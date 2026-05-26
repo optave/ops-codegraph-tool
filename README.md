@@ -398,8 +398,8 @@ codegraph cycles --functions   # Function-level cycles
 Local embeddings for every function, method, and class — search by natural language. Everything runs locally using [@huggingface/transformers](https://huggingface.co/docs/transformers.js) — no API keys needed.
 
 ```bash
-codegraph embed                # Build embeddings (default: nomic-v1.5)
-codegraph embed --model nomic  # Use a different model
+codegraph embed                # Build embeddings (default: nomic; reuses existing model if present)
+codegraph embed --model bge-large  # Use a different model
 codegraph search "handle authentication"
 codegraph search "parse config" --min-score 0.4 -n 10
 codegraph search "parseConfig" --mode keyword   # BM25 keyword-only (exact names)
@@ -429,8 +429,8 @@ A single trailing semicolon is ignored (falls back to single-query mode). The `-
 | `jina-small` | jina-embeddings-v2-small-en | 512 | ~33 MB | Apache-2.0 | Better quality, still small |
 | `jina-base` | jina-embeddings-v2-base-en | 768 | ~137 MB | Apache-2.0 | High quality, 8192 token context |
 | `jina-code` | jina-embeddings-v2-base-code | 768 | ~137 MB | Apache-2.0 | Best for code search, trained on code+text |
-| `nomic` | nomic-embed-text-v1 | 768 | ~137 MB | Apache-2.0 | Good quality, 8192 context |
-| `nomic-v1.5` (default) | nomic-embed-text-v1.5 | 768 | ~137 MB | Apache-2.0 | **Improved nomic, Matryoshka dimensions** |
+| `nomic` (default) | nomic-embed-text-v1 | 768 | ~137 MB | Apache-2.0 | Good quality, 8192 context |
+| `nomic-v1.5` | nomic-embed-text-v1.5 | 768 | ~137 MB | Apache-2.0 | **Improved nomic, Matryoshka dimensions** |
 | `bge-large` | bge-large-en-v1.5 | 1024 | ~335 MB | MIT | Best general retrieval, top MTEB scores |
 
 The model used during `embed` is stored in the database, so `search` auto-detects it — no need to pass `--model` when searching.
