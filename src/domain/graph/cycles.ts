@@ -3,6 +3,45 @@ import { loadNative } from '../../infrastructure/native.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import type { BetterSqlite3Database } from '../../types.js';
 
+type Edge = { source: string; target: string };
+type DbEdge = { source_id: number; target_id: number };
+
+/**
+ * Build a label-based edge list from DB rows, filtering to known nodes and
+ * deduplicating. Self-loops are skipped (Tarjan treats them as trivial SCCs).
+ */
+function buildLabelEdges(dbEdges: DbEdge[], idToLabel: Map<number, string>): Edge[] {
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  for (const e of dbEdges) {
+    if (e.source_id === e.target_id) continue;
+    const src = idToLabel.get(e.source_id);
+    const tgt = idToLabel.get(e.target_id);
+    if (src === undefined || tgt === undefined) continue;
+    const key = `${src}\0${tgt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ source: src, target: tgt });
+  }
+  return edges;
+}
+
+function buildFileLevelEdges(db: BetterSqlite3Database, noTests: boolean): Edge[] {
+  let nodes = getFileNodesAll(db);
+  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
+  const idToLabel = new Map<number, string>();
+  for (const n of nodes) idToLabel.set(n.id, n.file);
+  return buildLabelEdges(getImportEdges(db), idToLabel);
+}
+
+function buildCallableEdges(db: BetterSqlite3Database, noTests: boolean): Edge[] {
+  let nodes = getCallableNodes(db);
+  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
+  const idToLabel = new Map<number, string>();
+  for (const n of nodes) idToLabel.set(n.id, `${n.name}|${n.file}`);
+  return buildLabelEdges(getCallEdges(db), idToLabel);
+}
+
 /**
  * Find cycles using Tarjan's SCC algorithm.
  *
@@ -16,66 +55,20 @@ export function findCycles(
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
 
-  const edges: Array<{ source: string; target: string }> = [];
-  const seen = new Set<string>();
-
-  if (fileLevel) {
-    let nodes = getFileNodesAll(db);
-    if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
-    const nodeIds = new Set<number>();
-    const idToFile = new Map<number, string>();
-    for (const n of nodes) {
-      nodeIds.add(n.id);
-      idToFile.set(n.id, n.file);
-    }
-    for (const e of getImportEdges(db)) {
-      if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
-      if (e.source_id === e.target_id) continue;
-      const src = idToFile.get(e.source_id)!;
-      const tgt = idToFile.get(e.target_id)!;
-      const key = `${src}\0${tgt}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      edges.push({ source: src, target: tgt });
-    }
-  } else {
-    let nodes = getCallableNodes(db);
-    if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
-    const nodeIds = new Set<number>();
-    const idToLabel = new Map<number, string>();
-    for (const n of nodes) {
-      nodeIds.add(n.id);
-      idToLabel.set(n.id, `${n.name}|${n.file}`);
-    }
-    for (const e of getCallEdges(db)) {
-      if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
-      if (e.source_id === e.target_id) continue;
-      const src = idToLabel.get(e.source_id)!;
-      const tgt = idToLabel.get(e.target_id)!;
-      const key = `${src}\0${tgt}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      edges.push({ source: src, target: tgt });
-    }
-  }
+  const edges = fileLevel ? buildFileLevelEdges(db, noTests) : buildCallableEdges(db, noTests);
 
   const native = loadNative();
   if (native) {
     return native.detectCycles(edges) as string[][];
   }
-
   return tarjanFromEdges(edges);
 }
 
-export function findCyclesJS(edges: Array<{ source: string; target: string }>): string[][] {
+export function findCyclesJS(edges: Edge[]): string[][] {
   return tarjanFromEdges(edges);
 }
 
-/**
- * Run Tarjan's SCC on a flat edge list. Returns SCCs with length > 1 (cycles).
- * Uses a simple adjacency-list Map instead of a full CodeGraph.
- */
-function tarjanFromEdges(edges: Array<{ source: string; target: string }>): string[][] {
+function buildAdjacency(edges: Edge[]): { adj: Map<string, string[]>; allNodes: Set<string> } {
   const adj = new Map<string, string[]>();
   const allNodes = new Set<string>();
   for (const { source, target } of edges) {
@@ -88,6 +81,15 @@ function tarjanFromEdges(edges: Array<{ source: string; target: string }>): stri
     }
     list.push(target);
   }
+  return { adj, allNodes };
+}
+
+/**
+ * Run Tarjan's SCC on a flat edge list. Returns SCCs with length > 1 (cycles).
+ * Uses a simple adjacency-list Map instead of a full CodeGraph.
+ */
+function tarjanFromEdges(edges: Edge[]): string[][] {
+  const { adj, allNodes } = buildAdjacency(edges);
 
   let index = 0;
   const stack: string[] = [];
