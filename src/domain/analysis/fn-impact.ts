@@ -83,6 +83,63 @@ function expandImplementors(
   }
 }
 
+/** Record a caller node at depth `d`, adding to frontier and levels. */
+function recordCaller(
+  caller: RelatedNodeRow,
+  parentId: number,
+  depth: number,
+  visited: Set<number>,
+  nextFrontier: number[],
+  levels: BfsLevels,
+  noTests: boolean,
+  onVisit?: BfsOnVisit,
+): void {
+  if (visited.has(caller.id) || (noTests && isTestFile(caller.file))) return;
+  visited.add(caller.id);
+  nextFrontier.push(caller.id);
+  if (!levels[depth]) levels[depth] = [];
+  levels[depth]!.push(toSymbolRef(caller));
+  if (onVisit) onVisit(caller, parentId, depth);
+}
+
+/** Process all callers of one frontier node, recording new nodes and expanding implementors. */
+function processFrontierNode(
+  repo: InstanceType<typeof Repository>,
+  fid: number,
+  depth: number,
+  visited: Set<number>,
+  nextFrontier: number[],
+  levels: BfsLevels,
+  noTests: boolean,
+  resolveImplementors: boolean,
+  onVisit?: BfsOnVisit,
+): void {
+  const callers = repo.findDistinctCallers(fid) as RelatedNodeRow[];
+  for (const c of callers) {
+    recordCaller(c, fid, depth, visited, nextFrontier, levels, noTests, onVisit);
+    if (resolveImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
+      expandImplementors(repo, c.id, depth + 1, visited, nextFrontier, levels, noTests, onVisit);
+    }
+  }
+}
+
+/** Seed BFS with implementors of the start node when it is an interface/trait. */
+function seedInterfaceImplementors(
+  repo: InstanceType<typeof Repository>,
+  startId: number,
+  visited: Set<number>,
+  levels: BfsLevels,
+  noTests: boolean,
+  onVisit?: BfsOnVisit,
+): number[] {
+  const implNextFrontier: number[] = [];
+  const startNode = repo.findNodeById(startId) as NodeRow | undefined;
+  if (startNode && INTERFACE_LIKE_KINDS.has(startNode.kind)) {
+    expandImplementors(repo, startId, 1, visited, implNextFrontier, levels, noTests, onVisit);
+  }
+  return implNextFrontier;
+}
+
 export function bfsTransitiveCallers(
   dbOrRepo: BetterSqlite3Database | InstanceType<typeof Repository>,
   startId: number,
@@ -105,13 +162,9 @@ export function bfsTransitiveCallers(
   let frontier = [startId];
 
   // Seed: if start node is an interface/trait, include its implementors at depth 1
-  const implNextFrontier: number[] = [];
-  if (resolveImplementors) {
-    const startNode = repo.findNodeById(startId) as NodeRow | undefined;
-    if (startNode && INTERFACE_LIKE_KINDS.has(startNode.kind)) {
-      expandImplementors(repo, startId, 1, visited, implNextFrontier, levels, noTests, onVisit);
-    }
-  }
+  const implNextFrontier = resolveImplementors
+    ? seedInterfaceImplementors(repo, startId, visited, levels, noTests, onVisit)
+    : [];
 
   for (let d = 1; d <= maxDepth; d++) {
     if (d === 1 && implNextFrontier.length > 0) {
@@ -119,25 +172,70 @@ export function bfsTransitiveCallers(
     }
     const nextFrontier: number[] = [];
     for (const fid of frontier) {
-      const callers = repo.findDistinctCallers(fid) as RelatedNodeRow[];
-      for (const c of callers) {
-        if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-          visited.add(c.id);
-          nextFrontier.push(c.id);
-          if (!levels[d]) levels[d] = [];
-          levels[d]!.push(toSymbolRef(c));
-          if (onVisit) onVisit(c, fid, d);
-        }
-        if (resolveImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
-          expandImplementors(repo, c.id, d + 1, visited, nextFrontier, levels, noTests, onVisit);
-        }
-      }
+      processFrontierNode(
+        repo,
+        fid,
+        d,
+        visited,
+        nextFrontier,
+        levels,
+        noTests,
+        resolveImplementors,
+        onVisit,
+      );
     }
     frontier = nextFrontier;
     if (frontier.length === 0) break;
   }
 
   return { totalDependents: visited.size - 1, levels };
+}
+
+/** BFS over import dependents, returning visited node IDs and depth-per-id map. */
+function bfsImportDependents(
+  repo: InstanceType<typeof Repository>,
+  seedNodes: NodeRow[],
+  noTests: boolean,
+): { visited: Set<number>; levels: Map<number, number> } {
+  const visited = new Set<number>();
+  const queue: number[] = [];
+  const levels = new Map<number, number>();
+
+  for (const fn of seedNodes) {
+    visited.add(fn.id);
+    queue.push(fn.id);
+    levels.set(fn.id, 0);
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const level = levels.get(current)!;
+    const dependents = repo.findImportDependents(current) as RelatedNodeRow[];
+    for (const dep of dependents) {
+      if (visited.has(dep.id)) continue;
+      if (noTests && isTestFile(dep.file)) continue;
+      visited.add(dep.id);
+      queue.push(dep.id);
+      levels.set(dep.id, level + 1);
+    }
+  }
+
+  return { visited, levels };
+}
+
+/** Group visited dependents by depth (excluding seed depth 0). */
+function groupDependentsByLevel(
+  repo: InstanceType<typeof Repository>,
+  levels: Map<number, number>,
+): Record<number, Array<{ file: string }>> {
+  const byLevel: Record<number, Array<{ file: string }>> = {};
+  for (const [id, level] of levels) {
+    if (level === 0) continue;
+    if (!byLevel[level]) byLevel[level] = [];
+    const node = repo.findNodeById(id) as NodeRow | undefined;
+    if (node) byLevel[level].push({ file: node.file });
+  }
+  return byLevel;
 }
 
 export function impactAnalysisData(
@@ -152,36 +250,8 @@ export function impactAnalysisData(
       return { file, sources: [], levels: {}, totalDependents: 0 };
     }
 
-    const visited = new Set<number>();
-    const queue: number[] = [];
-    const levels = new Map<number, number>();
-
-    for (const fn of fileNodes) {
-      visited.add(fn.id);
-      queue.push(fn.id);
-      levels.set(fn.id, 0);
-    }
-
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      const level = levels.get(current)!;
-      const dependents = repo.findImportDependents(current) as RelatedNodeRow[];
-      for (const dep of dependents) {
-        if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
-          visited.add(dep.id);
-          queue.push(dep.id);
-          levels.set(dep.id, level + 1);
-        }
-      }
-    }
-
-    const byLevel: Record<number, Array<{ file: string }>> = {};
-    for (const [id, level] of levels) {
-      if (level === 0) continue;
-      if (!byLevel[level]) byLevel[level] = [];
-      const node = repo.findNodeById(id) as NodeRow | undefined;
-      if (node) byLevel[level].push({ file: node.file });
-    }
+    const { visited, levels } = bfsImportDependents(repo, fileNodes, noTests);
+    const byLevel = groupDependentsByLevel(repo, levels);
 
     return {
       file,
