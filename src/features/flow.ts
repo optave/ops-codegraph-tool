@@ -133,6 +133,41 @@ interface BfsState {
   truncated: boolean;
 }
 
+interface FlowBfsFrame {
+  visited: Set<number>;
+  cycles: Array<{ from: string; to: string; depth: number }>;
+  nodeDepths: Map<number, number>;
+  idToNode: Map<number, NodeInfo>;
+  nextFrontier: number[];
+  levelNodes: NodeInfo[];
+}
+
+/** Process one callee row, recording cycle hits or expanding frontier. */
+function processFlowCallee(
+  c: CalleeRow,
+  fid: number,
+  depth: number,
+  noTests: boolean,
+  frame: FlowBfsFrame,
+): void {
+  if (noTests && isTestFile(c.file)) return;
+
+  if (frame.visited.has(c.id)) {
+    const fromNode = frame.idToNode.get(fid);
+    if (fromNode) {
+      frame.cycles.push({ from: fromNode.name, to: c.name, depth });
+    }
+    return;
+  }
+
+  frame.visited.add(c.id);
+  frame.nextFrontier.push(c.id);
+  const nodeInfo: NodeInfo = toSymbolRef(c);
+  frame.levelNodes.push(nodeInfo);
+  frame.nodeDepths.set(c.id, depth);
+  frame.idToNode.set(c.id, nodeInfo);
+}
+
 /** Forward BFS through callees, collecting steps, cycles, and node depth info. */
 function bfsCallees(
   db: ReturnType<typeof openReadonlyOrFail>,
@@ -157,37 +192,26 @@ function bfsCallees(
   );
 
   for (let d = 1; d <= maxDepth; d++) {
-    const nextFrontier: number[] = [];
-    const levelNodes: NodeInfo[] = [];
+    const frame: FlowBfsFrame = {
+      visited,
+      cycles,
+      nodeDepths,
+      idToNode,
+      nextFrontier: [],
+      levelNodes: [],
+    };
 
     for (const fid of frontier) {
-      const callees = calleesStmt.all(fid);
-
-      for (const c of callees) {
-        if (noTests && isTestFile(c.file)) continue;
-
-        if (visited.has(c.id)) {
-          const fromNode = idToNode.get(fid);
-          if (fromNode) {
-            cycles.push({ from: fromNode.name, to: c.name, depth: d });
-          }
-          continue;
-        }
-
-        visited.add(c.id);
-        nextFrontier.push(c.id);
-        const nodeInfo: NodeInfo = toSymbolRef(c);
-        levelNodes.push(nodeInfo);
-        nodeDepths.set(c.id, d);
-        idToNode.set(c.id, nodeInfo);
+      for (const c of calleesStmt.all(fid)) {
+        processFlowCallee(c, fid, d, noTests, frame);
       }
     }
 
-    if (levelNodes.length > 0) {
-      steps.push({ depth: d, nodes: levelNodes });
+    if (frame.levelNodes.length > 0) {
+      steps.push({ depth: d, nodes: frame.levelNodes });
     }
 
-    frontier = nextFrontier;
+    frontier = frame.nextFrontier;
     if (frontier.length === 0) break;
     if (d === maxDepth && frontier.length > 0) truncated = true;
   }

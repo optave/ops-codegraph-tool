@@ -235,30 +235,23 @@ interface EvaluateBoundariesOpts {
   noTests?: boolean;
 }
 
-export function evaluateBoundaries(
-  db: BetterSqlite3Database,
-  boundaryConfig: BoundaryConfig | undefined,
-  opts: EvaluateBoundariesOpts = {},
-): { violations: BoundaryViolation[]; violationCount: number } {
-  if (!boundaryConfig) return { violations: [], violationCount: 0 };
-
-  const { valid, errors } = validateBoundaryConfig(boundaryConfig);
-  if (!valid) {
-    throw new BoundaryError(`Invalid boundary configuration: ${errors.join('; ')}`);
-  }
-
-  const modules = resolveModules(boundaryConfig);
-  if (modules.size === 0) return { violations: [], violationCount: 0 };
-
-  let allRules: BoundaryRule[] = [];
-  if (boundaryConfig.preset) {
-    allRules = generatePresetRules(modules, boundaryConfig.preset);
-  }
+function collectAllRules(
+  boundaryConfig: BoundaryConfig,
+  modules: Map<string, ResolvedModule>,
+): BoundaryRule[] {
+  const rules: BoundaryRule[] = boundaryConfig.preset
+    ? generatePresetRules(modules, boundaryConfig.preset)
+    : [];
   if (boundaryConfig.rules && Array.isArray(boundaryConfig.rules)) {
-    allRules = allRules.concat(boundaryConfig.rules);
+    return rules.concat(boundaryConfig.rules);
   }
-  if (allRules.length === 0) return { violations: [], violationCount: 0 };
+  return rules;
+}
 
+function loadImportEdges(
+  db: BetterSqlite3Database,
+  opts: EvaluateBoundariesOpts,
+): Array<{ source: string; target: string }> {
   let edges: Array<{ source: string; target: string }>;
   try {
     edges = db
@@ -281,38 +274,63 @@ export function evaluateBoundaries(
     const scope = new Set(opts.scopeFiles);
     edges = edges.filter((e) => scope.has(e.source));
   }
+  return edges;
+}
 
+function ruleViolated(rule: BoundaryRule, toModule: string): boolean {
+  if (rule.notTo?.includes(toModule)) return true;
+  if (rule.onlyTo && !rule.onlyTo.includes(toModule)) return true;
+  return false;
+}
+
+function emitEdgeViolations(
+  edge: { source: string; target: string },
+  fromModule: string,
+  toModule: string,
+  allRules: BoundaryRule[],
+  violations: BoundaryViolation[],
+): void {
+  for (const rule of allRules) {
+    if (rule.from !== fromModule) continue;
+    if (!ruleViolated(rule, toModule)) continue;
+    violations.push({
+      rule: 'boundaries',
+      name: `${fromModule} -> ${toModule}`,
+      file: edge.source,
+      targetFile: edge.target,
+      message: rule.message || `${fromModule} must not depend on ${toModule}`,
+      value: 1,
+      threshold: 0,
+    });
+  }
+}
+
+export function evaluateBoundaries(
+  db: BetterSqlite3Database,
+  boundaryConfig: BoundaryConfig | undefined,
+  opts: EvaluateBoundariesOpts = {},
+): { violations: BoundaryViolation[]; violationCount: number } {
+  if (!boundaryConfig) return { violations: [], violationCount: 0 };
+
+  const { valid, errors } = validateBoundaryConfig(boundaryConfig);
+  if (!valid) {
+    throw new BoundaryError(`Invalid boundary configuration: ${errors.join('; ')}`);
+  }
+
+  const modules = resolveModules(boundaryConfig);
+  if (modules.size === 0) return { violations: [], violationCount: 0 };
+
+  const allRules = collectAllRules(boundaryConfig, modules);
+  if (allRules.length === 0) return { violations: [], violationCount: 0 };
+
+  const edges = loadImportEdges(db, opts);
   const violations: BoundaryViolation[] = [];
 
   for (const edge of edges) {
     const fromModule = classifyFile(edge.source, modules);
     const toModule = classifyFile(edge.target, modules);
-
     if (!fromModule || !toModule) continue;
-
-    for (const rule of allRules) {
-      if (rule.from !== fromModule) continue;
-
-      let isViolation = false;
-
-      if (rule.notTo?.includes(toModule)) {
-        isViolation = true;
-      } else if (rule.onlyTo && !rule.onlyTo.includes(toModule)) {
-        isViolation = true;
-      }
-
-      if (isViolation) {
-        violations.push({
-          rule: 'boundaries',
-          name: `${fromModule} -> ${toModule}`,
-          file: edge.source,
-          targetFile: edge.target,
-          message: rule.message || `${fromModule} must not depend on ${toModule}`,
-          value: 1,
-          threshold: 0,
-        });
-      }
-    }
+    emitEdgeViolations(edge, fromModule, toModule, allRules, violations);
   }
 
   return { violations, violationCount: violations.length };
