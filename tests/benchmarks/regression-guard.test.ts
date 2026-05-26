@@ -226,6 +226,23 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   shape and root cause as the 3.10.0 entries above. Exempt this release;
  *   remove once 3.12.0+ data confirms the new steady-state on whatever
  *   runner generation is current at that time.
+ *
+ * - 3.11.0:Full build — same CI runner-variance root cause as the four
+ *   3.11.0 entries above, but on the multi-second WASM full-build metric
+ *   rather than the sub-50ms group. Surfaced on the embedding-bench docs
+ *   PR (#1218) when the per-PR gate re-measured dev (byte-identical to
+ *   released 3.11.0 modulo EMBEDDING-BENCHMARKS.md) against the published
+ *   3.11.0 baseline:
+ *     - Full build (wasm): 7664 → 9765 (+27%, threshold 25%) on run 26431397916
+ *   Historical WASM full-build numbers on the same corpus span 7.2s–14.0s
+ *   across 3.9.0–3.11.0, so 9.8s on a single dev re-measurement sits well
+ *   inside the runner-noise envelope (3.10.0 baseline was 8.4s, 3.9.6 was
+ *   14.0s). PR #1217's gate measured 7664 — the same code on a fresh
+ *   runner instance later measured 9765. No extractor, builder, or DB
+ *   layer changed between 3.11.0 release and #1218; only EMBEDDING-
+ *   BENCHMARKS.md, which is not loaded at build time. Exempt this release;
+ *   remove once 3.12.0+ data confirms stabilization under whatever runner
+ *   generation is current at that time.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
@@ -239,6 +256,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.0:No-op rebuild',
   '3.11.0:fnDeps depth 3',
   '3.11.0:fnDeps depth 5',
+  '3.11.0:Full build',
 ]);
 
 /**
