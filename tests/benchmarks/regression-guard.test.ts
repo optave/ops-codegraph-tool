@@ -103,34 +103,15 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * The `version` is the release where the regression was first observed.
  * When the per-PR gate runs `dev` against that release as baseline, the
  * exemption applies via the baseline-version fallback in assertNoRegressions
- * (and the resolution loop) — so a single `3.9.6:Foo` entry covers both
- * `3.9.6 vs 3.9.5` and every subsequent `dev vs 3.9.6` comparison until
+ * (and the resolution loop) — so a single `3.11.0:Foo` entry covers both
+ * `3.11.0 vs 3.10.0` and every subsequent `dev vs 3.11.0` comparison until
  * the next release clears the regression and the entry is pruned.
  *
  * Entries fire only when `latest.version` matches the prefix (or, for `dev`
  * latest, when `previous.version` matches via the baseline fallback). Once
  * a version is no longer the latest in committed history and no longer the
  * baseline used for `dev` comparisons, its entries become dead weight and
- * should be removed (last pruned: 3.9.0/3.9.1/3.9.2).
- *
- * - 3.9.6:Build ms/file / 3.9.6:No-op rebuild — WASM full build regressed
- *   (#1036) when PR #1016 expanded AST_TYPE_MAPS from 3 to 23 languages,
- *   causing zero-AST-row files to return `astNodes: undefined` and trigger
- *   a full-corpus re-parse. Fixed by PR #1038. Benchmarks captured before
- *   the fix landed; will reclear in v3.9.7+ data.
- *
- * - 3.9.6:Query time — native query benchmark sample-noise blip (29.4 → 47ms)
- *   above the natural variance of the small target set. Not reproducible
- *   locally (~30ms steady-state); will be re-validated on v3.9.7+ data.
- *
- * - 3.9.6:resolution haskell precision/recall — Haskell AST visitor walked
- *   `astTypeMap` with bracket-notation lookup, so node type `constructor`
- *   (Haskell sum-types: Left, Right) resolved to `Object.prototype.constructor`
- *   instead of `undefined`. The Object() function landed in the astNodes row
- *   and crashed the worker boundary with "function Object() could not be
- *   cloned", skipping every Haskell file with constructors. Fixed by gating
- *   with `Object.hasOwn` (#1039). Benchmarks captured before the fix landed;
- *   will reclear in v3.9.7+ data.
+ * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6).
  *
  * - 3.10.0:No-op rebuild — small (~3–7ms / ~25–35% local) real regression
  *   amplified by CI variance on a sub-30ms metric. Verified by running
@@ -223,13 +204,30 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   timing actually improved) — a measurement-scope artifact, not a real
  *   regression in the schema or extraction layer. Exempt this release;
  *   remove once 3.11.0+ data is captured under the post-#1134 methodology.
+ *
+ * - 3.11.0:Query time / 3.11.0:No-op rebuild / 3.11.0:fnDeps depth 3 /
+ *   3.11.0:fnDeps depth 5 — CI runner variance on sub-50ms WASM metrics
+ *   when the per-PR gate replays dev against the just-published 3.11.0
+ *   baseline. The dev source tree between commit f7c29c5 (3.11.0 release)
+ *   and the post-publish docs PR (#1217) contains only version-bump diffs
+ *   in package.json/Cargo.toml/package-lock.json — no extractor, query,
+ *   or DB changes. Published 3.11.0 numbers were captured by the publish
+ *   workflow on one runner; the per-PR gate re-measures on a fresh runner
+ *   and lands ~10ms higher on every sub-50ms WASM metric:
+ *     - Query time:    32.5 → 44.2 (+36%) on run 26426483639
+ *     - No-op rebuild: 18   → 29   (+61%)
+ *     - fnDeps depth 3: 33.6 → 44.1 (+31%)
+ *     - fnDeps depth 5: 33.3 → 44.4 (+33%)
+ *   The 3.11.0 vs 3.10.0 release-time comparison shows these metrics
+ *   either flat or improved (Query time 37.6 → 32.5 = -14%, fnDeps depth 3
+ *   33 → 33.6 = ~flat, fnDeps depth 5 33 → 33.3 = ~flat, No-op rebuild
+ *   15 → 18 = +20% but at runner noise floor) — confirming no underlying
+ *   regression and ruling out a real slowdown introduced in 3.11.0. Same
+ *   shape and root cause as the 3.10.0 entries above. Exempt this release;
+ *   remove once 3.12.0+ data confirms the new steady-state on whatever
+ *   runner generation is current at that time.
  */
 const KNOWN_REGRESSIONS = new Set([
-  '3.9.6:Build ms/file',
-  '3.9.6:No-op rebuild',
-  '3.9.6:Query time',
-  '3.9.6:resolution haskell precision',
-  '3.9.6:resolution haskell recall',
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
   '3.10.0:fnDeps depth 1',
@@ -237,6 +235,10 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:fnDeps depth 5',
   '3.10.0:Query time',
   '3.10.0:DB bytes/file',
+  '3.11.0:Query time',
+  '3.11.0:No-op rebuild',
+  '3.11.0:fnDeps depth 3',
+  '3.11.0:fnDeps depth 5',
 ]);
 
 /**
