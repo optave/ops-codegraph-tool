@@ -88,12 +88,10 @@ export function runLouvainUndirectedModularity(
   optionsInput: LeidenOptions = {},
 ): LouvainResult {
   const options: NormalizedOptions = normalizeOptions(optionsInput);
-  let currentGraph: CodeGraph = graph;
-  const levels: LevelEntry[] = [];
   const rngSource = createRng(options.randomSeed);
   const random: () => number = () => rngSource.nextDouble();
 
-  const baseGraphAdapter: GraphAdapter = makeGraphAdapter(currentGraph, {
+  const baseGraphAdapter: GraphAdapter = makeGraphAdapter(graph, {
     directed: options.directed,
     ...optionsInput,
   });
@@ -101,98 +99,27 @@ export function runLouvainUndirectedModularity(
   const originalToCurrent = new Int32Array(origN);
   for (let i = 0; i < origN; i++) originalToCurrent[i] = i;
 
-  let fixedNodeMask: Uint8Array | null = null;
-  if (options.fixedNodes) {
-    const fixed = new Uint8Array(origN);
-    const asSet: Set<string> =
-      options.fixedNodes instanceof Set ? options.fixedNodes : new Set(options.fixedNodes);
-    for (const id of asSet) {
-      const idx = baseGraphAdapter.idToIndex.get(String(id));
-      if (idx != null) fixed[idx] = 1;
-    }
-    fixedNodeMask = fixed;
-  }
+  const fixedNodeMask: Uint8Array | null = buildFixedNodeMask(baseGraphAdapter, options.fixedNodes);
 
+  const levels: LevelEntry[] = [];
+  let currentGraph: CodeGraph = graph;
   for (let level = 0; level < options.maxLevels; level++) {
     const graphAdapter: GraphAdapter =
       level === 0
         ? baseGraphAdapter
         : makeGraphAdapter(currentGraph, { directed: options.directed, ...optionsInput });
-    const partition: Partition = makePartition(graphAdapter);
-    partition.graph = graphAdapter;
-    partition.initializeAggregates();
+    const levelOutcome = runLevel(
+      graphAdapter,
+      options,
+      random,
+      level === 0 ? fixedNodeMask : null,
+    );
 
-    const order = new Int32Array(graphAdapter.n);
-    for (let i = 0; i < graphAdapter.n; i++) order[i] = i;
+    levels.push({ graph: graphAdapter, partition: levelOutcome.effectivePartition });
+    applyFineToCoarseMapping(originalToCurrent, levelOutcome.effectivePartition.nodeCommunity);
 
-    let improved: boolean = true;
-    let localPasses: number = 0;
-    const strategyCode: CandidateStrategyCode = options.candidateStrategyCode;
-    while (improved) {
-      improved = false;
-      localPasses++;
-      shuffleArrayInPlace(order, random);
-      for (let idx = 0; idx < order.length; idx++) {
-        const nodeIndex: number = order[idx]!;
-        if (level === 0 && fixedNodeMask && fixedNodeMask[nodeIndex]) continue;
-        const candidateCount: number = partition.accumulateNeighborCommunityEdgeWeights(nodeIndex);
-        const { bestCommunityId, bestGain } = findBestCommunityMove(
-          partition,
-          graphAdapter,
-          nodeIndex,
-          candidateCount,
-          strategyCode,
-          options,
-          random,
-        );
-        if (bestCommunityId !== partition.nodeCommunity[nodeIndex]! && bestGain > GAIN_EPSILON) {
-          partition.moveNodeToCommunity(nodeIndex, bestCommunityId);
-          improved = true;
-        }
-      }
-      if (localPasses >= options.maxLocalPasses) break;
-    }
-
-    renumberCommunities(partition, options.preserveLabels);
-
-    let effectivePartition: Partition = partition;
-    if (options.refine) {
-      const refined: Partition = refineWithinCoarseCommunities(
-        graphAdapter,
-        partition,
-        random,
-        options,
-        level === 0 ? fixedNodeMask : null,
-      );
-      // Post-refinement: split any disconnected communities into their
-      // connected components. This is the cheap O(V+E) alternative to
-      // checking gamma-connectedness on every candidate during refinement.
-      // A disconnected community violates even basic connectivity, so
-      // splitting is always correct.
-      splitDisconnectedCommunities(graphAdapter, refined);
-      renumberCommunities(refined, options.preserveLabels);
-      effectivePartition = refined;
-    }
-
-    levels.push({ graph: graphAdapter, partition: effectivePartition });
-    const fineToCoarse: Int32Array = effectivePartition.nodeCommunity;
-    for (let i = 0; i < originalToCurrent.length; i++) {
-      originalToCurrent[i] = fineToCoarse[originalToCurrent[i]!]!;
-    }
-
-    // Terminate when no further coarsening is possible. Check both the
-    // move-phase partition (did the greedy phase find merges?) and the
-    // effective partition that feeds buildCoarseGraph (would coarsening
-    // actually reduce the graph?). When refine is enabled the refined
-    // partition starts from singletons and may have more communities than
-    // the move phase found, so checking only effectivePartition would
-    // cause premature termination.
-    if (
-      partition.communityCount === graphAdapter.n &&
-      effectivePartition.communityCount === graphAdapter.n
-    )
-      break;
-    currentGraph = buildCoarseGraph(graphAdapter, effectivePartition);
+    if (levelOutcome.terminate) break;
+    currentGraph = buildCoarseGraph(graphAdapter, levelOutcome.effectivePartition);
   }
 
   const last: LevelEntry = levels[levels.length - 1]!;
@@ -204,6 +131,134 @@ export function runLouvainUndirectedModularity(
     originalNodeIds: baseGraphAdapter.nodeIds,
     baseGraph: baseGraphAdapter,
   };
+}
+
+/**
+ * Build a fixed-node mask aligned with the base graph adapter's node indices.
+ * Returns null when no fixed nodes are configured.
+ */
+function buildFixedNodeMask(
+  baseGraphAdapter: GraphAdapter,
+  fixedNodes: Set<string> | string[] | undefined,
+): Uint8Array | null {
+  if (!fixedNodes) return null;
+  const mask = new Uint8Array(baseGraphAdapter.n);
+  const asSet: Set<string> = fixedNodes instanceof Set ? fixedNodes : new Set(fixedNodes);
+  for (const id of asSet) {
+    const idx = baseGraphAdapter.idToIndex.get(String(id));
+    if (idx != null) mask[idx] = 1;
+  }
+  return mask;
+}
+
+interface LevelOutcome {
+  effectivePartition: Partition;
+  terminate: boolean;
+}
+
+/**
+ * Run one level of the Louvain/Leiden pipeline: greedy local-move phase,
+ * optional Leiden refinement, and a termination check. Returns the
+ * partition that feeds the next coarse graph plus a `terminate` flag set
+ * when no further coarsening is possible.
+ */
+function runLevel(
+  graphAdapter: GraphAdapter,
+  options: NormalizedOptions,
+  random: () => number,
+  fixedNodeMask: Uint8Array | null,
+): LevelOutcome {
+  const partition: Partition = makePartition(graphAdapter);
+  partition.graph = graphAdapter;
+  partition.initializeAggregates();
+
+  runLocalMovePhase(graphAdapter, partition, options, random, fixedNodeMask);
+  renumberCommunities(partition, options.preserveLabels);
+
+  let effectivePartition: Partition = partition;
+  if (options.refine) {
+    const refined: Partition = refineWithinCoarseCommunities(
+      graphAdapter,
+      partition,
+      random,
+      options,
+      fixedNodeMask,
+    );
+    // Post-refinement: split any disconnected communities into their
+    // connected components. This is the cheap O(V+E) alternative to
+    // checking gamma-connectedness on every candidate during refinement.
+    // A disconnected community violates even basic connectivity, so
+    // splitting is always correct.
+    splitDisconnectedCommunities(graphAdapter, refined);
+    renumberCommunities(refined, options.preserveLabels);
+    effectivePartition = refined;
+  }
+
+  // Terminate when no further coarsening is possible. Check both the
+  // move-phase partition (did the greedy phase find merges?) and the
+  // effective partition that feeds buildCoarseGraph (would coarsening
+  // actually reduce the graph?). When refine is enabled the refined
+  // partition starts from singletons and may have more communities than
+  // the move phase found, so checking only effectivePartition would
+  // cause premature termination.
+  const terminate =
+    partition.communityCount === graphAdapter.n &&
+    effectivePartition.communityCount === graphAdapter.n;
+  return { effectivePartition, terminate };
+}
+
+/**
+ * Greedy local-move phase: iterate randomly over nodes, moving each to the
+ * best community among the candidate set. Loops until no improvement or
+ * `maxLocalPasses` is reached.
+ */
+function runLocalMovePhase(
+  graphAdapter: GraphAdapter,
+  partition: Partition,
+  options: NormalizedOptions,
+  random: () => number,
+  fixedNodeMask: Uint8Array | null,
+): void {
+  const order = new Int32Array(graphAdapter.n);
+  for (let i = 0; i < graphAdapter.n; i++) order[i] = i;
+
+  const strategyCode: CandidateStrategyCode = options.candidateStrategyCode;
+  let improved: boolean = true;
+  let localPasses: number = 0;
+  while (improved) {
+    improved = false;
+    localPasses++;
+    shuffleArrayInPlace(order, random);
+    for (let idx = 0; idx < order.length; idx++) {
+      const nodeIndex: number = order[idx]!;
+      if (fixedNodeMask?.[nodeIndex]) continue;
+      const candidateCount: number = partition.accumulateNeighborCommunityEdgeWeights(nodeIndex);
+      const { bestCommunityId, bestGain } = findBestCommunityMove(
+        partition,
+        graphAdapter,
+        nodeIndex,
+        candidateCount,
+        strategyCode,
+        options,
+        random,
+      );
+      if (bestCommunityId !== partition.nodeCommunity[nodeIndex]! && bestGain > GAIN_EPSILON) {
+        partition.moveNodeToCommunity(nodeIndex, bestCommunityId);
+        improved = true;
+      }
+    }
+    if (localPasses >= options.maxLocalPasses) break;
+  }
+}
+
+/**
+ * Compose the running `originalToCurrent` mapping with this level's
+ * fine→coarse community labels, in place.
+ */
+function applyFineToCoarseMapping(originalToCurrent: Int32Array, fineToCoarse: Int32Array): void {
+  for (let i = 0; i < originalToCurrent.length; i++) {
+    originalToCurrent[i] = fineToCoarse[originalToCurrent[i]!]!;
+  }
 }
 
 /**
