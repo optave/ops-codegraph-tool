@@ -365,6 +365,144 @@ function persistVisitorFileCfg(
   return count;
 }
 
+/**
+ * Build a single native bulk-insert entry for one definition.
+ * Returns null when the def has no CFG blocks or no associated node row.
+ */
+function buildNativeCfgEntry(
+  db: BetterSqlite3Database,
+  def: Definition,
+  relPath: string,
+): Record<string, unknown> | null {
+  if (def.kind !== 'function' && def.kind !== 'method') return null;
+  if (!def.line) return null;
+
+  const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+  if (!nodeId) return null;
+
+  const cfg = def.cfg as { blocks?: CfgBuildBlock[]; edges?: CfgBuildEdge[] } | undefined;
+  if (!cfg?.blocks?.length) return null;
+
+  return {
+    nodeId,
+    blocks: cfg.blocks.map((b) => ({
+      index: b.index,
+      blockType: b.type,
+      startLine: b.startLine ?? undefined,
+      endLine: b.endLine ?? undefined,
+      label: b.label ?? undefined,
+    })),
+    edges: (cfg.edges || []).map((e) => ({
+      sourceIndex: e.sourceIndex,
+      targetIndex: e.targetIndex,
+      kind: e.kind,
+    })),
+  };
+}
+
+/**
+ * Native bulk-insert fast path. The Rust bulkInsertCfg handles
+ * delete-before-insert atomically on a single rusqlite connection, so there
+ * is no dual-connection WAL conflict. Returns true if this path handled the
+ * request (caller should return early); false to fall through to WASM/JS.
+ */
+function tryNativeBulkInsertCfg(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  engineOpts:
+    | {
+        nativeDb?: { bulkInsertCfg?(entries: Array<Record<string, unknown>>): number };
+        suspendJsDb?: () => void;
+        resumeJsDb?: () => void;
+      }
+    | undefined,
+): boolean {
+  const nativeDb = engineOpts?.nativeDb;
+  if (!nativeDb?.bulkInsertCfg) return false;
+
+  const entries: Array<Record<string, unknown>> = [];
+  for (const [relPath, symbols] of fileSymbols) {
+    const ext = path.extname(relPath).toLowerCase();
+    if (!CFG_EXTENSIONS.has(ext)) continue;
+
+    for (const def of symbols.definitions) {
+      const entry = buildNativeCfgEntry(db, def, relPath);
+      if (entry) entries.push(entry);
+    }
+  }
+
+  if (entries.length > 0) {
+    let inserted = 0;
+    try {
+      engineOpts?.suspendJsDb?.();
+      inserted = nativeDb.bulkInsertCfg(entries);
+    } finally {
+      engineOpts?.resumeJsDb?.();
+    }
+    info(`CFG (native bulk): ${inserted} functions analyzed`);
+  }
+  return true;
+}
+
+interface CfgInsertStatements {
+  insertBlock: ReturnType<BetterSqlite3Database['prepare']>;
+  insertEdge: ReturnType<BetterSqlite3Database['prepare']>;
+}
+
+function prepareCfgInsertStatements(db: BetterSqlite3Database): CfgInsertStatements {
+  const insertBlock = db.prepare(
+    `INSERT INTO cfg_blocks (function_node_id, block_index, block_type, start_line, end_line, label)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  const insertEdge = db.prepare(
+    `INSERT INTO cfg_edges (function_node_id, source_block_id, target_block_id, kind)
+     VALUES (?, ?, ?, ?)`,
+  );
+  return { insertBlock, insertEdge };
+}
+
+/**
+ * Persist CFG for every CFG-eligible file inside a single transaction.
+ * Dispatches to native fast path or visitor path per file.
+ */
+function persistAllFileCfgs(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  rootDir: string,
+  allNative: boolean,
+  extToLang: Map<string, string>,
+  parsers: unknown,
+  getParserFn: unknown,
+  stmts: CfgInsertStatements,
+): number {
+  let analyzed = 0;
+  const tx = db.transaction(() => {
+    for (const [relPath, symbols] of fileSymbols) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (!CFG_EXTENSIONS.has(ext)) continue;
+
+      if (allNative && !symbols._tree) {
+        analyzed += persistNativeFileCfg(db, symbols, relPath, stmts.insertBlock, stmts.insertEdge);
+        continue;
+      }
+
+      analyzed += persistVisitorFileCfg(
+        db,
+        symbols,
+        relPath,
+        rootDir,
+        extToLang,
+        parsers,
+        getParserFn,
+        stmts.insertBlock,
+        stmts.insertEdge,
+      );
+    }
+  });
+  tx();
+  return analyzed;
+}
+
 export async function buildCFGData(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
@@ -379,54 +517,7 @@ export async function buildCFGData(
   // skip WASM parser init, tree parsing, and JS visitor entirely — just persist.
   const allNative = allCfgNative(fileSymbols);
 
-  // ── Native bulk-insert fast path ──────────────────────────────────────
-  // The Rust bulkInsertCfg handles delete-before-insert atomically on a
-  // single rusqlite connection, so there is no dual-connection WAL conflict.
-  const nativeDb = engineOpts?.nativeDb;
-  if (allNative && nativeDb?.bulkInsertCfg) {
-    const entries: Array<Record<string, unknown>> = [];
-    for (const [relPath, symbols] of fileSymbols) {
-      const ext = path.extname(relPath).toLowerCase();
-      if (!CFG_EXTENSIONS.has(ext)) continue;
-
-      for (const def of symbols.definitions) {
-        if (def.kind !== 'function' && def.kind !== 'method') continue;
-        if (!def.line) continue;
-
-        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-        if (!nodeId) continue;
-
-        const cfg = def.cfg as { blocks?: CfgBuildBlock[]; edges?: CfgBuildEdge[] } | undefined;
-        if (!cfg?.blocks?.length) continue;
-
-        entries.push({
-          nodeId,
-          blocks: cfg.blocks.map((b) => ({
-            index: b.index,
-            blockType: b.type,
-            startLine: b.startLine ?? undefined,
-            endLine: b.endLine ?? undefined,
-            label: b.label ?? undefined,
-          })),
-          edges: (cfg.edges || []).map((e) => ({
-            sourceIndex: e.sourceIndex,
-            targetIndex: e.targetIndex,
-            kind: e.kind,
-          })),
-        });
-      }
-    }
-
-    if (entries.length > 0) {
-      let inserted = 0;
-      try {
-        engineOpts?.suspendJsDb?.();
-        inserted = nativeDb.bulkInsertCfg(entries);
-      } finally {
-        engineOpts?.resumeJsDb?.();
-      }
-      info(`CFG (native bulk): ${inserted} functions analyzed`);
-    }
+  if (allNative && tryNativeBulkInsertCfg(db, fileSymbols, engineOpts)) {
     return;
   }
 
@@ -438,41 +529,17 @@ export async function buildCFGData(
     ({ parsers, getParserFn } = await initCfgParsers(fileSymbols));
   }
 
-  const insertBlock = db.prepare(
-    `INSERT INTO cfg_blocks (function_node_id, block_index, block_type, start_line, end_line, label)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+  const stmts = prepareCfgInsertStatements(db);
+  const analyzed = persistAllFileCfgs(
+    db,
+    fileSymbols,
+    rootDir,
+    allNative,
+    extToLang,
+    parsers,
+    getParserFn,
+    stmts,
   );
-  const insertEdge = db.prepare(
-    `INSERT INTO cfg_edges (function_node_id, source_block_id, target_block_id, kind)
-     VALUES (?, ?, ?, ?)`,
-  );
-  let analyzed = 0;
-
-  const tx = db.transaction(() => {
-    for (const [relPath, symbols] of fileSymbols) {
-      const ext = path.extname(relPath).toLowerCase();
-      if (!CFG_EXTENSIONS.has(ext)) continue;
-
-      if (allNative && !symbols._tree) {
-        analyzed += persistNativeFileCfg(db, symbols, relPath, insertBlock, insertEdge);
-        continue;
-      }
-
-      analyzed += persistVisitorFileCfg(
-        db,
-        symbols,
-        relPath,
-        rootDir,
-        extToLang,
-        parsers,
-        getParserFn,
-        insertBlock,
-        insertEdge,
-      );
-    }
-  });
-
-  tx();
 
   if (analyzed > 0) {
     info(`CFG: ${analyzed} functions analyzed`);
