@@ -31,44 +31,36 @@ const COMPLEXITY_EXTENSIONS = buildExtensionSet(COMPLEXITY_RULES);
 
 // ─── Halstead Metrics Computation ─────────────────────────────────────────
 
-export function computeHalsteadMetrics(
-  functionNode: TreeSitterNode,
-  language: string,
-): HalsteadDerivedMetrics | null {
-  const rules = HALSTEAD_RULES.get(language) as HalsteadRules | undefined;
-  if (!rules) return null;
-
-  const operators = new Map<string, number>(); // type -> count
-  const operands = new Map<string, number>(); // text -> count
-
-  function walk(node: TreeSitterNode | null): void {
-    if (!node) return;
-
-    // Skip type annotation subtrees
-    if (rules?.skipTypes.has(node.type)) return;
-
-    // Compound operators (non-leaf): count the node type as an operator
-    if (rules?.compoundOperators.has(node.type)) {
-      operators.set(node.type, (operators.get(node.type) || 0) + 1);
-    }
-
-    // Leaf nodes: classify as operator or operand
-    if (node.childCount === 0) {
-      if (rules?.operatorLeafTypes.has(node.type)) {
-        operators.set(node.type, (operators.get(node.type) || 0) + 1);
-      } else if (rules?.operandLeafTypes.has(node.type)) {
-        const text = node.text;
-        operands.set(text, (operands.get(text) || 0) + 1);
-      }
-    }
-
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i));
-    }
+/** Classify a tree-sitter node as a Halstead operator or operand,
+ *  updating the running counts. Pure helper extracted from computeHalsteadMetrics
+ *  to keep the dispatcher thin. */
+function classifyHalsteadToken(
+  node: TreeSitterNode,
+  rules: HalsteadRules,
+  operators: Map<string, number>,
+  operands: Map<string, number>,
+): void {
+  // Compound operators (non-leaf): count the node type as an operator
+  if (rules.compoundOperators.has(node.type)) {
+    operators.set(node.type, (operators.get(node.type) || 0) + 1);
   }
 
-  walk(functionNode);
+  // Leaf nodes: classify as operator or operand
+  if (node.childCount === 0) {
+    if (rules.operatorLeafTypes.has(node.type)) {
+      operators.set(node.type, (operators.get(node.type) || 0) + 1);
+    } else if (rules.operandLeafTypes.has(node.type)) {
+      const text = node.text;
+      operands.set(text, (operands.get(text) || 0) + 1);
+    }
+  }
+}
 
+/** Build a HalsteadDerivedMetrics summary from the raw operator/operand counts. */
+function summarizeHalsteadCounts(
+  operators: Map<string, number>,
+  operands: Map<string, number>,
+): HalsteadDerivedMetrics {
   const n1 = operators.size; // distinct operators
   const n2 = operands.size; // distinct operands
   let bigN1 = 0; // total operators
@@ -79,7 +71,6 @@ export function computeHalsteadMetrics(
   const vocabulary = n1 + n2;
   const length = bigN1 + bigN2;
 
-  // Guard against zero
   const volume = vocabulary > 0 ? length * Math.log2(vocabulary) : 0;
   const difficulty = n2 > 0 ? (n1 / 2) * (bigN2 / n2) : 0;
   const effort = difficulty * volume;
@@ -97,6 +88,31 @@ export function computeHalsteadMetrics(
     effort: +effort.toFixed(2),
     bugs: +bugs.toFixed(4),
   };
+}
+
+export function computeHalsteadMetrics(
+  functionNode: TreeSitterNode,
+  language: string,
+): HalsteadDerivedMetrics | null {
+  const rules = HALSTEAD_RULES.get(language) as HalsteadRules | undefined;
+  if (!rules) return null;
+
+  const operators = new Map<string, number>(); // type -> count
+  const operands = new Map<string, number>(); // text -> count
+
+  function walk(node: TreeSitterNode | null): void {
+    if (!node) return;
+    // Skip type annotation subtrees
+    if (rules?.skipTypes.has(node.type)) return;
+    classifyHalsteadToken(node, rules as HalsteadRules, operators, operands);
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i));
+    }
+  }
+
+  walk(functionNode);
+
+  return summarizeHalsteadCounts(operators, operands);
 }
 
 // ─── LOC Metrics Computation ──────────────────────────────────────────────
@@ -535,6 +551,89 @@ function upsertAstComplexity(
   return 1;
 }
 
+/** Decision outcome for a single definition during native bulk-row collection.
+ *  - 'skip': the definition is legitimately ignorable (non-function, missing line,
+ *            interface stub, unsupported language).
+ *  - 'fallback': a genuine function body is missing precomputed complexity —
+ *                the whole native fast path must abort to JS.
+ *  - 'emit': the definition has complexity data; the row was appended. */
+type NativeRowDecision = 'skip' | 'fallback' | 'emit';
+
+/** Classify a definition relative to the native bulk path. Returns
+ *  'skip' to ignore it, 'fallback' to bail out, or 'emit' if the row was added. */
+function classifyDefinitionForNativeBulk(
+  def: FileSymbols['definitions'][0],
+  langSupported: boolean,
+): 'skip' | 'fallback' | 'has-data' {
+  if (def.kind !== 'function' && def.kind !== 'method') return 'skip';
+  if (!def.line) return 'skip';
+  if (!def.complexity) {
+    // Interface/type property signatures and single-line stubs are extracted
+    // as methods but the native engine correctly never assigns complexity.
+    // Mirror the leniency in initWasmParsersIfNeeded to avoid bailing out
+    // of the native bulk-insert path for every TypeScript codebase (#846).
+    if (def.name.includes('.') || !def.endLine || def.endLine <= def.line) return 'skip';
+    // Languages without complexity rules will never have data — skip them
+    // rather than bailing out of the entire native bulk path.
+    if (!langSupported) return 'skip';
+    return 'fallback'; // genuine function body missing complexity — needs JS fallback
+  }
+  return 'has-data';
+}
+
+/** Build a single native-bulk row from a definition with complexity data. */
+function buildNativeBulkRow(
+  nodeId: number,
+  def: FileSymbols['definitions'][0],
+): Record<string, unknown> {
+  const ch = def.complexity?.halstead;
+  const cl = def.complexity?.loc;
+  return {
+    nodeId,
+    cognitive: def.complexity?.cognitive ?? 0,
+    cyclomatic: def.complexity?.cyclomatic ?? 0,
+    maxNesting: def.complexity?.maxNesting ?? 0,
+    loc: cl ? cl.loc : 0,
+    sloc: cl ? cl.sloc : 0,
+    commentLines: cl ? cl.commentLines : 0,
+    halsteadN1: ch ? ch.n1 : 0,
+    halsteadN2: ch ? ch.n2 : 0,
+    halsteadBigN1: ch ? ch.bigN1 : 0,
+    halsteadBigN2: ch ? ch.bigN2 : 0,
+    halsteadVocabulary: ch ? ch.vocabulary : 0,
+    halsteadLength: ch ? ch.length : 0,
+    halsteadVolume: ch ? ch.volume : 0,
+    halsteadDifficulty: ch ? ch.difficulty : 0,
+    halsteadEffort: ch ? ch.effort : 0,
+    halsteadBugs: ch ? ch.bugs : 0,
+    maintainabilityIndex: def.complexity?.maintainabilityIndex ?? 0,
+  };
+}
+
+/** Try to collect a single file's definitions into native-bulk rows.
+ *  Returns 'fallback' if any definition forces a JS fallback. */
+function collectFileBulkRows(
+  db: BetterSqlite3Database,
+  relPath: string,
+  symbols: FileSymbols,
+  rows: Array<Record<string, unknown>>,
+): NativeRowDecision {
+  const ext = path.extname(relPath).toLowerCase();
+  const langId = symbols._langId || '';
+  const langSupported = COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(langId);
+
+  for (const def of symbols.definitions) {
+    const decision = classifyDefinitionForNativeBulk(def, langSupported);
+    if (decision === 'skip') continue;
+    if (decision === 'fallback') return 'fallback';
+
+    const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+    if (!nodeId) continue;
+    rows.push(buildNativeBulkRow(nodeId, def));
+  }
+  return 'emit';
+}
+
 /** Collect native bulk-insert rows from precomputed complexity data.
  *  Returns the rows array, or null if any definition is missing complexity
  *  (signalling that JS fallback is needed). */
@@ -543,53 +642,9 @@ function collectNativeBulkRows(
   fileSymbols: Map<string, FileSymbols>,
 ): Array<Record<string, unknown>> | null {
   const rows: Array<Record<string, unknown>> = [];
-
   for (const [relPath, symbols] of fileSymbols) {
-    const ext = path.extname(relPath).toLowerCase();
-    const langId = symbols._langId || '';
-    const langSupported = COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(langId);
-
-    for (const def of symbols.definitions) {
-      if (def.kind !== 'function' && def.kind !== 'method') continue;
-      if (!def.line) continue;
-      // Interface/type property signatures and single-line stubs are extracted
-      // as methods but the native engine correctly never assigns complexity.
-      // Mirror the leniency in initWasmParsersIfNeeded to avoid bailing out
-      // of the native bulk-insert path for every TypeScript codebase (#846).
-      if (!def.complexity) {
-        if (def.name.includes('.') || !def.endLine || def.endLine <= def.line) continue;
-        // Languages without complexity rules will never have data — skip them
-        // rather than bailing out of the entire native bulk path.
-        if (!langSupported) continue;
-        return null; // genuine function body missing complexity — needs JS fallback
-      }
-      const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-      if (!nodeId) continue;
-      const ch = def.complexity.halstead;
-      const cl = def.complexity.loc;
-      rows.push({
-        nodeId,
-        cognitive: def.complexity.cognitive ?? 0,
-        cyclomatic: def.complexity.cyclomatic ?? 0,
-        maxNesting: def.complexity.maxNesting ?? 0,
-        loc: cl ? cl.loc : 0,
-        sloc: cl ? cl.sloc : 0,
-        commentLines: cl ? cl.commentLines : 0,
-        halsteadN1: ch ? ch.n1 : 0,
-        halsteadN2: ch ? ch.n2 : 0,
-        halsteadBigN1: ch ? ch.bigN1 : 0,
-        halsteadBigN2: ch ? ch.bigN2 : 0,
-        halsteadVocabulary: ch ? ch.vocabulary : 0,
-        halsteadLength: ch ? ch.length : 0,
-        halsteadVolume: ch ? ch.volume : 0,
-        halsteadDifficulty: ch ? ch.difficulty : 0,
-        halsteadEffort: ch ? ch.effort : 0,
-        halsteadBugs: ch ? ch.bugs : 0,
-        maintainabilityIndex: def.complexity.maintainabilityIndex ?? 0,
-      });
-    }
+    if (collectFileBulkRows(db, relPath, symbols, rows) === 'fallback') return null;
   }
-
   return rows;
 }
 
