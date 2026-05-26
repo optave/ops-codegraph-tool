@@ -134,53 +134,59 @@ pub fn resolve_import_path(
 }
 
 /// Inner implementation with optional known_files cache.
-fn resolve_import_path_inner(
-    from_file: &str,
+/// Convert an absolute path candidate into a root-relative, normalized
+/// path string. Used as the success exit of every probe in
+/// `resolve_import_path_inner`.
+fn relativize_to_root(candidate: &str, root_dir: &str) -> String {
+    let root = Path::new(root_dir);
+    if let Ok(rel) = Path::new(candidate).strip_prefix(root) {
+        normalize_path(&rel.display().to_string())
+    } else {
+        normalize_path(candidate)
+    }
+}
+
+/// Resolve a non-relative (alias or bare) import source. Returns the
+/// resolved path or the raw source if no alias matches (bare specifier).
+fn resolve_non_relative_import(
     import_source: &str,
     root_dir: &str,
     aliases: &PathAliases,
     known_files: Option<&HashSet<String>>,
 ) -> String {
-    // Try alias resolution for non-relative imports
-    if !import_source.starts_with('.') {
-        if let Some(alias_resolved) =
-            resolve_via_alias(import_source, aliases, root_dir, known_files)
-        {
-            let root = Path::new(root_dir);
-            if let Ok(rel) = Path::new(&alias_resolved).strip_prefix(root) {
-                return normalize_path(&rel.display().to_string());
-            }
-            return normalize_path(&alias_resolved);
-        }
-        // Bare specifier (e.g., "lodash") — return as-is
-        return import_source.to_string();
+    if let Some(alias_resolved) = resolve_via_alias(import_source, aliases, root_dir, known_files) {
+        return relativize_to_root(&alias_resolved, root_dir);
     }
+    import_source.to_string()
+}
 
-    // Relative import — normalize immediately to remove `.` / `..` segments
-    let dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
-    let resolved = clean_path(&dir.join(import_source));
-    let resolved_str = resolved.display().to_string().replace('\\', "/");
-
-    // .js → .ts remap
-    if resolved_str.ends_with(".js") {
-        let ts_candidate = resolved_str.replace(".js", ".ts");
-        if file_exists(&ts_candidate, known_files, root_dir) {
-            let root = Path::new(root_dir);
-            if let Ok(rel) = Path::new(&ts_candidate).strip_prefix(root) {
-                return normalize_path(&rel.display().to_string());
-            }
-        }
-        let tsx_candidate = resolved_str.replace(".js", ".tsx");
-        if file_exists(&tsx_candidate, known_files, root_dir) {
-            let root = Path::new(root_dir);
-            if let Ok(rel) = Path::new(&tsx_candidate).strip_prefix(root) {
-                return normalize_path(&rel.display().to_string());
-            }
+/// Probe the `.js → .ts/.tsx` remap candidates and return the first
+/// existing file's relative path, if any.
+fn probe_js_to_ts_remap(
+    resolved_str: &str,
+    root_dir: &str,
+    known_files: Option<&HashSet<String>>,
+) -> Option<String> {
+    if !resolved_str.ends_with(".js") {
+        return None;
+    }
+    for replacement in [".ts", ".tsx"] {
+        let candidate = resolved_str.replace(".js", replacement);
+        if file_exists(&candidate, known_files, root_dir) {
+            return Some(relativize_to_root(&candidate, root_dir));
         }
     }
+    None
+}
 
-    // Extension probing
-    let extensions = [
+/// Probe known extensions (TS/JS/Python plus index files) for an existing
+/// match against the normalized relative path stem.
+fn probe_known_extensions(
+    resolved_str: &str,
+    root_dir: &str,
+    known_files: Option<&HashSet<String>>,
+) -> Option<String> {
+    const EXTENSIONS: &[&str] = &[
         ".ts",
         ".tsx",
         ".js",
@@ -193,31 +199,40 @@ fn resolve_import_path_inner(
         "/index.js",
         "/__init__.py",
     ];
-    for ext in &extensions {
-        let candidate = format!("{}{}", resolved_str, ext);
+    for ext in EXTENSIONS {
+        let candidate = format!("{resolved_str}{ext}");
         if file_exists(&candidate, known_files, root_dir) {
-            let root = Path::new(root_dir);
-            if let Ok(rel) = Path::new(&candidate).strip_prefix(root) {
-                return normalize_path(&rel.display().to_string());
-            }
+            return Some(relativize_to_root(&candidate, root_dir));
         }
     }
+    None
+}
 
-    // Exact match
+fn resolve_import_path_inner(
+    from_file: &str,
+    import_source: &str,
+    root_dir: &str,
+    aliases: &PathAliases,
+    known_files: Option<&HashSet<String>>,
+) -> String {
+    if !import_source.starts_with('.') {
+        return resolve_non_relative_import(import_source, root_dir, aliases, known_files);
+    }
+
+    let dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
+    let resolved = clean_path(&dir.join(import_source));
+    let resolved_str = resolved.display().to_string().replace('\\', "/");
+
+    if let Some(p) = probe_js_to_ts_remap(&resolved_str, root_dir, known_files) {
+        return p;
+    }
+    if let Some(p) = probe_known_extensions(&resolved_str, root_dir, known_files) {
+        return p;
+    }
     if file_exists(&resolved_str, known_files, root_dir) {
-        let root = Path::new(root_dir);
-        if let Ok(rel) = Path::new(&resolved_str).strip_prefix(root) {
-            return normalize_path(&rel.display().to_string());
-        }
+        return relativize_to_root(&resolved_str, root_dir);
     }
-
-    // Fallback: return relative path
-    let root = Path::new(root_dir);
-    if let Ok(rel) = resolved.strip_prefix(root) {
-        normalize_path(&rel.display().to_string())
-    } else {
-        normalize_path(&resolved_str)
-    }
+    relativize_to_root(&resolved.display().to_string().replace('\\', "/"), root_dir)
 }
 
 /// Compute proximity-based confidence for call resolution.
