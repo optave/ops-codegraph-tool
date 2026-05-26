@@ -234,6 +234,17 @@ Extrapolated linearly from per-file metrics above.
 <!-- NOTES_START -->
 ### Notes
 
+**Benchmark corpus reduction (v3.10.0 745 files → v3.11.0 623 files, –16%):**
+Methodology change from PR #1134, which excluded
+`tests/benchmarks/resolution/fixtures/**` from the dogfooding `buildGraph`
+sweep so heavyweight new grammars (e.g. Verilog #1107) no longer inflate
+timing. Per-file metrics (`Build ms/file`, `Query ms`, `Nodes/file`,
+`Edges/file`, `DB bytes/file`) remain comparable across versions — they're
+normalized by the file count actually measured. Absolute totals in the
+"Raw totals (latest)" block (build time, DB size, total nodes/edges) are
+scoped to the post-#1134 corpus and are **not** directly comparable to
+v3.10.0 absolute totals. The lower file count is expected and intentional.
+
 **Native 1-file rebuild regression (v3.8.1 42 ms → v3.9.0 562 ms, ↑1238%):** The native incremental
 path is re-running graph-wide work on single-file rebuilds. The phase breakdown shows `structureMs`
 at 151.7 ms for a 1-file rebuild vs 54.1 ms for the full 567-file build, and `setupMs` at 38.2 ms
