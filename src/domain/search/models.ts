@@ -122,6 +122,13 @@ export const MODELS: Record<string, ModelConfig> = {
     desc: 'Multilingual, multi-task (~600MB). 100+ languages, 8192 context.',
     quantized: false,
   },
+  modernbert: {
+    name: 'nomic-ai/modernbert-embed-base',
+    dim: 768,
+    contextWindow: 8192,
+    desc: 'ModernBERT base (~150MB). Newer architecture, 8192 ctx, English.',
+    quantized: false,
+  },
 };
 
 export const EMBEDDING_STRATEGIES: readonly string[] = ['structured', 'source'];
@@ -139,6 +146,7 @@ const BATCH_SIZE_MAP: Record<string, number> = {
   'mxbai-xsmall': 32,
   'mxbai-large': 4,
   'bge-m3': 4,
+  modernbert: 8,
 };
 const DEFAULT_BATCH_SIZE = 32;
 

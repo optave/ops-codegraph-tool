@@ -435,6 +435,7 @@ A single trailing semicolon is ignored (falls back to single-query mode). The `-
 | `mxbai-xsmall` | mxbai-embed-xsmall-v1 | 384 | ~50 MB | Apache-2.0 | Tiny + long context (4096), Matryoshka dimensions |
 | `mxbai-large` | mxbai-embed-large-v1 | 1024 | ~400 MB | Apache-2.0 | Top MTEB BERT-large, Matryoshka dimensions |
 | `bge-m3` | bge-m3 | 1024 | ~600 MB | MIT | **Multilingual** (100+ languages), 8192 context |
+| `modernbert` | modernbert-embed-base | 768 | ~150 MB | Apache-2.0 | ModernBERT architecture, 8192 ctx, English |
 
 The model used during `embed` is stored in the database, so `search` auto-detects it — no need to pass `--model` when searching.
 

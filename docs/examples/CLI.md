@@ -715,6 +715,7 @@ Available embedding models:
   mxbai-xsmall  384d  4096 ctx  Tiny model with long context (~50MB). 4096 ctx, Matryoshka dimensions.
   mxbai-large  1024d  512 ctx   Top MTEB BERT-large (~400MB). Matryoshka dimensions, public mirror.
   bge-m3       1024d  8192 ctx  Multilingual, multi-task (~600MB). 100+ languages, 8192 context.
+  modernbert    768d  8192 ctx  ModernBERT base (~150MB). Newer architecture, 8192 ctx, English.
 ```
 
 ---

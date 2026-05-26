@@ -562,7 +562,7 @@ codegraph embed . --model jina-code
 | | |
 |---|---|
 | **MCP tool** | (use via CLI) |
-| **Key flags** | `-m, --model` (minilm, jina-small, jina-base, jina-code, nomic, nomic-v1.5, bge-large, mxbai-xsmall, mxbai-large, bge-m3) |
+| **Key flags** | `-m, --model` (minilm, jina-small, jina-base, jina-code, nomic, nomic-v1.5, bge-large, mxbai-xsmall, mxbai-large, bge-m3, modernbert) |
 | **When to use** | Initial setup, or after adding many new functions |
 
 #### `export` — Export graph

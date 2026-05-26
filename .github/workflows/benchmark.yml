@@ -113,9 +113,9 @@ jobs:
   # against the npm-installed package and open their own PR.
   embedding-benchmark:
     runs-on: ubuntu-latest
-    # 10 models x 30 min each = 300 min worst-case (caps via TIMEOUT_MS in the
+    # 11 models x 30 min each = 330 min worst-case (caps via TIMEOUT_MS in the
     # script); symbols are sampled to 1500 so typical runtime is ~23 min/model
-    # ≈ 230 min + setup headroom
+    # ≈ 253 min + setup headroom
     timeout-minutes: 360
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -202,7 +202,7 @@ jobs:
 
       - name: Run embedding benchmark
         if: steps.existing.outputs.skip != 'true'
-        timeout-minutes: 280
+        timeout-minutes: 300
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
