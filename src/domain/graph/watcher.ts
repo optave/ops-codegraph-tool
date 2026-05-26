@@ -52,6 +52,7 @@ interface RebuildResult {
   nodesAdded: number;
   nodesRemoved: number;
   edgesAdded: number;
+  edgesRemoved: number;
 }
 
 /** Process a batch of pending file changes: rebuild, journal, and log. */
@@ -117,15 +118,24 @@ function writeJournalAndChangeEvents(rootDir: string, updates: RebuildResult[]):
   }
 }
 
+/** Format a signed integer with an explicit '+' prefix for non-negative values. */
+function formatDelta(delta: number): string {
+  return delta >= 0 ? `+${delta}` : `${delta}`;
+}
+
 /** Log rebuild results to the user. */
 function logRebuildResults(updates: RebuildResult[]): void {
   for (const r of updates) {
-    const nodeDelta = r.nodesAdded - r.nodesRemoved;
-    const nodeStr = nodeDelta >= 0 ? `+${nodeDelta}` : `${nodeDelta}`;
+    const nodeStr = formatDelta(r.nodesAdded - r.nodesRemoved);
     if (r.deleted) {
       info(`Removed: ${r.file} (-${r.nodesRemoved} nodes)`);
     } else {
-      info(`Updated: ${r.file} (${nodeStr} nodes, +${r.edgesAdded} edges)`);
+      // edgesAdded counts re-inserted edges (purgeFileData first removes the
+      // file's existing edges, then the rebuild path re-creates them). Reporting
+      // the raw insert count as "+N" misleads users when the net delta is zero
+      // — e.g. comment-only edits. Issue #1219.
+      const edgeStr = formatDelta(r.edgesAdded - r.edgesRemoved);
+      info(`Updated: ${r.file} (${nodeStr} nodes, ${edgeStr} edges)`);
     }
   }
 }
