@@ -14,7 +14,7 @@
 - `npx codegraph --version` → `3.11.0` ✓
 - `optionalDependencies` pins all platform binaries at exactly `3.11.0` (darwin-arm64, darwin-x64, linux-arm64-gnu, linux-x64-gnu, linux-x64-musl, win32-x64-msvc) ✓
 - `codegraph info` confirms `Active engine : native (v3.11.0)` ✓
-- Source-repo `node_modules/@optave/codegraph-darwin-arm64` was at `3.10.0` at session start (stale leftover from the prior release). Updated to `3.11.0` before any benchmarks ran — see Phase 4b note.
+- Source-repo `node_modules/@optave/codegraph-darwin-arm64` was at `3.10.0` at session start (stale leftover from the prior release). Updated to `3.11.0` before any benchmarks ran — see §4 note.
 
 No install-time issues.
 
@@ -108,6 +108,8 @@ All 22 listed commands accept `-n` without error: `roles`, `structure`, `audit`,
 Issue noted: see §9, BUG 1 — watcher's edge-delta accounting.
 
 ## 5. Engine Comparison
+
+> **Note:** the engine comparison was run against a slightly earlier repo state than the header figures (19,443 nodes / 40,695 edges), captured before a handful of local edits landed during the session. The delta is small (~100 nodes / ~200 edges) and does not affect the parity conclusions — both engines were measured against the same snapshot.
 
 | Metric | Native | WASM | Delta |
 |---|---|---|---|
@@ -249,13 +251,13 @@ Notable: native complexity is **52×** faster than WASM (1468 ms → 28 ms), whi
 - Native speedup over WASM holds at ~6× for full builds, matching the v3.10.x baseline.
 - Complexity phase is no longer the bottleneck for native (28 ms vs WASM 1468 ms) — confirms the native binary version is correctly matched.
 - 1-file rebuild on native is slightly slower than WASM (137 ms vs 97 ms). Both are dominated by the roles phase (~35 ms) and the constant overhead of orchestrator setup; this is unchanged from prior releases.
-- No-op rebuild well under the 10 ms target on neither engine (35–38 ms), but parity between engines is good.
+- No-op rebuild exceeds the 10 ms target on both engines (35–38 ms), but parity between engines is good.
 
 ## 9. Bugs Found
 
 ### BUG 1: Watcher edges log shows insert count, not net delta (Low)
 - **Issue:** [#1219](https://github.com/optave/ops-codegraph-tool/issues/1219)
-- **PR:** This PR (see below)
+- **PR:** [#1220](https://github.com/optave/ops-codegraph-tool/pull/1220)
 - **Symptoms:** `codegraph watch` reports `+N edges` for every file rebuild where N is the count of edges re-inserted, not the actual net change in the DB. A comment-only edit shows `+10 edges` even though the DB total moved by 0.
 - **Root cause:** `rebuildFile` in `src/domain/graph/builder/incremental.ts` calls `purgeFileData` first (which removes the file's edges) and then accumulates `edgesAdded` across each builder pass without subtracting the purged count. The watcher log printed `+${r.edgesAdded}` verbatim. The companion `nodes` field already used a signed delta (`nodesAdded - nodesRemoved`), so the asymmetry confused users.
 - **Fix applied:** Track `edgesRemoved` in `rebuildFile` (count edges touching the file before purge, plus outgoing edges of each reverse-dep). Thread it through `RebuildResult` to the watcher. Render the watcher log edges field as a signed delta `(edgesAdded - edgesRemoved)` matching the nodes field. The `change-journal.ts` "edges.added" semantics are intentionally preserved as "insert count".
@@ -323,4 +325,4 @@ One point off for the watcher log accuracy bug (long-standing, but visible enoug
 | Type | Number | Title | Status |
 |---|---|---|---|
 | Issue | [#1219](https://github.com/optave/ops-codegraph-tool/issues/1219) | bug(watch): edges log shows insert count, not net delta — misleading for unchanged content | open |
-| PR | (this) | fix(watch): report net edge delta in rebuild log | open |
+| PR | [#1220](https://github.com/optave/ops-codegraph-tool/pull/1220) | fix(watch): report net edge delta in rebuild log | open |
