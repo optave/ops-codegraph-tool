@@ -307,6 +307,63 @@ function resolveBarrelImportEdges(
   return edgesAdded;
 }
 
+/** Emit symbol-level `imports-type` edges for a single `import type` statement. */
+function emitTypeOnlySymbolEdges(
+  db: BetterSqlite3Database | null,
+  stmts: IncrementalStmts,
+  imp: ExtractorOutput['imports'][number],
+  resolvedPath: string,
+  fileNodeId: number,
+): number {
+  let edgesAdded = 0;
+  for (const name of imp.names) {
+    const cleanName = name.replace(/^\*\s+as\s+/, '');
+    let targetFile = resolvedPath;
+    if (db && isBarrelFile(db, resolvedPath)) {
+      const actual = resolveBarrelTarget(db, resolvedPath, cleanName);
+      if (actual) targetFile = actual;
+    }
+    const candidates = stmts.findNodeInFile.all(cleanName, targetFile) as Array<{
+      id: number;
+      file: string;
+    }>;
+    if (candidates.length === 0) continue;
+    stmts.insertEdge.run(fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0);
+    edgesAdded++;
+  }
+  return edgesAdded;
+}
+
+/**
+ * Process a single import statement: emit the file→file edge, any
+ * symbol-level type-only edges, and barrel re-export edges.
+ */
+function emitEdgesForImport(
+  stmts: IncrementalStmts,
+  imp: ExtractorOutput['imports'][number],
+  fileNodeId: number,
+  relPath: string,
+  rootDir: string,
+  aliases: PathAliases,
+  db: BetterSqlite3Database | null,
+): number {
+  const resolvedPath = resolveImportPath(path.join(rootDir, relPath), imp.source, rootDir, aliases);
+  const targetRow = stmts.getNodeId.get(resolvedPath, 'file', resolvedPath, 0);
+  if (!targetRow) return 0;
+
+  const edgeKind = imp.reexport ? 'reexports' : imp.typeOnly ? 'imports-type' : 'imports';
+  stmts.insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
+  let edgesAdded = 1;
+
+  if (imp.typeOnly) {
+    edgesAdded += emitTypeOnlySymbolEdges(db, stmts, imp, resolvedPath, fileNodeId);
+  }
+  if (!imp.reexport && db) {
+    edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp);
+  }
+  return edgesAdded;
+}
+
 function buildImportEdges(
   stmts: IncrementalStmts,
   relPath: string,
@@ -318,44 +375,7 @@ function buildImportEdges(
 ): number {
   let edgesAdded = 0;
   for (const imp of symbols.imports) {
-    const resolvedPath = resolveImportPath(
-      path.join(rootDir, relPath),
-      imp.source,
-      rootDir,
-      aliases,
-    );
-    const targetRow = stmts.getNodeId.get(resolvedPath, 'file', resolvedPath, 0);
-    if (targetRow) {
-      const edgeKind = imp.reexport ? 'reexports' : imp.typeOnly ? 'imports-type' : 'imports';
-      stmts.insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
-      edgesAdded++;
-
-      // Type-only imports: create symbol-level edges so the target symbols
-      // get fan-in credit and aren't falsely classified as dead code.
-      if (imp.typeOnly) {
-        for (const name of imp.names) {
-          const cleanName = name.replace(/^\*\s+as\s+/, '');
-          let targetFile = resolvedPath;
-          if (db && isBarrelFile(db, resolvedPath)) {
-            const actual = resolveBarrelTarget(db, resolvedPath, cleanName);
-            if (actual) targetFile = actual;
-          }
-          const candidates = stmts.findNodeInFile.all(cleanName, targetFile) as Array<{
-            id: number;
-            file: string;
-          }>;
-          if (candidates.length > 0) {
-            stmts.insertEdge.run(fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0);
-            edgesAdded++;
-          }
-        }
-      }
-
-      // Barrel resolution: create edges through re-export chains
-      if (!imp.reexport && db) {
-        edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp);
-      }
-    }
+    edgesAdded += emitEdgesForImport(stmts, imp, fileNodeId, relPath, rootDir, aliases, db);
   }
   return edgesAdded;
 }
@@ -491,6 +511,122 @@ function buildCallEdges(
 
 // ── Main entry point ────────────────────────────────────────────────────
 
+/** Build the "this file was deleted" result returned by `rebuildFile`. */
+function buildDeletionResult(
+  relPath: string,
+  oldNodes: number,
+  oldSymbols: unknown[],
+  diffSymbols: ((old: unknown[], new_: unknown[]) => unknown) | undefined,
+): RebuildResult {
+  const symbolDiff = diffSymbols ? diffSymbols(oldSymbols, []) : null;
+  return {
+    file: relPath,
+    nodesAdded: 0,
+    nodesRemoved: oldNodes,
+    edgesAdded: 0,
+    deleted: true,
+    event: 'deleted',
+    symbolDiff,
+    nodesBefore: oldNodes,
+    nodesAfter: 0,
+  };
+}
+
+/** Rebuild all edges originating in the single (just-parsed) target file. */
+function rebuildEdgesForTargetFile(
+  db: BetterSqlite3Database,
+  stmts: IncrementalStmts,
+  relPath: string,
+  symbols: ExtractorOutput,
+  fileNodeRow: { id: number },
+  rootDir: string,
+): number {
+  const aliases: PathAliases = { baseUrl: null, paths: {} };
+  let edgesAdded = buildContainmentEdges(db, stmts, relPath, symbols);
+  edgesAdded += rebuildDirContainment(db, stmts, relPath);
+  edgesAdded += buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeRow.id, aliases, db);
+  const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases);
+  edgesAdded += buildCallEdges(stmts, relPath, symbols, fileNodeRow, importedNames);
+  return edgesAdded;
+}
+
+/**
+ * Re-parse the reverse-deps and delete their outgoing edges so the cascade
+ * can rebuild them.
+ */
+async function parseReverseDeps(
+  db: BetterSqlite3Database,
+  rootDir: string,
+  reverseDeps: string[],
+  engineOpts: EngineOpts,
+  cache: unknown,
+): Promise<Map<string, ExtractorOutput>> {
+  const depSymbols = new Map<string, ExtractorOutput>();
+  for (const depRelPath of reverseDeps) {
+    const symbols_ = await parseReverseDep(rootDir, depRelPath, engineOpts, cache);
+    if (symbols_) {
+      deleteOutgoingEdges(db, depRelPath);
+      depSymbols.set(depRelPath, symbols_);
+    }
+  }
+  return depSymbols;
+}
+
+/**
+ * Pass 2 of the reverse-dep cascade: now that the changed file's `reexports`
+ * edges exist, resolve barrel imports for every reverse-dep so transitive
+ * call edges through the barrel still find their targets.
+ */
+function emitBarrelImportEdgesForReverseDeps(
+  db: BetterSqlite3Database,
+  stmts: IncrementalStmts,
+  depSymbols: Map<string, ExtractorOutput>,
+  rootDir: string,
+): number {
+  let edgesAdded = 0;
+  for (const [depRelPath, symbols_] of depSymbols) {
+    const fileNodeRow_ = stmts.getNodeId.get(depRelPath, 'file', depRelPath, 0);
+    if (!fileNodeRow_) continue;
+    const aliases_: PathAliases = { baseUrl: null, paths: {} };
+    for (const imp of symbols_.imports) {
+      if (imp.reexport) continue;
+      const resolvedPath = resolveImportPath(
+        path.join(rootDir, depRelPath),
+        imp.source,
+        rootDir,
+        aliases_,
+      );
+      edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeRow_.id, resolvedPath, imp);
+    }
+  }
+  return edgesAdded;
+}
+
+/**
+ * Two-pass reverse-dep cascade:
+ *   1. Rebuild direct edges (creating `reexports` edges for barrels).
+ *   2. Add barrel import edges (which need `reexports` edges to exist).
+ */
+async function runReverseDepCascade(
+  db: BetterSqlite3Database,
+  rootDir: string,
+  reverseDeps: string[],
+  stmts: IncrementalStmts,
+  engineOpts: EngineOpts,
+  cache: unknown,
+): Promise<number> {
+  const depSymbols = await parseReverseDeps(db, rootDir, reverseDeps, engineOpts, cache);
+
+  let edgesAdded = 0;
+  // Pass 1: direct edges only (no barrel resolution) — creates reexports edges
+  for (const [depRelPath, symbols_] of depSymbols) {
+    edgesAdded += rebuildReverseDepEdges(db, rootDir, depRelPath, symbols_, stmts, true);
+  }
+  // Pass 2: add barrel import edges (reexports edges now exist)
+  edgesAdded += emitBarrelImportEdgesForReverseDeps(db, stmts, depSymbols, rootDir);
+  return edgesAdded;
+}
+
 /**
  * Parse a single file and update the database incrementally.
  */
@@ -519,18 +655,7 @@ export async function rebuildFile(
 
   if (!fs.existsSync(filePath)) {
     if (cache) (cache as { remove(p: string): void }).remove(filePath);
-    const symbolDiff = diffSymbols ? diffSymbols(oldSymbols, []) : null;
-    return {
-      file: relPath,
-      nodesAdded: 0,
-      nodesRemoved: oldNodes,
-      edgesAdded: 0,
-      deleted: true,
-      event: 'deleted',
-      symbolDiff,
-      nodesBefore: oldNodes,
-      nodesAfter: 0,
-    };
+    return buildDeletionResult(relPath, oldNodes, oldSymbols, diffSymbols);
   }
 
   let code: string;
@@ -553,45 +678,8 @@ export async function rebuildFile(
   if (!fileNodeRow)
     return { file: relPath, nodesAdded: newNodes, nodesRemoved: oldNodes, edgesAdded: 0 };
 
-  const aliases: PathAliases = { baseUrl: null, paths: {} };
-
-  let edgesAdded = buildContainmentEdges(db, stmts, relPath, symbols);
-  edgesAdded += rebuildDirContainment(db, stmts, relPath);
-  edgesAdded += buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeRow.id, aliases, db);
-  const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases);
-  edgesAdded += buildCallEdges(stmts, relPath, symbols, fileNodeRow, importedNames);
-
-  // Cascade: rebuild outgoing edges for reverse-dep files.
-  // Two-pass approach: first rebuild direct edges (creating reexports edges for barrels),
-  // then add barrel import edges (which need reexports edges to exist for resolution).
-  const depSymbols = new Map<string, ExtractorOutput>();
-  for (const depRelPath of reverseDeps) {
-    const symbols_ = await parseReverseDep(rootDir, depRelPath, engineOpts, cache);
-    if (symbols_) {
-      deleteOutgoingEdges(db, depRelPath);
-      depSymbols.set(depRelPath, symbols_);
-    }
-  }
-  // Pass 1: direct edges only (no barrel resolution) — creates reexports edges
-  for (const [depRelPath, symbols_] of depSymbols) {
-    edgesAdded += rebuildReverseDepEdges(db, rootDir, depRelPath, symbols_, stmts, true);
-  }
-  // Pass 2: add barrel import edges (reexports edges now exist)
-  for (const [depRelPath, symbols_] of depSymbols) {
-    const fileNodeRow_ = stmts.getNodeId.get(depRelPath, 'file', depRelPath, 0);
-    if (!fileNodeRow_) continue;
-    const aliases_: PathAliases = { baseUrl: null, paths: {} };
-    for (const imp of symbols_.imports) {
-      if (imp.reexport) continue;
-      const resolvedPath = resolveImportPath(
-        path.join(rootDir, depRelPath),
-        imp.source,
-        rootDir,
-        aliases_,
-      );
-      edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeRow_.id, resolvedPath, imp);
-    }
-  }
+  let edgesAdded = rebuildEdgesForTargetFile(db, stmts, relPath, symbols, fileNodeRow, rootDir);
+  edgesAdded += await runReverseDepCascade(db, rootDir, reverseDeps, stmts, engineOpts, cache);
 
   const symbolDiff = diffSymbols ? diffSymbols(oldSymbols, newSymbols) : null;
   const event = oldNodes === 0 ? 'added' : 'modified';

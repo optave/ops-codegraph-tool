@@ -11,87 +11,104 @@ import type { ExtractorOutput } from '../../../../types.js';
 import type { PipelineContext } from '../context.js';
 import { readFileSafe } from '../helpers.js';
 
-export async function buildStructure(ctx: PipelineContext): Promise<void> {
-  const { db, fileSymbols, rootDir, discoveredDirs, allSymbols, isFullBuild } = ctx;
-
-  // Build line count map (prefer cached _lineCount from parser)
+/** Populate `ctx.lineCountMap` from cached parser results, falling back to disk. */
+function populateLineCountMap(ctx: PipelineContext): void {
+  const { fileSymbols, rootDir } = ctx;
   ctx.lineCountMap = new Map();
   for (const [relPath, symbols] of fileSymbols) {
     const lineCount =
       (symbols as ExtractorOutput & { lineCount?: number }).lineCount ?? symbols._lineCount;
     if (lineCount) {
       ctx.lineCountMap.set(relPath, lineCount);
-    } else {
-      const absPath = path.join(rootDir, relPath);
-      try {
-        const content = readFileSafe(absPath);
-        ctx.lineCountMap.set(relPath, content.split('\n').length);
-      } catch {
-        ctx.lineCountMap.set(relPath, 0);
-      }
+      continue;
+    }
+    const absPath = path.join(rootDir, relPath);
+    try {
+      const content = readFileSafe(absPath);
+      ctx.lineCountMap.set(relPath, content.split('\n').length);
+    } catch {
+      ctx.lineCountMap.set(relPath, 0);
     }
   }
+}
 
-  const changedFileList = isFullBuild ? null : [...allSymbols.keys()];
-
-  // For small incremental builds on large codebases, use a fast path that
-  // updates only the changed files' metrics via targeted SQL instead of
-  // loading ALL definitions from DB (~8ms) and recomputing ALL metrics (~15ms).
-  // Gate: ≤smallFilesThreshold changed files AND significantly more existing files (>20) to
-  // avoid triggering on small test fixtures where directory metrics matter.
+/** Count file-kind nodes already in the DB, preferring the native connection. */
+function countExistingFiles(ctx: PipelineContext): number {
   const useNativeReads = ctx.engineName === 'native' && !!ctx.nativeDb;
-  const existingFileCount = !isFullBuild
-    ? (
-        (useNativeReads
-          ? ctx.nativeDb!.queryGet("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'", [])
-          : db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get()) as {
-          c: number;
-        }
-      ).c
-    : 0;
-  const useSmallIncrementalFastPath =
-    !isFullBuild &&
-    changedFileList != null &&
-    changedFileList.length <= ctx.config.build.smallFilesThreshold &&
-    existingFileCount > 20;
+  const row = (
+    useNativeReads
+      ? ctx.nativeDb!.queryGet("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'", [])
+      : ctx.db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get()
+  ) as { c: number };
+  return row.c;
+}
 
-  if (!isFullBuild && !useSmallIncrementalFastPath) {
-    // Medium/large incremental: load unchanged files from DB for complete structure
-    loadUnchangedFilesFromDb(ctx);
-  }
-
-  // Build directory structure
-  const t0 = performance.now();
+/**
+ * Build directory structure + metrics. Chooses between the fast incremental
+ * path (a handful of files changed on a large codebase) and the full path
+ * (delegated to `features/structure`).
+ */
+async function buildDirectoryStructure(
+  ctx: PipelineContext,
+  changedFileList: string[] | null,
+  useSmallIncrementalFastPath: boolean,
+): Promise<void> {
   if (useSmallIncrementalFastPath) {
     updateChangedFileMetrics(ctx, changedFileList!);
-  } else {
-    const relDirs = new Set<string>();
-    for (const absDir of discoveredDirs) {
-      relDirs.add(normalizePath(path.relative(rootDir, absDir)));
-    }
-    try {
-      const { buildStructure: buildStructureFn } = (await import(
-        '../../../../features/structure.js'
-      )) as {
-        buildStructure: (
-          db: PipelineContext['db'],
-          fileSymbols: Map<string, ExtractorOutput>,
-          rootDir: string,
-          lineCountMap: Map<string, number>,
-          directories: Set<string>,
-          changedFiles: string[] | null,
-        ) => void;
-      };
-      const changedFilePaths = isFullBuild ? null : [...allSymbols.keys()];
-      buildStructureFn(db, fileSymbols, rootDir, ctx.lineCountMap, relDirs, changedFilePaths);
-    } catch (err) {
-      debug(`Structure analysis failed: ${(err as Error).message}`);
-    }
+    return;
   }
-  ctx.timing.structureMs = performance.now() - t0;
 
-  // Classify node roles (incremental: only reclassify changed files' nodes)
-  const t1 = performance.now();
+  const { db, fileSymbols, rootDir, discoveredDirs, allSymbols, isFullBuild } = ctx;
+  const relDirs = new Set<string>();
+  for (const absDir of discoveredDirs) {
+    relDirs.add(normalizePath(path.relative(rootDir, absDir)));
+  }
+  try {
+    const { buildStructure: buildStructureFn } = (await import(
+      '../../../../features/structure.js'
+    )) as {
+      buildStructure: (
+        db: PipelineContext['db'],
+        fileSymbols: Map<string, ExtractorOutput>,
+        rootDir: string,
+        lineCountMap: Map<string, number>,
+        directories: Set<string>,
+        changedFiles: string[] | null,
+      ) => void;
+    };
+    const changedFilePaths = isFullBuild ? null : [...allSymbols.keys()];
+    buildStructureFn(db, fileSymbols, rootDir, ctx.lineCountMap, relDirs, changedFilePaths);
+  } catch (err) {
+    debug(`Structure analysis failed: ${(err as Error).message}`);
+  }
+}
+
+/** Convert a `NativeDatabase.classifyRoles*` result into the JS summary shape. */
+function nativeRoleSummaryToRecord(
+  nativeResult: NonNullable<
+    ReturnType<NonNullable<PipelineContext['nativeDb']>['classifyRolesFull']>
+  >,
+): Record<string, number> {
+  return {
+    entry: nativeResult.entry,
+    core: nativeResult.core,
+    utility: nativeResult.utility,
+    adapter: nativeResult.adapter,
+    dead: nativeResult.dead,
+    'dead-leaf': nativeResult.deadLeaf,
+    'dead-entry': nativeResult.deadEntry,
+    'dead-ffi': nativeResult.deadFfi,
+    'dead-unresolved': nativeResult.deadUnresolved,
+    'test-only': nativeResult.testOnly,
+    leaf: nativeResult.leaf,
+  };
+}
+
+async function classifyRoles(
+  ctx: PipelineContext,
+  changedFileList: string[] | null,
+): Promise<void> {
+  const useNativeReads = ctx.engineName === 'native' && !!ctx.nativeDb;
   try {
     let roleSummary: Record<string, number> | null = null;
 
@@ -103,24 +120,9 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
         changedFileList && changedFileList.length > 0
           ? ctx.nativeDb.classifyRolesIncremental(changedFileList)
           : ctx.nativeDb.classifyRolesFull();
-      if (nativeResult) {
-        roleSummary = {
-          entry: nativeResult.entry,
-          core: nativeResult.core,
-          utility: nativeResult.utility,
-          adapter: nativeResult.adapter,
-          dead: nativeResult.dead,
-          'dead-leaf': nativeResult.deadLeaf,
-          'dead-entry': nativeResult.deadEntry,
-          'dead-ffi': nativeResult.deadFfi,
-          'dead-unresolved': nativeResult.deadUnresolved,
-          'test-only': nativeResult.testOnly,
-          leaf: nativeResult.leaf,
-        };
-      }
+      if (nativeResult) roleSummary = nativeRoleSummaryToRecord(nativeResult);
     }
 
-    // Fall back to JS path
     if (!roleSummary) {
       const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
         classifyNodeRoles: (
@@ -141,6 +143,37 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   } catch (err) {
     debug(`Role classification failed: ${(err as Error).message}`);
   }
+}
+
+export async function buildStructure(ctx: PipelineContext): Promise<void> {
+  const { allSymbols, isFullBuild } = ctx;
+
+  populateLineCountMap(ctx);
+
+  const changedFileList = isFullBuild ? null : [...allSymbols.keys()];
+
+  // For small incremental builds on large codebases, use a fast path that
+  // updates only the changed files' metrics via targeted SQL instead of
+  // loading ALL definitions from DB (~8ms) and recomputing ALL metrics (~15ms).
+  // Gate: ≤smallFilesThreshold changed files AND significantly more existing files (>20) to
+  // avoid triggering on small test fixtures where directory metrics matter.
+  const existingFileCount = !isFullBuild ? countExistingFiles(ctx) : 0;
+  const useSmallIncrementalFastPath =
+    !isFullBuild &&
+    changedFileList != null &&
+    changedFileList.length <= ctx.config.build.smallFilesThreshold &&
+    existingFileCount > 20;
+
+  if (!isFullBuild && !useSmallIncrementalFastPath) {
+    loadUnchangedFilesFromDb(ctx);
+  }
+
+  const t0 = performance.now();
+  await buildDirectoryStructure(ctx, changedFileList, useSmallIncrementalFastPath);
+  ctx.timing.structureMs = performance.now() - t0;
+
+  const t1 = performance.now();
+  await classifyRoles(ctx, changedFileList);
   ctx.timing.rolesMs = performance.now() - t1;
 }
 
