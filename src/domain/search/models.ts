@@ -101,6 +101,27 @@ export const MODELS: Record<string, ModelConfig> = {
     desc: 'Best general retrieval (~335MB). Top MTEB scores.',
     quantized: false,
   },
+  'mxbai-xsmall': {
+    name: 'mixedbread-ai/mxbai-embed-xsmall-v1',
+    dim: 384,
+    contextWindow: 4096,
+    desc: 'Tiny model with long context (~50MB). 4096 ctx, Matryoshka dimensions.',
+    quantized: false,
+  },
+  'mxbai-large': {
+    name: 'mixedbread-ai/mxbai-embed-large-v1',
+    dim: 1024,
+    contextWindow: 512,
+    desc: 'Top MTEB BERT-large (~400MB). Matryoshka dimensions, public mirror.',
+    quantized: false,
+  },
+  'bge-m3': {
+    name: 'Xenova/bge-m3',
+    dim: 1024,
+    contextWindow: 8192,
+    desc: 'Multilingual, multi-task (~600MB). 100+ languages, 8192 context.',
+    quantized: false,
+  },
 };
 
 export const EMBEDDING_STRATEGIES: readonly string[] = ['structured', 'source'];
@@ -115,6 +136,9 @@ const BATCH_SIZE_MAP: Record<string, number> = {
   nomic: 8,
   'nomic-v1.5': 8,
   'bge-large': 4,
+  'mxbai-xsmall': 32,
+  'mxbai-large': 4,
+  'bge-m3': 4,
 };
 const DEFAULT_BATCH_SIZE = 32;
 

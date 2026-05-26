@@ -432,6 +432,9 @@ A single trailing semicolon is ignored (falls back to single-query mode). The `-
 | `nomic` | nomic-embed-text-v1 | 768 | ~137 MB | Apache-2.0 | Good quality, 8192 context |
 | `nomic-v1.5` (default) | nomic-embed-text-v1.5 | 768 | ~137 MB | Apache-2.0 | **Improved nomic, Matryoshka dimensions** |
 | `bge-large` | bge-large-en-v1.5 | 1024 | ~335 MB | MIT | Best general retrieval, top MTEB scores |
+| `mxbai-xsmall` | mxbai-embed-xsmall-v1 | 384 | ~50 MB | Apache-2.0 | Tiny + long context (4096), Matryoshka dimensions |
+| `mxbai-large` | mxbai-embed-large-v1 | 1024 | ~400 MB | Apache-2.0 | Top MTEB BERT-large, Matryoshka dimensions |
+| `bge-m3` | bge-m3 | 1024 | ~600 MB | MIT | **Multilingual** (100+ languages), 8192 context |
 
 The model used during `embed` is stored in the database, so `search` auto-detects it — no need to pass `--model` when searching.
 
