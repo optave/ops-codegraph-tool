@@ -405,6 +405,126 @@ async function runPerfBenchmarks(nextjsDir) {
 	};
 }
 
+// ── Issue experiment ──────────────────────────────────────────────────────
+
+/** Run RUNS sessions for one mode, logging per-run metrics. */
+async function runSessionsForMode(mode, issue, nextjsDir) {
+	const runs = [];
+	const label = mode === 'baseline' ? 'Baseline' : 'Codegraph';
+	for (let r = 0; r < RUNS; r++) {
+		console.error(`  ${label} run ${r + 1}/${RUNS}...`);
+		try {
+			const metrics = await runSession(mode, issue, nextjsDir);
+			runs.push(metrics);
+			console.error(
+				`    ${metrics.inputTokens} input tokens, $${metrics.totalCostUsd}, ` +
+					`${metrics.numTurns} turns, hit rate: ${metrics.hitRate}%`,
+			);
+		} catch (err) {
+			console.error(`    ERROR: ${err.message}`);
+			runs.push({ error: err.message });
+		}
+	}
+	return runs;
+}
+
+/** Compute median metrics for a run-set (or null when no valid runs). */
+function medianForRuns(runs) {
+	const valid = runs.filter((r) => !r.error);
+	if (valid.length === 0) return null;
+	const medianOf = (key) => median(valid.map((r) => r[key]));
+	return {
+		inputTokens: medianOf('inputTokens'),
+		outputTokens: medianOf('outputTokens'),
+		cacheReadInputTokens: medianOf('cacheReadInputTokens'),
+		totalCostUsd: round2(medianOf('totalCostUsd')),
+		numTurns: medianOf('numTurns'),
+		durationMs: medianOf('durationMs'),
+		uniqueFilesRead: medianOf('uniqueFilesRead'),
+		hitRate: medianOf('hitRate'),
+	};
+}
+
+/** Token + cost savings (% reduction) between two median objects. */
+function computeSavings(baselineMedian, codegraphMedian) {
+	if (!baselineMedian || !codegraphMedian || baselineMedian.inputTokens <= 0) return null;
+	const tokenSavings =
+		((baselineMedian.inputTokens - codegraphMedian.inputTokens) /
+			baselineMedian.inputTokens) *
+		100;
+	const costSavings =
+		baselineMedian.totalCostUsd > 0
+			? ((baselineMedian.totalCostUsd - codegraphMedian.totalCostUsd) /
+					baselineMedian.totalCostUsd) *
+				100
+			: 0;
+	return {
+		inputTokensPct: Math.round(tokenSavings),
+		costPct: Math.round(costSavings),
+	};
+}
+
+/** Run baseline + codegraph experiments for a single issue and aggregate. */
+async function runIssueExperiment(issue, nextjsDir) {
+	console.error(`\n── ${issue.id} (${issue.difficulty}) ──`);
+	console.error(`PR #${issue.pr}: ${issue.title}`);
+
+	checkoutCommit(nextjsDir, issue.commitBefore);
+	if (!SKIP_GRAPH) {
+		await buildCodegraph(nextjsDir);
+	}
+
+	const baselineRuns = await runSessionsForMode('baseline', issue, nextjsDir);
+	const codegraphRuns = await runSessionsForMode('codegraph', issue, nextjsDir);
+
+	const baselineMedian = medianForRuns(baselineRuns);
+	const codegraphMedian = medianForRuns(codegraphRuns);
+	const savings = computeSavings(baselineMedian, codegraphMedian);
+
+	if (savings) {
+		console.error(
+			`  Savings: ${savings.inputTokensPct}% tokens, ${savings.costPct}% cost`,
+		);
+	}
+
+	return {
+		id: issue.id,
+		difficulty: issue.difficulty,
+		pr: issue.pr,
+		baseline: { median: baselineMedian, runs: baselineRuns },
+		codegraph: { median: codegraphMedian, runs: codegraphRuns },
+		savings,
+	};
+}
+
+/** Aggregate per-issue results into corpus-wide token/cost savings + hit rates. */
+function computeAggregate(results) {
+	const validResults = results.filter(
+		(r) => r.baseline.median && r.codegraph.median && r.savings,
+	);
+	if (validResults.length === 0) return null;
+
+	const sum = (sel) => validResults.reduce((s, r) => s + sel(r), 0);
+	const totalBaselineTokens = sum((r) => r.baseline.median.inputTokens);
+	const totalCodegraphTokens = sum((r) => r.codegraph.median.inputTokens);
+	const totalBaselineCost = sum((r) => r.baseline.median.totalCostUsd);
+	const totalCodegraphCost = sum((r) => r.codegraph.median.totalCostUsd);
+	const pct = (a, b) => (a > 0 ? Math.round(((a - b) / a) * 100) : 0);
+
+	return {
+		savings: {
+			inputTokensPct: pct(totalBaselineTokens, totalCodegraphTokens),
+			costPct: pct(totalBaselineCost, totalCodegraphCost),
+		},
+		baselineAvgHitRate: Math.round(
+			sum((r) => r.baseline.median.hitRate) / validResults.length,
+		),
+		codegraphAvgHitRate: Math.round(
+			sum((r) => r.codegraph.median.hitRate) / validResults.length,
+		),
+	};
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -422,179 +542,14 @@ async function main() {
 	console.error(`  Next.js dir: ${nextjsDir}`);
 	console.error('');
 
-	// Clone / fetch Next.js
 	await ensureNextjsClone(nextjsDir);
 
 	const results = [];
-
 	for (const issue of selectedIssues) {
-		console.error(`\n── ${issue.id} (${issue.difficulty}) ──`);
-		console.error(`PR #${issue.pr}: ${issue.title}`);
-
-		// Checkout the commit before the fix
-		checkoutCommit(nextjsDir, issue.commitBefore);
-
-		// Build codegraph (unless skipped)
-		if (!SKIP_GRAPH) {
-			await buildCodegraph(nextjsDir);
-		}
-
-		const baselineRuns = [];
-		const codegraphRuns = [];
-
-		// Run baseline sessions
-		for (let r = 0; r < RUNS; r++) {
-			console.error(`  Baseline run ${r + 1}/${RUNS}...`);
-			try {
-				const metrics = await runSession('baseline', issue, nextjsDir);
-				baselineRuns.push(metrics);
-				console.error(
-					`    ${metrics.inputTokens} input tokens, $${metrics.totalCostUsd}, ` +
-						`${metrics.numTurns} turns, hit rate: ${metrics.hitRate}%`,
-				);
-			} catch (err) {
-				console.error(`    ERROR: ${err.message}`);
-				baselineRuns.push({ error: err.message });
-			}
-		}
-
-		// Run codegraph sessions
-		for (let r = 0; r < RUNS; r++) {
-			console.error(`  Codegraph run ${r + 1}/${RUNS}...`);
-			try {
-				const metrics = await runSession('codegraph', issue, nextjsDir);
-				codegraphRuns.push(metrics);
-				console.error(
-					`    ${metrics.inputTokens} input tokens, $${metrics.totalCostUsd}, ` +
-						`${metrics.numTurns} turns, hit rate: ${metrics.hitRate}%`,
-				);
-			} catch (err) {
-				console.error(`    ERROR: ${err.message}`);
-				codegraphRuns.push({ error: err.message });
-			}
-		}
-
-		// Compute medians (filter out errored runs)
-		const validBaseline = baselineRuns.filter((r) => !r.error);
-		const validCodegraph = codegraphRuns.filter((r) => !r.error);
-
-		const medianOf = (runs, key) => median(runs.map((r) => r[key]));
-
-		const baselineMedian =
-			validBaseline.length > 0
-				? {
-						inputTokens: medianOf(validBaseline, 'inputTokens'),
-						outputTokens: medianOf(validBaseline, 'outputTokens'),
-						cacheReadInputTokens: medianOf(validBaseline, 'cacheReadInputTokens'),
-						totalCostUsd: round2(medianOf(validBaseline, 'totalCostUsd')),
-						numTurns: medianOf(validBaseline, 'numTurns'),
-						durationMs: medianOf(validBaseline, 'durationMs'),
-						uniqueFilesRead: medianOf(validBaseline, 'uniqueFilesRead'),
-						hitRate: medianOf(validBaseline, 'hitRate'),
-					}
-				: null;
-
-		const codegraphMedian =
-			validCodegraph.length > 0
-				? {
-						inputTokens: medianOf(validCodegraph, 'inputTokens'),
-						outputTokens: medianOf(validCodegraph, 'outputTokens'),
-						cacheReadInputTokens: medianOf(validCodegraph, 'cacheReadInputTokens'),
-						totalCostUsd: round2(medianOf(validCodegraph, 'totalCostUsd')),
-						numTurns: medianOf(validCodegraph, 'numTurns'),
-						durationMs: medianOf(validCodegraph, 'durationMs'),
-						uniqueFilesRead: medianOf(validCodegraph, 'uniqueFilesRead'),
-						hitRate: medianOf(validCodegraph, 'hitRate'),
-					}
-				: null;
-
-		// Compute savings
-		let savings = null;
-		if (baselineMedian && codegraphMedian && baselineMedian.inputTokens > 0) {
-			const tokenSavings =
-				((baselineMedian.inputTokens - codegraphMedian.inputTokens) /
-					baselineMedian.inputTokens) *
-				100;
-			const costSavings =
-				baselineMedian.totalCostUsd > 0
-					? ((baselineMedian.totalCostUsd - codegraphMedian.totalCostUsd) /
-							baselineMedian.totalCostUsd) *
-						100
-					: 0;
-			savings = {
-				inputTokensPct: Math.round(tokenSavings),
-				costPct: Math.round(costSavings),
-			};
-		}
-
-		results.push({
-			id: issue.id,
-			difficulty: issue.difficulty,
-			pr: issue.pr,
-			baseline: { median: baselineMedian, runs: baselineRuns },
-			codegraph: { median: codegraphMedian, runs: codegraphRuns },
-			savings,
-		});
-
-		if (savings) {
-			console.error(
-				`  Savings: ${savings.inputTokensPct}% tokens, ${savings.costPct}% cost`,
-			);
-		}
+		results.push(await runIssueExperiment(issue, nextjsDir));
 	}
 
-	// ── Aggregate ───────────────────────────────────────────────────────
-
-	const validResults = results.filter(
-		(r) => r.baseline.median && r.codegraph.median && r.savings,
-	);
-
-	let aggregate = null;
-	if (validResults.length > 0) {
-		const totalBaselineTokens = validResults.reduce(
-			(s, r) => s + r.baseline.median.inputTokens,
-			0,
-		);
-		const totalCodegraphTokens = validResults.reduce(
-			(s, r) => s + r.codegraph.median.inputTokens,
-			0,
-		);
-		const totalBaselineCost = validResults.reduce(
-			(s, r) => s + r.baseline.median.totalCostUsd,
-			0,
-		);
-		const totalCodegraphCost = validResults.reduce(
-			(s, r) => s + r.codegraph.median.totalCostUsd,
-			0,
-		);
-
-		aggregate = {
-			savings: {
-				inputTokensPct:
-					totalBaselineTokens > 0
-						? Math.round(
-								((totalBaselineTokens - totalCodegraphTokens) / totalBaselineTokens) * 100,
-							)
-						: 0,
-				costPct:
-					totalBaselineCost > 0
-						? Math.round(
-								((totalBaselineCost - totalCodegraphCost) / totalBaselineCost) * 100,
-							)
-						: 0,
-			},
-			baselineAvgHitRate: Math.round(
-				validResults.reduce((s, r) => s + r.baseline.median.hitRate, 0) /
-					validResults.length,
-			),
-			codegraphAvgHitRate: Math.round(
-				validResults.reduce((s, r) => s + r.codegraph.median.hitRate, 0) /
-					validResults.length,
-			),
-		};
-	}
-
-	// ── Performance benchmarks (optional) ────────────────────────────────
+	const aggregate = computeAggregate(results);
 
 	let perfBenchmarks = null;
 	if (RUN_PERF) {
@@ -602,8 +557,6 @@ async function main() {
 		checkoutCommit(nextjsDir, selectedIssues[0].commitBefore);
 		perfBenchmarks = await runPerfBenchmarks(nextjsDir);
 	}
-
-	// ── Output ──────────────────────────────────────────────────────────
 
 	// Restore console.log for JSON output
 	console.log = origLog;
