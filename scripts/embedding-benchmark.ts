@@ -229,7 +229,13 @@ for (const key of modelKeys) {
 	process.env[BENCH_DB_ENV] = modelDbPath;
 	const data = await forkWorker(scriptPath, MODEL_WORKER_KEY, key, process.argv.slice(2), TIMEOUT_MS);
 	delete process.env[BENCH_DB_ENV];
-	try { fs.rmSync(modelDbPath, { force: true }); } catch { /* best-effort */ }
+	// `openDb` enables WAL mode, so the worker leaves `${key}.db-wal` and
+	// `${key}.db-shm` sidecars next to the main snapshot. Remove all three so
+	// disk usage doesn't accumulate across models — the directory-level
+	// cleanup at exit is only a safety net.
+	for (const suffix of ['', '-wal', '-shm']) {
+		try { fs.rmSync(`${modelDbPath}${suffix}`, { force: true }); } catch { /* best-effort */ }
+	}
 
 	if (data) {
 		results[key] = data.result;
