@@ -556,15 +556,15 @@ function upsertAstComplexity(
  *            interface stub, unsupported language).
  *  - 'fallback': a genuine function body is missing precomputed complexity —
  *                the whole native fast path must abort to JS.
- *  - 'emit': the definition has complexity data; the row was appended. */
+ *  - 'emit': the definition has complexity data and a row was (or will be) appended. */
 type NativeRowDecision = 'skip' | 'fallback' | 'emit';
 
 /** Classify a definition relative to the native bulk path. Returns
- *  'skip' to ignore it, 'fallback' to bail out, or 'emit' if the row was added. */
+ *  'skip' to ignore it, 'fallback' to bail out, or 'emit' if the row should be added. */
 function classifyDefinitionForNativeBulk(
   def: FileSymbols['definitions'][0],
   langSupported: boolean,
-): 'skip' | 'fallback' | 'has-data' {
+): NativeRowDecision {
   if (def.kind !== 'function' && def.kind !== 'method') return 'skip';
   if (!def.line) return 'skip';
   if (!def.complexity) {
@@ -578,7 +578,7 @@ function classifyDefinitionForNativeBulk(
     if (!langSupported) return 'skip';
     return 'fallback'; // genuine function body missing complexity — needs JS fallback
   }
-  return 'has-data';
+  return 'emit';
 }
 
 /** Build a single native-bulk row from a definition with complexity data. */
