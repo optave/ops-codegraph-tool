@@ -224,44 +224,81 @@ If any of these apply → classify as **false-positive**. Append to `.codegraph/
 {"phase":"grind","timestamp":"<ISO 8601>","severity":"bug","category":"codegraph","description":"False positive dead-code detection: <symbol> in <file> — <reason>","context":"<detection method that failed>"}
 ```
 
-### 2c. Duplicate-logic scan
+### 2c. Duplicate-logic scan (codebase-wide — mandatory)
 
-Search the codebase for inline code that duplicates what the helper does:
+> **This scan must cover the entire codebase, not just forge-touched files.** Stopping after finding the first few matches or only checking files the forge phase touched is the primary cause of redundant helpers being created in later runs. You must prove the pattern is absent elsewhere before classifying.
 
+Read the helper's source to identify its core pattern (the 2–5 token signature that distinguishes it from generic code). Then run all three of the following — not just one:
+
+**1. Semantic search** (catches renamed or restructured duplicates):
 ```bash
-codegraph query <helper-name> -T --json
+codegraph search "<describe what the helper does in plain language>" --json
 ```
 
-Read the helper's source to extract its key pattern. Then search for that pattern:
-
+**2. Token-level grep** across all source files (catches exact inline duplicates):
 ```bash
-# Use Grep with patterns derived from the helper's implementation
-# Example: if helper is toSymbolRef({ name, kind, file, line }),
-# search for the inline pattern it replaces
+# Derive 2-3 distinct token patterns from the helper's body
+# Search from the repo root, not just the forge-touched directory
+grep -rn "<key-token-1>" src/ --include="*.ts" -l
+grep -rn "<key-token-2>" src/ --include="*.ts" -l
+# Repeat for Rust sources if applicable
+grep -rn "<key-token>" crates/ --include="*.rs" -l
 ```
 
-Use `Grep` with patterns derived from the helper's implementation. Look for:
+**3. Symbol-level duplicate scan** (catches helpers with different names but identical purpose):
+```bash
+codegraph roles --role dead -T --json | node -e "
+const d=[];process.stdin.on('data',c=>d.push(c));
+process.stdin.on('end',()=>{
+  const items=JSON.parse(Buffer.concat(d));
+  // Look for other dead symbols whose names suggest the same operation
+  console.log(JSON.stringify(items.filter(i=>i.name!=='<helper-name>')));
+});
+"
+```
+
+For each file that produces a match in any of the three scans: read the matching region, confirm whether it duplicates the helper's logic, and add it to the consumer list if so. A match list of zero across all three scans is required before concluding "no duplicates found" — do not assume absence without running all three.
+
+Look for:
 - Identical multi-line patterns (e.g., object literal mappings)
-- Equivalent `.map()` callbacks that the helper could replace
+- Equivalent `.map()` / `.reduce()` callbacks the helper could replace
 - Hand-rolled loops that duplicate the helper's logic
 - Similar function signatures doing the same work in a different module
 
-### 2d. Consumer-wiring scan
+### 2d. Consumer-wiring scan (all call sites — mandatory)
 
-Check if the helper should be called by existing code that currently does the same work:
+Check if the helper should be called by existing code that currently does the same work. **This must scan the full codebase, not only files in the current forge phase.**
 
 ```bash
 codegraph fn-impact <helper-name> -T --json
-codegraph path <helper-name> <potential-consumer> -T --json
 ```
 
-If the helper wraps a common operation (error construction, AST traversal, data mapping), search for call sites of the underlying operation that could use the wrapper instead:
+If the helper wraps an underlying operation, find every call site of that underlying operation across the entire codebase:
 
 ```bash
 codegraph ast --kind call <underlying-function> -T --json
 ```
 
-### 2e. Re-export check
+The result is a list of all call sites. For each site NOT already using the helper: read the surrounding code and determine if the helper is a drop-in replacement. Add every adoptable site to the consumer list — not just the ones in forge-touched files.
+
+If the underlying operation is called in >10 files and fewer than half are in the consumer list, that is a red flag — re-run the grep and semantic search before classifying.
+
+### 2e. Pre-existing duplicate helper check
+
+Before classifying as **adopt**, check whether a semantically equivalent helper already exists elsewhere in the codebase (a different name, same purpose). This is how redundant helpers accumulate across Titan runs.
+
+```bash
+codegraph search "<describe helper purpose>" --json | head -5
+```
+
+If a pre-existing helper with the same purpose is found:
+- If it is more broadly used → classify the new helper as **remove** and wire consumers to the existing one instead
+- If it is narrower → classify the new helper as **adopt** but file an issue to consolidate later:
+  ```bash
+  gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up."
+  ```
+
+### 2f. Re-export check
 
 If the helper is in a module with a barrel file (index.ts, mod.rs), check if it needs to be re-exported:
 
@@ -269,7 +306,7 @@ If the helper is in a module with a barrel file (index.ts, mod.rs), check if it 
 codegraph exports <barrel-file> -T --json
 ```
 
-### 2f. Classify and persist
+### 2g. Classify and persist
 
 For each grind target, assign one of:
 
@@ -594,6 +631,8 @@ Run /titan-close to finalize.
 - **Gate before commit.** Every commit must pass `/titan-gate`. No exceptions.
 - **Stage only specific files.** Never `git add .` or `git add -A`.
 - **Never change control flow.** Adoptions must be semantically identical to the code they replace. If the helper does something slightly different from the inline pattern, skip it.
+- **Codebase-wide scan is mandatory.** Steps 2c and 2d must cover the entire source tree, not just forge-touched files. "No duplicates found" requires zero matches across all three scan methods (semantic search, token grep, symbol scan). Stopping early is the primary cause of redundant helpers in later runs.
+- **Check for pre-existing equivalents before adopting (Step 2e).** If a helper with the same purpose already exists elsewhere, wire consumers to it and remove the new one — don't create two helpers that do the same thing.
 - **Rollback restores graph snapshot** — `codegraph snapshot restore`, then `git restore --staged` + `git checkout --`, then `codegraph build`. Never `git reset --hard`.
 - **Persist state after every target.** Write `titan-state.json` after each commit, failure, or classification. Back up after every write. The `.ndjson` files are append-only — never rewrite them.
 - **Log false positives to issues.ndjson.** These are codegraph bugs. Close phase compiles them into the report and opens GitHub issues.
