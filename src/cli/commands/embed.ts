@@ -7,7 +7,7 @@ import {
   EMBEDDING_STRATEGIES,
   MODELS,
 } from '../../domain/search/index.js';
-import { info } from '../../infrastructure/logger.js';
+import { info, warn } from '../../infrastructure/logger.js';
 import type { CommandDefinition } from '../types.js';
 
 function resolveStickyModel(dbPath: string | undefined): string | null {
@@ -19,6 +19,10 @@ function resolveStickyModel(dbPath: string | undefined): string | null {
       for (const [key, cfg] of Object.entries(MODELS)) {
         if (cfg.name === storedName) return key;
       }
+      warn(
+        `Stored embedding model "${storedName}" is no longer recognised — falling back to default. ` +
+          'Embeddings will be rebuilt with the new model.',
+      );
       return null;
     } finally {
       db.close();
