@@ -1,5 +1,5 @@
 import type { ExtractorOutput, SubDeclaration, TreeSitterNode, TreeSitterTree } from '../types.js';
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine, nodeStartLine, pushCall, pushImport } from './helpers.js';
 
 /**
  * Extract symbols from Julia files.
@@ -76,7 +76,7 @@ function handleModuleDef(node: TreeSitterNode, ctx: ExtractorOutput): string | n
   ctx.definitions.push({
     name: nameNode.text,
     kind: 'module',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
 
@@ -130,7 +130,7 @@ function handleFunctionDef(
       ctx.definitions.push({
         name,
         kind: 'function',
-        line: node.startPosition.row + 1,
+        line: nodeStartLine(node),
         endLine: nodeEndLine(node),
         children: params.length > 0 ? params : undefined,
       });
@@ -145,7 +145,7 @@ function handleFunctionDef(
   ctx.definitions.push({
     name: qualifyName(nameNode.text, currentModule),
     kind: 'function',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
 }
@@ -169,7 +169,7 @@ function handleAssignment(
     ctx.definitions.push({
       name: qualifyName(funcNameNode.text, currentModule),
       kind: 'function',
-      line: node.startPosition.row + 1,
+      line: nodeStartLine(node),
       endLine: nodeEndLine(node),
       children: params.length > 0 ? params : undefined,
     });
@@ -253,14 +253,14 @@ function handleStructDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
         children.push({
           name: fieldName.text,
           kind: 'property',
-          line: child.startPosition.row + 1,
+          line: nodeStartLine(child),
         });
       }
     } else if (child.type === 'identifier') {
       // Plain identifier fields (no type annotation) appear as direct
       // identifier children of struct_definition. The type_head is a
       // separate node so there is nothing to filter out here.
-      children.push({ name: child.text, kind: 'property', line: child.startPosition.row + 1 });
+      children.push({ name: child.text, kind: 'property', line: nodeStartLine(child) });
     }
   }
 
@@ -268,14 +268,14 @@ function handleStructDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
     ctx.classes.push({
       name: structName,
       extends: supertypeNode.text,
-      line: node.startPosition.row + 1,
+      line: nodeStartLine(node),
     });
   }
 
   ctx.definitions.push({
     name: structName,
     kind: 'struct',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     children: children.length > 0 ? children : undefined,
   });
@@ -295,7 +295,7 @@ function handleAbstractDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   ctx.definitions.push({
     name: nameNode.text,
     kind: 'type',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
 }
@@ -319,7 +319,7 @@ function handleMacroDef(
   ctx.definitions.push({
     name,
     kind: 'function',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
 }
@@ -363,11 +363,10 @@ function handleImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 
   if (source) {
-    ctx.imports.push({
-      source,
-      names: names.length > 0 ? names : [source],
-      line: node.startPosition.row + 1,
-    });
+    // pushImport falls back to source basename for empty `names`. Julia module
+    // sources have no `/` separator, so the basename equals `source` — matching
+    // the previous explicit `[source]` fallback.
+    pushImport(ctx, node, source, names);
   }
 }
 
@@ -388,20 +387,25 @@ function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!funcNode) return;
 
   if (funcNode.type === 'identifier') {
-    ctx.calls.push({ name: funcNode.text, line: node.startPosition.row + 1 });
+    pushCall(ctx, node, funcNode.text);
   } else if (funcNode.type === 'field_expression' || funcNode.type === 'scoped_identifier') {
     const parts = funcNode.text.split('.');
     if (parts.length >= 2) {
-      ctx.calls.push({
-        name: parts[parts.length - 1]!,
+      pushCall(ctx, node, parts[parts.length - 1]!, {
         receiver: parts.slice(0, -1).join('.'),
-        line: node.startPosition.row + 1,
       });
     } else {
-      ctx.calls.push({ name: funcNode.text, line: node.startPosition.row + 1 });
+      pushCall(ctx, node, funcNode.text);
     }
   }
 }
+
+const JULIA_PARAM_WRAPPER_TYPES = new Set([
+  'typed_parameter',
+  'typed_expression',
+  'optional_parameter',
+  'default_parameter',
+]);
 
 function extractJuliaParams(callExpr: TreeSitterNode): SubDeclaration[] {
   const params: SubDeclaration[] = [];
@@ -412,25 +416,14 @@ function extractJuliaParams(callExpr: TreeSitterNode): SubDeclaration[] {
     const child = argList.child(i);
     if (!child) continue;
     if (child.type === 'identifier') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
-    }
-    if (child.type === 'typed_parameter' || child.type === 'typed_expression') {
+      params.push({ name: child.text, kind: 'parameter', line: nodeStartLine(child) });
+    } else if (JULIA_PARAM_WRAPPER_TYPES.has(child.type)) {
       const nameNode = findChild(child, 'identifier');
       if (nameNode) {
         params.push({
           name: nameNode.text,
           kind: 'parameter',
-          line: child.startPosition.row + 1,
-        });
-      }
-    }
-    if (child.type === 'optional_parameter' || child.type === 'default_parameter') {
-      const nameNode = findChild(child, 'identifier');
-      if (nameNode) {
-        params.push({
-          name: nameNode.text,
-          kind: 'parameter',
-          line: child.startPosition.row + 1,
+          line: nodeStartLine(child),
         });
       }
     }

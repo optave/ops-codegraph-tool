@@ -539,36 +539,25 @@ export function classifyNativeDrops(relPaths: Iterable<string>): NativeDropClass
 }
 
 /**
- * Render `{ ext → paths[] }` as a multi-line tabular breakdown for log lines.
- * Each extension occupies its own line so a long warning scans like a table
- * instead of a wall of semicolon-separated slices. Caps at 3 sample paths per
- * extension and 6 extensions total to keep output bounded when many languages
- * are dropped at once. Extensions are sorted by descending file count so the
- * loudest offender shows up first; ties keep insertion order.
- *
- * Returns the empty string for empty input, and otherwise a string that
- * begins with `\n` so callers can append it directly after the header line
- * (`"Backfilling via WASM:" + formatDropExtensionSummary(...)`).
- *
- * Pure function — safe to unit-test independently.
+ * Render `{ ext → paths[] }` as `ext (n: sample.ext, ...)` slices for log lines.
+ * Caps at 3 sample paths per extension and 6 extensions total to keep warnings
+ * readable when many languages are dropped at once. Extensions are sorted by
+ * descending file count so the loudest offender shows up first; ties keep
+ * insertion order. Pure function — safe to unit-test independently.
  */
 export function formatDropExtensionSummary(buckets: Map<string, string[]>): string {
   const MAX_EXTS = 6;
   const MAX_SAMPLES = 3;
   const entries = Array.from(buckets.entries()).sort((a, b) => b[1].length - a[1].length);
-  if (entries.length === 0) return '';
-  const shown = entries.slice(0, MAX_EXTS);
-  const extWidth = Math.max(...shown.map(([ext]) => ext.length));
-  const countWidth = Math.max(...shown.map(([, paths]) => String(paths.length).length));
-  const lines = shown.map(([ext, paths]) => {
+  const shown = entries.slice(0, MAX_EXTS).map(([ext, paths]) => {
     const sample = paths.slice(0, MAX_SAMPLES).join(', ');
-    const more = paths.length > MAX_SAMPLES ? ` (+${paths.length - MAX_SAMPLES} more)` : '';
-    return `  ${ext.padEnd(extWidth)}  ${String(paths.length).padStart(countWidth)}  ${sample}${more}`;
+    const more = paths.length > MAX_SAMPLES ? `, +${paths.length - MAX_SAMPLES} more` : '';
+    return `${ext} (${paths.length}: ${sample}${more})`;
   });
   if (entries.length > MAX_EXTS) {
-    lines.push(`  (+${entries.length - MAX_EXTS} more extension(s))`);
+    shown.push(`+${entries.length - MAX_EXTS} more extension(s)`);
   }
-  return `\n${lines.join('\n')}`;
+  return shown.join('; ');
 }
 
 // ── Unified API ──────────────────────────────────────────────────────────────

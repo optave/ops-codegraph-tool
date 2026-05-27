@@ -10,6 +10,8 @@
  * Usage: node scripts/embedding-benchmark.js > result.json
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +20,19 @@ import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { forkWorker } from './lib/fork-engine.js';
 
 const MODEL_WORKER_KEY = '__BENCH_MODEL__';
+/**
+ * Per-model isolated DB path, set by the parent before forking each worker.
+ *
+ * The host project's .codegraph/graph.db is shared with any concurrent CLI
+ * activity (e.g. a manual `codegraph embed` run kicked off while the bench
+ * is in flight). Both writers race on the same `embeddings` table, so the
+ * search phase ends up reading either zero rows ("No embeddings found.")
+ * or vectors from the wrong model, both of which silently invalidate Hit@k.
+ *
+ * Each worker now operates on a fresh `VACUUM INTO` copy in os.tmpdir(),
+ * leaving the host DB untouched and immune to interleaved CLI writes.
+ */
+const BENCH_DB_ENV = '__BENCH_DB_PATH__';
 /**
  * Cap symbol count so CI stays under the per-model timeout.
  * At ~1500 symbols on a CPU-only runner, search evaluation takes ~5 min;
@@ -33,7 +48,11 @@ if (process.env[MODEL_WORKER_KEY]) {
 	const modelKey = process.env[MODEL_WORKER_KEY];
 
 	const { srcDir, cleanup } = await resolveBenchmarkSource();
-	const dbPath = path.join(root, '.codegraph', 'graph.db');
+	const dbPath = process.env[BENCH_DB_ENV];
+	if (!dbPath) {
+		console.error(`[${modelKey}] worker missing ${BENCH_DB_ENV} — parent must provide an isolated DB path`);
+		process.exit(2);
+	}
 
 	const { buildEmbeddings, MODELS, searchData, disposeModel } = await import(
 		srcImport(srcDir, 'domain/search/index.js')
@@ -149,7 +168,31 @@ if (process.env[MODEL_WORKER_KEY]) {
 
 // ── Parent process: fork one child per model, assemble final output ──────
 const { version, srcDir, cleanup } = await resolveBenchmarkSource();
-const dbPath = path.join(root, '.codegraph', 'graph.db');
+const hostDbPath = path.join(root, '.codegraph', 'graph.db');
+if (!fs.existsSync(hostDbPath)) {
+	throw new Error(`Host graph DB not found at ${hostDbPath}. Run "codegraph build" first.`);
+}
+
+// Per-model isolated copies live under a single tmp dir. Each iteration
+// removes its file after the worker returns; the dir is wiped on exit as a
+// safety net so a crash mid-loop can't leak the in-flight copy.
+const benchTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-embed-bench-'));
+let cleanedUpTmpDir = false;
+function cleanupBenchDbs() {
+	if (cleanedUpTmpDir) return;
+	cleanedUpTmpDir = true;
+	try { fs.rmSync(benchTmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+}
+process.on('exit', cleanupBenchDbs);
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+	// `once` so the re-raise below hits Node's default disposition instead of
+	// re-entering this handler. Without it, `process.kill(pid, sig)` would
+	// fire our listener again and loop forever.
+	process.once(sig, () => {
+		cleanupBenchDbs();
+		process.kill(process.pid, sig);
+	});
+}
 
 const { MODELS } = await import(srcImport(srcDir, 'domain/search/index.js'));
 
@@ -161,7 +204,37 @@ let symbolCount = 0;
 const scriptPath = fileURLToPath(import.meta.url);
 
 for (const key of modelKeys) {
+	// VACUUM INTO produces a transactionally-consistent snapshot — safe even
+	// if another process is writing the host DB. Fresh copy per model keeps a
+	// crashed worker from leaking partial state into the next one.
+	const modelDbPath = path.join(benchTmpDir, `${key}.db`);
+	try {
+		const srcDb = new Database(hostDbPath, { readonly: true });
+		try {
+			// SQLite does not support bound parameters in VACUUM INTO — the
+			// destination must be a string literal. Single-quote doubling is the
+			// correct and complete escape; no other characters are special in
+			// SQLite string literals.
+			srcDb.exec(`VACUUM INTO '${modelDbPath.replace(/'/g, "''")}'`);
+		} finally {
+			srcDb.close();
+		}
+	} catch (err) {
+		console.error(`  ${key}: FAILED to snapshot host DB — ${(err as Error).message}`);
+		continue;
+	}
+
+	process.env[BENCH_DB_ENV] = modelDbPath;
 	const data = await forkWorker(scriptPath, MODEL_WORKER_KEY, key, process.argv.slice(2), TIMEOUT_MS);
+	delete process.env[BENCH_DB_ENV];
+	// `openDb` enables WAL mode, so the worker leaves `${key}.db-wal` and
+	// `${key}.db-shm` sidecars next to the main snapshot. Remove all three so
+	// disk usage doesn't accumulate across models — the directory-level
+	// cleanup at exit is only a safety net.
+	for (const suffix of ['', '-wal', '-shm']) {
+		try { fs.rmSync(`${modelDbPath}${suffix}`, { force: true }); } catch { /* best-effort */ }
+	}
+
 	if (data) {
 		results[key] = data.result;
 		if (data.symbols) symbolCount = data.symbols;
@@ -184,4 +257,5 @@ const output = {
 
 console.log(JSON.stringify(output, null, 2));
 
+cleanupBenchDbs();
 cleanup();

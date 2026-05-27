@@ -971,6 +971,12 @@ struct DataflowOutput {
     mutations: Vec<DataflowMutation>,
 }
 
+/// Single-entry DFS traversal for dataflow extraction.
+///
+/// Dispatches the current node to the appropriate handler, then recurses into
+/// named children by calling `visit` directly. Children are walked inline to
+/// avoid a `visit` <-> `visit_children` mutual-recursion cycle (single entry
+/// point, single recursive call site).
 #[allow(clippy::too_many_arguments)]
 fn visit(
     node: &Node,
@@ -985,65 +991,42 @@ fn visit(
     }
 
     let t = node.kind();
+    let mut entered_scope = false;
 
-    // Enter function scope
+    // Dispatch to handler for this node kind. Children are always visited
+    // afterwards via the loop below — handlers must not recurse themselves.
     if is_function_node(rules, t) {
         enter_scope(node, rules, source, scope_stack, &mut out.parameters);
-        visit_children(node, rules, source, scope_stack, out, depth);
-        scope_stack.pop();
-        return;
-    }
-
-    // Return statements
-    if rules.return_node.is_some_and(|r| r == t) {
+        entered_scope = true;
+    } else if rules.return_node.is_some_and(|r| r == t) {
         handle_return_stmt(node, rules, source, scope_stack, &mut out.returns, depth);
-        visit_children(node, rules, source, scope_stack, out, depth);
-        return;
-    }
-
-    // Variable declarations (single or multi-type)
-    if rules.var_declarator_node.is_some_and(|v| v == t)
+    } else if rules.var_declarator_node.is_some_and(|v| v == t)
         || (!rules.var_declarator_nodes.is_empty() && rules.var_declarator_nodes.contains(&t))
     {
         handle_var_declarator(node, rules, source, scope_stack, &mut out.assignments);
-        visit_children(node, rules, source, scope_stack, out, depth);
-        return;
-    }
-
-    // Call expressions
-    if is_call_node(rules, t) {
+    } else if is_call_node(rules, t) {
         handle_call_expr(node, rules, source, scope_stack, &mut out.arg_flows);
-        visit_children(node, rules, source, scope_stack, out, depth);
-        return;
-    }
-
-    // Assignment expressions
-    if rules.assignment_node.is_some_and(|a| a == t) {
-        handle_assignment(node, rules, source, scope_stack, &mut out.assignments, &mut out.mutations);
-        visit_children(node, rules, source, scope_stack, out, depth);
-        return;
-    }
-
-    // Mutation detection via expression_statement
-    if t == rules.expression_stmt_node {
+    } else if rules.assignment_node.is_some_and(|a| a == t) {
+        handle_assignment(
+            node,
+            rules,
+            source,
+            scope_stack,
+            &mut out.assignments,
+            &mut out.mutations,
+        );
+    } else if t == rules.expression_stmt_node {
         handle_expr_stmt_mutation(node, rules, source, scope_stack, &mut out.mutations);
     }
 
-    visit_children(node, rules, source, scope_stack, out, depth);
-}
-
-/// Visit all named children of a node (shared DFS recursion helper).
-fn visit_children(
-    node: &Node,
-    rules: &DataflowRules,
-    source: &[u8],
-    scope_stack: &mut Vec<ScopeFrame>,
-    out: &mut DataflowOutput,
-    depth: usize,
-) {
+    // Recurse into named children inline — no helper indirection, no cycle.
     let cursor = &mut node.walk();
     for child in node.named_children(cursor) {
         visit(&child, rules, source, scope_stack, out, depth + 1);
+    }
+
+    if entered_scope {
+        scope_stack.pop();
     }
 }
 

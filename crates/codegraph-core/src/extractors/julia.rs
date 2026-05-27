@@ -482,12 +482,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
     match func_node.kind() {
         "identifier" => {
-            symbols.calls.push(Call {
-                name: node_text(&func_node, source).to_string(),
-                line: start_line(node),
-                dynamic: None,
-                receiver: None,
-            });
+            push_simple_call(symbols, node, node_text(&func_node, source).to_string());
         }
         "field_expression" | "scoped_identifier" => {
             let raw = node_text(&func_node, source);
@@ -495,19 +490,9 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             if parts.len() >= 2 {
                 let last = parts.last().copied().unwrap_or("");
                 let receiver = parts[..parts.len() - 1].join(".");
-                symbols.calls.push(Call {
-                    name: last.to_string(),
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver: Some(receiver),
-                });
+                push_call(symbols, node, last.to_string(), Some(receiver), None);
             } else {
-                symbols.calls.push(Call {
-                    name: raw.to_string(),
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver: None,
-                });
+                push_simple_call(symbols, node, raw.to_string());
             }
         }
         _ => {}

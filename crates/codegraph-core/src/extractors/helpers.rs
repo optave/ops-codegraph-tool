@@ -1,4 +1,4 @@
-use crate::types::{AstNode, Definition, FileSymbols};
+use crate::types::{AstNode, Call, Definition, FileSymbols, Import, TypeMapEntry};
 use tree_sitter::Node;
 
 // Re-export so extractors that `use super::helpers::*` still see it.
@@ -38,6 +38,51 @@ pub fn find_child<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
         }
     }
     None
+}
+
+/// Find the first child whose type is in `kinds`. Useful when several
+/// grammar variants name the same conceptual node differently (e.g.
+/// `string` vs `string_literal`). Returns the first match in document
+/// order, or `None`.
+///
+/// Mirrors `findFirstChildOfTypes` in `src/extractors/helpers.ts`.
+pub fn find_first_child_of_types<'a>(node: &Node<'a>, kinds: &[&str]) -> Option<Node<'a>> {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if kinds.contains(&child.kind()) {
+                return Some(child);
+            }
+        }
+    }
+    None
+}
+
+/// Common punctuation tokens — handy as a `skip_kinds` set for
+/// [`iter_children`]. Mirrors `PUNCTUATION_TOKENS` in
+/// `src/extractors/helpers.ts`.
+pub const PUNCTUATION_TOKENS: &[&str] = &[
+    ",", ";", "(", ")", "[", "]", "{", "}", ":", ".",
+];
+
+/// Iterate the direct children of `node` in document order, skipping
+/// nulls and tokens whose `kind()` is in `skip_kinds`. Mirrors the
+/// common `for i in 0..node.child_count() { let c = node.child(i); ... }`
+/// idiom while letting callers filter out grammar punctuation
+/// (`,`, `(`, `{`, etc.).
+///
+/// Mirrors `iterChildren` in `src/extractors/helpers.ts`.
+pub fn iter_children<'a>(
+    node: &'a Node<'a>,
+    skip_kinds: &'a [&'a str],
+) -> impl Iterator<Item = Node<'a>> + 'a {
+    (0..node.child_count()).filter_map(move |i| {
+        let child = node.child(i)?;
+        if skip_kinds.contains(&child.kind()) {
+            None
+        } else {
+            Some(child)
+        }
+    })
 }
 
 /// Find a parent of a given type, walking up the tree.
@@ -747,4 +792,241 @@ fn extract_child_expression_text(node: &Node, source: &[u8]) -> Option<String> {
         }
     }
     Some(truncate(node_text(node, source), AST_TEXT_MAX))
+}
+
+// ── Output-push helpers ────────────────────────────────────────────────────
+//
+// Most extractors finish with `symbols.calls.push(Call { name, line: start_line(node), ... })`
+// or `symbols.imports.push(Import::new(source, names, start_line(node)))`. Centralising
+// the construction keeps `line` derivation consistent and removes the many
+// hand-rolled `start_position().row + 1` literals scattered across language extractors.
+
+/// Append a [`Call`] to `symbols`, using `start_line(node)` for the line and
+/// the given optional `receiver`/`dynamic` flags. Skips no-op pushes when
+/// `name` is empty.
+///
+/// Mirrors `pushCall` in `src/extractors/helpers.ts`.
+pub fn push_call(
+    symbols: &mut FileSymbols,
+    node: &Node,
+    name: impl Into<String>,
+    receiver: Option<String>,
+    dynamic: Option<bool>,
+) {
+    let name = name.into();
+    if name.is_empty() {
+        return;
+    }
+    symbols.calls.push(Call {
+        name,
+        line: start_line(node),
+        dynamic,
+        receiver,
+    });
+}
+
+/// Append a simple [`Call`] (no receiver, no dynamic flag) to `symbols`.
+/// Convenience wrapper around [`push_call`] for the common case shared by
+/// most C-family and procedural-language extractors.
+pub fn push_simple_call(symbols: &mut FileSymbols, node: &Node, name: impl Into<String>) {
+    push_call(symbols, node, name, None, None);
+}
+
+/// Append an [`Import`] to `symbols`, using `start_line(node)` for the
+/// line. If `names` is empty, the last `/`-segment of `source` is used as
+/// a single-name fallback — matching the convention used by gleam, julia,
+/// and similar module-path imports.
+///
+/// The `customize` closure receives a mutable reference to the freshly
+/// constructed `Import` so callers can flip language-specific flags
+/// (`c_include`, `python_import`, `bash_source`, etc.) before the entry
+/// is pushed. Pass `|_| {}` when no flags are needed.
+///
+/// Mirrors `pushImport` in `src/extractors/helpers.ts`.
+pub fn push_import<F>(
+    symbols: &mut FileSymbols,
+    node: &Node,
+    source: impl Into<String>,
+    names: Vec<String>,
+    customize: F,
+) where
+    F: FnOnce(&mut Import),
+{
+    let source = source.into();
+    if source.is_empty() {
+        return;
+    }
+    let resolved_names = if names.is_empty() {
+        let fallback = source.rsplit('/').next().unwrap_or(source.as_str());
+        vec![fallback.to_string()]
+    } else {
+        names
+    };
+    let mut imp = Import::new(source, resolved_names, start_line(node));
+    customize(&mut imp);
+    symbols.imports.push(imp);
+}
+
+// ── Parameter extraction ───────────────────────────────────────────────────
+
+/// Configuration for [`extract_simple_parameters`].
+///
+/// Collapses the boilerplate in `extract_*_params` helpers across
+/// java / julia / gleam / solidity / r / etc. — each one walks a
+/// parameter list, matches a parameter-node kind, reads the `name`
+/// field, and pushes a [`Definition`] with `kind: "parameter"`.
+pub struct ExtractParametersOptions<'a> {
+    /// Tree-sitter node kinds that mark a single parameter node
+    /// (e.g. `formal_parameter`, `parameter`).
+    pub param_kinds: &'a [&'a str],
+    /// Field name on each parameter that holds the bound identifier.
+    /// Defaults to `Some("name")`. Pass `None` to use the parameter
+    /// node itself when its kind is in `param_kinds` and it has no
+    /// `name` field (e.g. R's bare `identifier`).
+    pub name_field: Option<&'a str>,
+    /// If true, when `name_field` lookup fails fall back to the first
+    /// `identifier` child of the parameter. Useful for gleam /
+    /// solidity-style grammars.
+    pub fallback_to_identifier: bool,
+}
+
+impl<'a> Default for ExtractParametersOptions<'a> {
+    fn default() -> Self {
+        Self {
+            param_kinds: &[],
+            name_field: Some("name"),
+            fallback_to_identifier: false,
+        }
+    }
+}
+
+/// Resolve the identifier node that names a parameter. Used by
+/// [`extract_simple_parameters`]; exposed so language-specific
+/// extractors can reuse the same lookup logic in custom loops.
+///
+/// Mirrors `resolveParamName` in `src/extractors/helpers.ts`.
+pub fn resolve_param_name<'a>(
+    param_node: &Node<'a>,
+    name_field: Option<&str>,
+    fallback_to_identifier: bool,
+) -> Option<Node<'a>> {
+    let Some(field) = name_field else {
+        return Some(*param_node);
+    };
+    if let Some(named) = param_node.child_by_field_name(field) {
+        return Some(named);
+    }
+    if fallback_to_identifier {
+        return find_child(param_node, "identifier");
+    }
+    None
+}
+
+/// Extract parameters from a parameter-list node using a uniform
+/// pattern. Returns an empty vec when `param_list` is `None`.
+///
+/// Mirrors `extractSimpleParameters` in `src/extractors/helpers.ts`.
+pub fn extract_simple_parameters(
+    param_list: Option<Node>,
+    source: &[u8],
+    options: &ExtractParametersOptions,
+) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let Some(param_list) = param_list else {
+        return params;
+    };
+    for i in 0..param_list.child_count() {
+        let Some(child) = param_list.child(i) else { continue };
+        if !options.param_kinds.contains(&child.kind()) {
+            continue;
+        }
+        let Some(name_node) = resolve_param_name(
+            &child,
+            options.name_field,
+            options.fallback_to_identifier,
+        ) else {
+            continue;
+        };
+        params.push(child_def(
+            node_text(&name_node, source).to_string(),
+            "parameter",
+            start_line(&child),
+        ));
+    }
+    params
+}
+
+// ── Type-map helpers ───────────────────────────────────────────────────────
+
+/// Record a parameter name → type binding in the type-map sink, using
+/// the default confidence of `0.9` shared by every Rust extractor.
+pub fn push_type_map_entry(
+    symbols: &mut FileSymbols,
+    name: impl Into<String>,
+    type_name: impl Into<String>,
+) {
+    let name = name.into();
+    if name.is_empty() {
+        return;
+    }
+    symbols.type_map.push(TypeMapEntry {
+        name,
+        type_name: type_name.into(),
+        confidence: 0.9,
+    });
+}
+
+/// C-family `declaration` / `parameter_declaration` type-map matcher.
+///
+/// The cpp / cuda / c extractors all emit verbatim copies of the same
+/// `match_*_type_map` walker — they share node kinds (`declaration`,
+/// `init_declarator`, `parameter_declaration`) and only differ in the
+/// per-language declarator-unwrap helper. This helper centralises the
+/// shared walker; callers supply the language's `unwrap_declarator`
+/// closure (e.g. `unwrap_cpp_declarator`).
+///
+pub fn match_c_family_type_map<F>(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    mut unwrap_declarator: F,
+)
+where
+    F: FnMut(&Node, &[u8]) -> String,
+{
+    match node.kind() {
+        "declaration" => {
+            let Some(type_node) = node.child_by_field_name("type") else {
+                return;
+            };
+            let type_name = node_text(&type_node, source).to_string();
+            for i in 0..node.child_count() {
+                let Some(child) = node.child(i) else { continue };
+                let kind = child.kind();
+                if kind != "init_declarator" && kind != "identifier" {
+                    continue;
+                }
+                let name_node = if kind == "init_declarator" {
+                    child.child_by_field_name("declarator")
+                } else {
+                    Some(child)
+                };
+                let Some(name_node) = name_node else { continue };
+                let final_name = unwrap_declarator(&name_node, source);
+                push_type_map_entry(symbols, final_name, type_name.clone());
+            }
+        }
+        "parameter_declaration" => {
+            let Some(type_node) = node.child_by_field_name("type") else {
+                return;
+            };
+            let Some(decl) = node.child_by_field_name("declarator") else {
+                return;
+            };
+            let name = unwrap_declarator(&decl, source);
+            let type_name = node_text(&type_node, source).to_string();
+            push_type_map_entry(symbols, name, type_name);
+        }
+        _ => {}
+    }
 }
