@@ -137,7 +137,7 @@ export const MODELS: Record<string, ModelConfig> = {
 
 export const EMBEDDING_STRATEGIES: readonly string[] = ['structured', 'source'];
 
-export const DEFAULT_MODEL: string = 'nomic-v1.5';
+export const DEFAULT_MODEL: string = 'nomic';
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const BATCH_SIZE_MAP: Record<string, number> = {
   minilm: 32,

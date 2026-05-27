@@ -197,76 +197,108 @@ function extractElixirParams(defCallNode: TreeSitterNode): SubDeclaration[] {
 }
 
 /**
- * Recursively walk a parameter pattern and emit each bound identifier as a
- * `parameter` child. Handles bare identifiers, default-value `a \\ default`,
- * list-cons `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and
- * map / struct destructuring (`%{k: v}`, `%Foo{k: v}`).
+ * Walk a parameter pattern and emit each bound identifier as a `parameter`
+ * child. Handles bare identifiers, default-value `a \\ default`, list-cons
+ * `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and map / struct
+ * destructuring (`%{k: v}`, `%Foo{k: v}`).
+ *
+ * Implemented as an iterative worklist (rather than recursion + helpers) so
+ * the call graph has no function-level cycle: only one function performs the
+ * traversal and it invokes only leaf helpers (`pushSubNodes`, `pushMapValues`).
  */
-function collectElixirParamIdentifiers(node: TreeSitterNode, out: SubDeclaration[]): void {
-  switch (node.type) {
-    case 'identifier':
-      out.push({ name: node.text, kind: 'parameter', line: node.startPosition.row + 1 });
-      return;
-    case 'binary_operator': {
-      // `name \\ default` (default-value) binds the left operand only.
-      // `head | tail` (list-cons, appears inside a `list` pattern) binds both operands.
-      const op = node.child(1);
-      if (!op) return;
-      if (op.type === '\\\\') {
-        const left = node.child(0);
-        if (left) collectElixirParamIdentifiers(left, out);
-        return;
-      }
-      if (op.type === '|') {
-        const left = node.child(0);
-        const right = node.child(2);
-        if (left) collectElixirParamIdentifiers(left, out);
-        if (right) collectElixirParamIdentifiers(right, out);
-        return;
-      }
-      return;
+function collectElixirParamIdentifiers(root: TreeSitterNode, out: SubDeclaration[]): void {
+  const stack: TreeSitterNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    switch (node.type) {
+      case 'identifier':
+        out.push({ name: node.text, kind: 'parameter', line: node.startPosition.row + 1 });
+        break;
+      case 'binary_operator':
+        pushElixirBinaryOperatorOperands(node, stack);
+        break;
+      case 'list':
+      case 'tuple':
+        pushElixirSequenceItems(node, stack);
+        break;
+      case 'map':
+        pushElixirMapValues(node, stack);
+        break;
     }
-    case 'list':
-      // `[a, b, c]` or `[head | tail]` — walk children, skipping punctuation. The
-      // `|` cons case is handled by the `binary_operator` arm when we recurse.
-      for (let i = 0; i < node.childCount; i++) {
-        const c = node.child(i);
-        if (!c || c.type === '[' || c.type === ']' || c.type === ',') continue;
-        collectElixirParamIdentifiers(c, out);
-      }
-      return;
-    case 'tuple':
-      for (let i = 0; i < node.childCount; i++) {
-        const c = node.child(i);
-        if (!c || c.type === '{' || c.type === '}' || c.type === ',') continue;
-        collectElixirParamIdentifiers(c, out);
-      }
-      return;
-    case 'map':
-      // `%{k: v}` or `%Foo{k: v}` — walk map_content > keywords > pair and emit each
-      // pair's value side (the bound name). The struct alias (`Foo`) is a type, not a
-      // bound identifier, so the leading `struct` child is intentionally skipped.
-      for (let i = 0; i < node.childCount; i++) {
-        const c = node.child(i);
-        if (c && c.type === 'map_content') collectElixirMapBindings(c, out);
-      }
-      return;
   }
 }
 
-function collectElixirMapBindings(content: TreeSitterNode, out: SubDeclaration[]): void {
-  for (let i = 0; i < content.childCount; i++) {
-    const kws = content.child(i);
-    if (!kws || kws.type !== 'keywords') continue;
-    for (let j = 0; j < kws.childCount; j++) {
-      const pair = kws.child(j);
-      if (!pair || pair.type !== 'pair') continue;
-      for (let k = 0; k < pair.childCount; k++) {
-        const part = pair.child(k);
-        if (!part || part.type === 'keyword') continue;
-        collectElixirParamIdentifiers(part, out);
+/**
+ * Push the binding-relevant operands of a `binary_operator` parameter onto the
+ * worklist:
+ * - `name \\ default` (default-value) binds the left operand only.
+ * - `head | tail`     (list-cons, appears inside a `list` pattern) binds both.
+ */
+function pushElixirBinaryOperatorOperands(node: TreeSitterNode, stack: TreeSitterNode[]): void {
+  const op = node.child(1);
+  if (!op) return;
+  if (op.type === '\\\\') {
+    const left = node.child(0);
+    if (left) stack.push(left);
+    return;
+  }
+  if (op.type === '|') {
+    const right = node.child(2);
+    const left = node.child(0);
+    if (right) stack.push(right);
+    if (left) stack.push(left);
+  }
+}
+
+/**
+ * Push the binding-relevant elements of a `list` or `tuple` parameter onto
+ * the worklist, skipping punctuation tokens.
+ *
+ * Items are pushed in reverse source order so that `stack.pop()` yields them
+ * left-to-right (the worklist is a LIFO stack).
+ */
+function pushElixirSequenceItems(node: TreeSitterNode, stack: TreeSitterNode[]): void {
+  for (let i = node.childCount - 1; i >= 0; i--) {
+    const c = node.child(i);
+    if (!c) continue;
+    const t = c.type;
+    if (t === '[' || t === ']' || t === '{' || t === '}' || t === ',') continue;
+    stack.push(c);
+  }
+}
+
+/**
+ * Push the value side of every pair in a `map` or `%Foo{...}` parameter onto
+ * the worklist. The struct alias (`Foo`) is a type, not a bound identifier, so
+ * the leading `struct` child is intentionally skipped.
+ *
+ * Items are pushed in reverse source order so that `stack.pop()` yields them
+ * left-to-right (the worklist is a LIFO stack).
+ */
+function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): void {
+  // Collect values in source order first, then push in reverse so pop() is l-to-r.
+  const values: TreeSitterNode[] = [];
+  for (let i = 0; i < node.childCount; i++) {
+    const content = node.child(i);
+    if (!content || content.type !== 'map_content') continue;
+    for (let j = 0; j < content.childCount; j++) {
+      const kws = content.child(j);
+      if (!kws || kws.type !== 'keywords') continue;
+      for (let k = 0; k < kws.childCount; k++) {
+        const pair = kws.child(k);
+        if (!pair || pair.type !== 'pair') continue;
+        for (let p = 0; p < pair.childCount; p++) {
+          const part = pair.child(p);
+          if (!part || part.type === 'keyword') continue;
+          values.push(part);
+        }
       }
     }
+  }
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v) stack.push(v);
   }
 }
 

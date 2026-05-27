@@ -36,11 +36,11 @@ fn match_java_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _d
                         if let Some(child) = node.child(i) {
                             if child.kind() == "variable_declarator" {
                                 if let Some(name_node) = child.child_by_field_name("name") {
-                                    symbols.type_map.push(TypeMapEntry {
-                                        name: node_text(&name_node, source).to_string(),
-                                        type_name: type_name.to_string(),
-                                        confidence: 0.9,
-                                    });
+                                    push_type_map_entry(
+                                        symbols,
+                                        node_text(&name_node, source).to_string(),
+                                        type_name.to_string(),
+                                    );
                                 }
                             }
                         }
@@ -52,11 +52,11 @@ fn match_java_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _d
             if let Some(type_node) = node.child_by_field_name("type") {
                 if let Some(type_name) = extract_java_type_name(&type_node, source) {
                     if let Some(name_node) = node.child_by_field_name("name") {
-                        symbols.type_map.push(TypeMapEntry {
-                            name: node_text(&name_node, source).to_string(),
-                            type_name: type_name.to_string(),
-                            confidence: 0.9,
-                        });
+                        push_type_map_entry(
+                            symbols,
+                            node_text(&name_node, source).to_string(),
+                            type_name.to_string(),
+                        );
                     }
                 }
             }
@@ -266,9 +266,9 @@ fn handle_import_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             let last = import_path.split('.').last().unwrap_or("").to_string();
             vec![last]
         };
-        let mut imp = Import::new(import_path, names, start_line(node));
-        imp.java_import = Some(true);
-        symbols.imports.push(imp);
+        push_import(symbols, node, import_path, names, |imp| {
+            imp.java_import = Some(true);
+        });
     }
 }
 
@@ -276,12 +276,13 @@ fn handle_method_invocation(node: &Node, source: &[u8], symbols: &mut FileSymbol
     if let Some(name_node) = node.child_by_field_name("name") {
         let receiver = named_child_text(node, "object", source)
             .map(|s| s.to_string());
-        symbols.calls.push(Call {
-            name: node_text(&name_node, source).to_string(),
-            line: start_line(node),
-            dynamic: None,
+        push_call(
+            symbols,
+            node,
+            node_text(&name_node, source).to_string(),
             receiver,
-        });
+            None,
+        );
     }
 }
 
@@ -293,37 +294,25 @@ fn handle_object_creation(node: &Node, source: &[u8], symbols: &mut FileSymbols)
         Some(node_text(&type_node, source).to_string())
     };
     if let Some(name) = type_name {
-        symbols.calls.push(Call {
-            name,
-            line: start_line(node),
-            dynamic: None,
-            receiver: None,
-        });
+        push_simple_call(symbols, node, name);
     }
 }
 
 // ── Extended kinds helpers ──────────────────────────────────────────────────
 
 fn extract_java_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
-    let mut params = Vec::new();
-    let params_node = node.child_by_field_name("parameters")
+    let params_node = node
+        .child_by_field_name("parameters")
         .or_else(|| find_child(node, "formal_parameters"));
-    if let Some(params_node) = params_node {
-        for i in 0..params_node.child_count() {
-            if let Some(child) = params_node.child(i) {
-                if child.kind() == "formal_parameter" || child.kind() == "spread_parameter" {
-                    if let Some(name_node) = child.child_by_field_name("name") {
-                        params.push(child_def(
-                            node_text(&name_node, source).to_string(),
-                            "parameter",
-                            start_line(&child),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    params
+    extract_simple_parameters(
+        params_node,
+        source,
+        &ExtractParametersOptions {
+            param_kinds: &["formal_parameter", "spread_parameter"],
+            name_field: Some("name"),
+            fallback_to_identifier: false,
+        },
+    )
 }
 
 fn extract_java_class_fields(node: &Node, source: &[u8]) -> Vec<Definition> {

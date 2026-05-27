@@ -401,6 +401,111 @@ fn load_file_paths_in_dirs(conn: &Connection, dirs: &HashSet<String>) -> Vec<Str
     result
 }
 
+/// Emit `directory → file` contains edges for every (deduplicated) file in
+/// the union of `file_symbols` and any DB-loaded paths under affected
+/// directories. The transaction-scoped `stmt` must INSERT into edges with
+/// kind='contains'.
+fn insert_dir_to_file_contains_edges(
+    tx: &rusqlite::Transaction,
+    stmt: &mut rusqlite::Statement,
+    file_symbols: &HashMap<String, FileSymbols>,
+    all_file_paths: &[String],
+    affected_dirs: Option<&HashSet<String>>,
+) {
+    let mut seen_files: HashSet<String> = HashSet::new();
+    let file_paths_iter = file_symbols
+        .keys()
+        .map(|s| s.as_str())
+        .chain(all_file_paths.iter().map(|s| s.as_str()));
+
+    for rel_path in file_paths_iter {
+        if !seen_files.insert(rel_path.to_string()) {
+            continue;
+        }
+        let dir = match parent_dir(rel_path) {
+            Some(d) => d,
+            None => continue,
+        };
+        if let Some(ad) = affected_dirs {
+            if !ad.contains(&dir) {
+                continue;
+            }
+        }
+        let dir_id = match get_node_id(tx, &dir, "directory", &dir, 0) {
+            Some(id) => id,
+            None => continue,
+        };
+        let file_id = match get_node_id(tx, rel_path, "file", rel_path, 0) {
+            Some(id) => id,
+            None => continue,
+        };
+        let _ = stmt.execute(rusqlite::params![dir_id, file_id]);
+    }
+}
+
+/// Emit `parent_dir → child_dir` contains edges for every entry in
+/// `all_dirs` whose parent is in scope.
+fn insert_dir_to_dir_contains_edges(
+    tx: &rusqlite::Transaction,
+    stmt: &mut rusqlite::Statement,
+    all_dirs: &HashSet<String>,
+    affected_dirs: Option<&HashSet<String>>,
+) {
+    for dir in all_dirs {
+        let parent = match parent_dir(dir) {
+            Some(p) => p,
+            None => continue,
+        };
+        if parent == *dir {
+            continue;
+        }
+        if let Some(ad) = affected_dirs {
+            if !ad.contains(&parent) {
+                continue;
+            }
+        }
+        let parent_id = match get_node_id(tx, &parent, "directory", &parent, 0) {
+            Some(id) => id,
+            None => continue,
+        };
+        let child_id = match get_node_id(tx, dir, "directory", dir, 0) {
+            Some(id) => id,
+            None => continue,
+        };
+        let _ = stmt.execute(rusqlite::params![parent_id, child_id]);
+    }
+}
+
+/// Restore `parent → child` directory contains edges that were dropped by
+/// cleanup for sibling subdirectories that aren't in `all_dirs` (no changed
+/// file under them) but still exist in the DB.
+fn restore_unchanged_dir_edges(
+    tx: &rusqlite::Transaction,
+    stmt: &mut rusqlite::Statement,
+    all_dirs: &HashSet<String>,
+    affected_dirs: &HashSet<String>,
+) {
+    let db_child_dirs = load_child_dirs_in_affected(tx, affected_dirs);
+    for child_dir in &db_child_dirs {
+        if all_dirs.contains(child_dir.as_str()) {
+            continue;
+        }
+        let parent = match parent_dir(child_dir) {
+            Some(p) => p,
+            None => continue,
+        };
+        if !affected_dirs.contains(&parent) {
+            continue;
+        }
+        if let (Some(p_id), Some(c_id)) = (
+            get_node_id(tx, &parent, "directory", &parent, 0),
+            get_node_id(tx, child_dir, "directory", child_dir, 0),
+        ) {
+            let _ = stmt.execute(rusqlite::params![p_id, c_id]);
+        }
+    }
+}
+
 fn insert_contains_edges(
     conn: &Connection,
     file_symbols: &HashMap<String, FileSymbols>,
@@ -422,96 +527,23 @@ fn insert_contains_edges(
             Err(_) => return,
         };
 
-        // In incremental mode, we need ALL file paths in affected directories,
-        // not just the changed files in file_symbols. Load existing file nodes
-        // from the DB so unchanged files keep their dir→file containment edges.
-        let all_file_paths: Vec<String> = if affected_dirs.is_some() {
-            load_file_paths_in_dirs(&tx, affected_dirs.as_ref().unwrap())
+        let all_file_paths: Vec<String> = if let Some(ref ad) = affected_dirs {
+            load_file_paths_in_dirs(&tx, ad)
         } else {
             Vec::new()
         };
 
-        // Directory → file edges: iterate over file_symbols keys (covers
-        // changed/parsed files) plus DB-loaded paths (covers unchanged files
-        // in affected directories during incremental builds).
-        let mut seen_files: HashSet<String> = HashSet::new();
-        let file_paths_iter = file_symbols
-            .keys()
-            .map(|s| s.as_str())
-            .chain(all_file_paths.iter().map(|s| s.as_str()));
+        insert_dir_to_file_contains_edges(
+            &tx,
+            &mut stmt,
+            file_symbols,
+            &all_file_paths,
+            affected_dirs.as_ref(),
+        );
+        insert_dir_to_dir_contains_edges(&tx, &mut stmt, all_dirs, affected_dirs.as_ref());
 
-        for rel_path in file_paths_iter {
-            if !seen_files.insert(rel_path.to_string()) {
-                continue; // deduplicate
-            }
-            let dir = match parent_dir(rel_path) {
-                Some(d) => d,
-                None => continue,
-            };
-            // Skip unaffected directories in incremental mode
-            if let Some(ref ad) = affected_dirs {
-                if !ad.contains(&dir) {
-                    continue;
-                }
-            }
-            let dir_id = match get_node_id(&tx, &dir, "directory", &dir, 0) {
-                Some(id) => id,
-                None => continue,
-            };
-            let file_id = match get_node_id(&tx, rel_path, "file", rel_path, 0) {
-                Some(id) => id,
-                None => continue,
-            };
-            let _ = stmt.execute(rusqlite::params![dir_id, file_id]);
-        }
-
-        // Parent directory → child directory edges
-        for dir in all_dirs {
-            let parent = match parent_dir(dir) {
-                Some(p) => p,
-                None => continue,
-            };
-            if parent == *dir {
-                continue;
-            }
-            if let Some(ref ad) = affected_dirs {
-                if !ad.contains(&parent) {
-                    continue;
-                }
-            }
-            let parent_id = match get_node_id(&tx, &parent, "directory", &parent, 0) {
-                Some(id) => id,
-                None => continue,
-            };
-            let child_id = match get_node_id(&tx, dir, "directory", dir, 0) {
-                Some(id) => id,
-                None => continue,
-            };
-            let _ = stmt.execute(rusqlite::params![parent_id, child_id]);
-        }
-
-        // Restore dir→dir edges for unchanged sibling subdirectories that
-        // were cleaned up but aren't in all_dirs (no changed file under them).
         if let Some(ref ad) = affected_dirs {
-            let db_child_dirs = load_child_dirs_in_affected(&tx, ad);
-            for child_dir in &db_child_dirs {
-                if all_dirs.contains(child_dir.as_str()) {
-                    continue; // already handled above
-                }
-                let parent = match parent_dir(child_dir) {
-                    Some(p) => p,
-                    None => continue,
-                };
-                if !ad.contains(&parent) {
-                    continue;
-                }
-                if let (Some(p_id), Some(c_id)) = (
-                    get_node_id(&tx, &parent, "directory", &parent, 0),
-                    get_node_id(&tx, child_dir, "directory", child_dir, 0),
-                ) {
-                    let _ = stmt.execute(rusqlite::params![p_id, c_id]);
-                }
-            }
+            restore_unchanged_dir_edges(&tx, &mut stmt, all_dirs, ad);
         }
     }
     let _ = tx.commit();
@@ -646,97 +678,96 @@ fn compute_file_metrics(
     let _ = tx.commit();
 }
 
-fn compute_directory_metrics(
-    conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
-    all_dirs: &HashSet<String>,
-    import_edges: &[ImportEdge],
-) {
-    // Load ALL file paths from DB so directory metrics account for unchanged
-    // files during incremental builds (file_symbols only has changed files).
-    let all_db_files: Vec<String> = {
-        let mut v = Vec::new();
-        if let Ok(mut stmt) = conn.prepare("SELECT name FROM nodes WHERE kind = 'file'") {
-            if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
-                for row in rows.flatten() {
-                    v.push(row);
-                }
+/// Load every file path stored as a `kind='file'` node in the DB.
+fn load_all_file_paths_from_db(conn: &Connection) -> Vec<String> {
+    let mut v = Vec::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT name FROM nodes WHERE kind = 'file'") {
+        if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
+            for row in rows.flatten() {
+                v.push(row);
             }
         }
-        v
-    };
+    }
+    v
+}
 
-    // Build dir→files map (transitive: each dir contains all files in all subdirs).
-    // Uses DB files as the complete set, supplemented by file_symbols for any
-    // files not yet in the DB (full build where nodes were just inserted).
+/// Walk a relative file path up through its ancestor directories, pushing
+/// the file's path slice into each ancestor's bucket in `dir_files`.
+fn record_file_in_ancestor_dirs<'a>(
+    rel_path: &'a str,
+    dir_files: &mut HashMap<&'a str, Vec<&'a str>>,
+) {
+    let mut d = match parent_dir(rel_path) {
+        Some(p) => p,
+        None => return,
+    };
+    while !d.is_empty() && d != "." {
+        if let Some(files) = dir_files.get_mut(d.as_str()) {
+            files.push(rel_path);
+        }
+        d = match parent_dir(&d) {
+            Some(p) => p,
+            None => break,
+        };
+    }
+}
+
+/// Build the `dir → ancestor files` map. DB files are the authoritative set
+/// for incremental builds; `file_symbols` adds anything newly-inserted that
+/// hasn't yet shown up via the DB query (full-build first run).
+fn build_dir_files_map<'a>(
+    all_dirs: &'a HashSet<String>,
+    all_db_files: &'a [String],
+    file_symbols: &'a HashMap<String, FileSymbols>,
+) -> HashMap<&'a str, Vec<&'a str>> {
     let mut dir_files: HashMap<&str, Vec<&str>> = HashMap::new();
     for dir in all_dirs {
         dir_files.insert(dir.as_str(), Vec::new());
     }
     let mut seen_files: HashSet<&str> = HashSet::new();
-    // First: DB files (complete set for incremental builds)
-    for rel_path in &all_db_files {
-        if !seen_files.insert(rel_path.as_str()) {
-            continue;
-        }
-        let mut d = match parent_dir(rel_path) {
-            Some(p) => p,
-            None => continue,
-        };
-        while !d.is_empty() && d != "." {
-            if let Some(files) = dir_files.get_mut(d.as_str()) {
-                files.push(rel_path.as_str());
-            }
-            d = match parent_dir(&d) {
-                Some(p) => p,
-                None => break,
-            };
+    for rel_path in all_db_files {
+        if seen_files.insert(rel_path.as_str()) {
+            record_file_in_ancestor_dirs(rel_path.as_str(), &mut dir_files);
         }
     }
-    // Second: file_symbols keys (covers newly-inserted files in full builds)
     for rel_path in file_symbols.keys() {
-        if !seen_files.insert(rel_path.as_str()) {
-            continue;
-        }
-        let mut d = match parent_dir(rel_path) {
-            Some(p) => p,
-            None => continue,
-        };
-        while !d.is_empty() && d != "." {
-            if let Some(files) = dir_files.get_mut(d.as_str()) {
-                files.push(rel_path.as_str());
-            }
-            d = match parent_dir(&d) {
-                Some(p) => p,
-                None => break,
-            };
+        if seen_files.insert(rel_path.as_str()) {
+            record_file_in_ancestor_dirs(rel_path.as_str(), &mut dir_files);
         }
     }
+    dir_files
+}
 
-    // Build reverse map: file → set of ancestor directories
+/// Invert `dir_files` to a `file → ancestor dirs` map.
+fn build_file_to_ancestor_dirs<'a>(
+    dir_files: &'a HashMap<&'a str, Vec<&'a str>>,
+) -> HashMap<&'a str, HashSet<&'a str>> {
     let mut file_to_ancestor_dirs: HashMap<&str, HashSet<&str>> = HashMap::new();
-    for (dir, files) in &dir_files {
+    for (dir, files) in dir_files {
         for f in files {
-            file_to_ancestor_dirs
-                .entry(f)
-                .or_default()
-                .insert(dir);
+            file_to_ancestor_dirs.entry(*f).or_default().insert(*dir);
         }
     }
+    file_to_ancestor_dirs
+}
 
-    // Count intra-directory, fan-in, and fan-out edges per directory
-    let mut dir_edge_counts: HashMap<&str, (i64, i64, i64)> = HashMap::new(); // (intra, fan_in, fan_out)
+/// Tally intra-directory, fan-in, and fan-out edge counts per directory by
+/// classifying each import edge against the ancestor sets of its endpoints.
+fn count_directory_edges<'a>(
+    all_dirs: &'a HashSet<String>,
+    file_to_ancestor_dirs: &HashMap<&'a str, HashSet<&'a str>>,
+    import_edges: &[ImportEdge],
+) -> HashMap<&'a str, (i64, i64, i64)> {
+    let mut dir_edge_counts: HashMap<&str, (i64, i64, i64)> = HashMap::new();
     for dir in all_dirs {
         dir_edge_counts.insert(dir.as_str(), (0, 0, 0));
     }
     for edge in import_edges {
         let src_dirs = file_to_ancestor_dirs.get(edge.source_file.as_str());
         let tgt_dirs = file_to_ancestor_dirs.get(edge.target_file.as_str());
-
         if src_dirs.is_none() && tgt_dirs.is_none() {
             continue;
         }
-
         if let Some(src_dirs) = src_dirs {
             for dir in src_dirs {
                 if let Some(counts) = dir_edge_counts.get_mut(dir) {
@@ -758,10 +789,11 @@ fn compute_directory_metrics(
             }
         }
     }
+    dir_edge_counts
+}
 
-    // Count symbols per directory.
-    // Use DB counts (covers all files including unchanged ones in incremental
-    // builds) and fall back to file_symbols for newly-inserted files.
+/// Load per-file symbol counts from the DB (one query per build).
+fn load_db_symbol_counts(conn: &Connection) -> HashMap<String, i64> {
     let mut db_symbol_counts: HashMap<String, i64> = HashMap::new();
     if let Ok(mut stmt) = conn.prepare(
         "SELECT file, COUNT(*) FROM nodes \
@@ -776,26 +808,53 @@ fn compute_directory_metrics(
             }
         }
     }
+    db_symbol_counts
+}
+
+/// Count distinct definitions in `file_symbols` for a single newly-inserted
+/// file (used as a fallback when DB counts haven't been written yet).
+fn count_distinct_definitions(sym: &FileSymbols) -> i64 {
+    let mut seen = HashSet::new();
+    let mut count: i64 = 0;
+    for d in &sym.definitions {
+        let key = format!("{}|{}|{}", d.name, d.kind, d.line);
+        if seen.insert(key) {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Compute per-directory symbol counts by summing DB counts for every file
+/// under the directory, falling back to in-memory `file_symbols` for any
+/// files not yet persisted.
+fn compute_dir_symbol_counts<'a>(
+    dir_files: &HashMap<&'a str, Vec<&'a str>>,
+    db_symbol_counts: &HashMap<String, i64>,
+    file_symbols: &HashMap<String, FileSymbols>,
+) -> HashMap<&'a str, i64> {
     let mut dir_symbol_counts: HashMap<&str, i64> = HashMap::new();
-    for (dir, files) in &dir_files {
+    for (dir, files) in dir_files {
         let mut count: i64 = 0;
         for f in files {
             if let Some(&c) = db_symbol_counts.get(*f) {
                 count += c;
             } else if let Some(sym) = file_symbols.get(*f) {
-                let mut seen = HashSet::new();
-                for d in &sym.definitions {
-                    let key = format!("{}|{}|{}", d.name, d.kind, d.line);
-                    if seen.insert(key) {
-                        count += 1;
-                    }
-                }
+                count += count_distinct_definitions(sym);
             }
         }
-        dir_symbol_counts.insert(dir, count);
+        dir_symbol_counts.insert(*dir, count);
     }
+    dir_symbol_counts
+}
 
-    // Write directory metrics
+/// Write the directory metrics rows produced by the previous helpers.
+fn write_directory_metric_rows(
+    conn: &Connection,
+    dir_files: &HashMap<&str, Vec<&str>>,
+    dir_symbol_counts: &HashMap<&str, i64>,
+    dir_edge_counts: &HashMap<&str, (i64, i64, i64)>,
+) {
     let tx = match conn.unchecked_transaction() {
         Ok(tx) => tx,
         Err(_) => return,
@@ -809,13 +868,11 @@ fn compute_directory_metrics(
             Ok(s) => s,
             Err(_) => return,
         };
-
-        for (dir, files) in &dir_files {
+        for (dir, files) in dir_files {
             let dir_id = match get_node_id(&tx, dir, "directory", dir, 0) {
                 Some(id) => id,
                 None => continue,
             };
-
             let file_count = files.len() as i64;
             let symbol_count = dir_symbol_counts.get(dir).copied().unwrap_or(0);
             let (intra, fan_in, fan_out) = dir_edge_counts.get(dir).copied().unwrap_or((0, 0, 0));
@@ -825,7 +882,6 @@ fn compute_directory_metrics(
             } else {
                 None
             };
-
             let _ = upsert.execute(rusqlite::params![
                 dir_id,
                 symbol_count,
@@ -837,6 +893,25 @@ fn compute_directory_metrics(
         }
     }
     let _ = tx.commit();
+}
+
+fn compute_directory_metrics(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    all_dirs: &HashSet<String>,
+    import_edges: &[ImportEdge],
+) {
+    // Load ALL file paths from DB so directory metrics account for unchanged
+    // files during incremental builds (file_symbols only has changed files).
+    let all_db_files = load_all_file_paths_from_db(conn);
+    let dir_files = build_dir_files_map(all_dirs, &all_db_files, file_symbols);
+    let file_to_ancestor_dirs = build_file_to_ancestor_dirs(&dir_files);
+    let dir_edge_counts =
+        count_directory_edges(all_dirs, &file_to_ancestor_dirs, import_edges);
+    let db_symbol_counts = load_db_symbol_counts(conn);
+    let dir_symbol_counts =
+        compute_dir_symbol_counts(&dir_files, &db_symbol_counts, file_symbols);
+    write_directory_metric_rows(conn, &dir_files, &dir_symbol_counts, &dir_edge_counts);
 }
 
 #[cfg(test)]
