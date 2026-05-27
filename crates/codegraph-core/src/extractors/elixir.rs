@@ -157,86 +157,107 @@ fn extract_elixir_params(args: &Node, source: &[u8]) -> Vec<Definition> {
     params
 }
 
-/// Recursively walk a parameter pattern and emit each bound identifier as a
-/// `parameter` child. Handles bare identifiers, default-value `a \\ default`,
-/// list-cons `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and
-/// map / struct destructuring (`%{k: v}`, `%Foo{k: v}`).
-fn collect_elixir_param_identifiers(node: &Node, source: &[u8], out: &mut Vec<Definition>) {
-    match node.kind() {
-        "identifier" => {
-            out.push(child_def(
-                node_text(node, source).to_string(),
-                "parameter",
-                start_line(node),
-            ));
+/// Walk a parameter pattern and emit each bound identifier as a `parameter`
+/// child. Handles bare identifiers, default-value `a \\ default`, list-cons
+/// `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and map / struct
+/// destructuring (`%{k: v}`, `%Foo{k: v}`).
+///
+/// Implemented as an iterative worklist (rather than recursion + helpers) so
+/// the call graph has no function-level cycle: only one function performs the
+/// traversal and it invokes only leaf helpers (`push_elixir_sequence_items`,
+/// `push_elixir_map_values`, `push_elixir_binary_operator_operands`).
+fn collect_elixir_param_identifiers(root: &Node, source: &[u8], out: &mut Vec<Definition>) {
+    let mut stack: Vec<Node> = vec![*root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "identifier" => {
+                out.push(child_def(
+                    node_text(&node, source).to_string(),
+                    "parameter",
+                    start_line(&node),
+                ));
+            }
+            "binary_operator" => {
+                push_elixir_binary_operator_operands(&node, &mut stack);
+            }
+            "list" | "tuple" => {
+                push_elixir_sequence_items(&node, &mut stack);
+            }
+            "map" => {
+                push_elixir_map_values(&node, &mut stack);
+            }
+            _ => {}
         }
-        "binary_operator" => {
-            // `name \\ default` (default-value) binds the left operand only.
-            // `head | tail` (list-cons, appears inside a `list` pattern) binds both operands.
-            let Some(op) = node.child(1) else { return };
-            match op.kind() {
-                "\\\\" => {
-                    if let Some(left) = node.child(0) {
-                        collect_elixir_param_identifiers(&left, source, out);
-                    }
-                }
-                "|" => {
-                    if let Some(left) = node.child(0) {
-                        collect_elixir_param_identifiers(&left, source, out);
-                    }
-                    if let Some(right) = node.child(2) {
-                        collect_elixir_param_identifiers(&right, source, out);
-                    }
-                }
-                _ => {}
+    }
+}
+
+/// Push the binding-relevant operands of a `binary_operator` parameter onto the
+/// worklist:
+/// - `name \\ default` (default-value) binds the left operand only.
+/// - `head | tail`     (list-cons, appears inside a `list` pattern) binds both.
+fn push_elixir_binary_operator_operands<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
+    let Some(op) = node.child(1) else { return };
+    match op.kind() {
+        "\\\\" => {
+            if let Some(left) = node.child(0) {
+                stack.push(left);
             }
         }
-        "list" => {
-            // `[a, b, c]` or `[head | tail]` — walk children, skipping punctuation.
-            // The `|` cons case is handled by the `binary_operator` arm on recursion.
-            for i in 0..node.child_count() {
-                let Some(c) = node.child(i) else { continue };
-                let k = c.kind();
-                if k == "[" || k == "]" || k == "," { continue; }
-                collect_elixir_param_identifiers(&c, source, out);
+        "|" => {
+            if let Some(right) = node.child(2) {
+                stack.push(right);
             }
-        }
-        "tuple" => {
-            for i in 0..node.child_count() {
-                let Some(c) = node.child(i) else { continue };
-                let k = c.kind();
-                if k == "{" || k == "}" || k == "," { continue; }
-                collect_elixir_param_identifiers(&c, source, out);
-            }
-        }
-        "map" => {
-            // `%{k: v}` or `%Foo{k: v}` — walk map_content > keywords > pair and emit
-            // each pair's value side (the bound name). The leading `struct` alias is a
-            // type, not a bound identifier, so it is intentionally skipped.
-            for i in 0..node.child_count() {
-                let Some(c) = node.child(i) else { continue };
-                if c.kind() == "map_content" {
-                    collect_elixir_map_bindings(&c, source, out);
-                }
+            if let Some(left) = node.child(0) {
+                stack.push(left);
             }
         }
         _ => {}
     }
 }
 
-fn collect_elixir_map_bindings(content: &Node, source: &[u8], out: &mut Vec<Definition>) {
-    for i in 0..content.child_count() {
-        let Some(kws) = content.child(i) else { continue };
-        if kws.kind() != "keywords" { continue; }
-        for j in 0..kws.child_count() {
-            let Some(pair) = kws.child(j) else { continue };
-            if pair.kind() != "pair" { continue; }
-            for k in 0..pair.child_count() {
-                let Some(part) = pair.child(k) else { continue };
-                if part.kind() == "keyword" { continue; }
-                collect_elixir_param_identifiers(&part, source, out);
+/// Push the binding-relevant elements of a `list` or `tuple` parameter onto
+/// the worklist, skipping punctuation tokens.
+///
+/// Children are pushed in reverse source order so that `stack.pop()` yields
+/// them left-to-right (the worklist is a LIFO stack).
+fn push_elixir_sequence_items<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
+    let count = node.child_count();
+    for i in (0..count).rev() {
+        let Some(c) = node.child(i) else { continue };
+        let k = c.kind();
+        if k == "[" || k == "]" || k == "{" || k == "}" || k == "," { continue; }
+        stack.push(c);
+    }
+}
+
+/// Push the value side of every pair in a `map` or `%Foo{...}` parameter onto
+/// the worklist. The struct alias (`Foo`) is a type, not a bound identifier, so
+/// the leading `struct` child is intentionally skipped.
+///
+/// Values are collected in source order and then pushed in reverse so that
+/// `stack.pop()` yields them left-to-right (the worklist is a LIFO stack).
+fn push_elixir_map_values<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
+    // Collect values in source order first, then push in reverse so pop() is l-to-r.
+    let mut values: Vec<Node<'a>> = Vec::new();
+    for i in 0..node.child_count() {
+        let Some(content) = node.child(i) else { continue };
+        if content.kind() != "map_content" { continue; }
+        for j in 0..content.child_count() {
+            let Some(kws) = content.child(j) else { continue };
+            if kws.kind() != "keywords" { continue; }
+            for k in 0..kws.child_count() {
+                let Some(pair) = kws.child(k) else { continue };
+                if pair.kind() != "pair" { continue; }
+                for p in 0..pair.child_count() {
+                    let Some(part) = pair.child(p) else { continue };
+                    if part.kind() == "keyword" { continue; }
+                    values.push(part);
+                }
             }
         }
+    }
+    for v in values.into_iter().rev() {
+        stack.push(v);
     }
 }
 

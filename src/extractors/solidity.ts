@@ -1,15 +1,14 @@
-import type {
-  Call,
-  ExtractorOutput,
-  SubDeclaration,
-  TreeSitterNode,
-  TreeSitterTree,
-} from '../types.js';
+import type { ExtractorOutput, SubDeclaration, TreeSitterNode, TreeSitterTree } from '../types.js';
 import {
   extractModifierVisibility,
+  extractSimpleParameters,
   findChild,
+  findFirstChildOfTypes,
   findParentNode,
   nodeEndLine,
+  nodeStartLine,
+  pushCall,
+  pushImport,
   stripQuotes,
 } from './helpers.js';
 
@@ -103,7 +102,7 @@ function handleContractDecl(
   ctx.definitions.push({
     name,
     kind,
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     children: members.length > 0 ? members : undefined,
   });
@@ -125,7 +124,7 @@ function extractContractMembers(body: TreeSitterNode): SubDeclaration[] {
 
 /** Map a single contract body child to a SubDeclaration, or null if not a recognized member. */
 function extractContractMember(child: TreeSitterNode): SubDeclaration | null {
-  const line = child.startPosition.row + 1;
+  const line = nodeStartLine(child);
   switch (child.type) {
     case 'function_definition': {
       const fnName = child.childForFieldName('name');
@@ -172,7 +171,7 @@ function extractInheritance(node: TreeSitterNode, name: string, ctx: ExtractorOu
       const child = inheritance.child(j);
       if (!child) continue;
       if (child.type === 'user_defined_type' || child.type === 'identifier') {
-        ctx.classes.push({ name, extends: child.text, line: node.startPosition.row + 1 });
+        ctx.classes.push({ name, extends: child.text, line: nodeStartLine(node) });
       }
     }
   }
@@ -191,19 +190,16 @@ function handleStructDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
         members.push({
           name: memberName.text,
           kind: 'property',
-          line: child.startPosition.row + 1,
+          line: nodeStartLine(child),
         });
       }
     }
   }
 
-  const parent = findParentNode(node, SOL_PARENT_TYPES);
-  const fullName = parent ? `${parent}.${nameNode.text}` : nameNode.text;
-
   ctx.definitions.push({
-    name: fullName,
+    name: qualifyWithParent(node, nameNode.text),
     kind: 'struct',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     children: members.length > 0 ? members : undefined,
   });
@@ -217,17 +213,14 @@ function handleEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child && child.type === 'enum_value') {
-      members.push({ name: child.text, kind: 'constant', line: child.startPosition.row + 1 });
+      members.push({ name: child.text, kind: 'constant', line: nodeStartLine(child) });
     }
   }
 
-  const parent = findParentNode(node, SOL_PARENT_TYPES);
-  const fullName = parent ? `${parent}.${nameNode.text}` : nameNode.text;
-
   ctx.definitions.push({
-    name: fullName,
+    name: qualifyWithParent(node, nameNode.text),
     kind: 'enum',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     children: members.length > 0 ? members : undefined,
   });
@@ -244,7 +237,7 @@ function handleFunctionDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   ctx.definitions.push({
     name: fullName,
     kind,
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     children: params.length > 0 ? params : undefined,
     visibility: extractSolVisibility(node),
@@ -254,13 +247,10 @@ function handleFunctionDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleModifierDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
-  const parent = findParentNode(node, SOL_PARENT_TYPES);
-  const fullName = parent ? `${parent}.${nameNode.text}` : nameNode.text;
-
   ctx.definitions.push({
-    name: fullName,
+    name: qualifyWithParent(node, nameNode.text),
     kind: 'function',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     decorators: ['modifier'],
   });
@@ -269,13 +259,10 @@ function handleModifierDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleEventDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
-  const parent = findParentNode(node, SOL_PARENT_TYPES);
-  const fullName = parent ? `${parent}.${nameNode.text}` : nameNode.text;
-
   ctx.definitions.push({
-    name: fullName,
+    name: qualifyWithParent(node, nameNode.text),
     kind: 'type',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     decorators: ['event'],
   });
@@ -284,13 +271,10 @@ function handleEventDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleErrorDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
-  const parent = findParentNode(node, SOL_PARENT_TYPES);
-  const fullName = parent ? `${parent}.${nameNode.text}` : nameNode.text;
-
   ctx.definitions.push({
-    name: fullName,
+    name: qualifyWithParent(node, nameNode.text),
     kind: 'type',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     decorators: ['error'],
   });
@@ -299,16 +283,19 @@ function handleErrorDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleStateVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
-  const parent = findParentNode(node, SOL_PARENT_TYPES);
-  const fullName = parent ? `${parent}.${nameNode.text}` : nameNode.text;
-
   ctx.definitions.push({
-    name: fullName,
+    name: qualifyWithParent(node, nameNode.text),
     kind: 'variable',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     visibility: extractSolVisibility(node),
   });
+}
+
+/** Qualify `name` with the nearest contract/interface/library, if any. */
+function qualifyWithParent(node: TreeSitterNode, name: string): string {
+  const parent = findParentNode(node, SOL_PARENT_TYPES);
+  return parent ? `${parent}.${name}` : name;
 }
 
 function handleImportDirective(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -328,22 +315,17 @@ function handleImportDirective(node: TreeSitterNode, ctx: ExtractorOutput): void
           if (id) names.push(id.text);
         }
       }
-      ctx.imports.push({
-        source,
-        names: names.length > 0 ? names : ['*'],
-        line: node.startPosition.row + 1,
-      });
+      // Preserve the explicit `['*']` fallback — pushImport's default uses the
+      // source basename, but Solidity's convention here is to mark unqualified
+      // imports as `*`.
+      pushImport(ctx, node, source, names.length > 0 ? names : ['*']);
       return;
     }
     // source_import: handles `import * as X from "path"`
     if (child.type === 'source_import' || child.type === 'import_clause') {
-      const strNode = findChild(child, 'string') || findChild(child, 'string_literal');
+      const strNode = findFirstChildOfTypes(child, ['string', 'string_literal']);
       if (strNode) {
-        ctx.imports.push({
-          source: stripQuotes(strNode.text),
-          names: ['*'],
-          line: node.startPosition.row + 1,
-        });
+        pushImport(ctx, node, stripQuotes(strNode.text), ['*']);
         return;
       }
     }
@@ -354,35 +336,25 @@ function handleCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): void 
   const funcNode = node.childForFieldName('function') || node.childForFieldName('callee');
   if (!funcNode) return;
 
-  const call: Call = { name: '', line: node.startPosition.row + 1 };
+  let name = '';
+  let receiver: string | undefined;
   if (funcNode.type === 'member_expression' || funcNode.type === 'member_access') {
     const prop = funcNode.childForFieldName('property') || funcNode.childForFieldName('member');
     const obj = funcNode.childForFieldName('object') || funcNode.childForFieldName('expression');
-    if (prop) call.name = prop.text;
-    if (obj) call.receiver = obj.text;
+    if (prop) name = prop.text;
+    if (obj) receiver = obj.text;
   } else {
-    call.name = funcNode.text;
+    name = funcNode.text;
   }
-  if (call.name) ctx.calls.push(call);
+  if (name) pushCall(ctx, node, name, receiver !== undefined ? { receiver } : {});
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function extractSolParams(funcNode: TreeSitterNode): SubDeclaration[] {
-  const params: SubDeclaration[] = [];
   const paramList =
     funcNode.childForFieldName('parameters') || findChild(funcNode, 'parameter_list');
-  if (!paramList) return params;
-
-  for (let i = 0; i < paramList.childCount; i++) {
-    const param = paramList.child(i);
-    if (!param || param.type !== 'parameter') continue;
-    const nameNode = param.childForFieldName('name');
-    if (nameNode) {
-      params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });
-    }
-  }
-  return params;
+  return extractSimpleParameters(paramList, { paramTypes: ['parameter'] });
 }
 
 function extractSolVisibility(
