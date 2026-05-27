@@ -984,23 +984,19 @@ pub fn push_type_map_entry(
 /// per-language declarator-unwrap helper. This helper centralises the
 /// shared walker; callers supply the language's `unwrap_declarator`
 /// closure (e.g. `unwrap_cpp_declarator`).
-///
-/// Returns whether the node was a relevant C-family type-map node. The
-/// generic [`walk_tree`] match-fn signature still wraps this helper so
-/// the helper can be called from a tiny per-language adapter.
 pub fn match_c_family_type_map<F>(
     node: &Node,
     source: &[u8],
     symbols: &mut FileSymbols,
     mut unwrap_declarator: F,
-) -> bool
+)
 where
     F: FnMut(&Node, &[u8]) -> String,
 {
     match node.kind() {
         "declaration" => {
             let Some(type_node) = node.child_by_field_name("type") else {
-                return false;
+                return;
             };
             let type_name = node_text(&type_node, source).to_string();
             for i in 0..node.child_count() {
@@ -1018,20 +1014,18 @@ where
                 let final_name = unwrap_declarator(&name_node, source);
                 push_type_map_entry(symbols, final_name, type_name.clone());
             }
-            true
         }
         "parameter_declaration" => {
             let Some(type_node) = node.child_by_field_name("type") else {
-                return false;
+                return;
             };
             let Some(decl) = node.child_by_field_name("declarator") else {
-                return false;
+                return;
             };
             let name = unwrap_declarator(&decl, source);
             let type_name = node_text(&type_node, source).to_string();
             push_type_map_entry(symbols, name, type_name);
-            true
         }
-        _ => false,
+        _ => {}
     }
 }

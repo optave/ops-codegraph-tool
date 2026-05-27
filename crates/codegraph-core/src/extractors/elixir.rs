@@ -221,13 +221,7 @@ fn push_elixir_binary_operator_operands<'a>(node: &Node<'a>, stack: &mut Vec<Nod
 /// Items are pushed in reverse document order so that, with a LIFO stack, they
 /// are processed left-to-right — preserving the source ordering of bound names.
 fn push_elixir_sequence_items<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
-    let mut items: Vec<Node<'a>> = Vec::new();
-    for i in 0..node.child_count() {
-        let Some(c) = node.child(i) else { continue };
-        let k = c.kind();
-        if k == "[" || k == "]" || k == "{" || k == "}" || k == "," { continue; }
-        items.push(c);
-    }
+    let items: Vec<Node<'a>> = iter_children(node, PUNCTUATION_TOKENS).collect();
     for c in items.into_iter().rev() {
         stack.push(c);
     }
@@ -236,7 +230,12 @@ fn push_elixir_sequence_items<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
 /// Push the value side of every pair in a `map` or `%Foo{...}` parameter onto
 /// the worklist. The struct alias (`Foo`) is a type, not a bound identifier, so
 /// the leading `struct` child is intentionally skipped.
+///
+/// Values are collected in source order and then pushed in reverse so that
+/// `stack.pop()` yields them left-to-right (the worklist is a LIFO stack).
 fn push_elixir_map_values<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
+    // Collect values in source order first, then push in reverse so pop() is l-to-r.
+    let mut values: Vec<Node<'a>> = Vec::new();
     for i in 0..node.child_count() {
         let Some(content) = node.child(i) else { continue };
         if content.kind() != "map_content" { continue; }
@@ -249,10 +248,13 @@ fn push_elixir_map_values<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
                 for p in 0..pair.child_count() {
                     let Some(part) = pair.child(p) else { continue };
                     if part.kind() == "keyword" { continue; }
-                    stack.push(part);
+                    values.push(part);
                 }
             }
         }
+    }
+    for v in values.into_iter().rev() {
+        stack.push(v);
     }
 }
 
