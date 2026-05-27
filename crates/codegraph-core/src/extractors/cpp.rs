@@ -20,49 +20,9 @@ impl SymbolExtractor for CppExtractor {
 // ── Type inference ──────────────────────────────────────────────────────────
 
 fn match_cpp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
-    match node.kind() {
-        "declaration" => {
-            if let Some(type_node) = node.child_by_field_name("type") {
-                let type_name = node_text(&type_node, source);
-                for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i) {
-                        if child.kind() == "init_declarator" || child.kind() == "identifier" {
-                            let name_node = if child.kind() == "init_declarator" {
-                                child.child_by_field_name("declarator")
-                            } else {
-                                Some(child)
-                            };
-                            if let Some(name_node) = name_node {
-                                let final_name = unwrap_cpp_declarator(&name_node, source);
-                                if !final_name.is_empty() {
-                                    symbols.type_map.push(TypeMapEntry {
-                                        name: final_name,
-                                        type_name: type_name.to_string(),
-                                        confidence: 0.9,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        "parameter_declaration" => {
-            if let Some(type_node) = node.child_by_field_name("type") {
-                if let Some(decl) = node.child_by_field_name("declarator") {
-                    let name = unwrap_cpp_declarator(&decl, source);
-                    if !name.is_empty() {
-                        symbols.type_map.push(TypeMapEntry {
-                            name,
-                            type_name: node_text(&type_node, source).to_string(),
-                            confidence: 0.9,
-                        });
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
+    // Delegate the shared C-family declaration / parameter_declaration walker
+    // to the helper; supply the C++ declarator unwrap closure.
+    match_c_family_type_map(node, source, symbols, unwrap_cpp_declarator);
 }
 
 fn unwrap_cpp_declarator(node: &Node, source: &[u8]) -> String {
@@ -353,9 +313,9 @@ fn handle_cpp_preproc_include(node: &Node, source: &[u8], symbols: &mut FileSymb
             let name = last.strip_suffix(".h")
                 .or_else(|| last.strip_suffix(".hpp"))
                 .unwrap_or(last);
-            let mut imp = Import::new(path.to_string(), vec![name.to_string()], start_line(node));
-            imp.c_include = Some(true);
-            symbols.imports.push(imp);
+            push_import(symbols, node, path.to_string(), vec![name.to_string()], |imp| {
+                imp.c_include = Some(true);
+            });
         }
     }
 }
@@ -364,12 +324,7 @@ fn handle_cpp_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymb
     if let Some(fn_node) = node.child_by_field_name("function") {
         match fn_node.kind() {
             "identifier" | "qualified_identifier" | "scoped_identifier" => {
-                symbols.calls.push(Call {
-                    name: node_text(&fn_node, source).to_string(),
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver: None,
-                });
+                push_simple_call(symbols, node, node_text(&fn_node, source).to_string());
             }
             "field_expression" => {
                 let name = named_child_text(&fn_node, "field", source)
@@ -377,20 +332,10 @@ fn handle_cpp_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymb
                     .unwrap_or_else(|| node_text(&fn_node, source).to_string());
                 let receiver = named_child_text(&fn_node, "argument", source)
                     .map(|s| s.to_string());
-                symbols.calls.push(Call {
-                    name,
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver,
-                });
+                push_call(symbols, node, name, receiver, None);
             }
             _ => {
-                symbols.calls.push(Call {
-                    name: node_text(&fn_node, source).to_string(),
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver: None,
-                });
+                push_simple_call(symbols, node, node_text(&fn_node, source).to_string());
             }
         }
     }

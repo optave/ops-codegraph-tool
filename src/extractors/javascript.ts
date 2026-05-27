@@ -17,6 +17,7 @@ import {
   findParentNode,
   MAX_WALK_DEPTH,
   nodeEndLine,
+  nodeStartLine,
   setTypeMapEntry,
 } from './helpers.js';
 
@@ -99,7 +100,7 @@ function handleFnCapture(c: Record<string, TreeSitterNode>, definitions: Definit
   definitions.push({
     name: c.fn_name!.text,
     kind: 'function',
-    line: c.fn_node!.startPosition.row + 1,
+    line: nodeStartLine(c.fn_node!),
     endLine: nodeEndLine(c.fn_node!),
     children: fnChildren.length > 0 ? fnChildren : undefined,
   });
@@ -108,7 +109,7 @@ function handleFnCapture(c: Record<string, TreeSitterNode>, definitions: Definit
 /** Handle variable_declarator with arrow_function / function_expression capture. */
 function handleVarFnCapture(c: Record<string, TreeSitterNode>, definitions: Definition[]): void {
   const declNode = c.varfn_name!.parent?.parent;
-  const line = declNode ? declNode.startPosition.row + 1 : c.varfn_name!.startPosition.row + 1;
+  const line = declNode ? nodeStartLine(declNode) : nodeStartLine(c.varfn_name!);
   const varFnChildren = extractParameters(c.varfn_value!);
   definitions.push({
     name: c.varfn_name!.text,
@@ -126,7 +127,7 @@ function handleClassCapture(
   classes: ClassRelation[],
 ): void {
   const className = c.cls_name!.text;
-  const startLine = c.cls_node!.startPosition.row + 1;
+  const startLine = nodeStartLine(c.cls_node!);
   const clsChildren = extractClassProperties(c.cls_node!);
   definitions.push({
     name: className,
@@ -157,7 +158,7 @@ function handleMethodCapture(c: Record<string, TreeSitterNode>, definitions: Def
   definitions.push({
     name: fullName,
     kind: 'method',
-    line: c.meth_node!.startPosition.row + 1,
+    line: nodeStartLine(c.meth_node!),
     endLine: nodeEndLine(c.meth_node!),
     children: methChildren.length > 0 ? methChildren : undefined,
     visibility: methVis,
@@ -170,7 +171,7 @@ function handleExportCapture(
   exps: Export[],
   imports: Import[],
 ): void {
-  const exportLine = c.exp_node!.startPosition.row + 1;
+  const exportLine = nodeStartLine(c.exp_node!);
   const decl = c.exp_node!.childForFieldName('declaration');
   if (decl) {
     const declType = decl.type;
@@ -211,7 +212,7 @@ function handleInterfaceCapture(
   definitions.push({
     name: ifaceName,
     kind: 'interface',
-    line: ifaceNode.startPosition.row + 1,
+    line: nodeStartLine(ifaceNode),
     endLine: nodeEndLine(ifaceNode),
   });
   const body =
@@ -226,7 +227,7 @@ function handleTypeCapture(c: Record<string, TreeSitterNode>, definitions: Defin
   definitions.push({
     name: c.type_name!.text,
     kind: 'type',
-    line: typeNode.startPosition.row + 1,
+    line: nodeStartLine(typeNode),
     endLine: nodeEndLine(typeNode),
   });
 }
@@ -239,7 +240,7 @@ function handleImportCapture(c: Record<string, TreeSitterNode>, imports: Import[
   imports.push({
     source: modPath,
     names,
-    line: impNode.startPosition.row + 1,
+    line: nodeStartLine(impNode),
     typeOnly: isTypeOnly,
   });
 }
@@ -272,7 +273,7 @@ function dispatchQueryMatch(
   } else if (c.callfn_node) {
     calls.push({
       name: c.callfn_name!.text,
-      line: c.callfn_node.startPosition.row + 1,
+      line: nodeStartLine(c.callfn_node),
     });
     calls.push(...extractCallbackReferenceCalls(c.callfn_node));
   } else if (c.callmem_node) {
@@ -288,7 +289,7 @@ function dispatchQueryMatch(
   } else if (c.newfn_node) {
     calls.push({
       name: c.newfn_name!.text,
-      line: c.newfn_node.startPosition.row + 1,
+      line: nodeStartLine(c.newfn_node),
     });
   } else if (c.newmem_node) {
     const callInfo = extractCallInfo(c.newmem_fn!, c.newmem_node);
@@ -411,7 +412,7 @@ function extractDestructuredBindingsWalk(node: TreeSitterNode, definitions: Defi
         if (nameN && nameN.type === 'object_pattern') {
           extractDestructuredBindings(
             nameN,
-            declNode.startPosition.row + 1,
+            nodeStartLine(declNode),
             nodeEndLine(declNode),
             definitions,
           );
@@ -445,7 +446,7 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
       definitions.push({
         name: nameN.text,
         kind: 'constant',
-        line: declNode.startPosition.row + 1,
+        line: nodeStartLine(declNode),
         endLine: nodeEndLine(declNode),
       });
     }
@@ -470,12 +471,12 @@ function extractDynamicImportsWalk(node: TreeSitterNode, imports: Import[]): voi
           imports.push({
             source: modPath,
             names,
-            line: node.startPosition.row + 1,
+            line: nodeStartLine(node),
             dynamicImport: true,
           });
         } else {
           debug(
-            `Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`,
+            `Skipping non-static dynamic import() at line ${nodeStartLine(node)} (template literal or variable)`,
           );
         }
       }
@@ -497,7 +498,7 @@ function handleCommonJSAssignment(
   const leftText = left.text;
   if (!leftText.startsWith('module.exports') && leftText !== 'exports') return;
 
-  const assignLine = node.startPosition.row + 1;
+  const assignLine = nodeStartLine(node);
 
   // module.exports = require("…") — direct re-export
   if (right.type === 'call_expression') {
@@ -618,7 +619,7 @@ function handleFunctionDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     ctx.definitions.push({
       name: nameNode.text,
       kind: 'function',
-      line: node.startPosition.row + 1,
+      line: nodeStartLine(node),
       endLine: nodeEndLine(node),
       children: fnChildren.length > 0 ? fnChildren : undefined,
     });
@@ -629,7 +630,7 @@ function handleClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const className = nameNode.text;
-  const startLine = node.startPosition.row + 1;
+  const startLine = nodeStartLine(node);
   const clsChildren = extractClassProperties(node);
   ctx.definitions.push({
     name: className,
@@ -661,7 +662,7 @@ function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
     ctx.definitions.push({
       name: fullName,
       kind: 'method',
-      line: node.startPosition.row + 1,
+      line: nodeStartLine(node),
       endLine: nodeEndLine(node),
       children: methChildren.length > 0 ? methChildren : undefined,
       visibility: methVis,
@@ -675,7 +676,7 @@ function handleInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   ctx.definitions.push({
     name: nameNode.text,
     kind: 'interface',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
   const body =
@@ -693,7 +694,7 @@ function handleTypeAliasDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     ctx.definitions.push({
       name: nameNode.text,
       kind: 'type',
-      line: node.startPosition.row + 1,
+      line: nodeStartLine(node),
       endLine: nodeEndLine(node),
     });
   }
@@ -751,7 +752,7 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
           ctx.definitions.push({
             name: nameN.text,
             kind: 'function',
-            line: node.startPosition.row + 1,
+            line: nodeStartLine(node),
             endLine: nodeEndLine(valueN),
             children: varFnChildren.length > 0 ? varFnChildren : undefined,
           });
@@ -759,7 +760,7 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
           ctx.definitions.push({
             name: nameN.text,
             kind: 'constant',
-            line: node.startPosition.row + 1,
+            line: nodeStartLine(node),
             endLine: nodeEndLine(node),
           });
         } else if (isConst && nameN.type === 'object_pattern' && !hasFunctionScopeAncestor(node)) {
@@ -772,7 +773,7 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
           // handle_var_decl (Rust path) — skips bindings inside function bodies.
           extractDestructuredBindings(
             nameN,
-            node.startPosition.row + 1,
+            nodeStartLine(node),
             nodeEndLine(node),
             ctx.definitions,
           );
@@ -797,7 +798,7 @@ function handleEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
           enumChildren.push({
             name: mName.text,
             kind: 'constant',
-            line: member.startPosition.row + 1,
+            line: nodeStartLine(member),
           });
         }
       }
@@ -806,7 +807,7 @@ function handleEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   ctx.definitions.push({
     name: nameNode.text,
     kind: 'enum',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
     children: enumChildren.length > 0 ? enumChildren : undefined,
   });
@@ -832,7 +833,7 @@ function handleNewExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const ctor = node.childForFieldName('constructor') || node.child(1);
   if (!ctor) return;
   if (ctor.type === 'identifier') {
-    ctx.calls.push({ name: ctor.text, line: node.startPosition.row + 1 });
+    ctx.calls.push({ name: ctor.text, line: nodeStartLine(node) });
   } else if (ctor.type === 'member_expression') {
     const callInfo = extractCallInfo(ctor, node);
     if (callInfo) ctx.calls.push(callInfo);
@@ -847,10 +848,10 @@ function handleDynamicImportCall(node: TreeSitterNode, imports: Import[]): void 
   if (strArg) {
     const modPath = strArg.text.replace(/['"]/g, '');
     const names = extractDynamicImportNames(node);
-    imports.push({ source: modPath, names, line: node.startPosition.row + 1, dynamicImport: true });
+    imports.push({ source: modPath, names, line: nodeStartLine(node), dynamicImport: true });
   } else {
     debug(
-      `Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`,
+      `Skipping non-static dynamic import() at line ${nodeStartLine(node)} (template literal or variable)`,
     );
   }
 }
@@ -864,14 +865,14 @@ function handleImportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
     ctx.imports.push({
       source: modPath,
       names,
-      line: node.startPosition.row + 1,
+      line: nodeStartLine(node),
       typeOnly: isTypeOnly,
     });
   }
 }
 
 function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const exportLine = node.startPosition.row + 1;
+  const exportLine = nodeStartLine(node);
   const decl = node.childForFieldName('declaration');
   if (decl) {
     const declType = decl.type;
@@ -923,7 +924,7 @@ function extractParameters(node: TreeSitterNode): SubDeclaration[] {
     if (!child) continue;
     const t = child.type;
     if (t === 'identifier') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
+      params.push({ name: child.text, kind: 'parameter', line: nodeStartLine(child) });
     } else if (
       t === 'required_parameter' ||
       t === 'optional_parameter' ||
@@ -936,12 +937,12 @@ function extractParameters(node: TreeSitterNode): SubDeclaration[] {
         (nameNode.type === 'identifier' ||
           nameNode.type === 'shorthand_property_identifier_pattern')
       ) {
-        params.push({ name: nameNode.text, kind: 'parameter', line: child.startPosition.row + 1 });
+        params.push({ name: nameNode.text, kind: 'parameter', line: nodeStartLine(child) });
       }
     } else if (t === 'rest_pattern' || t === 'rest_element') {
       const nameNode = child.child(1) || child.childForFieldName('name');
       if (nameNode && nameNode.type === 'identifier') {
-        params.push({ name: nameNode.text, kind: 'parameter', line: child.startPosition.row + 1 });
+        params.push({ name: nameNode.text, kind: 'parameter', line: nodeStartLine(child) });
       }
     }
   }
@@ -975,7 +976,7 @@ function extractClassProperties(classNode: TreeSitterNode): SubDeclaration[] {
         props.push({
           name: nameNode.text,
           kind: 'property',
-          line: child.startPosition.row + 1,
+          line: nodeStartLine(child),
           visibility: vis,
         });
       }
@@ -1044,8 +1045,8 @@ function extractInterfaceMethods(
         definitions.push({
           name: `${interfaceName}.${nameNode.text}`,
           kind: 'method',
-          line: child.startPosition.row + 1,
-          endLine: child.endPosition.row + 1,
+          line: nodeStartLine(child),
+          endLine: nodeEndLine(child),
         });
       }
     }
@@ -1216,7 +1217,7 @@ function extractReceiverName(objNode: TreeSitterNode | null): string | undefined
 function extractCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | null {
   const fnType = fn.type;
   if (fnType === 'identifier') {
-    return { name: fn.text, line: callNode.startPosition.row + 1 };
+    return { name: fn.text, line: nodeStartLine(callNode) };
   }
   if (fnType === 'member_expression') {
     return extractMemberExprCallInfo(fn, callNode);
@@ -1233,7 +1234,7 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
   const prop = fn.childForFieldName('property');
   if (!prop) return null;
 
-  const callLine = callNode.startPosition.row + 1;
+  const callLine = nodeStartLine(callNode);
   const propText = prop.text;
 
   // .call()/.apply()/.bind() — dynamic invocation
@@ -1272,7 +1273,7 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
       const receiver = extractReceiverName(obj);
       return {
         name: methodName,
-        line: callNode.startPosition.row + 1,
+        line: nodeStartLine(callNode),
         dynamic: true,
         receiver,
       };
@@ -1435,7 +1436,7 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   }
 
   const result: Call[] = [];
-  const callLine = callNode.startPosition.row + 1;
+  const callLine = nodeStartLine(callNode);
 
   for (let i = 0; i < args.childCount; i++) {
     const child = args.child(i);
@@ -1540,7 +1541,7 @@ function extractCallbackDefinition(
     return {
       name: `command:${firstWord}`,
       kind: 'function',
-      line: cb.startPosition.row + 1,
+      line: nodeStartLine(cb),
       endLine: nodeEndLine(cb),
     };
   }
@@ -1554,7 +1555,7 @@ function extractCallbackDefinition(
     return {
       name: `route:${method.toUpperCase()} ${strArg}`,
       kind: 'function',
-      line: cb.startPosition.row + 1,
+      line: nodeStartLine(cb),
       endLine: nodeEndLine(cb),
     };
   }
@@ -1568,7 +1569,7 @@ function extractCallbackDefinition(
     return {
       name: `event:${eventName}`,
       kind: 'function',
-      line: cb.startPosition.row + 1,
+      line: nodeStartLine(cb),
       endLine: nodeEndLine(cb),
     };
   }
