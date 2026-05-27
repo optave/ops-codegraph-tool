@@ -254,10 +254,14 @@ function pushElixirBinaryOperatorOperands(node: TreeSitterNode, stack: TreeSitte
 /**
  * Push the binding-relevant elements of a `list` or `tuple` parameter onto
  * the worklist, skipping punctuation tokens.
+ *
+ * Items are pushed in reverse document order so that, with a LIFO stack, they
+ * are processed left-to-right — preserving the source ordering of bound names.
  */
 function pushElixirSequenceItems(node: TreeSitterNode, stack: TreeSitterNode[]): void {
-  for (const c of iterChildren(node, PUNCTUATION_TOKENS)) {
-    stack.push(c);
+  const items: TreeSitterNode[] = [...iterChildren(node, PUNCTUATION_TOKENS)];
+  for (let i = items.length - 1; i >= 0; i--) {
+    stack.push(items[i] as TreeSitterNode);
   }
 }
 
@@ -265,8 +269,12 @@ function pushElixirSequenceItems(node: TreeSitterNode, stack: TreeSitterNode[]):
  * Push the value side of every pair in a `map` or `%Foo{...}` parameter onto
  * the worklist. The struct alias (`Foo`) is a type, not a bound identifier, so
  * the leading `struct` child is intentionally skipped.
+ *
+ * Items are collected in document order and pushed in reverse so that, with a
+ * LIFO stack, they are processed left-to-right — preserving source ordering.
  */
 function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): void {
+  const parts: TreeSitterNode[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const content = node.child(i);
     if (!content || content.type !== 'map_content') continue;
@@ -279,10 +287,13 @@ function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): voi
         for (let p = 0; p < pair.childCount; p++) {
           const part = pair.child(p);
           if (!part || part.type === 'keyword') continue;
-          stack.push(part);
+          parts.push(part);
         }
       }
     }
+  }
+  for (let i = parts.length - 1; i >= 0; i--) {
+    stack.push(parts[i] as TreeSitterNode);
   }
 }
 
