@@ -16,7 +16,6 @@ import {
   nodeStartLine,
   pushCall,
   pushImport,
-  setTypeMapEntry,
 } from './helpers.js';
 
 /**
@@ -274,7 +273,13 @@ function handleJavaLocalVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): voi
     const child = node.child(i);
     if (child?.type === 'variable_declarator') {
       const nameNode = child.childForFieldName('name');
-      if (nameNode && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
+      // Use direct Map.set (last-wins) for local variable declarations.
+      // Local variable types are method-scoped and should override any
+      // prior entry (e.g. a same-named constructor parameter). Using
+      // setTypeMapEntry (first-wins on tie) would let a constructor
+      // parameter type block a local variable's more-specific concrete type.
+      if (nameNode && ctx.typeMap)
+        ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
     }
   }
 }
