@@ -297,7 +297,8 @@ function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): voi
     }
   }
   for (let i = values.length - 1; i >= 0; i--) {
-    stack.push(values[i]);
+    const v = values[i];
+    if (v) stack.push(v);
   }
 }
 
