@@ -707,7 +707,8 @@ function parseAndExtract(
   if (!tree) return null;
 
   // Extractor — on failure, skip file (ok:true, null) to match parser.ts
-  // behavior where extractor issues don't crash the build.
+  // behavior where extractor issues don't crash the build. Dispose the tree
+  // before returning null so WASM linear memory doesn't accumulate in the worker.
   let symbols: ExtractorOutput | null;
   try {
     const query = _queries.get(entry.id);
@@ -716,9 +717,11 @@ function parseAndExtract(
     // parser.ts::wasmExtractSymbols (parser.ts:789).
     symbols = entry.extractor(tree as any, filePath, query as any) ?? null;
   } catch {
+    disposeTree(tree);
     return null;
   }
   if (!symbols) {
+    disposeTree(tree);
     return null;
   }
   return { tree, symbols };
