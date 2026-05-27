@@ -78,7 +78,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 <sub>Comparison last verified: May 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
-| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph⁶](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
+| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph⁴](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Languages | **34** | ~12 | **32** | ~20 | 3 | 13 |
 | MCP server | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
@@ -86,14 +86,14 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 | Hybrid search (BM25 + semantic) | **Yes** | — | — | Keyword only | **Yes** | **Yes** |
 | Git-aware (diff impact, co-change, branch diff) | **All 3** | — | — | — | **All 3** | — |
 | Dead code / role classification | **Yes** | — | **Yes** | — | **Yes** | — |
-| Incremental rebuilds | **O(changed)** | — | O(n) | File-watcher⁴ | **Yes** | Commit-level⁵ |
+| Incremental rebuilds | **O(changed)** | — | O(n) | File-watcher⁵ | **Yes** | Commit-level⁶ |
 | Architecture rules + CI gate | **Yes** | — | — | — | — | — |
 | Security scanning (SAST / vuln detection) | Intentionally out of scope² | **Yes** | **Yes** | — | — | — |
 | Zero config, `npm install` | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
 | Graph export (GraphML / Neo4j / DOT) | **Yes** | **Yes** | — | — | — | — |
 | Open source + commercial use | **Yes** (Apache-2.0) | **Yes** (Apache-2.0) | **Yes** (MIT/Apache-2.0) | **Yes** (MIT) | Source-available³ | Non-commercial⁷ |
 
-<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁴ colbymchenry/codegraph uses OS file watchers (chokidar) for auto-sync — rebuild triggers on file change but re-parses from scratch per file, not O(changed) hashing. ⁵ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁶ colbymchenry/codegraph is an unrelated tool that shares the name. It focuses on reducing AI agent token consumption by pre-indexing code structure for fast context retrieval — not on structural analysis, CI gates, or complexity metrics. 28.5k stars. ⁷ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
+<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁴ colbymchenry/codegraph is an unrelated tool that shares the name. It focuses on reducing AI agent token consumption by pre-indexing code structure for fast context retrieval — not on structural analysis, CI gates, or complexity metrics. 28.1k stars. ⁵ colbymchenry/codegraph uses OS file watchers (chokidar) for auto-sync — rebuild triggers on file change but re-parses from scratch per file, not O(changed) hashing. ⁶ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁷ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
 
 ### What makes codegraph different
 
