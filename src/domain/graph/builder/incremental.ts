@@ -40,7 +40,6 @@ interface RebuildResult {
   nodesAdded: number;
   nodesRemoved: number;
   edgesAdded: number;
-  edgesRemoved: number;
   deleted?: boolean;
   event?: string;
   symbolDiff?: unknown;
@@ -139,48 +138,6 @@ function findReverseDeps(db: BetterSqlite3Database, relPath: string): string[] {
 function deleteOutgoingEdges(db: BetterSqlite3Database, relPath: string): void {
   const { deleteOutEdgesStmt } = getRevDepStmts(db);
   deleteOutEdgesStmt.run(relPath);
-}
-
-/**
- * Count the edges that will be removed when rebuilding `relPath`.
- *
- * Mirrors the exact deletion semantics of the rebuild path:
- *   1. `purgeFileData(relPath)` deletes every edge with source OR target in
- *      `relPath`'s nodes (see `purgeFileData` in `db/repository/build-stmts.ts`).
- *   2. For each reverse dep whose file parses successfully,
- *      `deleteOutgoingEdges(dep)` deletes the remaining outgoing edges from
- *      `dep`. The `dep → relPath` edges were already removed in step 1, so
- *      this only deletes `dep → other-file` edges.
- *
- * `reverseDeps` MUST be filtered to deps that will actually have their
- * outgoing edges deleted (i.e. those that parsed successfully). Including
- * deps that fail to parse would overcount, since their outgoing edges to
- * files other than `relPath` are never deleted.
- *
- * A naive `touching(relPath) + Σ outgoing(dep)` overcounts because every
- * `dep → relPath` edge is in both sets. Using a single DISTINCT query over the
- * union of source files (plus the target filter on `relPath`) deduplicates
- * automatically and matches the actual delete behaviour.
- */
-function countEdgesRemovedOnRebuild(
-  db: BetterSqlite3Database,
-  relPath: string,
-  reverseDeps: string[],
-): number {
-  // Build the union of source files whose outgoing edges will be deleted:
-  // `relPath` itself (via purgeFileData) plus each reverse dep (via
-  // deleteOutgoingEdges). The query also catches every edge ending in
-  // `relPath`, regardless of source — also deleted by purgeFileData.
-  const sourceFiles = [relPath, ...reverseDeps];
-  const placeholders = sourceFiles.map(() => '?').join(',');
-  // SQL uses literal placeholders — sourceFiles is bound as parameters, not
-  // interpolated, so this is safe from injection.
-  const sql = `SELECT COUNT(*) AS c FROM edges
-       WHERE source_id IN (SELECT id FROM nodes WHERE file IN (${placeholders}))
-          OR target_id IN (SELECT id FROM nodes WHERE file = ?)`;
-  const stmt = db.prepare(sql);
-  const row = stmt.get(...sourceFiles, relPath) as { c: number } | undefined;
-  return row?.c ?? 0;
 }
 
 async function parseReverseDep(
@@ -554,26 +511,6 @@ export async function rebuildFile(
   // Find reverse-deps BEFORE purging (edges still reference the old nodes)
   const reverseDeps = findReverseDeps(db, relPath);
 
-  // Pre-parse reverse-deps so we know which ones will actually have their
-  // outgoing edges deleted. Only deps that parse successfully get their edges
-  // deleted+rebuilt below; deps that fail to parse keep their existing edges.
-  // We compute `edgesRemoved` from this filtered set so the delta reflects the
-  // actual deletion semantics (Greptile #1220 follow-up).
-  const depSymbols = new Map<string, ExtractorOutput>();
-  for (const depRelPath of reverseDeps) {
-    const symbols_ = await parseReverseDep(rootDir, depRelPath, engineOpts, cache);
-    if (symbols_) {
-      depSymbols.set(depRelPath, symbols_);
-    }
-  }
-  const deletableReverseDeps = Array.from(depSymbols.keys());
-
-  // Count edges that will be removed during this rebuild so the watcher log can
-  // report a net delta (added − removed) instead of treating every re-inserted
-  // edge as a positive delta. Without this, comment-only edits log "+N edges"
-  // even when the DB total does not move. Issue #1219.
-  const edgesRemoved = countEdgesRemovedOnRebuild(db, relPath, deletableReverseDeps);
-
   // Purge ancillary tables (incl. embeddings), edges, and nodes in one pass.
   // Embeddings must be purged before nodes — better-sqlite3 enforces foreign
   // keys by default, and `embeddings.node_id` references `nodes.id`. Issue #1176.
@@ -588,7 +525,6 @@ export async function rebuildFile(
       nodesAdded: 0,
       nodesRemoved: oldNodes,
       edgesAdded: 0,
-      edgesRemoved,
       deleted: true,
       event: 'deleted',
       symbolDiff,
@@ -615,13 +551,7 @@ export async function rebuildFile(
 
   const fileNodeRow = stmts.getNodeId.get(relPath, 'file', relPath, 0);
   if (!fileNodeRow)
-    return {
-      file: relPath,
-      nodesAdded: newNodes,
-      nodesRemoved: oldNodes,
-      edgesAdded: 0,
-      edgesRemoved,
-    };
+    return { file: relPath, nodesAdded: newNodes, nodesRemoved: oldNodes, edgesAdded: 0 };
 
   const aliases: PathAliases = { baseUrl: null, paths: {} };
 
@@ -634,9 +564,13 @@ export async function rebuildFile(
   // Cascade: rebuild outgoing edges for reverse-dep files.
   // Two-pass approach: first rebuild direct edges (creating reexports edges for barrels),
   // then add barrel import edges (which need reexports edges to exist for resolution).
-  // `depSymbols` was populated above (pre-parse for edgesRemoved accounting).
-  for (const depRelPath of depSymbols.keys()) {
-    deleteOutgoingEdges(db, depRelPath);
+  const depSymbols = new Map<string, ExtractorOutput>();
+  for (const depRelPath of reverseDeps) {
+    const symbols_ = await parseReverseDep(rootDir, depRelPath, engineOpts, cache);
+    if (symbols_) {
+      deleteOutgoingEdges(db, depRelPath);
+      depSymbols.set(depRelPath, symbols_);
+    }
   }
   // Pass 1: direct edges only (no barrel resolution) — creates reexports edges
   for (const [depRelPath, symbols_] of depSymbols) {
@@ -667,7 +601,6 @@ export async function rebuildFile(
     nodesAdded: newNodes,
     nodesRemoved: oldNodes,
     edgesAdded,
-    edgesRemoved,
     deleted: false,
     event,
     symbolDiff,
