@@ -154,7 +154,6 @@ const dbPath = path.join(root, '.codegraph', 'graph.db');
 const { MODELS } = await import(srcImport(srcDir, 'domain/search/index.js'));
 
 const TIMEOUT_MS = 1_800_000; // 30 min — with symbol sampling, embed (~18 min) + search (~5 min) fits comfortably
-const hasHfToken = !!process.env.HF_TOKEN;
 const modelKeys = Object.keys(MODELS);
 const results = {};
 let symbolCount = 0;
@@ -162,11 +161,6 @@ let symbolCount = 0;
 const scriptPath = fileURLToPath(import.meta.url);
 
 for (const key of modelKeys) {
-	if (key === 'jina-code' && !hasHfToken) {
-		console.error(`Skipping ${key} (HF_TOKEN not set)`);
-		continue;
-	}
-
 	const data = await forkWorker(scriptPath, MODEL_WORKER_KEY, key, process.argv.slice(2), TIMEOUT_MS);
 	if (data) {
 		results[key] = data.result;
