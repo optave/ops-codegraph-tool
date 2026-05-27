@@ -30,7 +30,7 @@ export const DEFAULTS = {
     defaultLimit: 20,
     excludeTests: false,
   },
-  embeddings: { model: 'nomic-v1.5', llmProvider: null as string | null },
+  embeddings: { model: null as string | null, llmProvider: null as string | null },
   llm: {
     provider: null as string | null,
     model: null as string | null,

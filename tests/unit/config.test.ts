@@ -58,7 +58,7 @@ describe('DEFAULTS', () => {
   });
 
   it('has embeddings defaults', () => {
-    expect(DEFAULTS.embeddings).toEqual({ model: 'nomic-v1.5', llmProvider: null });
+    expect(DEFAULTS.embeddings).toEqual({ model: null, llmProvider: null });
   });
 
   it('has llm defaults', () => {
