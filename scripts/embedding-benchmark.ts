@@ -211,6 +211,10 @@ for (const key of modelKeys) {
 	try {
 		const srcDb = new Database(hostDbPath, { readonly: true });
 		try {
+			// SQLite does not support bound parameters in VACUUM INTO — the
+			// destination must be a string literal. Single-quote doubling is the
+			// correct and complete escape; no other characters are special in
+			// SQLite string literals.
 			srcDb.exec(`VACUUM INTO '${modelDbPath.replace(/'/g, "''")}'`);
 		} finally {
 			srcDb.close();
