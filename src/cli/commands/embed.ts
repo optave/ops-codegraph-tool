@@ -39,7 +39,7 @@ export const command: CommandDefinition = {
   options: [
     [
       '-m, --model <name>',
-      'Embedding model. Defaults to the model used by existing embeddings, or config, or the built-in default. Run `codegraph models` for options',
+      'Embedding model. Defaults to config, then the model used by existing embeddings, then the built-in default. Run `codegraph models` for options',
     ],
     [
       '-s, --strategy <name>',
