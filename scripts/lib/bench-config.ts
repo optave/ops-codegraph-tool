@@ -239,10 +239,11 @@ async function installNativePackage(tmpDir: string, installedPkg: any): Promise<
 		const safeNativePkg = assertSafePkgName(nativePkg);
 		const safeNativeVersion = assertSafePkgVersion(optDeps[nativePkg]);
 		console.error(`Installing native package ${safeNativePkg}@${safeNativeVersion}...`);
+		const maxRetries = 5;
 		await npmInstallWithRetries(
 			`${safeNativePkg}@${safeNativeVersion}`,
 			tmpDir,
-			5,
+			maxRetries,
 			'Native install',
 			['--no-save'],
 		);
