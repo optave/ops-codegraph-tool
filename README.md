@@ -623,19 +623,19 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.11.0 (2026-05-25)*
+*Last updated: v3.10.0 (2026-05-11)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **3.2 ms/file** | **15.4 ms/file** |
-| Query time | **27ms** | **33ms** |
-| No-op rebuild | **19ms** | **18ms** |
-| 1-file rebuild | **70ms** | **53ms** |
-| Query: fn-deps | **2.1ms** | **1.8ms** |
-| Query: path | **2ms** | **1.8ms** |
-| ~50,000 files (est.) | **~160.0s build** | **~770.0s build** |
-| Resolution precision | **89.9%** | — |
-| Resolution recall | **42.3%** | — |
+| Build speed | **4.8 ms/file** | **18.1 ms/file** |
+| Query time | **50ms** | **38ms** |
+| No-op rebuild | **24ms** | **15ms** |
+| 1-file rebuild | **67ms** | **51ms** |
+| Query: fn-deps | **2.2ms** | **2.1ms** |
+| Query: path | **2.3ms** | **2.1ms** |
+| ~50,000 files (est.) | **~240.0s build** | **~905.0s build** |
+| Resolution precision | **90.7%** | — |
+| Resolution recall | **42.9%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -652,9 +652,9 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | csharp | 100.0% | 52.6% | 10 | 0 | 9 | 19 | — |
 | cuda | 50.0% | 33.3% | 4 | 4 | 8 | 12 | — |
 | dart | 0.0% | 0.0% | 0 | 0 | 18 | 18 | — |
-| elixir | 0.0% | 0.0% | 0 | 0 | 21 | 21 | — |
+| elixir | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
 | erlang | 100.0% | 100.0% | 12 | 0 | 0 | 12 | — |
-| fsharp | 0.0% | 0.0% | 0 | 11 | 12 | 12 | — |
+| fsharp | 0.0% | 0.0% | 0 | 9 | 12 | 12 | — |
 | gleam | 100.0% | 26.7% | 4 | 0 | 11 | 15 | — |
 | go | 100.0% | 69.2% | 9 | 0 | 4 | 13 | 13/14 |
 | groovy | 100.0% | 7.7% | 1 | 0 | 12 | 13 | — |
@@ -682,7 +682,7 @@ Metrics are normalized per file for cross-version comparability. Times above are
 
 | Mode | Resolved | Expected | Recall |
 |------|--------:|---------:|-------:|
-| module-function | 16 | 112 | 14.3% |
+| module-function | 16 | 106 | 15.1% |
 | receiver-typed | 17 | 104 | 16.3% |
 | static | 66 | 93 | 71.0% |
 | same-file | 48 | 86 | 55.8% |
