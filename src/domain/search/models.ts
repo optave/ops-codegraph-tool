@@ -41,6 +41,8 @@ export interface ModelConfig {
   contextWindow: number;
   desc: string;
   quantized: boolean;
+  /** Pooling strategy passed to the transformers pipeline. Defaults to 'mean'. */
+  pooling?: 'mean' | 'cls';
 }
 
 // Lazy-load transformers (heavy, optional module)
@@ -91,7 +93,7 @@ export const MODELS: Record<string, ModelConfig> = {
     name: 'nomic-ai/nomic-embed-text-v1.5',
     dim: 768,
     contextWindow: 8192,
-    desc: 'Improved nomic (~137MB). Matryoshka dimensions, 8192 context.',
+    desc: 'Matryoshka MRL trained (~137MB). 8192 context. Codegraph stores full 768d (no truncation); v1 scores higher on our benchmark.',
     quantized: false,
   },
   'bge-large': {
@@ -101,11 +103,41 @@ export const MODELS: Record<string, ModelConfig> = {
     desc: 'Best general retrieval (~335MB). Top MTEB scores.',
     quantized: false,
   },
+  'mxbai-xsmall': {
+    name: 'mixedbread-ai/mxbai-embed-xsmall-v1',
+    dim: 384,
+    contextWindow: 4096,
+    desc: 'Tiny model with long context (~50MB). 4096 ctx.',
+    quantized: false,
+    pooling: 'cls',
+  },
+  'mxbai-large': {
+    name: 'mixedbread-ai/mxbai-embed-large-v1',
+    dim: 1024,
+    contextWindow: 512,
+    desc: 'Top MTEB BERT-large, Matryoshka dimensions (~400MB). 512 ctx.',
+    quantized: false,
+    pooling: 'cls',
+  },
+  'bge-m3': {
+    name: 'Xenova/bge-m3',
+    dim: 1024,
+    contextWindow: 8192,
+    desc: 'Multilingual, multi-task (~600MB). 100+ languages, 8192 context.',
+    quantized: false,
+  },
+  modernbert: {
+    name: 'nomic-ai/modernbert-embed-base',
+    dim: 768,
+    contextWindow: 8192,
+    desc: 'ModernBERT base (~150MB). Newer architecture, 8192 ctx, English.',
+    quantized: false,
+  },
 };
 
 export const EMBEDDING_STRATEGIES: readonly string[] = ['structured', 'source'];
 
-export const DEFAULT_MODEL: string = 'nomic-v1.5';
+export const DEFAULT_MODEL: string = 'nomic';
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const BATCH_SIZE_MAP: Record<string, number> = {
   minilm: 32,
@@ -115,6 +147,10 @@ const BATCH_SIZE_MAP: Record<string, number> = {
   nomic: 8,
   'nomic-v1.5': 8,
   'bge-large': 4,
+  'mxbai-xsmall': 32,
+  'mxbai-large': 4,
+  'bge-m3': 4,
+  modernbert: 8,
 };
 const DEFAULT_BATCH_SIZE = 32;
 
@@ -274,7 +310,7 @@ export async function embed(
     const batch = texts.slice(i, i + batchSize);
     const output =
       (await // biome-ignore lint/complexity/noBannedTypes: dynamically loaded extractor is untyped
-      (ext as Function)(batch, { pooling: 'mean', normalize: true })) as {
+      (ext as Function)(batch, { pooling: config.pooling ?? 'mean', normalize: true })) as {
         data: number[];
       };
 

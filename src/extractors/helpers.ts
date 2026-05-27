@@ -1,10 +1,22 @@
-import type { SubDeclaration, TreeSitterNode, TypeMapEntry } from '../types.js';
+import type {
+  Call,
+  ExtractorOutput,
+  Import,
+  SubDeclaration,
+  TreeSitterNode,
+  TypeMapEntry,
+} from '../types.js';
 
 /**
  * Maximum recursion depth for tree-sitter AST walkers.
  * Shared across all language extractors to prevent stack overflow on deeply nested ASTs.
  */
 export const MAX_WALK_DEPTH = 200;
+
+/** Convert a tree-sitter node's start row to a 1-based source line. */
+export function nodeStartLine(node: TreeSitterNode): number {
+  return node.startPosition.row + 1;
+}
 
 export function nodeEndLine(node: TreeSitterNode): number {
   return node.endPosition.row + 1;
@@ -17,6 +29,56 @@ export function findChild(node: TreeSitterNode, type: string): TreeSitterNode | 
   }
   return null;
 }
+
+/**
+ * Find the first child whose type is in `types`. Useful when several grammar
+ * variants name the same conceptual node differently (e.g. `string` vs
+ * `string_literal`). Returns the first match in document order, or null.
+ */
+export function findFirstChildOfTypes(
+  node: TreeSitterNode,
+  types: readonly string[],
+): TreeSitterNode | null {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && types.includes(child.type)) return child;
+  }
+  return null;
+}
+
+/**
+ * Iterate the direct children of `node` in document order, skipping nulls and
+ * tokens whose type appears in `skipTypes`. Mirrors the common
+ * `for (let i = 0; i < node.childCount; i++) { const c = node.child(i); if (...) continue; ... }`
+ * idiom while letting callers filter out grammar punctuation (`,`, `(`, `{`, etc.).
+ */
+export function* iterChildren(
+  node: TreeSitterNode,
+  skipTypes: ReadonlySet<string> = EMPTY_SKIP_SET,
+): Generator<TreeSitterNode> {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (skipTypes.has(child.type)) continue;
+    yield child;
+  }
+}
+
+const EMPTY_SKIP_SET: ReadonlySet<string> = new Set();
+
+/** Common punctuation tokens — handy as a `skipTypes` set for `iterChildren`. */
+export const PUNCTUATION_TOKENS: ReadonlySet<string> = new Set([
+  ',',
+  ';',
+  '(',
+  ')',
+  '[',
+  ']',
+  '{',
+  '}',
+  ':',
+  '.',
+]);
 
 /**
  * Merge a type-map entry, keeping the higher-confidence one.
@@ -196,4 +258,146 @@ export function extractModifierVisibility(
     if (result) return result;
   }
   return undefined;
+}
+
+// ── Output-push helpers ────────────────────────────────────────────────────
+//
+// Most extractors finish with `ctx.calls.push({ name, line: node.startPosition.row + 1 })`
+// or `ctx.imports.push({ source, names, line: node.startPosition.row + 1 })`.
+// Centralising the construction keeps `line` derivation consistent and removes
+// the ~108 hand-rolled `startPosition.row + 1` literals scattered across
+// language extractors.
+
+/**
+ * Append a `Call` to the extractor output. `line` defaults to the start line of
+ * `node`; pass `extra` for `receiver` / `dynamic` flags.
+ */
+export function pushCall(
+  ctx: ExtractorOutput,
+  node: TreeSitterNode,
+  name: string,
+  extra: { receiver?: string; dynamic?: boolean } = {},
+): void {
+  if (!name) return;
+  const call: Call = { name, line: nodeStartLine(node) };
+  if (extra.receiver !== undefined) call.receiver = extra.receiver;
+  if (extra.dynamic !== undefined) call.dynamic = extra.dynamic;
+  ctx.calls.push(call);
+}
+
+/**
+ * Append an `Import` to the extractor output. `line` defaults to the start
+ * line of `node`. If `names` is empty, the source basename (split on `/`) is
+ * used as a single-name fallback — matching the convention in gleam, julia,
+ * and similar module-path imports.
+ */
+export function pushImport(
+  ctx: ExtractorOutput,
+  node: TreeSitterNode,
+  source: string,
+  names: string[],
+  flags: Partial<Omit<Import, 'source' | 'names' | 'line'>> = {},
+): void {
+  if (!source) return;
+  const resolved = names.length > 0 ? names : [lastPathSegment(source, '/') || source];
+  const entry: Import = { source, names: resolved, line: nodeStartLine(node) };
+  Object.assign(entry, flags);
+  ctx.imports.push(entry);
+}
+
+// ── Parameter extraction ───────────────────────────────────────────────────
+
+/**
+ * Options for {@link extractSimpleParameters}.
+ */
+export interface ExtractParametersOptions {
+  /** Tree-sitter types that mark a single parameter node (e.g. `formal_parameter`). */
+  paramTypes: readonly string[];
+  /**
+   * Field name on each parameter that holds the bound identifier. Defaults to
+   * `'name'`. Pass `null` to use the parameter node itself when its type is in
+   * `paramTypes` and it has no `name` field (e.g. R's bare `identifier`).
+   */
+  nameField?: string | null;
+  /**
+   * If true, when `nameField` lookup fails fall back to the first `identifier`
+   * child of the parameter. Useful for Gleam / Solidity-style grammars.
+   */
+  fallbackToIdentifier?: boolean;
+  /**
+   * Optional type-map sink. When provided, the parameter's `type` field text
+   * (if present) is recorded with the given confidence.
+   */
+  typeMap?: Map<string, TypeMapEntry>;
+  /** Confidence used when writing into `typeMap`. Defaults to `0.9`. */
+  typeMapConfidence?: number;
+  /**
+   * Optional callback to derive the type text from the parameter's `type`
+   * field node. Defaults to `node.text`. Use this for languages where the
+   * `type` field is wrapped (e.g. Java `generic_type` → first child).
+   */
+  resolveType?: (typeNode: TreeSitterNode) => string | undefined;
+}
+
+/**
+ * Extract parameters from a parameter-list node using a uniform pattern.
+ *
+ * This collapses the boilerplate in `extract*Params` helpers across
+ * Java/Julia/Gleam/Solidity/R/etc. — each one walks the parameter list,
+ * matches a parameter node type, reads the `name` field, and pushes a
+ * `SubDeclaration` with `kind: 'parameter'`.
+ */
+export function extractSimpleParameters(
+  paramListNode: TreeSitterNode | null,
+  options: ExtractParametersOptions,
+): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
+  if (!paramListNode) return params;
+  const { paramTypes, nameField = 'name', fallbackToIdentifier = false } = options;
+
+  for (let i = 0; i < paramListNode.childCount; i++) {
+    const param = paramListNode.child(i);
+    if (!param || !paramTypes.includes(param.type)) continue;
+    const nameNode = resolveParamName(param, nameField, fallbackToIdentifier);
+    if (!nameNode) continue;
+    params.push({ name: nameNode.text, kind: 'parameter', line: nodeStartLine(param) });
+    recordParamType(param, nameNode.text, options);
+  }
+  return params;
+}
+
+/** Record a parameter's declared type into the type-map sink, if configured. */
+function recordParamType(
+  param: TreeSitterNode,
+  paramName: string,
+  options: ExtractParametersOptions,
+): void {
+  const { typeMap, resolveType, typeMapConfidence = 0.9 } = options;
+  if (!typeMap) return;
+  const typeNode = param.childForFieldName('type');
+  if (!typeNode) return;
+  const typeText = resolveType ? resolveType(typeNode) : typeNode.text;
+  if (!typeText) return;
+  setTypeMapEntry(typeMap, paramName, typeText, typeMapConfidence);
+}
+
+/**
+ * Resolve the identifier node that names a parameter. Used by
+ * {@link extractSimpleParameters}; exposed so language-specific extractors
+ * can reuse the same lookup logic in custom loops.
+ */
+export function resolveParamName(
+  paramNode: TreeSitterNode,
+  nameField: string | null,
+  fallbackToIdentifier: boolean,
+): TreeSitterNode | null {
+  if (nameField === null) {
+    return paramNode;
+  }
+  const named = paramNode.childForFieldName(nameField);
+  if (named) return named;
+  if (fallbackToIdentifier) {
+    return findChild(paramNode, 'identifier');
+  }
+  return null;
 }
