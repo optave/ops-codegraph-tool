@@ -16,6 +16,7 @@ import {
   nodeStartLine,
   pushCall,
   pushImport,
+  setTypeMapEntry,
 } from './helpers.js';
 
 /**
@@ -273,7 +274,7 @@ function handleJavaLocalVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): voi
     const child = node.child(i);
     if (child?.type === 'variable_declarator') {
       const nameNode = child.childForFieldName('name');
-      if (nameNode) ctx.typeMap?.set(nameNode.text, { type: typeName, confidence: 0.9 });
+      if (nameNode && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
     }
   }
 }
