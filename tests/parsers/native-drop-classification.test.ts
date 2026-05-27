@@ -89,36 +89,25 @@ describe('formatDropExtensionSummary', () => {
     expect(formatDropExtensionSummary(new Map())).toBe('');
   });
 
-  it('renders one indented row per extension prefixed with a leading newline', () => {
+  it('lists every extension when under the cap', () => {
     const buckets = new Map<string, string[]>([
       ['.ts', ['a.ts', 'b.ts']],
       ['.py', ['c.py']],
     ]);
-    expect(formatDropExtensionSummary(buckets)).toBe('\n  .ts  2  a.ts, b.ts\n  .py  1  c.py');
+    expect(formatDropExtensionSummary(buckets)).toBe('.ts (2: a.ts, b.ts); .py (1: c.py)');
   });
 
   it('caps samples per extension at 3 and renders +N more', () => {
     const buckets = new Map<string, string[]>([['.ts', ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts']]]);
-    expect(formatDropExtensionSummary(buckets)).toBe('\n  .ts  5  a.ts, b.ts, c.ts (+2 more)');
+    expect(formatDropExtensionSummary(buckets)).toBe('.ts (5: a.ts, b.ts, c.ts, +2 more)');
   });
 
   it('shows exactly MAX_SAMPLES samples without a +N suffix when count equals the cap', () => {
     const buckets = new Map<string, string[]>([['.ts', ['a.ts', 'b.ts', 'c.ts']]]);
-    expect(formatDropExtensionSummary(buckets)).toBe('\n  .ts  3  a.ts, b.ts, c.ts');
+    expect(formatDropExtensionSummary(buckets)).toBe('.ts (3: a.ts, b.ts, c.ts)');
   });
 
-  it('right-pads the extension column and right-aligns the count column for tabular layout', () => {
-    const buckets = new Map<string, string[]>([
-      ['.kt', ['a.kt']], // 100 files later — wider count column
-      ['.tsx', new Array(100).fill('x.tsx')],
-    ]);
-    const out = formatDropExtensionSummary(buckets);
-    // `.tsx` (4 chars) sets the ext width; `.kt` is padded to 4 chars.
-    // 100 (3 chars) sets the count width; 1 is right-aligned to 3 chars.
-    expect(out).toBe('\n  .tsx  100  x.tsx, x.tsx, x.tsx (+97 more)\n  .kt     1  a.kt');
-  });
-
-  it('caps extensions at 6 and renders +N more extension(s) on its own row', () => {
+  it('caps extensions at 6 and renders +N more extension(s)', () => {
     // 8 extensions, all with 1 file — sorted by count is a stable tie so insertion
     // order wins, and the first 6 are shown.
     const buckets = new Map<string, string[]>([
@@ -132,12 +121,12 @@ describe('formatDropExtensionSummary', () => {
       ['.h', ['1.h']],
     ]);
     const out = formatDropExtensionSummary(buckets);
-    expect(out.endsWith('\n  (+2 more extension(s))')).toBe(true);
+    expect(out.endsWith('; +2 more extension(s)')).toBe(true);
     // First 6 extensions are present, the last 2 (.g, .h) are not.
-    expect(out).toContain('\n  .a  1  1.a');
-    expect(out).toContain('\n  .f  1  1.f');
-    expect(out).not.toContain('  .g  ');
-    expect(out).not.toContain('  .h  ');
+    expect(out).toContain('.a (1: 1.a)');
+    expect(out).toContain('.f (1: 1.f)');
+    expect(out).not.toContain('.g (');
+    expect(out).not.toContain('.h (');
   });
 
   it('sorts by descending file count so the loudest offender is first', () => {

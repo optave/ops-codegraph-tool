@@ -1018,7 +1018,7 @@ async function backfillNativeDroppedFiles(
     // summary directly to avoid a redundant classification pass.
     const staleByExt = groupByExtension(staleRel);
     info(
-      `Detected ${staleRel.length} deleted WASM-only file(s) across ${staleByExt.size} extension(s) the native orchestrator skipped; purging stale rows:${formatDropExtensionSummary(staleByExt)}`,
+      `Detected ${staleRel.length} deleted WASM-only file(s) the native orchestrator skipped; purging stale rows: ${formatDropExtensionSummary(staleByExt)}`,
     );
     purgeFilesData(dbConn, staleRel);
   }
@@ -1031,15 +1031,13 @@ async function backfillNativeDroppedFiles(
   // the language IS supported by the addon yet the file was dropped anyway.
   const { byReason, totals } = classifyNativeDrops(missingRel);
   if (totals['unsupported-by-native'] > 0) {
-    const buckets = byReason['unsupported-by-native'];
     info(
-      `Native orchestrator skipped ${totals['unsupported-by-native']} file(s) across ${buckets.size} extension(s) in languages without a Rust extractor; backfilling via WASM:${formatDropExtensionSummary(buckets)}`,
+      `Native orchestrator skipped ${totals['unsupported-by-native']} file(s) in languages without a Rust extractor; backfilling via WASM: ${formatDropExtensionSummary(byReason['unsupported-by-native'])}`,
     );
   }
   if (totals['native-extractor-failure'] > 0) {
-    const buckets = byReason['native-extractor-failure'];
     warn(
-      `Native orchestrator dropped ${totals['native-extractor-failure']} file(s) across ${buckets.size} extension(s) in natively-supported languages — likely a Rust extractor bug. Backfilling via WASM:${formatDropExtensionSummary(buckets)}`,
+      `Native orchestrator dropped ${totals['native-extractor-failure']} file(s) in natively-supported languages — likely a Rust extractor bug. Backfilling via WASM: ${formatDropExtensionSummary(byReason['native-extractor-failure'])}`,
     );
   }
   const wasmResults = await parseFilesWasmForBackfill(missingAbs, ctx.rootDir);

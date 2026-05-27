@@ -79,6 +79,68 @@ export interface RoleClassificationNode {
 }
 
 /**
+ * Compute median fan-in and fan-out across nodes with non-zero values.
+ * Used as thresholds for "high" fan-in/out classification.
+ */
+function computeFanMedians(nodes: RoleClassificationNode[]): { fanIn: number; fanOut: number } {
+  const nonZeroFanIn = nodes
+    .filter((n) => n.fanIn > 0)
+    .map((n) => n.fanIn)
+    .sort((a, b) => a - b);
+  const nonZeroFanOut = nodes
+    .filter((n) => n.fanOut > 0)
+    .map((n) => n.fanOut)
+    .sort((a, b) => a - b);
+  return { fanIn: median(nonZeroFanIn), fanOut: median(nonZeroFanOut) };
+}
+
+/**
+ * Classify a node with `fanIn === 0` that is not exported.
+ * Covers framework-active constants, test-only callables, and the dead-* family.
+ */
+function classifyUnreferencedNode(node: RoleClassificationNode): Role {
+  if (node.kind === 'constant' && node.hasActiveFileSiblings) {
+    // Constants consumed via identifier reference (not calls) have no
+    // inbound call edges. If the same file has active callables, the
+    // constant is almost certainly used locally — classify as leaf.
+    return 'leaf';
+  }
+  if (node.testOnlyFanIn != null && node.testOnlyFanIn > 0) return 'test-only';
+  return classifyDeadSubRole(node);
+}
+
+/**
+ * Pick a role from fan-in/fan-out shape: core/utility/adapter/leaf.
+ * Called after entry/test-only/dead cases have been ruled out.
+ */
+function classifyByFanShape(highIn: boolean, highOut: boolean): Role {
+  if (highIn && !highOut) return 'core';
+  if (highIn && highOut) return 'utility';
+  if (!highIn && highOut) return 'adapter';
+  return 'leaf';
+}
+
+/**
+ * Apply role-classification rules to a single node.
+ * Order matters — framework entries are tagged first, then dead/test cases,
+ * then the fan-in/fan-out shape decides among the structural roles.
+ */
+function classifyNodeRole(node: RoleClassificationNode, medFanIn: number, medFanOut: number): Role {
+  if (FRAMEWORK_ENTRY_PREFIXES.some((p) => node.name.startsWith(p))) return 'entry';
+
+  if (node.fanIn === 0) {
+    return node.isExported ? 'entry' : classifyUnreferencedNode(node);
+  }
+
+  const hasProdFanIn = typeof node.productionFanIn === 'number';
+  if (hasProdFanIn && node.productionFanIn === 0 && !node.isExported) return 'test-only';
+
+  const highIn = node.fanIn >= medFanIn;
+  const highOut = node.fanOut >= medFanOut && node.fanOut > 0;
+  return classifyByFanShape(highIn, highOut);
+}
+
+/**
  * Classify nodes into architectural roles based on fan-in/fan-out metrics.
  */
 export function classifyRoles(
@@ -87,63 +149,11 @@ export function classifyRoles(
 ): Map<string, Role> {
   if (nodes.length === 0) return new Map();
 
-  let medFanIn: number;
-  let medFanOut: number;
-  if (medianOverrides) {
-    medFanIn = medianOverrides.fanIn;
-    medFanOut = medianOverrides.fanOut;
-  } else {
-    const nonZeroFanIn = nodes
-      .filter((n) => n.fanIn > 0)
-      .map((n) => n.fanIn)
-      .sort((a, b) => a - b);
-    const nonZeroFanOut = nodes
-      .filter((n) => n.fanOut > 0)
-      .map((n) => n.fanOut)
-      .sort((a, b) => a - b);
-    medFanIn = median(nonZeroFanIn);
-    medFanOut = median(nonZeroFanOut);
-  }
+  const { fanIn: medFanIn, fanOut: medFanOut } = medianOverrides ?? computeFanMedians(nodes);
 
   const result = new Map<string, Role>();
-
   for (const node of nodes) {
-    const highIn = node.fanIn >= medFanIn && node.fanIn > 0;
-    const highOut = node.fanOut >= medFanOut && node.fanOut > 0;
-    const hasProdFanIn = typeof node.productionFanIn === 'number';
-
-    let role: Role;
-    const isFrameworkEntry = FRAMEWORK_ENTRY_PREFIXES.some((p) => node.name.startsWith(p));
-    if (isFrameworkEntry) {
-      role = 'entry';
-    } else if (node.fanIn === 0 && !node.isExported) {
-      if (node.kind === 'constant' && node.hasActiveFileSiblings) {
-        // Constants consumed via identifier reference (not calls) have no
-        // inbound call edges. If the same file has active callables, the
-        // constant is almost certainly used locally — classify as leaf.
-        role = 'leaf';
-      } else {
-        role =
-          node.testOnlyFanIn != null && node.testOnlyFanIn > 0
-            ? 'test-only'
-            : classifyDeadSubRole(node);
-      }
-    } else if (node.fanIn === 0 && node.isExported) {
-      role = 'entry';
-    } else if (hasProdFanIn && node.fanIn > 0 && node.productionFanIn === 0 && !node.isExported) {
-      role = 'test-only';
-    } else if (highIn && !highOut) {
-      role = 'core';
-    } else if (highIn && highOut) {
-      role = 'utility';
-    } else if (!highIn && highOut) {
-      role = 'adapter';
-    } else {
-      role = 'leaf';
-    }
-
-    result.set(node.id, role);
+    result.set(node.id, classifyNodeRole(node, medFanIn, medFanOut));
   }
-
   return result;
 }
