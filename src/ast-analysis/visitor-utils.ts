@@ -152,8 +152,8 @@ function collectObjectDestructChildren(
   const next: TreeSitterNode[] = [];
   for (const child of node.namedChildren) {
     if (rules.shorthandPropPattern && child.type === rules.shorthandPropPattern) {
-      // Shorthand prop is a direct identifier — handled in the worklist
-      // by `resolveParamNode` once requeued.
+      // Shorthand prop is a direct identifier — handled by the shorthand
+      // guard in the `extractParamNames` worklist loop (before `resolveParamNode`).
       next.push(child);
     } else if (rules.pairPatternType && child.type === rules.pairPatternType) {
       const value = child.childForFieldName('value');

@@ -441,19 +441,18 @@ interface DataflowDispatchCtx {
 }
 
 /**
- * Route a node to the appropriate dataflow handler based on its type, or return
- * `false` if no handler matched. Function-definition nodes are signalled by
- * a `true` return so the caller can short-circuit.
+ * Route a node to the appropriate dataflow handler based on its type.
+ * Function-definition nodes are short-circuited with an early return.
  */
-function dispatchDataflowNode(ctx: DataflowDispatchCtx, node: TreeSitterNode): boolean {
+function dispatchDataflowNode(ctx: DataflowDispatchCtx, node: TreeSitterNode): void {
   const { rules } = ctx;
   const t = node.type;
 
-  if (rules.functionNodes.has(t)) return true;
+  if (rules.functionNodes.has(t)) return;
 
   if (rules.returnNode && t === rules.returnNode) {
     handleReturn(node, rules, ctx.scopeStack, ctx.returns);
-    return true;
+    return;
   }
 
   if (
@@ -461,25 +460,22 @@ function dispatchDataflowNode(ctx: DataflowDispatchCtx, node: TreeSitterNode): b
     rules.varDeclaratorNodes?.has(t)
   ) {
     handleVarDeclarator(node, rules, ctx.scopeStack, ctx.assignments, ctx.isCallNode);
-    return true;
+    return;
   }
 
   if (ctx.isCallNode(t)) {
     handleCallExpr(node, rules, ctx.scopeStack, ctx.argFlows);
-    return true;
+    return;
   }
 
   if (rules.assignmentNode && t === rules.assignmentNode) {
     handleAssignment(node, rules, ctx.scopeStack, ctx.assignments, ctx.mutations, ctx.isCallNode);
-    return true;
+    return;
   }
 
   if (rules.expressionStmtNode && t === rules.expressionStmtNode) {
     handleExprStmtMutation(node, rules, ctx.scopeStack, ctx.mutations, ctx.isCallNode);
-    return true;
   }
-
-  return false;
 }
 
 export function createDataflowVisitor(rules: AnyRules): Visitor {
