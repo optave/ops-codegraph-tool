@@ -190,11 +190,12 @@ async function installCodegraphPackage(cliVersion: string | null): Promise<{ tmp
 	console.error(`Installing @optave/codegraph@${safeVersion} into ${tmpDir}...`);
 	fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ private: true }));
 
+	const maxRetries = 5;
 	try {
-		await npmInstallWithRetries(`@optave/codegraph@${safeVersion}`, tmpDir, 5, 'Attempt');
+		await npmInstallWithRetries(`@optave/codegraph@${safeVersion}`, tmpDir, maxRetries, 'Codegraph install');
 	} catch (err) {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
-		throw new Error(`Failed to install @optave/codegraph@${safeVersion} after 5 attempts: ${(err as Error).message}`);
+		throw new Error(`Failed to install @optave/codegraph@${safeVersion} after ${maxRetries} attempts: ${(err as Error).message}`);
 	}
 
 	const pkgDir = path.join(tmpDir, 'node_modules', '@optave', 'codegraph');
