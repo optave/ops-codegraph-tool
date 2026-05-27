@@ -435,7 +435,7 @@ Per-model retrieval quality (Hit@N) and timing are measured on every release —
 | `nomic-v1.5` (default) | nomic-embed-text-v1.5 | 768 | ~137 MB | Apache-2.0 | Matryoshka MRL training (unused — codegraph stores full 768d); v1 scores higher on our benchmark |
 | `bge-large` | bge-large-en-v1.5 | 1024 | ~335 MB | MIT | Best general retrieval, top MTEB scores |
 | `mxbai-xsmall` | mxbai-embed-xsmall-v1 | 384 | ~50 MB | Apache-2.0 | Tiny + long context (4096) |
-| `mxbai-large` | mxbai-embed-large-v1 | 1024 | ~400 MB | Apache-2.0 | Top MTEB BERT-large |
+| `mxbai-large` | mxbai-embed-large-v1 | 1024 | ~400 MB | Apache-2.0 | Top MTEB BERT-large, Matryoshka dimensions, 512 ctx |
 | `bge-m3` | bge-m3 | 1024 | ~600 MB | MIT | **Multilingual** (100+ languages), 8192 context |
 | `modernbert` | modernbert-embed-base | 768 | ~150 MB | Apache-2.0 | ModernBERT architecture, 8192 ctx, English |
 

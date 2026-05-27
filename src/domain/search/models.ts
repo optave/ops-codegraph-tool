@@ -41,6 +41,8 @@ export interface ModelConfig {
   contextWindow: number;
   desc: string;
   quantized: boolean;
+  /** Pooling strategy passed to the transformers pipeline. Defaults to 'mean'. */
+  pooling?: 'mean' | 'cls';
 }
 
 // Lazy-load transformers (heavy, optional module)
@@ -107,13 +109,15 @@ export const MODELS: Record<string, ModelConfig> = {
     contextWindow: 4096,
     desc: 'Tiny model with long context (~50MB). 4096 ctx.',
     quantized: false,
+    pooling: 'cls',
   },
   'mxbai-large': {
     name: 'mixedbread-ai/mxbai-embed-large-v1',
     dim: 1024,
     contextWindow: 512,
-    desc: 'Top MTEB BERT-large (~400MB). Public mirror.',
+    desc: 'Top MTEB BERT-large, Matryoshka dimensions (~400MB). 512 ctx.',
     quantized: false,
+    pooling: 'cls',
   },
   'bge-m3': {
     name: 'Xenova/bge-m3',
@@ -306,7 +310,7 @@ export async function embed(
     const batch = texts.slice(i, i + batchSize);
     const output =
       (await // biome-ignore lint/complexity/noBannedTypes: dynamically loaded extractor is untyped
-      (ext as Function)(batch, { pooling: 'mean', normalize: true })) as {
+      (ext as Function)(batch, { pooling: config.pooling ?? 'mean', normalize: true })) as {
         data: number[];
       };
 
