@@ -109,8 +109,8 @@ describe('formatDropExtensionSummary', () => {
 
   it('right-pads the extension column and right-aligns the count column for tabular layout', () => {
     const buckets = new Map<string, string[]>([
-      ['.kt', ['a.kt']], // 100 files later — wider count column
-      ['.tsx', new Array(100).fill('x.tsx')],
+      ['.kt', ['a.kt']],
+      ['.tsx', new Array(100).fill('x.tsx')], // 100 files — sets wider count column
     ]);
     const out = formatDropExtensionSummary(buckets);
     // `.tsx` (4 chars) sets the ext width; `.kt` is padded to 4 chars.
