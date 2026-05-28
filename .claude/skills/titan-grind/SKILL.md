@@ -273,6 +273,12 @@ Check if the helper should be called by existing code that currently does the sa
 codegraph fn-impact <helper-name> -T --json
 ```
 
+For borderline cases where you need to confirm whether a path exists between the helper and a specific suspected consumer:
+
+```bash
+codegraph path <helper-name> <potential-consumer> -T --json
+```
+
 If the helper wraps an underlying operation, find every call site of that underlying operation across the entire codebase:
 
 ```bash
@@ -288,7 +294,7 @@ If the underlying operation is called in >10 files and fewer than half are in th
 Before classifying as **adopt**, check whether a semantically equivalent helper already exists elsewhere in the codebase (a different name, same purpose). This is how redundant helpers accumulate across Titan runs.
 
 ```bash
-codegraph search "<describe helper purpose>" --json | head -5
+codegraph search "<describe helper purpose>" --json
 ```
 
 If a pre-existing helper with the same purpose is found:
