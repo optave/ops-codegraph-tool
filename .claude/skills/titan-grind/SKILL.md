@@ -256,22 +256,29 @@ if (fs.existsSync('package.json')) {
     (pkg.workspaces || []).forEach(w => roots.push(w.replace(/\/\*$/,'')));
   } catch {}
 }
-// Fall back to any top-level dir that contains .ts files
+// Fall back to any top-level dir that contains TS/JS source files
 if (roots.length === 0) {
+  const srcExts = ['.ts','.tsx','.mts','.cts','.js','.jsx'];
   fs.readdirSync('.').filter(d => {
-    try { return fs.statSync(d).isDirectory() && fs.readdirSync(d).some(f => f.endsWith('.ts')); } catch { return false; }
+    try { return fs.statSync(d).isDirectory() && fs.readdirSync(d).some(f => srcExts.some(e => f.endsWith(e))); } catch { return false; }
   }).forEach(d => roots.push(d));
 }
 console.log([...new Set(roots)].join(' ') || 'src');
 "
 # Use the discovered roots (e.g. src, packages/core, lib) — never hardcode
-grep -rn "<key-token-1>" <discovered-ts-roots> --include="*.ts" -l
-grep -rn "<key-token-2>" <discovered-ts-roots> --include="*.ts" -l
+grep -rn "<key-token-1>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" -l
+grep -rn "<key-token-2>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" -l
 # Discover Rust workspace members if applicable
 if [ -f Cargo.toml ]; then
   cargo metadata --no-deps --format-version 1 2>/dev/null | node -e "
     const d=[];process.stdin.on('data',c=>d.push(c));
-    process.stdin.on('end',()=>{ try { const m=JSON.parse(Buffer.concat(d)); console.log(m.workspace_members?.map(id=>id.split(' ')[0]).join(' ')||''); } catch{} });
+    process.stdin.on('end',()=>{ try { const m=JSON.parse(Buffer.concat(d));
+      // Use packages[].manifest_path to get actual source directories — workspace_members
+      // only contains names, not paths. Print one path per line for xargs to iterate.
+      const paths = (m.packages||[]).map(p => require('path').dirname(p.manifest_path));
+      const unique = [...new Set(paths)];
+      if (unique.length) { console.log(unique.join('\n')); } else { console.log('.'); }
+    } catch{} });
   " | xargs -I{} grep -rn "<key-token>" {} --include="*.rs" -l
 fi
 ```
