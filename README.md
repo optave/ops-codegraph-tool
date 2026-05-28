@@ -76,24 +76,25 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 ### Feature comparison
 
-<sub>Comparison last verified: March 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
+<sub>Comparison last verified: May 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
-| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
+| Capability | codegraph (this repo) | [code-review-graph](https://github.com/tirth8205/code-review-graph) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph (other)⁶](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Languages | **34** | ~12 | **32** | ~10 | 3 | 13 |
-| MCP server | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
-| Dataflow + CFG + AST querying | **Yes** | **Yes** | **Yes**¹ | **Yes** | — | — |
-| Hybrid search (BM25 + semantic) | **Yes** | — | — | — | **Yes** | **Yes** |
-| Git-aware (diff impact, co-change, branch diff) | **All 3** | — | — | — | **All 3** | — |
-| Dead code / role classification | **Yes** | — | **Yes** | — | **Yes** | — |
-| Incremental rebuilds | **O(changed)** | — | O(n) | — | **Yes** | Commit-level⁴ |
+| GitHub stars | ![](https://img.shields.io/github/stars/optave/ops-codegraph-tool?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/tirth8205/code-review-graph?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/postrv/narsil-mcp?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/harshkedia177/axon?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/abhigyanpatwari/GitNexus?style=flat-square&label=%E2%AD%90) |
+| Languages | **34** | ~30 | **32** | ~20 | 3 | 13 |
+| MCP server | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Dataflow + CFG + AST querying | **Yes** | AST only | **Yes**¹ | — | — | — |
+| Hybrid search (BM25 + semantic) | **Yes** | **Yes** | — | Keyword only | **Yes** | **Yes** |
+| Git-aware (diff impact, co-change, branch diff) | **All 3** | Diff only | — | — | **All 3** | — |
+| Dead code / role classification | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
+| Incremental rebuilds | **O(changed)** | **O(changed)** | O(n) | **O(changed)**⁴ | **O(changed)** | O(n)⁵ |
 | Architecture rules + CI gate | **Yes** | — | — | — | — | — |
-| Security scanning (SAST / vuln detection) | Intentionally out of scope² | **Yes** | **Yes** | **Yes** | — | — |
-| Zero config, `npm install` | **Yes** | — | **Yes** | — | **Yes** | **Yes** |
+| Security scanning (SAST / vuln detection) | Intentionally out of scope² | — | **Yes** | — | — | — |
+| Zero config, `npm install` | **Yes** | — (pip) | **Yes** | **Yes** | **Yes** | **Yes** |
 | Graph export (GraphML / Neo4j / DOT) | **Yes** | **Yes** | — | — | — | — |
-| Open source + commercial use | **Yes** (Apache-2.0) | **Yes** (Apache-2.0) | **Yes** (MIT/Apache-2.0) | **Yes** (Apache-2.0) | Source-available³ | Non-commercial⁵ |
+| Open source + commercial use | **Yes** (Apache-2.0) | **Yes** (MIT) | **Yes** (MIT/Apache-2.0) | **Yes** (MIT) | Source-available³ | Non-commercial⁷ |
 
-<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁴ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁵ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
+<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁴ colbymchenry/codegraph uses OS file watchers (chokidar) for auto-sync — rebuild triggers on file change but re-parses from scratch per file, not O(changed) hashing. ⁵ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁶ colbymchenry/codegraph is an unrelated tool that shares the name. It focuses on reducing AI agent token consumption by pre-indexing code structure for fast context retrieval — not on structural analysis, CI gates, or complexity metrics. ⁷ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
 
 ### What makes codegraph different
 
@@ -398,8 +399,8 @@ codegraph cycles --functions   # Function-level cycles
 Local embeddings for every function, method, and class — search by natural language. Everything runs locally using [@huggingface/transformers](https://huggingface.co/docs/transformers.js) — no API keys needed.
 
 ```bash
-codegraph embed                # Build embeddings (default: nomic; reuses existing model if present)
-codegraph embed --model bge-large  # Use a different model
+codegraph embed                # Build embeddings (default: nomic-v1.5)
+codegraph embed --model nomic  # Use a different model
 codegraph search "handle authentication"
 codegraph search "parse config" --min-score 0.4 -n 10
 codegraph search "parseConfig" --mode keyword   # BM25 keyword-only (exact names)
@@ -431,11 +432,11 @@ Per-model retrieval quality (Hit@N) and timing are measured on every release —
 | `jina-small` | jina-embeddings-v2-small-en | 512 | ~33 MB | Apache-2.0 | Better quality, still small |
 | `jina-base` | jina-embeddings-v2-base-en | 768 | ~137 MB | Apache-2.0 | High quality, 8192 token context |
 | `jina-code` | jina-embeddings-v2-base-code | 768 | ~137 MB | Apache-2.0 | Best for code search, trained on code+text |
-| `nomic` (default) | nomic-embed-text-v1 | 768 | ~137 MB | Apache-2.0 | Good quality, 8192 context |
-| `nomic-v1.5` | nomic-embed-text-v1.5 | 768 | ~137 MB | Apache-2.0 | Matryoshka MRL training (unused — codegraph stores full 768d); v1 scores higher on our benchmark |
+| `nomic` | nomic-embed-text-v1 | 768 | ~137 MB | Apache-2.0 | Good quality, 8192 context |
+| `nomic-v1.5` (default) | nomic-embed-text-v1.5 | 768 | ~137 MB | Apache-2.0 | Matryoshka MRL training (unused — codegraph stores full 768d); v1 scores higher on our benchmark |
 | `bge-large` | bge-large-en-v1.5 | 1024 | ~335 MB | MIT | Best general retrieval, top MTEB scores |
 | `mxbai-xsmall` | mxbai-embed-xsmall-v1 | 384 | ~50 MB | Apache-2.0 | Tiny + long context (4096) |
-| `mxbai-large` | mxbai-embed-large-v1 | 1024 | ~400 MB | Apache-2.0 | Top MTEB BERT-large, Matryoshka dimensions, 512 ctx |
+| `mxbai-large` | mxbai-embed-large-v1 | 1024 | ~400 MB | Apache-2.0 | Top MTEB BERT-large |
 | `bge-m3` | bge-m3 | 1024 | ~600 MB | MIT | **Multilingual** (100+ languages), 8192 context |
 | `modernbert` | modernbert-embed-base | 768 | ~150 MB | Apache-2.0 | ModernBERT architecture, 8192 ctx, English |
 
@@ -623,19 +624,19 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.10.0 (2026-05-11)*
+*Last updated: v3.11.0 (2026-05-25)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **4.8 ms/file** | **18.1 ms/file** |
-| Query time | **50ms** | **38ms** |
-| No-op rebuild | **24ms** | **15ms** |
-| 1-file rebuild | **67ms** | **51ms** |
-| Query: fn-deps | **2.2ms** | **2.1ms** |
-| Query: path | **2.3ms** | **2.1ms** |
-| ~50,000 files (est.) | **~240.0s build** | **~905.0s build** |
-| Resolution precision | **90.7%** | — |
-| Resolution recall | **42.9%** | — |
+| Build speed | **3.2 ms/file** | **15.4 ms/file** |
+| Query time | **27ms** | **33ms** |
+| No-op rebuild | **19ms** | **18ms** |
+| 1-file rebuild | **70ms** | **53ms** |
+| Query: fn-deps | **2.1ms** | **1.8ms** |
+| Query: path | **2ms** | **1.8ms** |
+| ~50,000 files (est.) | **~160.0s build** | **~770.0s build** |
+| Resolution precision | **89.9%** | — |
+| Resolution recall | **42.3%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -652,9 +653,9 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | csharp | 100.0% | 52.6% | 10 | 0 | 9 | 19 | — |
 | cuda | 50.0% | 33.3% | 4 | 4 | 8 | 12 | — |
 | dart | 0.0% | 0.0% | 0 | 0 | 18 | 18 | — |
-| elixir | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
+| elixir | 0.0% | 0.0% | 0 | 0 | 21 | 21 | — |
 | erlang | 100.0% | 100.0% | 12 | 0 | 0 | 12 | — |
-| fsharp | 0.0% | 0.0% | 0 | 9 | 12 | 12 | — |
+| fsharp | 0.0% | 0.0% | 0 | 11 | 12 | 12 | — |
 | gleam | 100.0% | 26.7% | 4 | 0 | 11 | 15 | — |
 | go | 100.0% | 69.2% | 9 | 0 | 4 | 13 | 13/14 |
 | groovy | 100.0% | 7.7% | 1 | 0 | 12 | 13 | — |
@@ -682,7 +683,7 @@ Metrics are normalized per file for cross-version comparability. Times above are
 
 | Mode | Resolved | Expected | Recall |
 |------|--------:|---------:|-------:|
-| module-function | 16 | 106 | 15.1% |
+| module-function | 16 | 112 | 14.3% |
 | receiver-typed | 17 | 104 | 16.3% |
 | static | 66 | 93 | 71.0% |
 | same-file | 48 | 86 | 55.8% |
