@@ -218,11 +218,14 @@ fn push_elixir_binary_operator_operands<'a>(node: &Node<'a>, stack: &mut Vec<Nod
 /// Push the binding-relevant elements of a `list` or `tuple` parameter onto
 /// the worklist, skipping punctuation tokens.
 ///
-/// Items are pushed in reverse document order so that, with a LIFO stack, they
-/// are processed left-to-right — preserving the source ordering of bound names.
+/// Children are pushed in reverse source order so that `stack.pop()` yields
+/// them left-to-right (the worklist is a LIFO stack).
 fn push_elixir_sequence_items<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
-    let items: Vec<Node<'a>> = iter_children(node, PUNCTUATION_TOKENS).collect();
-    for c in items.into_iter().rev() {
+    let count = node.child_count();
+    for i in (0..count).rev() {
+        let Some(c) = node.child(i) else { continue };
+        let k = c.kind();
+        if PUNCTUATION_TOKENS.contains(&k) { continue; }
         stack.push(c);
     }
 }
