@@ -933,11 +933,9 @@ fn extract_callee_name<'a>(call_node: &Node, source: &'a [u8]) -> Option<&'a str
 /// used to distinguish Express/router route handlers (`app.get('/path', h)`)
 /// from Map/cache APIs that reuse the same verb names (`cache.get(user.id)`).
 fn first_arg_is_string_literal(args_node: &Node) -> bool {
-    for i in 0..args_node.child_count() {
-        let Some(child) = args_node.child(i) else { continue };
+    // Skip grammar punctuation; the first non-punctuation child is the first arg.
+    if let Some(child) = iter_children(args_node, PUNCTUATION_TOKENS).next() {
         let kind = child.kind();
-        // Skip parens and commas; the first non-punctuation child is the first arg.
-        if kind == "(" || kind == "," || kind == ")" { continue; }
         return kind == "string" || kind == "template_string";
     }
     false
