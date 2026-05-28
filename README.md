@@ -78,23 +78,23 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 <sub>Comparison last verified: May 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
-| Capability | codegraph (this repo) | [code-review-graph](https://github.com/tirth8205/code-review-graph) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph (other)⁶](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
+| Capability | codegraph (this repo) | [code-review-graph](https://github.com/tirth8205/code-review-graph) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph (other)¹](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | GitHub stars | ![](https://img.shields.io/github/stars/optave/ops-codegraph-tool?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/tirth8205/code-review-graph?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/postrv/narsil-mcp?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/harshkedia177/axon?style=flat-square&label=%E2%AD%90) | ![](https://img.shields.io/github/stars/abhigyanpatwari/GitNexus?style=flat-square&label=%E2%AD%90) |
 | Languages | **34** | ~30 | **32** | ~20 | 3 | 13 |
 | MCP server | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Dataflow + CFG + AST querying | **Yes** | AST only | **Yes**¹ | — | — | — |
+| Dataflow + CFG + AST querying | **Yes** | AST only | **Yes**² | — | — | — |
 | Hybrid search (BM25 + semantic) | **Yes** | **Yes** | — | Keyword only | **Yes** | **Yes** |
 | Git-aware (diff impact, co-change, branch diff) | **All 3** | Diff only | — | — | **All 3** | — |
 | Dead code / role classification | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
-| Incremental rebuilds | **O(changed)** | **O(changed)** | O(n) | **O(changed)**⁴ | **O(changed)** | O(n)⁵ |
+| Incremental rebuilds | **O(changed)** | **O(changed)** | O(n) | O(n)⁵ | **O(changed)** | O(n)⁶ |
 | Architecture rules + CI gate | **Yes** | — | — | — | — | — |
-| Security scanning (SAST / vuln detection) | Intentionally out of scope² | — | **Yes** | — | — | — |
+| Security scanning (SAST / vuln detection) | Intentionally out of scope³ | — | **Yes** | — | — | — |
 | Zero config, `npm install` | **Yes** | — (pip) | **Yes** | **Yes** | **Yes** | **Yes** |
-| Graph export (GraphML / Neo4j / DOT) | **Yes** | **Yes** | — | — | — | — |
-| Open source + commercial use | **Yes** (Apache-2.0) | **Yes** (MIT) | **Yes** (MIT/Apache-2.0) | **Yes** (MIT) | Source-available³ | Non-commercial⁷ |
+| Graph export (GraphML / Neo4j / DOT) | **Yes** | — | — | — | — | — |
+| Open source + commercial use | **Yes** (Apache-2.0) | **Yes** (MIT) | **Yes** (MIT/Apache-2.0) | **Yes** (MIT) | Source-available⁴ | Non-commercial⁷ |
 
-<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁴ colbymchenry/codegraph uses OS file watchers (chokidar) for auto-sync — rebuild triggers on file change but re-parses from scratch per file, not O(changed) hashing. ⁵ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁶ colbymchenry/codegraph is an unrelated tool that shares the name. It focuses on reducing AI agent token consumption by pre-indexing code structure for fast context retrieval — not on structural analysis, CI gates, or complexity metrics. ⁷ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
+<sup>¹ colbymchenry/codegraph is an unrelated tool that shares the name. It focuses on reducing AI agent token consumption by pre-indexing code structure for fast context retrieval — not on structural analysis, CI gates, or complexity metrics. ² narsil-mcp added CFG and dataflow in recent versions. ³ Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ⁴ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁵ colbymchenry/codegraph uses OS file watchers (chokidar) for auto-sync — rebuild triggers on file change but re-parses from scratch per file, not O(changed) hashing. ⁶ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁷ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
 
 ### What makes codegraph different
 
