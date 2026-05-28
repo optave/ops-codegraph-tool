@@ -91,6 +91,40 @@ interface BfsResult {
   truncated: boolean;
 }
 
+type CalleeNode = { id: number; name: string; file: string; kind: string; line: number };
+
+interface BfsFrame {
+  visited: Set<number>;
+  messages: SequenceMessage[];
+  fileSet: Set<string>;
+  idToNode: Map<number, CalleeNode>;
+  nextFrontier: number[];
+}
+
+function processCallee(
+  c: CalleeNode,
+  caller: CalleeNode,
+  depth: number,
+  noTests: boolean,
+  frame: BfsFrame,
+): void {
+  if (noTests && isTestFile(c.file)) return;
+
+  frame.fileSet.add(c.file);
+  frame.messages.push({
+    from: caller.file,
+    to: c.file,
+    label: c.name,
+    type: 'call',
+    depth,
+  });
+
+  if (frame.visited.has(c.id)) return;
+  frame.visited.add(c.id);
+  frame.nextFrontier.push(c.id);
+  frame.idToNode.set(c.id, c);
+}
+
 function bfsCallees(
   repo: Repository,
   matchNode: MatchNode,
@@ -101,46 +135,25 @@ function bfsCallees(
   let frontier = [matchNode.id];
   const messages: SequenceMessage[] = [];
   const fileSet = new Set<string>([matchNode.file]);
-  const idToNode = new Map<
-    number,
-    { id: number; name: string; file: string; kind: string; line: number }
-  >();
+  const idToNode = new Map<number, CalleeNode>();
   idToNode.set(matchNode.id, matchNode);
   let truncated = false;
 
   for (let d = 1; d <= maxDepth; d++) {
-    const nextFrontier: number[] = [];
+    const frame: BfsFrame = { visited, messages, fileSet, idToNode, nextFrontier: [] };
 
     for (const fid of frontier) {
-      const callees = repo.findCallees(fid);
       const caller = idToNode.get(fid)!;
-
-      for (const c of callees) {
-        if (noTests && isTestFile(c.file)) continue;
-
-        fileSet.add(c.file);
-        messages.push({
-          from: caller.file,
-          to: c.file,
-          label: c.name,
-          type: 'call',
-          depth: d,
-        });
-
-        if (visited.has(c.id)) continue;
-
-        visited.add(c.id);
-        nextFrontier.push(c.id);
-        idToNode.set(c.id, c);
+      for (const c of repo.findCallees(fid)) {
+        processCallee(c, caller, d, noTests, frame);
       }
     }
 
-    frontier = nextFrontier;
+    frontier = frame.nextFrontier;
     if (frontier.length === 0) break;
 
-    if (d === maxDepth && frontier.length > 0) {
-      const hasMoreCalls = frontier.some((fid) => repo.findCallees(fid).length > 0);
-      if (hasMoreCalls) truncated = true;
+    if (d === maxDepth && frontier.some((fid) => repo.findCallees(fid).length > 0)) {
+      truncated = true;
     }
   }
 
@@ -174,6 +187,60 @@ function annotateDataflow(
   }
 }
 
+type DataflowStmts = {
+  getReturns: ReturnType<BetterSqlite3Database['prepare']>;
+  getFlowsTo: ReturnType<BetterSqlite3Database['prepare']>;
+};
+
+function appendReturnMessages(
+  messages: SequenceMessage[],
+  nodeByNameFile: Map<string, { id: number; name: string; file: string }>,
+  stmts: DataflowStmts,
+): void {
+  const seenReturns = new Set<string>();
+  for (const msg of [...messages]) {
+    if (msg.type !== 'call') continue;
+    const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
+    if (!targetNode) continue;
+
+    const returnKey = `${msg.to}->${msg.from}:${msg.label}`;
+    if (seenReturns.has(returnKey)) continue;
+
+    const returns = stmts.getReturns.all(targetNode.id) as { expression: string }[];
+    if (returns.length === 0) continue;
+
+    seenReturns.add(returnKey);
+    messages.push({
+      from: msg.to,
+      to: msg.from,
+      label: returns[0]!.expression || 'result',
+      type: 'return',
+      depth: msg.depth,
+    });
+  }
+}
+
+function annotateCallParams(
+  messages: SequenceMessage[],
+  nodeByNameFile: Map<string, { id: number; name: string; file: string }>,
+  stmts: DataflowStmts,
+): void {
+  for (const msg of messages) {
+    if (msg.type !== 'call') continue;
+    const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
+    if (!targetNode) continue;
+
+    const params = stmts.getFlowsTo.all(targetNode.id) as { expression: string }[];
+    const paramNames = params
+      .map((p) => p.expression)
+      .filter(Boolean)
+      .slice(0, 3);
+    if (paramNames.length > 0) {
+      msg.label = `${msg.label}(${paramNames.join(', ')})`;
+    }
+  }
+}
+
 function _annotateDataflowImpl(
   db: BetterSqlite3Database,
   messages: SequenceMessage[],
@@ -184,57 +251,20 @@ function _annotateDataflowImpl(
     nodeByNameFile.set(`${n.name}|${n.file}`, n);
   }
 
-  const getReturns = db.prepare(
-    `SELECT d.expression FROM dataflow d
+  const stmts: DataflowStmts = {
+    getReturns: db.prepare(
+      `SELECT d.expression FROM dataflow d
          WHERE d.source_id = ? AND d.kind = 'returns'`,
-  );
-  const getFlowsTo = db.prepare(
-    `SELECT d.expression FROM dataflow d
+    ),
+    getFlowsTo: db.prepare(
+      `SELECT d.expression FROM dataflow d
          WHERE d.target_id = ? AND d.kind = 'flows_to'
          ORDER BY d.param_index`,
-  );
+    ),
+  };
 
-  const seenReturns = new Set<string>();
-  for (const msg of [...messages]) {
-    if (msg.type !== 'call') continue;
-    const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
-    if (!targetNode) continue;
-
-    const returnKey = `${msg.to}->${msg.from}:${msg.label}`;
-    if (seenReturns.has(returnKey)) continue;
-
-    const returns = getReturns.all(targetNode.id) as { expression: string }[];
-
-    if (returns.length > 0) {
-      seenReturns.add(returnKey);
-      const expr = returns[0]!.expression || 'result';
-      messages.push({
-        from: msg.to,
-        to: msg.from,
-        label: expr,
-        type: 'return',
-        depth: msg.depth,
-      });
-    }
-  }
-
-  for (const msg of messages) {
-    if (msg.type !== 'call') continue;
-    const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
-    if (!targetNode) continue;
-
-    const params = getFlowsTo.all(targetNode.id) as { expression: string }[];
-
-    if (params.length > 0) {
-      const paramNames = params
-        .map((p) => p.expression)
-        .filter(Boolean)
-        .slice(0, 3);
-      if (paramNames.length > 0) {
-        msg.label = `${msg.label}(${paramNames.join(', ')})`;
-      }
-    }
-  }
+  appendReturnMessages(messages, nodeByNameFile, stmts);
+  annotateCallParams(messages, nodeByNameFile, stmts);
 }
 
 interface Participant {
