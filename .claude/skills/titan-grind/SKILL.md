@@ -237,22 +237,67 @@ codegraph search "<describe what the helper does in plain language>" --json
 
 **2. Token-level grep** across all source files (catches exact inline duplicates):
 ```bash
-# Derive 2-3 distinct token patterns from the helper's body
-# Search from the repo root, not just the forge-touched directory
-grep -rn "<key-token-1>" src/ --include="*.ts" -l
-grep -rn "<key-token-2>" src/ --include="*.ts" -l
-# Repeat for Rust sources if applicable
-grep -rn "<key-token>" crates/ --include="*.rs" -l
+# Discover actual TypeScript source roots from repo layout (do not assume src/)
+node -e "
+const fs = require('fs');
+const roots = [];
+// Check tsconfig for rootDir
+if (fs.existsSync('tsconfig.json')) {
+  try {
+    const tc = JSON.parse(fs.readFileSync('tsconfig.json','utf8'));
+    if (tc.compilerOptions?.rootDir) roots.push(tc.compilerOptions.rootDir);
+  } catch {}
+}
+// Check package.json workspaces
+if (fs.existsSync('package.json')) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+    (pkg.workspaces || []).forEach(w => roots.push(w.replace(/\/\*$/,'')));
+  } catch {}
+}
+// Fall back to any top-level dir that contains .ts files
+if (roots.length === 0) {
+  fs.readdirSync('.').filter(d => {
+    try { return fs.statSync(d).isDirectory() && fs.readdirSync(d).some(f => f.endsWith('.ts')); } catch { return false; }
+  }).forEach(d => roots.push(d));
+}
+console.log([...new Set(roots)].join(' ') || 'src');
+"
+# Use the discovered roots (e.g. src, packages/core, lib) — never hardcode
+grep -rn "<key-token-1>" <discovered-ts-roots> --include="*.ts" -l
+grep -rn "<key-token-2>" <discovered-ts-roots> --include="*.ts" -l
+# Discover Rust workspace members if applicable
+if [ -f Cargo.toml ]; then
+  cargo metadata --no-deps --format-version 1 2>/dev/null | node -e "
+    const d=[];process.stdin.on('data',c=>d.push(c));
+    process.stdin.on('end',()=>{ try { const m=JSON.parse(Buffer.concat(d)); console.log(m.workspace_members?.map(id=>id.split(' ')[0]).join(' ')||''); } catch{} });
+  " | xargs -I{} grep -rn "<key-token>" {} --include="*.rs" -l
+fi
 ```
 
 **3. Symbol-level duplicate scan** (catches helpers with different names but identical purpose):
 ```bash
+# Extract 2-3 meaningful tokens from the helper name and filter dead symbols by those tokens.
+# This keeps output focused on candidates actually worth reviewing — not the full dead-symbol list.
 codegraph roles --role dead -T --json | node -e "
+const helperName = '<helper-name>';
+// Split camelCase/snake_case into tokens; take the 2-3 most distinctive (skip generic words)
+const stopWords = new Set(['get','set','is','has','to','from','by','on','of','the','a','an','format','parse','build','make','create','handle','process','run','check','with','use']);
+const tokens = helperName
+  .replace(/([a-z])([A-Z])/g,'\$1 \$2')
+  .replace(/[_-]+/g,' ')
+  .toLowerCase()
+  .split(' ')
+  .filter(t => t.length > 2 && !stopWords.has(t))
+  .slice(0, 3);
 const d=[];process.stdin.on('data',c=>d.push(c));
 process.stdin.on('end',()=>{
   const items=JSON.parse(Buffer.concat(d));
-  // Look for other dead symbols whose names suggest the same operation
-  console.log(JSON.stringify(items.filter(i=>i.name!=='<helper-name>')));
+  const candidates = items.filter(i =>
+    i.name !== helperName &&
+    tokens.some(t => i.name.toLowerCase().includes(t))
+  );
+  console.log(JSON.stringify(candidates));
 });
 "
 ```
@@ -291,17 +336,19 @@ If the underlying operation is called in >10 files and fewer than half are in th
 
 ### 2e. Pre-existing duplicate helper check
 
-Before classifying as **adopt**, check whether a semantically equivalent helper already exists elsewhere in the codebase (a different name, same purpose). This is how redundant helpers accumulate across Titan runs.
+Before classifying as **adopt** or **promote**, check whether a semantically equivalent helper already exists elsewhere in the codebase (a different name, same purpose). This is how redundant helpers accumulate across Titan runs.
 
 ```bash
 codegraph search "<describe helper purpose>" --json
 ```
 
-If a pre-existing helper with the same purpose is found:
-- If it is more broadly used → classify the new helper as **remove** and wire consumers to the existing one instead
-- If it is narrower → classify the new helper as **adopt** but file an issue to consolidate later:
+Evaluate the results against the current helper:
+
+- **No semantically equivalent helper found** → proceed with the original classification unchanged (adopt or promote as determined in Step 2d).
+- **Pre-existing helper found, more broadly used** → classify the new helper as **remove** and wire consumers to the existing one instead.
+- **Pre-existing helper found, narrower scope** → classify the new helper as **adopt** or **promote** (as applicable) but file an issue to consolidate later:
   ```bash
-  gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up."
+  gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up." --label "follow-up"
   ```
 
 ### 2f. Re-export check
