@@ -336,13 +336,13 @@ interface FileLevelEdge {
   target: string;
 }
 
-function prepareFileLevelData(
+/** Load file-level import/call edges from the DB and optionally exclude test files. */
+function loadFileLevelEdges(
   db: BetterSqlite3Database,
   noTests: boolean,
   minConf: number,
-  cfg: PlotConfig,
-): GraphData {
-  let edges = db
+): FileLevelEdge[] {
+  const edges = db
     .prepare<FileLevelEdge>(
       `
       SELECT DISTINCT n1.file AS source, n2.file AS target
@@ -354,7 +354,94 @@ function prepareFileLevelData(
     `,
     )
     .all(minConf);
-  if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
+  return noTests ? edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target)) : edges;
+}
+
+/** Compute fan-in and fan-out for each file from a list of edges. */
+function computeFileFanCounts(edges: FileLevelEdge[]): {
+  fanInCount: Map<string, number>;
+  fanOutCount: Map<string, number>;
+} {
+  const fanInCount = new Map<string, number>();
+  const fanOutCount = new Map<string, number>();
+  for (const { source, target } of edges) {
+    fanOutCount.set(source, (fanOutCount.get(source) || 0) + 1);
+    fanInCount.set(target, (fanInCount.get(target) || 0) + 1);
+  }
+  return { fanInCount, fanOutCount };
+}
+
+/** Run Louvain community detection on the file-level graph. Returns empty map on failure. */
+function detectFileCommunities(files: Set<string>, edges: FileLevelEdge[]): Map<string, number> {
+  const communityMap = new Map<string, number>();
+  if (files.size === 0) return communityMap;
+  try {
+    const fileGraph = new CodeGraph();
+    for (const f of files) fileGraph.addNode(f);
+    for (const { source, target } of edges) {
+      if (source !== target && !fileGraph.hasEdge(source, target))
+        fileGraph.addEdge(source, target);
+    }
+    const { assignments } = louvainCommunities(fileGraph);
+    for (const [file, cid] of assignments) communityMap.set(file, cid);
+  } catch {
+    // louvain can fail on disconnected graphs
+  }
+  return communityMap;
+}
+
+/** Build a VisNode for a single file, applying color based on cfg.colorBy. */
+function buildFileVisNode(
+  file: string,
+  id: number,
+  community: number | null,
+  fanIn: number,
+  fanOut: number,
+  cfg: PlotConfig,
+): VisNode {
+  const color: string =
+    cfg.colorBy === 'community' && community !== null
+      ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length] || '#ccc'
+      : cfg.nodeColors?.file || (DEFAULT_NODE_COLORS as Record<string, string>).file || '#ccc';
+
+  return {
+    id,
+    label: path.basename(file),
+    title: file,
+    color,
+    kind: 'file',
+    role: '',
+    file,
+    line: 0,
+    community,
+    cognitive: null,
+    cyclomatic: null,
+    maintainabilityIndex: null,
+    fanIn,
+    fanOut,
+    directory: path.dirname(file),
+    risk: [],
+  };
+}
+
+/** Select seed node IDs for the file-level graph based on configured strategy. */
+function selectFileSeedNodes(visNodes: VisNode[], cfg: PlotConfig): (number | string)[] {
+  if (cfg.seedStrategy === 'top-fanin') {
+    const sorted = [...visNodes].sort((a, b) => b.fanIn - a.fanIn);
+    return sorted.slice(0, cfg.seedCount || 30).map((n) => n.id);
+  }
+  // Both 'entry' and the default fallback include every node — file-level graphs
+  // don't track per-file roles, so 'entry' has no meaningful filter.
+  return visNodes.map((n) => n.id);
+}
+
+function prepareFileLevelData(
+  db: BetterSqlite3Database,
+  noTests: boolean,
+  minConf: number,
+  cfg: PlotConfig,
+): GraphData {
+  const edges = loadFileLevelEdges(db, noTests, minConf);
 
   const files = new Set<string>();
   for (const { source, target } of edges) {
@@ -366,61 +453,19 @@ function prepareFileLevelData(
   let idx = 0;
   for (const f of files) fileIds.set(f, idx++);
 
-  // Fan-in/fan-out
-  const fanInCount = new Map<string, number>();
-  const fanOutCount = new Map<string, number>();
-  for (const { source, target } of edges) {
-    fanOutCount.set(source, (fanOutCount.get(source) || 0) + 1);
-    fanInCount.set(target, (fanInCount.get(target) || 0) + 1);
-  }
+  const { fanInCount, fanOutCount } = computeFileFanCounts(edges);
+  const communityMap = detectFileCommunities(files, edges);
 
-  // Communities via graph subsystem
-  const communityMap = new Map<string, number>();
-  if (files.size > 0) {
-    try {
-      const fileGraph = new CodeGraph();
-      for (const f of files) fileGraph.addNode(f);
-      for (const { source, target } of edges) {
-        if (source !== target && !fileGraph.hasEdge(source, target))
-          fileGraph.addEdge(source, target);
-      }
-      const { assignments } = louvainCommunities(fileGraph);
-      for (const [file, cid] of assignments) communityMap.set(file, cid);
-    } catch {
-      // ignore
-    }
-  }
-
-  const visNodes: VisNode[] = [...files].map((f) => {
-    const id = fileIds.get(f)!;
-    const community = communityMap.get(f) ?? null;
-    const fanIn = fanInCount.get(f) || 0;
-    const fanOut = fanOutCount.get(f) || 0;
-    const directory = path.dirname(f);
-    const color: string =
-      cfg.colorBy === 'community' && community !== null
-        ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length] || '#ccc'
-        : cfg.nodeColors?.file || (DEFAULT_NODE_COLORS as Record<string, string>).file || '#ccc';
-
-    return {
-      id,
-      label: path.basename(f),
-      title: f,
-      color,
-      kind: 'file',
-      role: '',
-      file: f,
-      line: 0,
-      community,
-      cognitive: null,
-      cyclomatic: null,
-      maintainabilityIndex: null,
-      fanIn,
-      fanOut,
-      directory,
-      risk: [],
-    };
-  });
+  const visNodes: VisNode[] = [...files].map((f) =>
+    buildFileVisNode(
+      f,
+      fileIds.get(f)!,
+      communityMap.get(f) ?? null,
+      fanInCount.get(f) || 0,
+      fanOutCount.get(f) || 0,
+      cfg,
+    ),
+  );
 
   const visEdges: VisEdge[] = edges.map(({ source, target }, i) => ({
     id: `e${i}`,
@@ -428,17 +473,7 @@ function prepareFileLevelData(
     to: fileIds.get(target)!,
   }));
 
-  let seedNodeIds: (number | string)[];
-  if (cfg.seedStrategy === 'top-fanin') {
-    const sorted = [...visNodes].sort((a, b) => b.fanIn - a.fanIn);
-    seedNodeIds = sorted.slice(0, cfg.seedCount || 30).map((n) => n.id);
-  } else if (cfg.seedStrategy === 'entry') {
-    seedNodeIds = visNodes.map((n) => n.id);
-  } else {
-    seedNodeIds = visNodes.map((n) => n.id);
-  }
-
-  return { nodes: visNodes, edges: visEdges, seedNodeIds };
+  return { nodes: visNodes, edges: visEdges, seedNodeIds: selectFileSeedNodes(visNodes, cfg) };
 }
 
 // ─── HTML Generation (thin wrapper) ──────────────────────────────────
