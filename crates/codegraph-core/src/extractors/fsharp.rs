@@ -321,8 +321,8 @@ fn handle_application(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             // matches the JS extractor (`identifier` first). Operator forms
             // like `( + )` have neither child; we emit nothing in that case,
             // mirroring the JS extractor's silent skip.
-            if let Some(inner) = find_child(&func_node, "identifier")
-                .or_else(|| find_child(&func_node, "long_identifier"))
+            if let Some(inner) =
+                find_first_child_of_types(&func_node, &["identifier", "long_identifier"])
             {
                 symbols.calls.push(Call {
                     name: node_text(&inner, source).to_string(),

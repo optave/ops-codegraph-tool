@@ -225,7 +225,7 @@ fn push_elixir_sequence_items<'a>(node: &Node<'a>, stack: &mut Vec<Node<'a>>) {
     for i in (0..count).rev() {
         let Some(c) = node.child(i) else { continue };
         let k = c.kind();
-        if k == "[" || k == "]" || k == "{" || k == "}" || k == "," { continue; }
+        if PUNCTUATION_TOKENS.contains(&k) { continue; }
         stack.push(c);
     }
 }
