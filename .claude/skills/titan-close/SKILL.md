@@ -604,7 +604,28 @@ Write `.codegraph/titan/close-summary.json`:
    ```
    Delete any remaining batch snapshots.
 
-3. **Titan reports are committed to the repo** (not gitignored). The `generated/titan/` directory is tracked so reports are preserved in git history.
+3. **Branch cleanup:** Delete all titan working branches now that their content lives in focused PR branches. These branches accumulate indefinitely without this step and leave hundreds of orphaned commits that never reach main.
+
+   List what will be deleted:
+   ```bash
+   git branch --list 'refactor/titan-*' 'refactor/titan-*' 'docs/titan-*'
+   ```
+
+   Delete locally (force-delete is safe — all work is in the created PR branches):
+   ```bash
+   git branch --list 'refactor/titan-*' | xargs -r git branch -D
+   git branch --list 'docs/titan-*' | xargs -r git branch -D
+   ```
+
+   Delete from remote:
+   ```bash
+   git branch --list 'refactor/titan-*' | sed 's/^[* ]*//' | xargs -r git push origin --delete 2>/dev/null || true
+   git branch --list 'docs/titan-*' | sed 's/^[* ]*//' | xargs -r git push origin --delete 2>/dev/null || true
+   ```
+
+   Print count of branches deleted.
+
+4. **Titan reports are committed to the repo** (not gitignored). The `generated/titan/` directory is tracked so reports are preserved in git history.
 
 ---
 

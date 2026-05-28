@@ -64,7 +64,26 @@ This removes:
 
 ---
 
-## Step 4 — Rebuild graph (unless --keep-graph)
+## Step 4 — Delete titan working branches
+
+Delete all local titan working branches. These accumulate across runs and leave orphaned commits that never reach main. The actual PR content lives on focused PR branches created by `/titan-close` — the working branches are safe to remove.
+
+```bash
+git branch --list 'refactor/titan-*' | xargs -r git branch -D
+git branch --list 'docs/titan-*' | xargs -r git branch -D
+```
+
+Delete from remote (best-effort — failures are non-fatal):
+```bash
+git branch --list 'refactor/titan-*' | sed 's/^[* ]*//' | xargs -r git push origin --delete 2>/dev/null || true
+git branch --list 'docs/titan-*' | sed 's/^[* ]*//' | xargs -r git push origin --delete 2>/dev/null || true
+```
+
+Print how many branches were removed.
+
+---
+
+## Step 5 — Rebuild graph (unless --keep-graph)
 
 If `$ARGUMENTS` does NOT contain `--keep-graph`:
 
@@ -78,7 +97,7 @@ If `$ARGUMENTS` contains `--keep-graph`, skip this step.
 
 ---
 
-## Step 5 — Report
+## Step 6 — Report
 
 ```
 Titan pipeline reset complete.
@@ -86,6 +105,7 @@ Titan pipeline reset complete.
   - Grind snapshot: deleted
   - Batch snapshots: deleted
   - Artifacts: removed (.codegraph/titan/)
+  - Titan branches deleted: N local, N remote
   - Graph: rebuilt (clean state)
 
 To start a fresh Titan pipeline, run /titan-recon
