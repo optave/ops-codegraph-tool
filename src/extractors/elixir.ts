@@ -256,8 +256,9 @@ function pushElixirBinaryOperatorOperands(node: TreeSitterNode, stack: TreeSitte
  * the worklist, skipping punctuation tokens.
  */
 function pushElixirSequenceItems(node: TreeSitterNode, stack: TreeSitterNode[]): void {
-  for (const c of iterChildren(node, PUNCTUATION_TOKENS)) {
-    stack.push(c);
+  const items = [...iterChildren(node, PUNCTUATION_TOKENS)];
+  for (let i = items.length - 1; i >= 0; i--) {
+    stack.push(items[i] as TreeSitterNode);
   }
 }
 
@@ -267,6 +268,7 @@ function pushElixirSequenceItems(node: TreeSitterNode, stack: TreeSitterNode[]):
  * the leading `struct` child is intentionally skipped.
  */
 function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): void {
+  const values: TreeSitterNode[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const content = node.child(i);
     if (!content || content.type !== 'map_content') continue;
@@ -279,10 +281,13 @@ function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): voi
         for (let p = 0; p < pair.childCount; p++) {
           const part = pair.child(p);
           if (!part || part.type === 'keyword') continue;
-          stack.push(part);
+          values.push(part);
         }
       }
     }
+  }
+  for (let i = values.length - 1; i >= 0; i--) {
+    stack.push(values[i] as TreeSitterNode);
   }
 }
 
