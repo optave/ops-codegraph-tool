@@ -58,9 +58,32 @@ export function fileDepsData(
  *
  * Uses Repository.findCallers() so it works with both native and WASM engines.
  */
+type CallerRow = { id: number; name: string; kind: string; file: string; line: number };
+
+/** Compute the next BFS frontier from a batched upstream-callers lookup. */
+function buildNextCallerFrontier(
+  unvisited: CallerRow[],
+  batchCallers: Map<number, CallerRow[]>,
+  visited: Set<number>,
+  noTests: boolean,
+): CallerRow[] {
+  const nextFrontier: CallerRow[] = [];
+  const nextFrontierIds = new Set<number>();
+  for (const f of unvisited) {
+    const upstream = batchCallers.get(f.id) || [];
+    for (const u of upstream) {
+      if (noTests && isTestFile(u.file)) continue;
+      if (visited.has(u.id) || nextFrontierIds.has(u.id)) continue;
+      nextFrontierIds.add(u.id);
+      nextFrontier.push(u);
+    }
+  }
+  return nextFrontier;
+}
+
 function buildTransitiveCallers(
   repo: InstanceType<typeof Repository>,
-  callers: Array<{ id: number; name: string; kind: string; file: string; line: number }>,
+  callers: CallerRow[],
   nodeId: number,
   depth: number,
   noTests: boolean,
@@ -81,18 +104,8 @@ function buildTransitiveCallers(
     if (unvisited.length === 0) break;
 
     const batchCallers = repo.findCallersBatch(unvisited.map((f) => f.id));
-    const nextFrontier: typeof frontier = [];
-    const nextFrontierIds = new Set<number>();
-    for (const f of unvisited) {
-      const upstream = batchCallers.get(f.id) || [];
-      for (const u of upstream) {
-        if (noTests && isTestFile(u.file)) continue;
-        if (!visited.has(u.id) && !nextFrontierIds.has(u.id)) {
-          nextFrontierIds.add(u.id);
-          nextFrontier.push(u);
-        }
-      }
-    }
+    const nextFrontier = buildNextCallerFrontier(unvisited, batchCallers, visited, noTests);
+
     if (nextFrontier.length > 0) {
       transitiveCallers[d] = nextFrontier.map((n) => ({
         name: n.name,
@@ -258,6 +271,68 @@ function resolveEndpoints(
   };
 }
 
+type NeighborRow = {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  edge_kind: string;
+};
+
+type BfsShortestState = {
+  visited: Set<number>;
+  parent: Map<number, { parentId: number; edgeKind: string }>;
+  found: boolean;
+  foundDepth: number;
+  alternateCount: number;
+};
+
+/** Build the SQL statement that yields neighbors of a node id in the requested direction. */
+function buildNeighborStmt(
+  db: BetterSqlite3Database,
+  edgeKinds: string[],
+  reverse: boolean,
+): ReturnType<BetterSqlite3Database['prepare']> {
+  const kindPlaceholders = edgeKinds.map(() => '?').join(', ');
+  // Forward: source_id -> target_id (A calls... calls B)
+  // Reverse: target_id -> source_id (B is called by... called by A)
+  const neighborQuery = reverse
+    ? `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
+       FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind IN (${kindPlaceholders})`
+    : `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
+       FROM edges e JOIN nodes n ON e.target_id = n.id
+       WHERE e.source_id = ? AND e.kind IN (${kindPlaceholders})`;
+  return db.prepare(neighborQuery);
+}
+
+/** Process a single neighbor row during BFS; returns true once the target has been reached. */
+function visitNeighbor(
+  n: NeighborRow,
+  currentId: number,
+  depth: number,
+  targetId: number,
+  state: BfsShortestState,
+  nextQueue: number[],
+  noTests: boolean,
+): void {
+  if (noTests && isTestFile(n.file)) return;
+  if (n.id === targetId) {
+    if (!state.found) {
+      state.found = true;
+      state.foundDepth = depth;
+      state.parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
+    }
+    state.alternateCount++;
+    return;
+  }
+  if (state.visited.has(n.id)) return;
+  state.visited.add(n.id);
+  state.parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
+  nextQueue.push(n.id);
+}
+
 /**
  * BFS from sourceId toward targetId.
  * Returns { found, parent, alternateCount, foundDepth }.
@@ -272,61 +347,35 @@ function bfsShortestPath(
   maxDepth: number,
   noTests: boolean,
 ) {
-  const kindPlaceholders = edgeKinds.map(() => '?').join(', ');
-
-  // Forward: source_id -> target_id (A calls... calls B)
-  // Reverse: target_id -> source_id (B is called by... called by A)
-  const neighborQuery = reverse
-    ? `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
-       FROM edges e JOIN nodes n ON e.source_id = n.id
-       WHERE e.target_id = ? AND e.kind IN (${kindPlaceholders})`
-    : `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
-       FROM edges e JOIN nodes n ON e.target_id = n.id
-       WHERE e.source_id = ? AND e.kind IN (${kindPlaceholders})`;
-  const neighborStmt = db.prepare(neighborQuery);
-
-  const visited = new Set([sourceId]);
-  const parent = new Map<number, { parentId: number; edgeKind: string }>();
+  const neighborStmt = buildNeighborStmt(db, edgeKinds, reverse);
+  const state: BfsShortestState = {
+    visited: new Set([sourceId]),
+    parent: new Map(),
+    found: false,
+    foundDepth: -1,
+    alternateCount: 0,
+  };
   let queue = [sourceId];
-  let found = false;
-  let alternateCount = 0;
-  let foundDepth = -1;
 
   for (let depth = 1; depth <= maxDepth; depth++) {
     const nextQueue: number[] = [];
     for (const currentId of queue) {
-      const neighbors = neighborStmt.all(currentId, ...edgeKinds) as Array<{
-        id: number;
-        name: string;
-        kind: string;
-        file: string;
-        line: number;
-        edge_kind: string;
-      }>;
+      const neighbors = neighborStmt.all(currentId, ...edgeKinds) as NeighborRow[];
       for (const n of neighbors) {
-        if (noTests && isTestFile(n.file)) continue;
-        if (n.id === targetId) {
-          if (!found) {
-            found = true;
-            foundDepth = depth;
-            parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
-          }
-          alternateCount++;
-          continue;
-        }
-        if (!visited.has(n.id)) {
-          visited.add(n.id);
-          parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
-          nextQueue.push(n.id);
-        }
+        visitNeighbor(n, currentId, depth, targetId, state, nextQueue, noTests);
       }
     }
-    if (found) break;
+    if (state.found) break;
     queue = nextQueue;
     if (queue.length === 0) break;
   }
 
-  return { found, parent, alternateCount, foundDepth };
+  return {
+    found: state.found,
+    parent: state.parent,
+    alternateCount: state.alternateCount,
+    foundDepth: state.foundDepth,
+  };
 }
 
 /**
@@ -474,6 +523,53 @@ export function pathData(
 
 // ── File-level shortest path ────────────────────────────────────────────
 
+type FileBfsState = {
+  visited: Set<string>;
+  parentMap: Map<string, string>;
+  found: boolean;
+  alternateCount: number;
+};
+
+/** Process a neighbor file during file-level BFS; updates state in place. */
+function visitFileNeighbor(
+  neighborFile: string,
+  currentFile: string,
+  targetFile: string,
+  state: FileBfsState,
+  nextQueue: string[],
+  noTests: boolean,
+): void {
+  if (noTests && isTestFile(neighborFile)) return;
+  if (neighborFile === targetFile) {
+    if (!state.found) {
+      state.found = true;
+      state.parentMap.set(neighborFile, currentFile);
+    }
+    state.alternateCount++;
+    return;
+  }
+  if (state.visited.has(neighborFile)) return;
+  state.visited.add(neighborFile);
+  state.parentMap.set(neighborFile, currentFile);
+  nextQueue.push(neighborFile);
+}
+
+/** Reconstruct file path from target back to source using parent links. */
+function reconstructFilePath(
+  parentMap: Map<string, string>,
+  sourceFile: string,
+  targetFile: string,
+): string[] {
+  const filePath: string[] = [targetFile];
+  let cur = targetFile;
+  while (cur !== sourceFile) {
+    cur = parentMap.get(cur)!;
+    filePath.push(cur);
+  }
+  filePath.reverse();
+  return filePath;
+}
+
 /** BFS over file adjacency graph to find shortest path. */
 function bfsFilePath(
   neighborStmt: ReturnType<BetterSqlite3Database['prepare']>,
@@ -483,11 +579,13 @@ function bfsFilePath(
   maxDepth: number,
   noTests: boolean,
 ): { found: boolean; path: string[]; alternateCount: number } {
-  const visited = new Set([sourceFile]);
-  const parentMap = new Map<string, string>();
+  const state: FileBfsState = {
+    visited: new Set([sourceFile]),
+    parentMap: new Map<string, string>(),
+    found: false,
+    alternateCount: 0,
+  };
   let queue = [sourceFile];
-  let found = false;
-  let alternateCount = 0;
 
   for (let depth = 1; depth <= maxDepth; depth++) {
     const nextQueue: string[] = [];
@@ -496,38 +594,21 @@ function bfsFilePath(
         neighbor_file: string;
       }>;
       for (const n of neighbors) {
-        if (noTests && isTestFile(n.neighbor_file)) continue;
-        if (n.neighbor_file === targetFile) {
-          if (!found) {
-            found = true;
-            parentMap.set(n.neighbor_file, currentFile);
-          }
-          alternateCount++;
-          continue;
-        }
-        if (!visited.has(n.neighbor_file)) {
-          visited.add(n.neighbor_file);
-          parentMap.set(n.neighbor_file, currentFile);
-          nextQueue.push(n.neighbor_file);
-        }
+        visitFileNeighbor(n.neighbor_file, currentFile, targetFile, state, nextQueue, noTests);
       }
     }
-    if (found) break;
+    if (state.found) break;
     queue = nextQueue;
     if (queue.length === 0) break;
   }
 
-  if (!found) return { found: false, path: [], alternateCount: 0 };
+  if (!state.found) return { found: false, path: [], alternateCount: 0 };
 
-  // Reconstruct path
-  const filePath: string[] = [targetFile];
-  let cur = targetFile;
-  while (cur !== sourceFile) {
-    cur = parentMap.get(cur)!;
-    filePath.push(cur);
-  }
-  filePath.reverse();
-  return { found: true, path: filePath, alternateCount: Math.max(0, alternateCount - 1) };
+  return {
+    found: true,
+    path: reconstructFilePath(state.parentMap, sourceFile, targetFile),
+    alternateCount: Math.max(0, state.alternateCount - 1),
+  };
 }
 
 /**

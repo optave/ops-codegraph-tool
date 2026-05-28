@@ -16,35 +16,111 @@ interface FlowOpts {
   csv?: boolean;
 }
 
+interface EntryPoint {
+  kind: string;
+  name: string;
+  file: string;
+  line: number;
+}
+
+interface FlowNode {
+  kind: string;
+  name: string;
+  file: string;
+  line: number;
+}
+
+interface FlowStep {
+  depth: number;
+  nodes: FlowNode[];
+}
+
+interface FlowCycle {
+  from: string;
+  to: string;
+  depth: number;
+}
+
+interface FlowResult {
+  entry?: { kind: string; name: string; type: string; file: string; line: number };
+  depth: number;
+  totalReached: number;
+  leaves: Array<{ name: string; file: string }>;
+  steps: FlowStep[];
+  cycles: FlowCycle[];
+  truncated?: boolean;
+}
+
+function runListEntryPoints(dbPath: string | undefined, opts: FlowOpts): void {
+  const data = listEntryPointsData(dbPath, {
+    noTests: opts.noTests,
+    limit: opts.limit,
+    offset: opts.offset,
+  }) as { count: number; byType: Record<string, EntryPoint[]> };
+  if (outputResult(data, 'entries', opts)) return;
+  if (data.count === 0) {
+    console.log('No entry points found. Run "codegraph build" first.');
+    return;
+  }
+  console.log(`\nEntry points (${data.count} total):\n`);
+  for (const [type, entries] of Object.entries(data.byType)) {
+    console.log(`  ${type} (${entries.length}):`);
+    for (const e of entries) {
+      console.log(`    [${kindIcon(e.kind)}] ${e.name}  ${e.file}:${e.line}`);
+    }
+    console.log();
+  }
+}
+
+function printFlowHeader(data: FlowResult): void {
+  const e = data.entry;
+  if (!e) return;
+  const typeTag = e.type !== 'exported' ? ` (${e.type})` : '';
+  console.log(`\nFlow from: [${kindIcon(e.kind)}] ${e.name}${typeTag}  ${e.file}:${e.line}`);
+  console.log(
+    `Depth: ${data.depth}  Reached: ${data.totalReached} nodes  Leaves: ${data.leaves.length}`,
+  );
+  if (data.truncated) {
+    console.log(`  (truncated at depth ${data.depth})`);
+  }
+  console.log();
+}
+
+function isLeafNode(n: FlowNode, leaves: Array<{ name: string; file: string }>): boolean {
+  return leaves.some((l) => l.name === n.name && l.file === n.file);
+}
+
+/** Returns true when the node is a leaf (no steps); caller should skip cycle output. */
+function printFlowSteps(data: FlowResult): boolean {
+  if (data.steps.length === 0) {
+    console.log('  (leaf node — no callees)');
+    return true;
+  }
+  for (const step of data.steps) {
+    console.log(`  depth ${step.depth}:`);
+    for (const n of step.nodes) {
+      const leafTag = isLeafNode(n, data.leaves) ? ' [leaf]' : '';
+      console.log(`    [${kindIcon(n.kind)}] ${n.name}  ${n.file}:${n.line}${leafTag}`);
+    }
+  }
+  return false;
+}
+
+function printFlowCycles(cycles: FlowCycle[]): void {
+  if (cycles.length === 0) return;
+  console.log('\n  Cycles detected:');
+  for (const c of cycles) {
+    console.log(`    ${c.from} -> ${c.to} (at depth ${c.depth})`);
+  }
+}
+
 export function flow(
   name: string | undefined,
   dbPath: string | undefined,
   opts: FlowOpts = {},
 ): void {
   if (opts.list) {
-    const data = listEntryPointsData(dbPath, {
-      noTests: opts.noTests,
-      limit: opts.limit,
-      offset: opts.offset,
-    }) as any;
-    if (outputResult(data, 'entries', opts)) return;
-    if (data.count === 0) {
-      console.log('No entry points found. Run "codegraph build" first.');
-      return;
-    }
-    console.log(`\nEntry points (${data.count} total):\n`);
-    for (const [type, entries] of Object.entries(
-      data.byType as Record<
-        string,
-        Array<{ kind: string; name: string; file: string; line: number }>
-      >,
-    )) {
-      console.log(`  ${type} (${entries.length}):`);
-      for (const e of entries) {
-        console.log(`    [${kindIcon(e.kind)}] ${e.name}  ${e.file}:${e.line}`);
-      }
-      console.log();
-    }
+    runListEntryPoints(dbPath, opts);
     return;
   }
 
@@ -55,7 +131,7 @@ export function flow(
     return;
   }
 
-  const data = flowData(name, dbPath, opts) as any;
+  const data = flowData(name, dbPath, opts) as unknown as FlowResult;
   if (outputResult(data, 'steps', opts)) return;
 
   if (!data.entry) {
@@ -63,37 +139,9 @@ export function flow(
     return;
   }
 
-  const e = data.entry;
-  const typeTag = e.type !== 'exported' ? ` (${e.type})` : '';
-  console.log(`\nFlow from: [${kindIcon(e.kind)}] ${e.name}${typeTag}  ${e.file}:${e.line}`);
-  console.log(
-    `Depth: ${data.depth}  Reached: ${data.totalReached} nodes  Leaves: ${data.leaves.length}`,
-  );
-  if (data.truncated) {
-    console.log(`  (truncated at depth ${data.depth})`);
-  }
-  console.log();
-
-  if (data.steps.length === 0) {
-    console.log('  (leaf node — no callees)');
-    return;
-  }
-
-  for (const step of data.steps) {
-    console.log(`  depth ${step.depth}:`);
-    for (const n of step.nodes) {
-      const isLeaf = data.leaves.some(
-        (l: { name: string; file: string }) => l.name === n.name && l.file === n.file,
-      );
-      const leafTag = isLeaf ? ' [leaf]' : '';
-      console.log(`    [${kindIcon(n.kind)}] ${n.name}  ${n.file}:${n.line}${leafTag}`);
-    }
-  }
-
-  if (data.cycles.length > 0) {
-    console.log('\n  Cycles detected:');
-    for (const c of data.cycles) {
-      console.log(`    ${c.from} -> ${c.to} (at depth ${c.depth})`);
-    }
+  printFlowHeader(data);
+  const isLeaf = printFlowSteps(data);
+  if (!isLeaf) {
+    printFlowCycles(data.cycles);
   }
 }
