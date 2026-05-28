@@ -1128,7 +1128,7 @@ export interface CodegraphConfig {
   };
 
   embeddings: {
-    model: string;
+    model: string | null;
     llmProvider: string | null;
   };
 

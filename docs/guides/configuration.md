@@ -86,7 +86,7 @@ Controls the local embedding model used by `codegraph embed` and `codegraph sear
 
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
-| `model` | `string` | `"nomic-v1.5"` | Model registry key (see `src/domain/search/models.ts`). Common options: `"nomic-v1.5"`, `"bge-large"`, `"nomic"`. |
+| `model` | `string \| null` | `null` | Model registry key (see `src/domain/search/models.ts`). When `null`, `codegraph embed` reuses the model already stored in the database, or falls back to the built-in default (`"nomic"`) for fresh graphs. Common options: `"nomic"`, `"nomic-v1.5"`, `"bge-large"`. |
 | `llmProvider` | `string \| null` | `null` | Optional LLM provider for query expansion. `null` disables it. |
 
 ---
