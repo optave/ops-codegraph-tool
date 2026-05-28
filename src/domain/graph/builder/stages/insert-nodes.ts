@@ -92,6 +92,99 @@ function marshalSymbolBatches(allSymbols: Map<string, ExtractorOutput>): InsertN
   return batches;
 }
 
+/** A single file_hashes row. */
+interface FileHashRecord {
+  file: string;
+  hash: string;
+  mtime: number;
+  size: number;
+}
+
+/** Resolve the (hash, mtime, size) tuple for a relPath, reading from disk if needed. */
+function resolveHashFromPrecomputed(
+  relPath: string,
+  precomputed: PrecomputedFileData,
+  rootDir: string,
+  caller: string,
+): FileHashRecord | null {
+  if (precomputed.hash) {
+    let mtime: number;
+    let size: number;
+    if (precomputed.stat) {
+      mtime = precomputed.stat.mtime;
+      size = precomputed.stat.size;
+    } else {
+      const rawStat = fileStat(path.join(rootDir, relPath));
+      mtime = rawStat ? rawStat.mtime : 0;
+      size = rawStat ? rawStat.size : 0;
+    }
+    return { file: relPath, hash: precomputed.hash, mtime, size };
+  }
+
+  const absPath = path.join(rootDir, relPath);
+  let code: string | null;
+  try {
+    code = readFileSafe(absPath);
+  } catch (e) {
+    debug(`${caller}: readFileSafe failed for ${relPath}: ${toErrorMessage(e)}`);
+    code = null;
+  }
+  if (code === null) return null;
+  const stat = fileStat(absPath);
+  return {
+    file: relPath,
+    hash: fileHash(code),
+    mtime: stat ? stat.mtime : 0,
+    size: stat ? stat.size : 0,
+  };
+}
+
+/**
+ * Walk every collected file once and yield a `FileHashRecord` for it, plus one
+ * record per metadata-only update.  Shared by `buildFileHashes` (native path)
+ * and `updateFileHashes` (JS fallback) so the iteration and hash-resolution
+ * logic stays in one place.
+ *
+ * Files marked `_reverseDepOnly` are skipped — their hashes are already
+ * correct in the DB.
+ */
+function* iterFileHashRecords(
+  filesToParse: FileToParse[],
+  precomputedData: Map<string, PrecomputedFileData>,
+  metadataUpdates: MetadataUpdate[],
+  rootDir: string,
+  caller: string,
+): Generator<FileHashRecord> {
+  const seen = new Set<string>();
+
+  for (const item of filesToParse) {
+    const relPath = item.relPath ?? normalizePath(path.relative(rootDir, item.file));
+    if (seen.has(relPath)) continue;
+    seen.add(relPath);
+
+    const precomputed = precomputedData.get(relPath);
+    if (precomputed?._reverseDepOnly) continue;
+
+    const record = resolveHashFromPrecomputed(
+      relPath,
+      precomputed ?? ({} as PrecomputedFileData),
+      rootDir,
+      caller,
+    );
+    if (record) yield record;
+  }
+
+  // Metadata-only updates (self-heal mtime/size without re-parse)
+  for (const item of metadataUpdates) {
+    yield {
+      file: item.relPath,
+      hash: item.hash,
+      mtime: item.stat ? item.stat.mtime : 0,
+      size: item.stat ? item.stat.size : 0,
+    };
+  }
+}
+
 /**
  * Build file hash entries for every collected file, including those that
  * produced zero symbols (empty files, parsers that silently no-op'd, or
@@ -107,57 +200,16 @@ export function buildFileHashes(
   precomputedData: Map<string, PrecomputedFileData>,
   metadataUpdates: MetadataUpdate[],
   rootDir: string,
-): Array<{ file: string; hash: string; mtime: number; size: number }> {
-  const fileHashes: Array<{ file: string; hash: string; mtime: number; size: number }> = [];
-  const seen = new Set<string>();
-
-  for (const item of filesToParse) {
-    const relPath = item.relPath ?? normalizePath(path.relative(rootDir, item.file));
-    if (seen.has(relPath)) continue;
-    seen.add(relPath);
-
-    const precomputed = precomputedData.get(relPath);
-    if (precomputed?._reverseDepOnly) {
-      continue; // file unchanged, hash already correct
-    }
-    if (precomputed?.hash) {
-      let mtime: number;
-      let size: number;
-      if (precomputed.stat) {
-        mtime = precomputed.stat.mtime;
-        size = precomputed.stat.size;
-      } else {
-        const rawStat = fileStat(path.join(rootDir, relPath));
-        mtime = rawStat ? rawStat.mtime : 0;
-        size = rawStat ? rawStat.size : 0;
-      }
-      fileHashes.push({ file: relPath, hash: precomputed.hash, mtime, size });
-    } else {
-      const absPath = path.join(rootDir, relPath);
-      let code: string | null;
-      try {
-        code = readFileSafe(absPath);
-      } catch (e) {
-        debug(`buildFileHashes: readFileSafe failed for ${relPath}: ${toErrorMessage(e)}`);
-        code = null;
-      }
-      if (code !== null) {
-        const stat = fileStat(absPath);
-        const mtime = stat ? stat.mtime : 0;
-        const size = stat ? stat.size : 0;
-        fileHashes.push({ file: relPath, hash: fileHash(code), mtime, size });
-      }
-    }
-  }
-
-  // Also include metadata-only updates (self-heal mtime/size without re-parse)
-  for (const item of metadataUpdates) {
-    const mtime = item.stat ? item.stat.mtime : 0;
-    const size = item.stat ? item.stat.size : 0;
-    fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
-  }
-
-  return fileHashes;
+): FileHashRecord[] {
+  return [
+    ...iterFileHashRecords(
+      filesToParse,
+      precomputedData,
+      metadataUpdates,
+      rootDir,
+      'buildFileHashes',
+    ),
+  ];
 }
 
 // ── Native fast-path ─────────────────────────────────────────────────
@@ -260,36 +312,38 @@ function insertDefinitionsAndExports(
 
 // ── JS fallback: Phase 2+3 ──────────────────────────────────────────
 
-function insertChildrenAndEdges(
+/** Build the in-memory `name|kind|line` → node-id map for a single file. */
+function loadFileNodeIdMap(db: BetterSqlite3Database, relPath: string): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of bulkNodeIdsByFile(db, relPath)) {
+    map.set(`${row.name}|${row.kind}|${row.line}`, row.id);
+  }
+  return map;
+}
+
+/**
+ * First pass: for every file, emit file→def containment edges and collect
+ * the child-node insertion rows.
+ */
+function collectChildRowsAndFileEdges(
   db: BetterSqlite3Database,
   allSymbols: Map<string, ExtractorOutput>,
+  childRows: unknown[][],
+  edgeRows: unknown[][],
 ): void {
-  const childRows: unknown[][] = [];
-  const edgeRows: unknown[][] = [];
-
   for (const [relPath, symbols] of allSymbols) {
-    // First pass: collect file→def edges and child rows
-    const nodeIdMap = new Map<string, number>();
-    for (const row of bulkNodeIdsByFile(db, relPath)) {
-      nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
-    }
-
+    const nodeIdMap = loadFileNodeIdMap(db, relPath);
     const fileId = nodeIdMap.get(`${relPath}|file|0`);
 
     for (const def of symbols.definitions) {
       const defId = nodeIdMap.get(`${def.name}|${def.kind}|${def.line}`);
 
-      // Containment edge: file -> definition
       if (fileId && defId) {
         edgeRows.push([fileId, defId, 'contains', 1.0, 0]);
       }
-
-      if (!def.children?.length) continue;
-      if (!defId) continue;
+      if (!def.children?.length || !defId) continue;
 
       for (const child of def.children) {
-        // Child node
-        const qualifiedName = `${def.name}.${child.name}`;
         childRows.push([
           child.name,
           child.kind,
@@ -297,39 +351,55 @@ function insertChildrenAndEdges(
           child.line,
           child.endLine || null,
           defId,
-          qualifiedName,
+          `${def.name}.${child.name}`,
           def.name,
           child.visibility || null,
         ]);
       }
     }
   }
+}
 
-  // Insert children first (so they exist for edge lookup)
-  batchInsertNodes(db, childRows);
-
-  // Now re-fetch IDs to include newly-inserted children, then add child edges
+/**
+ * Second pass (after child nodes have been inserted): emit def→child
+ * containment edges and child→def `parameter_of` edges.
+ */
+function collectChildEdges(
+  db: BetterSqlite3Database,
+  allSymbols: Map<string, ExtractorOutput>,
+  edgeRows: unknown[][],
+): void {
   for (const [relPath, symbols] of allSymbols) {
-    const nodeIdMap = new Map<string, number>();
-    for (const row of bulkNodeIdsByFile(db, relPath)) {
-      nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
-    }
+    const nodeIdMap = loadFileNodeIdMap(db, relPath);
     for (const def of symbols.definitions) {
       if (!def.children?.length) continue;
       const defId = nodeIdMap.get(`${def.name}|${def.kind}|${def.line}`);
       if (!defId) continue;
       for (const child of def.children) {
         const childId = nodeIdMap.get(`${child.name}|${child.kind}|${child.line}`);
-        if (childId) {
-          edgeRows.push([defId, childId, 'contains', 1.0, 0]);
-          if (child.kind === 'parameter') {
-            edgeRows.push([childId, defId, 'parameter_of', 1.0, 0]);
-          }
+        if (!childId) continue;
+        edgeRows.push([defId, childId, 'contains', 1.0, 0]);
+        if (child.kind === 'parameter') {
+          edgeRows.push([childId, defId, 'parameter_of', 1.0, 0]);
         }
       }
     }
   }
+}
 
+function insertChildrenAndEdges(
+  db: BetterSqlite3Database,
+  allSymbols: Map<string, ExtractorOutput>,
+): void {
+  const childRows: unknown[][] = [];
+  const edgeRows: unknown[][] = [];
+
+  collectChildRowsAndFileEdges(db, allSymbols, childRows, edgeRows);
+
+  // Insert children first (so they exist for edge lookup)
+  batchInsertNodes(db, childRows);
+
+  collectChildEdges(db, allSymbols, edgeRows);
   batchInsertEdges(db, edgeRows);
 }
 
@@ -348,50 +418,14 @@ function updateFileHashes(
   // Iterate every collected file (#1068): files that produced zero symbols
   // (empty, parser no-op, or grammar-missing optional language) still need a
   // hash row, otherwise the next no-op rebuild's fast-skip pre-flight rejects.
-  const seen = new Set<string>();
-  for (const item of filesToParse) {
-    const relPath = item.relPath ?? normalizePath(path.relative(rootDir, item.file));
-    if (seen.has(relPath)) continue;
-    seen.add(relPath);
-
-    const precomputed = precomputedData.get(relPath);
-    if (precomputed?._reverseDepOnly) {
-      // no-op: file unchanged, hash already correct
-    } else if (precomputed?.hash) {
-      let mtime: number;
-      let size: number;
-      if (precomputed.stat) {
-        mtime = precomputed.stat.mtime;
-        size = precomputed.stat.size;
-      } else {
-        const rawStat = fileStat(path.join(rootDir, relPath));
-        mtime = rawStat ? rawStat.mtime : 0;
-        size = rawStat ? rawStat.size : 0;
-      }
-      upsertHash.run(relPath, precomputed.hash, mtime, size);
-    } else {
-      const absPath = path.join(rootDir, relPath);
-      let code: string | null;
-      try {
-        code = readFileSafe(absPath);
-      } catch (e) {
-        debug(`updateFileHashes: readFileSafe failed for ${relPath}: ${toErrorMessage(e)}`);
-        code = null;
-      }
-      if (code !== null) {
-        const stat = fileStat(absPath);
-        const mtime = stat ? stat.mtime : 0;
-        const size = stat ? stat.size : 0;
-        upsertHash.run(relPath, fileHash(code), mtime, size);
-      }
-    }
-  }
-
-  // Also update metadata-only entries (self-heal mtime/size without re-parse)
-  for (const item of metadataUpdates) {
-    const mtime = item.stat ? item.stat.mtime : 0;
-    const size = item.stat ? item.stat.size : 0;
-    upsertHash.run(item.relPath, item.hash, mtime, size);
+  for (const record of iterFileHashRecords(
+    filesToParse,
+    precomputedData,
+    metadataUpdates,
+    rootDir,
+    'updateFileHashes',
+  )) {
+    upsertHash.run(record.file, record.hash, record.mtime, record.size);
   }
 }
 
