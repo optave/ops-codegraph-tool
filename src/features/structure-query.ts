@@ -227,6 +227,96 @@ interface HotspotsDataOpts {
   noTests?: boolean;
 }
 
+type HotspotEntry = {
+  name: string;
+  kind: string;
+  lineCount: number | null;
+  symbolCount: number | null;
+  importCount: number | null;
+  exportCount: number | null;
+  fanIn: number | null;
+  fanOut: number | null;
+  cohesion: number | null;
+  fileCount: number | null;
+  density: number;
+  coupling: number;
+};
+
+/** Compute density from either fileCount/symbolCount or lineCount/symbolCount. */
+function computeHotspotDensity(
+  symbolCount: number | null,
+  fileCount: number | null,
+  lineCount: number | null,
+): number {
+  if ((fileCount ?? 0) > 0) return (symbolCount || 0) / (fileCount ?? 1);
+  if ((lineCount ?? 0) > 0) return (symbolCount || 0) / (lineCount ?? 1);
+  return 0;
+}
+
+/** Map a native-engine hotspot row (camelCase keys) to the public HotspotEntry shape. */
+function mapNativeHotspotRow(r: {
+  name: string;
+  kind: string;
+  lineCount: number | null;
+  symbolCount: number | null;
+  importCount: number | null;
+  exportCount: number | null;
+  fanIn: number | null;
+  fanOut: number | null;
+  cohesion: number | null;
+  fileCount: number | null;
+}): HotspotEntry {
+  return {
+    name: r.name,
+    kind: r.kind,
+    lineCount: r.lineCount,
+    symbolCount: r.symbolCount,
+    importCount: r.importCount,
+    exportCount: r.exportCount,
+    fanIn: r.fanIn,
+    fanOut: r.fanOut,
+    cohesion: r.cohesion,
+    fileCount: r.fileCount,
+    density: computeHotspotDensity(r.symbolCount, r.fileCount, r.lineCount),
+    coupling: (r.fanIn || 0) + (r.fanOut || 0),
+  };
+}
+
+/** Map a JS-path hotspot row (snake_case keys from SQLite) to the public HotspotEntry shape. */
+function mapJsHotspotRow(r: HotspotRow): HotspotEntry {
+  return {
+    name: r.name,
+    kind: r.kind,
+    lineCount: r.line_count,
+    symbolCount: r.symbol_count,
+    importCount: r.import_count,
+    exportCount: r.export_count,
+    fanIn: r.fan_in,
+    fanOut: r.fan_out,
+    cohesion: r.cohesion,
+    fileCount: r.file_count,
+    density: computeHotspotDensity(r.symbol_count, r.file_count, r.line_count),
+    coupling: (r.fan_in || 0) + (r.fan_out || 0),
+  };
+}
+
+/** ORDER BY clause for each ranking dimension (strategy pattern). */
+const HOTSPOT_ORDER_BY: Record<string, string> = {
+  'fan-in': 'nm.fan_in DESC NULLS LAST',
+  'fan-out': 'nm.fan_out DESC NULLS LAST',
+  density: 'nm.symbol_count DESC NULLS LAST',
+  coupling: '(COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST',
+};
+
+/** Build the JS-path SQL query for a given metric and test filter. */
+function buildHotspotQuery(metric: string, testFilter: string): string {
+  const orderBy = HOTSPOT_ORDER_BY[metric] ?? HOTSPOT_ORDER_BY['fan-in'];
+  return `SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
+                 nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+          FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
+          WHERE n.kind = ? ${testFilter} ORDER BY ${orderBy} LIMIT ?`;
+}
+
 export function hotspotsData(
   customDbPath?: string,
   opts: HotspotsDataOpts = {},
@@ -242,96 +332,21 @@ export function hotspotsData(
     const level = opts.level || 'file';
     const limit = opts.limit || 10;
     const noTests = opts.noTests || false;
-
     const kind = level === 'directory' ? 'directory' : 'file';
-
-    const mapRow = (r: {
-      name: string;
-      kind: string;
-      lineCount: number | null;
-      symbolCount: number | null;
-      importCount: number | null;
-      exportCount: number | null;
-      fanIn: number | null;
-      fanOut: number | null;
-      cohesion: number | null;
-      fileCount: number | null;
-    }) => ({
-      name: r.name,
-      kind: r.kind,
-      lineCount: r.lineCount,
-      symbolCount: r.symbolCount,
-      importCount: r.importCount,
-      exportCount: r.exportCount,
-      fanIn: r.fanIn,
-      fanOut: r.fanOut,
-      cohesion: r.cohesion,
-      fileCount: r.fileCount,
-      density:
-        (r.fileCount ?? 0) > 0
-          ? (r.symbolCount || 0) / (r.fileCount ?? 1)
-          : (r.lineCount ?? 0) > 0
-            ? (r.symbolCount || 0) / (r.lineCount ?? 1)
-            : 0,
-      coupling: (r.fanIn || 0) + (r.fanOut || 0),
-    });
 
     // ── Native fast path: single query instead of 4 eagerly prepared ──
     if (nativeDb?.getHotspots) {
       const rows = nativeDb.getHotspots(kind, metric, noTests, limit);
-      const hotspots = rows.map(mapRow);
+      const hotspots = rows.map(mapNativeHotspotRow);
       const base = { metric, level, limit, hotspots };
       return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
     }
 
     // ── JS fallback ───────────────────────────────────────────────────
     const testFilter = testFilterSQL('n.name', noTests && kind === 'file');
-
-    const HOTSPOT_QUERIES: Record<string, { all(...params: unknown[]): HotspotRow[] }> = {
-      'fan-in': db.prepare(`
-        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-        WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_in DESC NULLS LAST LIMIT ?`),
-      'fan-out': db.prepare(`
-        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-        WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_out DESC NULLS LAST LIMIT ?`),
-      density: db.prepare(`
-        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-        WHERE n.kind = ? ${testFilter} ORDER BY nm.symbol_count DESC NULLS LAST LIMIT ?`),
-      coupling: db.prepare(`
-        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-        WHERE n.kind = ? ${testFilter} ORDER BY (COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST LIMIT ?`),
-    };
-
-    const stmt = HOTSPOT_QUERIES[metric] ?? HOTSPOT_QUERIES['fan-in'];
-    const rows = stmt!.all(kind, limit);
-
-    const hotspots = rows.map((r) => ({
-      name: r.name,
-      kind: r.kind,
-      lineCount: r.line_count,
-      symbolCount: r.symbol_count,
-      importCount: r.import_count,
-      exportCount: r.export_count,
-      fanIn: r.fan_in,
-      fanOut: r.fan_out,
-      cohesion: r.cohesion,
-      fileCount: r.file_count,
-      density:
-        (r.file_count ?? 0) > 0
-          ? (r.symbol_count || 0) / (r.file_count ?? 1)
-          : (r.line_count ?? 0) > 0
-            ? (r.symbol_count || 0) / (r.line_count ?? 1)
-            : 0,
-      coupling: (r.fan_in || 0) + (r.fan_out || 0),
-    }));
+    const stmt = db.prepare(buildHotspotQuery(metric, testFilter));
+    const rows = stmt.all(kind, limit) as HotspotRow[];
+    const hotspots = rows.map(mapJsHotspotRow);
 
     const base = { metric, level, limit, hotspots };
     return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });

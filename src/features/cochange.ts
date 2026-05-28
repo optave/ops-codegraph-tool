@@ -137,6 +137,105 @@ export function computeCoChanges(
   return { pairs: results, fileCommitCounts };
 }
 
+/** Read the SHA of the most recently analyzed commit (incremental state). */
+function loadLastAnalyzedSha(db: BetterSqlite3Database): string | null {
+  try {
+    const row = db
+      .prepare<{ value: string }>(
+        "SELECT value FROM co_change_meta WHERE key = 'last_analyzed_commit'",
+      )
+      .get();
+    return row ? row.value : null;
+  } catch {
+    /* table may not exist yet */
+    return null;
+  }
+}
+
+/** Wipe all co-change tables for a full re-scan. */
+function clearCoChangeTables(db: BetterSqlite3Database): void {
+  db.exec('DELETE FROM co_changes');
+  db.exec('DELETE FROM co_change_meta');
+  db.exec('DELETE FROM file_commit_counts');
+}
+
+/** Collect the set of files currently tracked by the graph for filtering. */
+function loadKnownFiles(db: BetterSqlite3Database): Set<string> | null {
+  try {
+    const rows = db.prepare<{ file: string }>('SELECT DISTINCT file FROM nodes').all();
+    return new Set(rows.map((r) => r.file));
+  } catch {
+    /* nodes table may not exist */
+    return null;
+  }
+}
+
+/** Upsert per-file commit counts and pair counts (Jaccard recomputed later). */
+function persistCoChangeResults(
+  db: BetterSqlite3Database,
+  fileCommitCounts: Map<string, number>,
+  coChanges: Map<string, CoChangePair>,
+): void {
+  const fileCountUpsert = db.prepare(`
+    INSERT INTO file_commit_counts (file, commit_count) VALUES (?, ?)
+    ON CONFLICT(file) DO UPDATE SET commit_count = commit_count + excluded.commit_count
+  `);
+
+  const pairUpsert = db.prepare(`
+    INSERT INTO co_changes (file_a, file_b, commit_count, jaccard, last_commit_epoch)
+    VALUES (?, ?, ?, 0, ?)
+    ON CONFLICT(file_a, file_b) DO UPDATE SET
+      commit_count = commit_count + excluded.commit_count,
+      last_commit_epoch = MAX(co_changes.last_commit_epoch, excluded.last_commit_epoch)
+  `);
+
+  const insertMany = db.transaction(() => {
+    for (const [file, count] of fileCommitCounts) {
+      fileCountUpsert.run(file, count);
+    }
+    for (const [key, data] of coChanges) {
+      const [fileA, fileB] = key.split('\0') as [string, string];
+      pairUpsert.run(fileA, fileB, data.commitCount, data.lastEpoch);
+    }
+  });
+  insertMany();
+}
+
+/** Recompute Jaccard for every pair touching any file in `affectedFiles`. */
+function recomputeJaccardForAffected(db: BetterSqlite3Database, affectedFiles: string[]): void {
+  if (affectedFiles.length === 0) return;
+  const ph = affectedFiles.map(() => '?').join(',');
+  db.prepare(`
+    UPDATE co_changes SET jaccard = (
+      SELECT CAST(co_changes.commit_count AS REAL) / (
+        COALESCE(fa.commit_count, 0) + COALESCE(fb.commit_count, 0) - co_changes.commit_count
+      )
+      FROM file_commit_counts fa, file_commit_counts fb
+      WHERE fa.file = co_changes.file_a AND fb.file = co_changes.file_b
+    )
+    WHERE file_a IN (${ph}) OR file_b IN (${ph})
+  `).run(...affectedFiles, ...affectedFiles);
+}
+
+/** Update co_change_meta with the latest analyzer run parameters. */
+function updateCoChangeMeta(
+  db: BetterSqlite3Database,
+  commits: CommitEntry[],
+  since: string,
+  minSupport: number,
+): void {
+  const metaUpsert = db.prepare(`
+    INSERT INTO co_change_meta (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `);
+  if (commits.length > 0) {
+    metaUpsert.run('last_analyzed_commit', commits[0]!.sha);
+  }
+  metaUpsert.run('analyzed_at', new Date().toISOString());
+  metaUpsert.run('since', since);
+  metaUpsert.run('min_support', String(minSupport));
+}
+
 export function analyzeCoChanges(
   customDbPath?: string,
   opts: {
@@ -163,36 +262,10 @@ export function analyzeCoChanges(
   const minSupport = opts.minSupport ?? 3;
   const maxFilesPerCommit = opts.maxFilesPerCommit ?? 50;
 
-  // Check for incremental state
-  let afterSha: string | null = null;
-  if (!opts.full) {
-    try {
-      const row = db
-        .prepare<{ value: string }>(
-          "SELECT value FROM co_change_meta WHERE key = 'last_analyzed_commit'",
-        )
-        .get();
-      if (row) afterSha = row.value;
-    } catch {
-      /* table may not exist yet */
-    }
-  }
+  const afterSha = opts.full ? null : loadLastAnalyzedSha(db);
+  if (opts.full) clearCoChangeTables(db);
 
-  // If full re-scan, clear existing data
-  if (opts.full) {
-    db.exec('DELETE FROM co_changes');
-    db.exec('DELETE FROM co_change_meta');
-    db.exec('DELETE FROM file_commit_counts');
-  }
-
-  // Collect known files from the graph for filtering
-  let knownFiles: Set<string> | null = null;
-  try {
-    const rows = db.prepare<{ file: string }>('SELECT DISTINCT file FROM nodes').all();
-    knownFiles = new Set(rows.map((r) => r.file));
-  } catch {
-    /* nodes table may not exist */
-  }
+  const knownFiles = loadKnownFiles(db);
 
   const { commits } = scanGitHistory(repoRoot, { since, afterSha });
   const { pairs: coChanges, fileCommitCounts } = computeCoChanges(commits, {
@@ -201,59 +274,9 @@ export function analyzeCoChanges(
     knownFiles,
   });
 
-  // Upsert per-file commit counts so Jaccard can be recomputed from totals
-  const fileCountUpsert = db.prepare(`
-    INSERT INTO file_commit_counts (file, commit_count) VALUES (?, ?)
-    ON CONFLICT(file) DO UPDATE SET commit_count = commit_count + excluded.commit_count
-  `);
-
-  // Upsert pair counts (accumulate commit_count, jaccard placeholder — recomputed below)
-  const pairUpsert = db.prepare(`
-    INSERT INTO co_changes (file_a, file_b, commit_count, jaccard, last_commit_epoch)
-    VALUES (?, ?, ?, 0, ?)
-    ON CONFLICT(file_a, file_b) DO UPDATE SET
-      commit_count = commit_count + excluded.commit_count,
-      last_commit_epoch = MAX(co_changes.last_commit_epoch, excluded.last_commit_epoch)
-  `);
-
-  const insertMany = db.transaction(() => {
-    for (const [file, count] of fileCommitCounts) {
-      fileCountUpsert.run(file, count);
-    }
-    for (const [key, data] of coChanges) {
-      const [fileA, fileB] = key.split('\0') as [string, string];
-      pairUpsert.run(fileA, fileB, data.commitCount, data.lastEpoch);
-    }
-  });
-  insertMany();
-
-  // Recompute Jaccard for all affected pairs from total file commit counts
-  const affectedFiles = [...fileCommitCounts.keys()];
-  if (affectedFiles.length > 0) {
-    const ph = affectedFiles.map(() => '?').join(',');
-    db.prepare(`
-      UPDATE co_changes SET jaccard = (
-        SELECT CAST(co_changes.commit_count AS REAL) / (
-          COALESCE(fa.commit_count, 0) + COALESCE(fb.commit_count, 0) - co_changes.commit_count
-        )
-        FROM file_commit_counts fa, file_commit_counts fb
-        WHERE fa.file = co_changes.file_a AND fb.file = co_changes.file_b
-      )
-      WHERE file_a IN (${ph}) OR file_b IN (${ph})
-    `).run(...affectedFiles, ...affectedFiles);
-  }
-
-  // Update metadata
-  const metaUpsert = db.prepare(`
-    INSERT INTO co_change_meta (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `);
-  if (commits.length > 0) {
-    metaUpsert.run('last_analyzed_commit', commits[0]!.sha);
-  }
-  metaUpsert.run('analyzed_at', new Date().toISOString());
-  metaUpsert.run('since', since);
-  metaUpsert.run('min_support', String(minSupport));
+  persistCoChangeResults(db, fileCommitCounts, coChanges);
+  recomputeJaccardForAffected(db, [...fileCommitCounts.keys()]);
+  updateCoChangeMeta(db, commits, since, minSupport);
 
   const totalPairs = db
     .prepare<{ cnt: number }>('SELECT COUNT(*) as cnt FROM co_changes')
