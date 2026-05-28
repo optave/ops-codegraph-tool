@@ -608,13 +608,13 @@ Write `.codegraph/titan/close-summary.json`:
 
    List what will be deleted:
    ```bash
-   git branch --list 'refactor/titan-*' 'refactor/titan-*' 'docs/titan-*'
+   git branch --list 'refactor/titan-*' 'docs/titan-*'
    ```
 
-   Delete locally (force-delete is safe — all work is in the created PR branches):
+   Delete locally (force-delete is safe — all work is in the created PR branches). The current worktree branch cannot be deleted while checked out; it will be cleaned up when the worktree is torn down. Skip it gracefully with `|| true`:
    ```bash
-   git branch --list 'refactor/titan-*' | xargs -r git branch -D
-   git branch --list 'docs/titan-*' | xargs -r git branch -D
+   git branch --list 'refactor/titan-*' | xargs -r -I{} git branch -D {} || true
+   git branch --list 'docs/titan-*' | xargs -r -I{} git branch -D {} || true
    ```
 
    Delete from remote:

@@ -46,7 +46,7 @@ Your goal: read `sync.json`, find the next incomplete execution phase, make the 
      ```bash
      git log origin/main..HEAD --no-merges --format="%s" | sort | uniq -d
      ```
-     If any subjects are duplicated, print a warning listing them: "WARNING: Duplicate commit subjects found after merge — prior work may have been re-applied. Cross-check execution.completedTargets before continuing." Do not stop — proceed to Step 3.
+     If any subjects are duplicated, print a warning listing them: "WARNING: Duplicate commit subjects found after merge — prior work may have been re-applied. Step 5 will auto-recover completed targets from git log so they are skipped." Do not stop — proceed to Step 3.
 
 3. **Load artifacts.** Read:
    - `.codegraph/titan/sync.json` — execution plan (if missing: "Run `/titan-sync` first.")
