@@ -253,7 +253,8 @@ if (fs.existsSync('tsconfig.json')) {
 if (fs.existsSync('package.json')) {
   try {
     const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-    (pkg.workspaces || []).forEach(w => roots.push(w.replace(/\/\*$/,'')));
+    const wsGlobs = Array.isArray(pkg.workspaces) ? pkg.workspaces : (pkg.workspaces?.packages ?? []);
+    wsGlobs.forEach(w => roots.push(w.replace(/\/\*\*?.*$/, '')));
   } catch {}
 }
 // Fall back to any top-level dir that contains TS/JS source files
@@ -299,14 +300,14 @@ const tokens = helperName
   .filter(t => t.length > 2 && !stopWords.has(t))
   .slice(0, 3);
 const d=[];process.stdin.on('data',c=>d.push(c));
-process.stdin.on('end',()=>{
+process.stdin.on('end',()=>{ try {
   const items=JSON.parse(Buffer.concat(d));
   const candidates = items.filter(i =>
     i.name !== helperName &&
     tokens.some(t => i.name.toLowerCase().includes(t))
   );
   console.log(JSON.stringify(candidates));
-});
+} catch { console.log('[]'); } });
 "
 ```
 
