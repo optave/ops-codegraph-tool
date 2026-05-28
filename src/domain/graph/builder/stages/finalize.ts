@@ -136,82 +136,72 @@ function persistBuildMetadata(
   }
 }
 
-/**
- * Run advisory checks on full builds: orphaned embeddings, stale embeddings,
- * and unused exports. Informational only — does not affect correctness.
- */
-function runAdvisoryChecks(ctx: PipelineContext, hasEmbeddings: boolean, buildNow: Date): void {
-  // Batched native path: single napi call for all 3 advisory checks
-  if (ctx.engineName === 'native' && ctx.nativeDb?.runAdvisoryChecks) {
-    const result = ctx.nativeDb.runAdvisoryChecks(hasEmbeddings);
-    if (result.orphanedEmbeddings > 0) {
+/** Format the "X exports have zero consumers" warning, with correct plural agreement. */
+function unusedExportsMessage(count: number): string {
+  return `${count} exported symbol${count > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`;
+}
+
+/** Run all three advisory checks via the batched native FFI. */
+function runAdvisoryChecksNative(
+  ctx: PipelineContext,
+  hasEmbeddings: boolean,
+  buildNow: Date,
+): void {
+  const result = ctx.nativeDb!.runAdvisoryChecks!(hasEmbeddings);
+  if (result.orphanedEmbeddings > 0) {
+    warn(
+      `${result.orphanedEmbeddings} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
+    );
+  }
+  if (result.embedBuiltAt) {
+    const embedTime = new Date(result.embedBuiltAt).getTime();
+    if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
+      warn('Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.');
+    }
+  }
+  if (result.unusedExports > 0) {
+    warn(unusedExportsMessage(result.unusedExports));
+  }
+}
+
+function checkOrphanedEmbeddings(ctx: PipelineContext): void {
+  try {
+    const orphaned = (
+      ctx.db
+        .prepare('SELECT COUNT(*) as c FROM embeddings WHERE node_id NOT IN (SELECT id FROM nodes)')
+        .get() as { c: number }
+    ).c;
+    if (orphaned > 0) {
       warn(
-        `${result.orphanedEmbeddings} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
+        `${orphaned} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
       );
     }
-    if (result.embedBuiltAt) {
-      const embedTime = new Date(result.embedBuiltAt).getTime();
-      if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
-        warn(
-          'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
-        );
-      }
-    }
-    if (result.unusedExports > 0) {
-      warn(
-        `${result.unusedExports} exported symbol${result.unusedExports > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
-      );
-    }
-    return;
+  } catch {
+    /* ignore - embeddings table may have been dropped */
   }
+}
 
-  const { db } = ctx;
-
-  // Orphaned embeddings warning
-  if (hasEmbeddings) {
-    try {
-      const orphaned = (
-        db
-          .prepare(
-            'SELECT COUNT(*) as c FROM embeddings WHERE node_id NOT IN (SELECT id FROM nodes)',
-          )
-          .get() as { c: number }
-      ).c;
-      if (orphaned > 0) {
-        warn(
-          `${orphaned} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
-        );
-      }
-    } catch {
-      /* ignore - embeddings table may have been dropped */
+function checkStaleEmbeddings(ctx: PipelineContext, buildNow: Date): void {
+  try {
+    const embedBuiltAt = (
+      ctx.db.prepare("SELECT value FROM embedding_meta WHERE key = 'built_at'").get() as
+        | { value: string }
+        | undefined
+    )?.value;
+    if (!embedBuiltAt) return;
+    const embedTime = new Date(embedBuiltAt).getTime();
+    if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
+      warn('Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.');
     }
+  } catch {
+    /* ignore - embedding_meta table may not exist */
   }
+}
 
-  // Stale embeddings warning (built before current graph rebuild)
-  if (hasEmbeddings) {
-    try {
-      const embedBuiltAt = (
-        db.prepare("SELECT value FROM embedding_meta WHERE key = 'built_at'").get() as
-          | { value: string }
-          | undefined
-      )?.value;
-      if (embedBuiltAt) {
-        const embedTime = new Date(embedBuiltAt).getTime();
-        if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
-          warn(
-            'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
-          );
-        }
-      }
-    } catch {
-      /* ignore - embedding_meta table may not exist */
-    }
-  }
-
-  // Unused exports warning
+function checkUnusedExports(ctx: PipelineContext): void {
   try {
     const unusedCount = (
-      db
+      ctx.db
         .prepare(
           `SELECT COUNT(*) as c FROM nodes
          WHERE exported = 1 AND kind != 'file'
@@ -224,14 +214,26 @@ function runAdvisoryChecks(ctx: PipelineContext, hasEmbeddings: boolean, buildNo
         )
         .get() as { c: number }
     ).c;
-    if (unusedCount > 0) {
-      warn(
-        `${unusedCount} exported symbol${unusedCount > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
-      );
-    }
+    if (unusedCount > 0) warn(unusedExportsMessage(unusedCount));
   } catch {
     /* exported column may not exist on older DBs */
   }
+}
+
+/**
+ * Run advisory checks on full builds: orphaned embeddings, stale embeddings,
+ * and unused exports. Informational only — does not affect correctness.
+ */
+function runAdvisoryChecks(ctx: PipelineContext, hasEmbeddings: boolean, buildNow: Date): void {
+  if (ctx.engineName === 'native' && ctx.nativeDb?.runAdvisoryChecks) {
+    runAdvisoryChecksNative(ctx, hasEmbeddings, buildNow);
+    return;
+  }
+  if (hasEmbeddings) {
+    checkOrphanedEmbeddings(ctx);
+    checkStaleEmbeddings(ctx, buildNow);
+  }
+  checkUnusedExports(ctx);
 }
 
 export async function finalize(ctx: PipelineContext): Promise<void> {

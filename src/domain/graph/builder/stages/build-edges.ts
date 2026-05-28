@@ -89,12 +89,74 @@ function setupNodeLookups(ctx: PipelineContext, allNodes: QueryNodeRow[]): void 
 
 // ── Import edges ────────────────────────────────────────────────────────
 
+/** Pick the edge kind for an import statement based on its modifiers. */
+function importEdgeKind(imp: Import): string {
+  if (imp.reexport) return 'reexports';
+  if (imp.typeOnly) return 'imports-type';
+  if (imp.dynamicImport) return 'dynamic-imports';
+  return 'imports';
+}
+
+/**
+ * For a `import type` statement, emit symbol-level `imports-type` edges so
+ * the target symbols get fan-in credit and aren't classified as dead code.
+ */
+function emitTypeOnlySymbolEdges(
+  ctx: PipelineContext,
+  imp: Import,
+  resolvedPath: string,
+  fileNodeId: number,
+  allEdgeRows: EdgeRowTuple[],
+): void {
+  if (!ctx.nodesByNameAndFile) return;
+  for (const name of imp.names) {
+    const cleanName = name.replace(/^\*\s+as\s+/, '');
+    let targetFile = resolvedPath;
+    if (isBarrelFile(ctx, resolvedPath)) {
+      const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
+      if (actual) targetFile = actual;
+    }
+    const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
+    if (candidates && candidates.length > 0) {
+      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0]);
+    }
+  }
+}
+
+/**
+ * Process a single import statement and emit all resulting edges (file→file,
+ * type-only symbol-level, and barrel re-export targets).
+ */
+function emitEdgesForImport(
+  ctx: PipelineContext,
+  imp: Import,
+  fileNodeId: number,
+  relPath: string,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+): void {
+  const resolvedPath = getResolved(ctx, path.join(ctx.rootDir, relPath), imp.source);
+  const targetRow = getNodeIdStmt.get(resolvedPath, 'file', resolvedPath, 0);
+  if (!targetRow) return;
+
+  const edgeKind = importEdgeKind(imp);
+  allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0]);
+
+  if (imp.typeOnly) {
+    emitTypeOnlySymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows);
+  }
+
+  if (!imp.reexport && isBarrelFile(ctx, resolvedPath)) {
+    buildBarrelEdges(ctx, imp, resolvedPath, fileNodeId, edgeKind, getNodeIdStmt, allEdgeRows);
+  }
+}
+
 function buildImportEdges(
   ctx: PipelineContext,
   getNodeIdStmt: NodeIdStmt,
   allEdgeRows: EdgeRowTuple[],
 ): void {
-  const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
+  const { fileSymbols, barrelOnlyFiles } = ctx;
 
   for (const [relPath, symbols] of fileSymbols) {
     const isBarrelOnly = barrelOnlyFiles.has(relPath);
@@ -105,40 +167,7 @@ function buildImportEdges(
     for (const imp of symbols.imports) {
       // Barrel-only files: only emit reexport edges, skip regular imports
       if (isBarrelOnly && !imp.reexport) continue;
-
-      const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
-      const targetRow = getNodeIdStmt.get(resolvedPath, 'file', resolvedPath, 0);
-      if (!targetRow) continue;
-
-      const edgeKind = imp.reexport
-        ? 'reexports'
-        : imp.typeOnly
-          ? 'imports-type'
-          : imp.dynamicImport
-            ? 'dynamic-imports'
-            : 'imports';
-      allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0]);
-
-      // Type-only imports: create symbol-level edges so the target symbols
-      // get fan-in credit and aren't falsely classified as dead code.
-      if (imp.typeOnly && ctx.nodesByNameAndFile) {
-        for (const name of imp.names) {
-          const cleanName = name.replace(/^\*\s+as\s+/, '');
-          let targetFile = resolvedPath;
-          if (isBarrelFile(ctx, resolvedPath)) {
-            const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
-            if (actual) targetFile = actual;
-          }
-          const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
-          if (candidates && candidates.length > 0) {
-            allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0]);
-          }
-        }
-      }
-
-      if (!imp.reexport && isBarrelFile(ctx, resolvedPath)) {
-        buildBarrelEdges(ctx, imp, resolvedPath, fileNodeId, edgeKind, getNodeIdStmt, allEdgeRows);
-      }
+      emitEdgesForImport(ctx, imp, fileNodeId, relPath, getNodeIdStmt, allEdgeRows);
     }
   }
 }
@@ -174,83 +203,98 @@ function buildBarrelEdges(
 
 // ── Import edges (native engine) ────────────────────────────────────────
 
-function buildImportEdgesNative(
-  ctx: PipelineContext,
-  getNodeIdStmt: NodeIdStmt,
-  allEdgeRows: EdgeRowTuple[],
-  native: NativeAddon,
-): void {
-  const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
+/** Native FFI input shape for a single import statement. */
+interface NativeImportInfo {
+  source: string;
+  names: string[];
+  reexport: boolean;
+  typeOnly: boolean;
+  dynamicImport: boolean;
+  wildcardReexport: boolean;
+}
 
-  // 1. Build per-file input data
-  const files: Array<{
-    file: string;
-    fileNodeId: number;
-    isBarrelOnly: boolean;
-    imports: Array<{
-      source: string;
-      names: string[];
-      reexport: boolean;
-      typeOnly: boolean;
-      dynamicImport: boolean;
-      wildcardReexport: boolean;
-    }>;
-    definitionNames: string[];
-  }> = [];
+/** Native FFI input shape for a single file. */
+interface NativeFileInput {
+  file: string;
+  fileNodeId: number;
+  isBarrelOnly: boolean;
+  imports: NativeImportInfo[];
+  definitionNames: string[];
+}
 
-  // Collect all file node IDs we'll need (sources + targets)
-  const fileNodeIds: Array<{ file: string; nodeId: number }> = [];
-  const seenNodeFiles = new Set<string>();
+/** Native FFI input shape for re-exports of a single file. */
+interface NativeReexportInput {
+  file: string;
+  reexports: Array<{ source: string; names: string[]; wildcardReexport: boolean }>;
+}
 
-  const addFileNodeId = (relPath: string): { id: number } | undefined => {
-    if (seenNodeFiles.has(relPath)) return fileNodeRowCache.get(relPath);
-    const row = getNodeIdStmt.get(relPath, 'file', relPath, 0);
-    if (row) {
-      seenNodeFiles.add(relPath);
-      fileNodeIds.push({ file: relPath, nodeId: row.id });
-      fileNodeRowCache.set(relPath, row);
-    }
-    return row;
+/** Lazily-resolving cache of file-node rows for the native input arrays. */
+interface FileNodeIdRegistry {
+  ids: Array<{ file: string; nodeId: number }>;
+  add(relPath: string): { id: number } | undefined;
+}
+
+function createFileNodeIdRegistry(getNodeIdStmt: NodeIdStmt): FileNodeIdRegistry {
+  const ids: Array<{ file: string; nodeId: number }> = [];
+  const seen = new Set<string>();
+  const cache = new Map<string, { id: number }>();
+  return {
+    ids,
+    add(relPath: string) {
+      if (seen.has(relPath)) return cache.get(relPath);
+      const row = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+      if (row) {
+        seen.add(relPath);
+        ids.push({ file: relPath, nodeId: row.id });
+        cache.set(relPath, row);
+      }
+      return row;
+    },
   };
-  const fileNodeRowCache = new Map<string, { id: number }>();
+}
 
-  // 2. Pre-resolve all imports and build resolved imports array.
-  // Keys use forward-slash-normalized rootDir + "/" + relPath to match the Rust
-  // lookup format (format!("{}/{}", root_dir.replace('\\', "/"), file)).
-  // On Windows, rootDir has backslashes but Rust normalizes them — the JS side
-  // must do the same or every resolve key lookup misses (#750).
-  const resolvedImports: Array<{ key: string; resolvedPath: string }> = [];
+function toNativeImportInfo(imp: Import): NativeImportInfo {
+  return {
+    source: imp.source,
+    names: imp.names,
+    reexport: !!imp.reexport,
+    typeOnly: !!imp.typeOnly,
+    dynamicImport: !!imp.dynamicImport,
+    wildcardReexport: !!imp.wildcardReexport,
+  };
+}
+
+/**
+ * Pre-resolve every import for the given files, registering each resolved
+ * target with the registry so the native side has full node-id coverage.
+ *
+ * Resolved-import keys use forward-slash-normalized rootDir + "/" + relPath to
+ * match the Rust lookup format. On Windows, rootDir has backslashes but Rust
+ * normalizes them — the JS side must do the same or every key lookup misses
+ * (#750).
+ */
+function buildNativeFileInputs(
+  ctx: PipelineContext,
+  registry: FileNodeIdRegistry,
+): {
+  files: NativeFileInput[];
+  resolvedImports: Array<{ key: string; resolvedPath: string }>;
+} {
+  const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
   const fwdRootDir = rootDir.replace(/\\/g, '/');
+  const files: NativeFileInput[] = [];
+  const resolvedImports: Array<{ key: string; resolvedPath: string }> = [];
 
   for (const [relPath, symbols] of fileSymbols) {
-    const fileNodeRow = addFileNodeId(relPath);
+    const fileNodeRow = registry.add(relPath);
     if (!fileNodeRow) continue;
 
-    const importInfos: Array<{
-      source: string;
-      names: string[];
-      reexport: boolean;
-      typeOnly: boolean;
-      dynamicImport: boolean;
-      wildcardReexport: boolean;
-    }> = [];
-
+    const importInfos: NativeImportInfo[] = [];
     for (const imp of symbols.imports) {
-      // Pre-resolve and register target file node
       const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
-      addFileNodeId(resolvedPath);
-
-      // Key matches Rust's format!("{}/{}", root_dir.replace('\\', "/"), file_input.file)
+      registry.add(resolvedPath);
       resolvedImports.push({ key: `${fwdRootDir}/${relPath}|${imp.source}`, resolvedPath });
-
-      importInfos.push({
-        source: imp.source,
-        names: imp.names,
-        reexport: !!imp.reexport,
-        typeOnly: !!imp.typeOnly,
-        dynamicImport: !!imp.dynamicImport,
-        wildcardReexport: !!imp.wildcardReexport,
-      });
+      importInfos.push(toNativeImportInfo(imp));
     }
 
     files.push({
@@ -261,61 +305,75 @@ function buildImportEdgesNative(
       definitionNames: symbols.definitions.map((d) => d.name),
     });
   }
+  return { files, resolvedImports };
+}
 
-  // 4. Flatten reexportMap
-  const fileReexports: Array<{
-    file: string;
-    reexports: Array<{
-      source: string;
-      names: string[];
-      wildcardReexport: boolean;
-    }>;
-  }> = [];
-  if (ctx.reexportMap) {
-    for (const [file, entries] of ctx.reexportMap) {
-      const reexports = (
-        entries as Array<{ source: string; names: string[]; wildcardReexport: boolean }>
-      ).map((re) => ({
-        source: re.source,
-        names: re.names,
-        wildcardReexport: !!re.wildcardReexport,
-      }));
-      fileReexports.push({ file, reexports });
+/** Flatten `ctx.reexportMap` into the array shape the native side expects. */
+function buildNativeReexports(
+  ctx: PipelineContext,
+  registry: FileNodeIdRegistry,
+): NativeReexportInput[] {
+  const fileReexports: NativeReexportInput[] = [];
+  if (!ctx.reexportMap) return fileReexports;
 
-      // Register reexport target files for node ID lookup
-      for (const re of reexports) {
-        addFileNodeId(re.source);
-      }
+  for (const [file, entries] of ctx.reexportMap) {
+    const reexports = (
+      entries as Array<{ source: string; names: string[]; wildcardReexport: boolean }>
+    ).map((re) => ({
+      source: re.source,
+      names: re.names,
+      wildcardReexport: !!re.wildcardReexport,
+    }));
+    fileReexports.push({ file, reexports });
+
+    for (const re of reexports) {
+      registry.add(re.source);
     }
   }
+  return fileReexports;
+}
 
-  // 5. Compute barrel file list
+function collectBarrelFiles(ctx: PipelineContext): string[] {
   const barrelFiles: string[] = [];
-  for (const [relPath] of fileSymbols) {
-    if (isBarrelFile(ctx, relPath)) {
-      barrelFiles.push(relPath);
-    }
+  for (const [relPath] of ctx.fileSymbols) {
+    if (isBarrelFile(ctx, relPath)) barrelFiles.push(relPath);
   }
+  return barrelFiles;
+}
 
-  // 6. Build symbol node entries for type-only import resolution
+function collectSymbolNodes(
+  ctx: PipelineContext,
+): Array<{ name: string; file: string; nodeId: number }> {
   const symbolNodes: Array<{ name: string; file: string; nodeId: number }> = [];
-  if (ctx.nodesByNameAndFile) {
-    for (const [key, nodes] of ctx.nodesByNameAndFile) {
-      if (nodes.length > 0) {
-        const [name, file] = key.split('|');
-        symbolNodes.push({ name: name!, file: file!, nodeId: nodes[0]!.id });
-      }
-    }
+  if (!ctx.nodesByNameAndFile) return symbolNodes;
+  for (const [key, nodes] of ctx.nodesByNameAndFile) {
+    if (nodes.length === 0) continue;
+    const [name, file] = key.split('|');
+    symbolNodes.push({ name: name!, file: file!, nodeId: nodes[0]!.id });
   }
+  return symbolNodes;
+}
 
-  // 7. Call native
+function buildImportEdgesNative(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  native: NativeAddon,
+): void {
+  const registry = createFileNodeIdRegistry(getNodeIdStmt);
+
+  const { files, resolvedImports } = buildNativeFileInputs(ctx, registry);
+  const fileReexports = buildNativeReexports(ctx, registry);
+  const barrelFiles = collectBarrelFiles(ctx);
+  const symbolNodes = collectSymbolNodes(ctx);
+
   const nativeEdges = native.buildImportEdges!(
     files,
     resolvedImports,
     fileReexports,
-    fileNodeIds,
+    registry.ids,
     barrelFiles,
-    rootDir,
+    ctx.rootDir,
     symbolNodes,
   ) as NativeEdge[];
 
