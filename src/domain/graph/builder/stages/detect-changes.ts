@@ -162,14 +162,14 @@ function tryJournalTier(
   return { changed, removed: [...removedSet], isFullBuild: false };
 }
 
-function mtimeAndHashTiers(
+/** Tier 1: mtime+size triage. Returns the files that still need hashing. */
+function tierMtimeSize(
   existing: Map<string, FileHashRow>,
   allFiles: string[],
   rootDir: string,
-  removed: string[],
-): ChangeResult {
+): { needsHash: NeedsHashItem[]; skipped: number } {
   const needsHash: NeedsHashItem[] = [];
-  const skipped: string[] = [];
+  let skipped = 0;
 
   for (const file of allFiles) {
     const relPath = normalizePath(path.relative(rootDir, file));
@@ -183,16 +183,17 @@ function mtimeAndHashTiers(
     const storedMtime = record.mtime || 0;
     const storedSize = record.size || 0;
     if (storedSize > 0 && stat.mtime === storedMtime && stat.size === storedSize) {
-      skipped.push(relPath);
+      skipped++;
       continue;
     }
     needsHash.push({ file, relPath, stat });
   }
 
-  if (needsHash.length > 0) {
-    debug(`Tier 1: ${skipped.length} skipped by mtime+size, ${needsHash.length} need hash check`);
-  }
+  return { needsHash, skipped };
+}
 
+/** Tier 2: hash candidates from tier 1, classifying changed vs metadata-only. */
+function tierHash(existing: Map<string, FileHashRow>, needsHash: NeedsHashItem[]): ChangedFile[] {
   const changed: ChangedFile[] = [];
   for (const item of needsHash) {
     let content: string | undefined;
@@ -217,11 +218,26 @@ function mtimeAndHashTiers(
       });
     }
   }
+  return changed;
+}
 
-  const parseChanged = changed.filter((c) => !c.metadataOnly);
+function mtimeAndHashTiers(
+  existing: Map<string, FileHashRow>,
+  allFiles: string[],
+  rootDir: string,
+  removed: string[],
+): ChangeResult {
+  const { needsHash, skipped } = tierMtimeSize(existing, allFiles, rootDir);
   if (needsHash.length > 0) {
+    debug(`Tier 1: ${skipped} skipped by mtime+size, ${needsHash.length} need hash check`);
+  }
+
+  const changed = tierHash(existing, needsHash);
+
+  if (needsHash.length > 0) {
+    const parseChangedLen = changed.filter((c) => !c.metadataOnly).length;
     debug(
-      `Tier 2: ${parseChanged.length} actually changed, ${changed.length - parseChanged.length} metadata-only`,
+      `Tier 2: ${parseChangedLen} actually changed, ${changed.length - parseChangedLen} metadata-only`,
     );
   }
 
@@ -512,61 +528,43 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
 }
 
-/**
- * Read-only pre-flight check for the native orchestrator.
- *
- * Returns true iff every collected source file has matching mtime+size in
- * `file_hashes` and no DB-tracked file has been removed. When true, the
- * caller can short-circuit before invoking the native orchestrator —
- * matching WASM's ~20 ms early-exit path and avoiding the ~2s flat
- * per-call native rebuild overhead seen in CI (#1054).
- *
- * Intentionally Tier-0/Tier-1 only (journal + mtime/size). Tier-2 content
- * hashing is left to the native side: when this returns false the caller
- * falls through to the orchestrator, which performs its own complete
- * detection and is the source of truth.
- *
- * Conservatively returns false when CFG or dataflow analysis is enabled
- * but the corresponding tables are empty — otherwise the fast-skip would
- * silently suppress the pending-analysis pass that the JS path runs via
- * `runPendingAnalysis`, and CFG/dataflow data would never populate on
- * repos where source files don't change between builds.
- *
- * Pure read of `db` and the filesystem — never mutates either.
- */
-export function detectNoChanges(
-  db: BetterSqlite3Database,
-  allFiles: string[],
-  rootDir: string,
-  opts?: Record<string, unknown>,
-): boolean {
-  // Diagnostic logging gated by env var — used by the bench gate to surface
-  // why the fast-skip is not firing on CI runners (#1066). Off by default to
-  // avoid noise on every regular incremental build.
+/** Diagnostic logger gated by env var, used by both `detectNoChanges` branches. */
+function makeFastSkipLogger(): (reason: string) => void {
   const diag = process.env.CODEGRAPH_FAST_SKIP_DIAG === '1';
-  const log = (reason: string): void => {
+  return (reason: string): void => {
     if (diag) info(`[fast-skip] ${reason}`);
   };
+}
 
-  let hasTable = false;
+/**
+ * Load the `file_hashes` table for the no-change pre-flight.  Returns null
+ * if the table is missing or empty (both → caller must fall through).
+ */
+function loadFileHashesForPreflight(
+  db: BetterSqlite3Database,
+  log: (reason: string) => void,
+): Map<string, FileHashRow> | null {
   try {
     db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
-    hasTable = true;
   } catch {
-    /* table missing — first build */
-  }
-  if (!hasTable) {
     log('false: file_hashes table missing');
-    return false;
+    return null;
   }
-
   const rows = db.prepare('SELECT file, hash, mtime, size FROM file_hashes').all() as FileHashRow[];
   if (rows.length === 0) {
     log('false: file_hashes table empty');
-    return false;
+    return null;
   }
-  const existing = new Map<string, FileHashRow>(rows.map((r) => [r.file, r]));
+  return new Map<string, FileHashRow>(rows.map((r) => [r.file, r]));
+}
 
+/** Returns true iff every file in `allFiles` matches a stored mtime+size record. */
+function allFilesMatchStoredStat(
+  existing: Map<string, FileHashRow>,
+  allFiles: string[],
+  rootDir: string,
+  log: (reason: string) => void,
+): boolean {
   const currentFiles = new Set<string>();
   for (const file of allFiles) {
     currentFiles.add(normalizePath(path.relative(rootDir, file)));
@@ -603,21 +601,66 @@ export function detectNoChanges(
       return false;
     }
   }
+  return true;
+}
 
-  // Pending-analysis guard: if CFG/dataflow is enabled but the corresponding
-  // table is empty (analysis newly enabled, or tables wiped between builds),
-  // fall through so the orchestrator / JS pipeline can run runPendingAnalysis.
-  // Mirrors the check at the top of runPendingAnalysis (see line ~244).
-  if (opts) {
-    if (opts.cfg !== false && hasEmptyAnalysisTable(db, 'cfg_blocks')) {
-      log('false: pending-analysis guard — cfg_blocks is empty');
-      return false;
-    }
-    if (opts.dataflow !== false && hasEmptyAnalysisTable(db, 'dataflow')) {
-      log('false: pending-analysis guard — dataflow is empty');
-      return false;
-    }
+/**
+ * Pending-analysis guard: if CFG/dataflow is enabled but the corresponding
+ * table is empty (analysis newly enabled, or tables wiped between builds),
+ * fall through so the orchestrator / JS pipeline can run runPendingAnalysis.
+ * Mirrors the check at the top of runPendingAnalysis.
+ */
+function passesPendingAnalysisGuard(
+  db: BetterSqlite3Database,
+  opts: Record<string, unknown> | undefined,
+  log: (reason: string) => void,
+): boolean {
+  if (!opts) return true;
+  if (opts.cfg !== false && hasEmptyAnalysisTable(db, 'cfg_blocks')) {
+    log('false: pending-analysis guard — cfg_blocks is empty');
+    return false;
   }
+  if (opts.dataflow !== false && hasEmptyAnalysisTable(db, 'dataflow')) {
+    log('false: pending-analysis guard — dataflow is empty');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Read-only pre-flight check for the native orchestrator.
+ *
+ * Returns true iff every collected source file has matching mtime+size in
+ * `file_hashes` and no DB-tracked file has been removed. When true, the
+ * caller can short-circuit before invoking the native orchestrator —
+ * matching WASM's ~20 ms early-exit path and avoiding the ~2s flat
+ * per-call native rebuild overhead seen in CI (#1054).
+ *
+ * Intentionally Tier-0/Tier-1 only (journal + mtime/size). Tier-2 content
+ * hashing is left to the native side: when this returns false the caller
+ * falls through to the orchestrator, which performs its own complete
+ * detection and is the source of truth.
+ *
+ * Conservatively returns false when CFG or dataflow analysis is enabled
+ * but the corresponding tables are empty — otherwise the fast-skip would
+ * silently suppress the pending-analysis pass that the JS path runs via
+ * `runPendingAnalysis`, and CFG/dataflow data would never populate on
+ * repos where source files don't change between builds.
+ *
+ * Pure read of `db` and the filesystem — never mutates either.
+ */
+export function detectNoChanges(
+  db: BetterSqlite3Database,
+  allFiles: string[],
+  rootDir: string,
+  opts?: Record<string, unknown>,
+): boolean {
+  const log = makeFastSkipLogger();
+  const existing = loadFileHashesForPreflight(db, log);
+  if (!existing) return false;
+
+  if (!allFilesMatchStoredStat(existing, allFiles, rootDir, log)) return false;
+  if (!passesPendingAnalysisGuard(db, opts, log)) return false;
 
   log(`true: all checks passed (${allFiles.length} files)`);
   return true;

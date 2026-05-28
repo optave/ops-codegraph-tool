@@ -76,108 +76,117 @@ export function passesIncludeExclude(
   return true;
 }
 
+/** Per-walk state computed once at the top-level invocation. */
+interface CollectContext {
+  readonly rootDir: string;
+  readonly includeRegexes: readonly RegExp[];
+  readonly excludeRegexes: readonly RegExp[];
+  readonly hasGlobFilters: boolean;
+  readonly extraIgnore: Set<string> | null;
+  readonly visited: Set<string>;
+}
+
+/** Detect a symlink loop for `dir`. Returns true if `dir` was already visited. */
+function isSymlinkLoop(dir: string, visited: Set<string>): boolean {
+  let realDir: string;
+  try {
+    realDir = fs.realpathSync(dir);
+  } catch {
+    return true;
+  }
+  if (visited.has(realDir)) {
+    warn(`Symlink loop detected, skipping: ${dir}`);
+    return true;
+  }
+  visited.add(realDir);
+  return false;
+}
+
+/** Read directory entries, returning null on error (already logged). */
+function readDirSafe(dir: string): fs.Dirent[] | null {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err: unknown) {
+    warn(`Cannot read directory ${dir}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** True if `entry` is a source file we should collect under `ctx`. */
+function isCollectableSourceFile(full: string, entry: fs.Dirent, ctx: CollectContext): boolean {
+  if (!EXTENSIONS.has(path.extname(entry.name))) return false;
+  if (!ctx.hasGlobFilters) return true;
+  const rel = normalizePath(path.relative(ctx.rootDir, full));
+  return passesIncludeExclude(rel, ctx.includeRegexes, ctx.excludeRegexes);
+}
+
+function walkCollect(
+  dir: string,
+  files: string[],
+  directories: Set<string> | null,
+  ctx: CollectContext,
+): void {
+  if (isSymlinkLoop(dir, ctx.visited)) return;
+
+  const entries = readDirSafe(dir);
+  if (!entries) return;
+
+  let hasFiles = false;
+  for (const entry of entries) {
+    if (shouldSkipEntry(entry, ctx.extraIgnore)) continue;
+
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkCollect(full, files, directories, ctx);
+    } else if (isCollectableSourceFile(full, entry, ctx)) {
+      files.push(full);
+      hasFiles = true;
+    }
+  }
+  if (directories && hasFiles) {
+    directories.add(dir);
+  }
+}
+
 /**
  * Recursively collect all source files under `dir`.
  * When `directories` is a Set, also tracks which directories contain files.
  *
- * The first invocation establishes `dir` as the project root against which
- * `config.include` / `config.exclude` globs are matched.
+ * `dir` establishes the project root against which `config.include` /
+ * `config.exclude` globs are matched.
  */
 export function collectFiles(
   dir: string,
   files: string[],
   config: Partial<CodegraphConfig>,
   directories: Set<string>,
-  _visited?: Set<string>,
-  _rootDir?: string,
-  _includeRegexes?: readonly RegExp[],
-  _excludeRegexes?: readonly RegExp[],
 ): { files: string[]; directories: Set<string> };
 export function collectFiles(
   dir: string,
   files?: string[],
   config?: Partial<CodegraphConfig>,
   directories?: null,
-  _visited?: Set<string>,
-  _rootDir?: string,
-  _includeRegexes?: readonly RegExp[],
-  _excludeRegexes?: readonly RegExp[],
 ): string[];
 export function collectFiles(
   dir: string,
   files: string[] = [],
   config: Partial<CodegraphConfig> = {},
   directories: Set<string> | null = null,
-  _visited: Set<string> = new Set(),
-  _rootDir?: string,
-  _includeRegexes?: readonly RegExp[],
-  _excludeRegexes?: readonly RegExp[],
 ): string[] | { files: string[]; directories: Set<string> } {
   const trackDirs = directories instanceof Set;
-  let hasFiles = false;
+  const includeRegexes = compileGlobs(config.include);
+  const excludeRegexes = compileGlobs(config.exclude);
+  const ctx: CollectContext = {
+    rootDir: dir,
+    includeRegexes,
+    excludeRegexes,
+    hasGlobFilters: includeRegexes.length > 0 || excludeRegexes.length > 0,
+    extraIgnore: config.ignoreDirs ? new Set(config.ignoreDirs) : null,
+    visited: new Set(),
+  };
 
-  // First call: compute root and compile include/exclude patterns once,
-  // then pass them down recursive calls so we don't recompile per directory.
-  const rootDir = _rootDir ?? dir;
-  const includeRegexes = _includeRegexes ?? compileGlobs(config.include);
-  const excludeRegexes = _excludeRegexes ?? compileGlobs(config.exclude);
-  const hasGlobFilters = includeRegexes.length > 0 || excludeRegexes.length > 0;
+  walkCollect(dir, files, trackDirs ? (directories as Set<string>) : null, ctx);
 
-  // Merge config ignoreDirs with defaults
-  const extraIgnore = config.ignoreDirs ? new Set(config.ignoreDirs) : null;
-
-  // Detect symlink loops (before I/O to avoid wasted readdirSync)
-  let realDir: string;
-  try {
-    realDir = fs.realpathSync(dir);
-  } catch {
-    return trackDirs ? { files, directories: directories as Set<string> } : files;
-  }
-  if (_visited.has(realDir)) {
-    warn(`Symlink loop detected, skipping: ${dir}`);
-    return trackDirs ? { files, directories: directories as Set<string> } : files;
-  }
-  _visited.add(realDir);
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (err: unknown) {
-    warn(`Cannot read directory ${dir}: ${(err as Error).message}`);
-    return trackDirs ? { files, directories: directories as Set<string> } : files;
-  }
-
-  for (const entry of entries) {
-    if (shouldSkipEntry(entry, extraIgnore)) continue;
-
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (trackDirs) {
-        collectFiles(
-          full,
-          files,
-          config,
-          directories as Set<string>,
-          _visited,
-          rootDir,
-          includeRegexes,
-          excludeRegexes,
-        );
-      } else {
-        collectFiles(full, files, config, null, _visited, rootDir, includeRegexes, excludeRegexes);
-      }
-    } else if (EXTENSIONS.has(path.extname(entry.name))) {
-      if (hasGlobFilters) {
-        const rel = normalizePath(path.relative(rootDir, full));
-        if (!passesIncludeExclude(rel, includeRegexes, excludeRegexes)) continue;
-      }
-      files.push(full);
-      hasFiles = true;
-    }
-  }
-  if (trackDirs && hasFiles) {
-    (directories as Set<string>).add(dir);
-  }
   return trackDirs ? { files, directories: directories as Set<string> } : files;
 }
 

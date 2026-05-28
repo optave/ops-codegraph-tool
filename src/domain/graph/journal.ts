@@ -91,62 +91,69 @@ function trySteal(lockPath: string): AcquiredLock | null {
   return { fd, nonce };
 }
 
+/**
+ * Try to create the lockfile fresh via `wx`. Returns the acquired lock on
+ * success, `null` if another holder exists, or throws on unexpected errors.
+ *
+ * If the stamp write fails (ENOSPC, I/O error) we release the empty file —
+ * leaving it would look stale to concurrent waiters and admit double-acquire.
+ */
+function tryFreshAcquire(lockPath: string): AcquiredLock | null {
+  const nonce = `${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  let fd: number;
+  try {
+    fd = fs.openSync(lockPath, 'wx');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return null;
+    throw e;
+  }
+  try {
+    fs.writeSync(fd, `${process.pid}\n${nonce}\n`);
+  } catch {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+  return { fd, nonce };
+}
+
+/**
+ * Decide whether the current lock holder is stale and should be stolen.
+ * Returns true if the PID is dead, or if the lockfile mtime exceeds the
+ * staleness threshold.
+ */
+function isLockStale(lockPath: string): boolean {
+  let holderAlive = true;
+  try {
+    const pidContent = fs.readFileSync(lockPath, 'utf-8').split('\n')[0]!.trim();
+    holderAlive = isPidAlive(Number(pidContent));
+  } catch {
+    /* unreadable — fall through to age check */
+  }
+  if (!holderAlive) return true;
+  try {
+    const stat = fs.statSync(lockPath);
+    return Date.now() - stat.mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
 function acquireJournalLock(lockPath: string): AcquiredLock {
   const start = Date.now();
   for (;;) {
-    const nonce = `${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
-    try {
-      const fd = fs.openSync(lockPath, 'wx');
-      try {
-        fs.writeSync(fd, `${process.pid}\n${nonce}\n`);
-      } catch {
-        // Stamp write failed (ENOSPC, I/O error). An empty lockfile would
-        // look stale to concurrent waiters (Number('') === 0, isPidAlive(0)
-        // returns false), so they'd steal our live lock. Release and retry.
-        try {
-          fs.closeSync(fd);
-        } catch {
-          /* ignore */
-        }
-        try {
-          fs.unlinkSync(lockPath);
-        } catch {
-          /* ignore */
-        }
-        if (Date.now() - start > LOCK_TIMEOUT_MS) {
-          throw new Error(
-            `Failed to acquire journal lock at ${lockPath} within ${LOCK_TIMEOUT_MS}ms`,
-          );
-        }
-        sleepSync(LOCK_RETRY_MS);
-        continue;
-      }
-      return { fd, nonce };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-    }
+    const fresh = tryFreshAcquire(lockPath);
+    if (fresh) return fresh;
 
-    let holderAlive = true;
-    try {
-      const pidContent = fs.readFileSync(lockPath, 'utf-8').split('\n')[0]!.trim();
-      holderAlive = isPidAlive(Number(pidContent));
-    } catch {
-      /* unreadable — fall through to age check */
-    }
-
-    let shouldSteal = !holderAlive;
-    if (holderAlive) {
-      try {
-        const stat = fs.statSync(lockPath);
-        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-          shouldSteal = true;
-        }
-      } catch {
-        /* stat failed — keep retrying */
-      }
-    }
-
-    if (shouldSteal) {
+    if (isLockStale(lockPath)) {
       const stolen = trySteal(lockPath);
       if (stolen) return stolen;
       // Steal failed or lost the race — fall through to timeout check & retry.
@@ -227,27 +234,20 @@ interface JournalResult {
   removed?: string[];
 }
 
-export function readJournal(rootDir: string): JournalResult {
-  const journalPath = path.join(rootDir, '.codegraph', JOURNAL_FILENAME);
-  let content: string;
-  try {
-    content = fs.readFileSync(journalPath, 'utf-8');
-  } catch {
-    return { valid: false };
-  }
-
-  const lines = content.split('\n');
-  if (lines.length === 0 || !lines[0]!.startsWith(HEADER_PREFIX)) {
+function parseJournalHeader(firstLine: string | undefined): number | null {
+  if (!firstLine || !firstLine.startsWith(HEADER_PREFIX)) {
     debug('Journal has malformed or missing header');
-    return { valid: false };
+    return null;
   }
-
-  const timestamp = Number(lines[0]!.slice(HEADER_PREFIX.length).trim());
+  const timestamp = Number(firstLine.slice(HEADER_PREFIX.length).trim());
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
     debug('Journal has invalid timestamp');
-    return { valid: false };
+    return null;
   }
+  return timestamp;
+}
 
+function parseJournalBody(lines: string[]): { changed: string[]; removed: string[] } {
   const changed: string[] = [];
   const removed: string[] = [];
   const seenChanged = new Set<string>();
@@ -263,14 +263,29 @@ export function readJournal(rootDir: string): JournalResult {
         seenRemoved.add(filePath);
         removed.push(filePath);
       }
-    } else {
-      if (!seenChanged.has(line)) {
-        seenChanged.add(line);
-        changed.push(line);
-      }
+    } else if (!seenChanged.has(line)) {
+      seenChanged.add(line);
+      changed.push(line);
     }
   }
 
+  return { changed, removed };
+}
+
+export function readJournal(rootDir: string): JournalResult {
+  const journalPath = path.join(rootDir, '.codegraph', JOURNAL_FILENAME);
+  let content: string;
+  try {
+    content = fs.readFileSync(journalPath, 'utf-8');
+  } catch {
+    return { valid: false };
+  }
+
+  const lines = content.split('\n');
+  const timestamp = parseJournalHeader(lines[0]);
+  if (timestamp === null) return { valid: false };
+
+  const { changed, removed } = parseJournalBody(lines);
   return { valid: true, timestamp, changed, removed };
 }
 
