@@ -181,46 +181,17 @@ function newTypesFor(astTypeMap: Record<string, string>): Set<string> {
   return s;
 }
 
-export function createAstStoreVisitor(
-  astTypeMap: Record<string, string>,
-  defs: Definition[],
-  relPath: string,
-  nodeIdMap: Map<string, number>,
-  stringConfig: AstStringConfig = DEFAULT_STRING_CONFIG,
-  stopRecurseKinds: ReadonlySet<string> = new Set(),
-): Visitor {
-  const rows: AstStoreRow[] = [];
-  const matched = new Set<number>();
-  const newTypes = newTypesFor(astTypeMap);
-  // When nodeIdMap is empty, parentNodeId resolution is wasted work — the
-  // worker passes an empty map and the main thread re-resolves against its
-  // own DB-populated map in features/ast.ts::collectFileAstRows. Skip the
-  // findParentDef linear scan in that case.
-  const skipParentLookup = nodeIdMap.size === 0;
+type NameTextResult = { name: string | null | undefined; text: string | null; skip?: boolean };
+type KindHandler = (node: TreeSitterNode) => NameTextResult;
 
-  function findParentDef(line: number): Definition | null {
-    let best: Definition | null = null;
-    for (const def of defs) {
-      if (def.line <= line && (def.endLine == null || def.endLine >= line)) {
-        if (!best || (def.endLine ?? 0) - def.line < (best.endLine ?? 0) - best.line) {
-          best = def;
-        }
-      }
-    }
-    return best;
-  }
+const DEFAULT_NAME_TEXT_RESULT: NameTextResult = { name: undefined, text: null };
 
-  function resolveParentNodeId(line: number): number | null {
-    if (skipParentLookup) return null;
-    const parentDef = findParentDef(line);
-    if (!parentDef) return null;
-    return nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
-  }
-
-  type NameTextResult = { name: string | null | undefined; text: string | null; skip?: boolean };
-  type KindHandler = (node: TreeSitterNode) => NameTextResult;
-
-  const kindHandlers: Record<string, KindHandler> = {
+/** Build the per-kind resolver map for name/text extraction. */
+function buildKindHandlers(
+  newTypes: Set<string>,
+  stringConfig: AstStringConfig,
+): Record<string, KindHandler> {
+  return {
     new: (node) => ({ name: extractConstructorName(node), text: truncate(node.text) }),
     throw: (node) => ({
       name: extractThrowName(node, newTypes),
@@ -234,31 +205,102 @@ export function createAstStoreVisitor(
     },
     regex: (node) => ({ name: node.text || '?', text: truncate(node.text) }),
   };
-  const defaultResult: NameTextResult = { name: undefined, text: null };
+}
 
-  function resolveNameAndText(node: TreeSitterNode, kind: string): NameTextResult {
-    const handler = kindHandlers[kind];
-    return handler ? handler(node) : defaultResult;
+/** Find the innermost definition whose line range contains `line`. */
+function findParentDef(line: number, defs: Definition[]): Definition | null {
+  let best: Definition | null = null;
+  for (const def of defs) {
+    if (def.line <= line && (def.endLine == null || def.endLine >= line)) {
+      if (!best || (def.endLine ?? 0) - def.line < (best.endLine ?? 0) - best.line) {
+        best = def;
+      }
+    }
   }
+  return best;
+}
 
-  function collectNode(node: TreeSitterNode, kind: string): void {
-    if (matched.has(node.id)) return;
+/** Resolve the parent definition's node id for a given source line. */
+function resolveParentNodeId(
+  line: number,
+  defs: Definition[],
+  nodeIdMap: Map<string, number>,
+  skipParentLookup: boolean,
+): number | null {
+  if (skipParentLookup) return null;
+  const parentDef = findParentDef(line, defs);
+  if (!parentDef) return null;
+  return nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
+}
 
-    const resolved = resolveNameAndText(node, kind);
-    if (resolved.skip) return;
+interface CollectCtx {
+  rows: AstStoreRow[];
+  matched: Set<number>;
+  relPath: string;
+  defs: Definition[];
+  nodeIdMap: Map<string, number>;
+  skipParentLookup: boolean;
+  kindHandlers: Record<string, KindHandler>;
+}
 
-    rows.push({
-      file: relPath,
-      line: node.startPosition.row + 1,
-      kind,
-      name: resolved.name,
-      text: resolved.text,
-      receiver: null,
-      parentNodeId: resolveParentNodeId(node.startPosition.row + 1),
-    });
+function collectNode(ctx: CollectCtx, node: TreeSitterNode, kind: string): void {
+  if (ctx.matched.has(node.id)) return;
 
-    matched.add(node.id);
-  }
+  const handler = ctx.kindHandlers[kind];
+  const resolved = handler ? handler(node) : DEFAULT_NAME_TEXT_RESULT;
+  if (resolved.skip) return;
+
+  const line = node.startPosition.row + 1;
+  ctx.rows.push({
+    file: ctx.relPath,
+    line,
+    kind,
+    name: resolved.name,
+    text: resolved.text,
+    receiver: null,
+    parentNodeId: resolveParentNodeId(line, ctx.defs, ctx.nodeIdMap, ctx.skipParentLookup),
+  });
+
+  ctx.matched.add(node.id);
+}
+
+/**
+ * Resolve the kind for a tree-sitter node, or `null` if the node should be ignored.
+ *
+ * Gate with `hasOwn` because plain-object lookup walks Object.prototype:
+ * tree-sitter node types like `constructor` (Haskell sum-types: Left,
+ * Right) would otherwise resolve to `Object.prototype.constructor` (the
+ * Object() function), which then crashes the worker boundary with
+ * "function Object() { [native code] } could not be cloned" when the
+ * resulting astNodes row is structured-cloned back to the main thread.
+ */
+function resolveAstKind(node: TreeSitterNode, astTypeMap: Record<string, string>): string | null {
+  if (!Object.hasOwn(astTypeMap, node.type)) return null;
+  return astTypeMap[node.type] || null;
+}
+
+export function createAstStoreVisitor(
+  astTypeMap: Record<string, string>,
+  defs: Definition[],
+  relPath: string,
+  nodeIdMap: Map<string, number>,
+  stringConfig: AstStringConfig = DEFAULT_STRING_CONFIG,
+  stopRecurseKinds: ReadonlySet<string> = new Set(),
+): Visitor {
+  const newTypes = newTypesFor(astTypeMap);
+  // When nodeIdMap is empty, parentNodeId resolution is wasted work — the
+  // worker passes an empty map and the main thread re-resolves against its
+  // own DB-populated map in features/ast.ts::collectFileAstRows. Skip the
+  // findParentDef linear scan in that case.
+  const ctx: CollectCtx = {
+    rows: [],
+    matched: new Set<number>(),
+    relPath,
+    defs,
+    nodeIdMap,
+    skipParentLookup: nodeIdMap.size === 0,
+    kindHandlers: buildKindHandlers(newTypes, stringConfig),
+  };
 
   return {
     name: 'ast-store',
@@ -267,19 +309,12 @@ export function createAstStoreVisitor(
       // Guard: skip re-collection but do NOT skipChildren — node.id (memory address)
       // can be reused by tree-sitter, so a collision would incorrectly suppress an
       // unrelated subtree. The parent call's skipChildren handles the intended case.
-      if (matched.has(node.id)) return;
+      if (ctx.matched.has(node.id)) return;
 
-      // Gate with `hasOwn` because plain-object lookup walks Object.prototype:
-      // tree-sitter node types like `constructor` (Haskell sum-types: Left,
-      // Right) would otherwise resolve to `Object.prototype.constructor` (the
-      // Object() function), which then crashes the worker boundary with
-      // "function Object() { [native code] } could not be cloned" when the
-      // resulting astNodes row is structured-cloned back to the main thread.
-      if (!Object.hasOwn(astTypeMap, node.type)) return;
-      const kind = astTypeMap[node.type];
+      const kind = resolveAstKind(node, astTypeMap);
       if (!kind) return;
 
-      collectNode(node, kind);
+      collectNode(ctx, node, kind);
 
       // Mirror the native walker's recursion policy. In JS/TS, the native
       // javascript.rs walker returns after collecting `new` or `throw` to
@@ -293,7 +328,7 @@ export function createAstStoreVisitor(
     },
 
     finish(): AstStoreRow[] {
-      return rows;
+      return ctx.rows;
     },
   };
 }

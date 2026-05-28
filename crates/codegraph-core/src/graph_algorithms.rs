@@ -70,6 +70,58 @@ impl<'a> DirectedGraph<'a> {
     }
 }
 
+// ─── Traversal helpers ───────────────────────────────────────────────
+
+/// Pick the neighbor set used by `bfs_traversal` for the requested direction.
+/// "backward" → predecessors, "both" → predecessors + successors,
+/// anything else → successors. Mirrors the JS direction enum.
+fn bfs_neighbors_for_direction<'a>(
+    graph: &'a DirectedGraph<'a>,
+    current: &str,
+    direction: &str,
+) -> Vec<&'a str> {
+    match direction {
+        "backward" => graph
+            .predecessors
+            .get(current)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+            .to_vec(),
+        "both" => {
+            let mut all: Vec<&str> = Vec::new();
+            if let Some(succ) = graph.successors.get(current) {
+                all.extend(succ.iter());
+            }
+            if let Some(pred) = graph.predecessors.get(current) {
+                all.extend(pred.iter());
+            }
+            all
+        }
+        _ => graph
+            .successors
+            .get(current)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+            .to_vec(),
+    }
+}
+
+/// Walk the parent pointers produced by a BFS back from `terminal` to the
+/// start node and return the path as a `Vec<String>` (start → terminal).
+fn reconstruct_bfs_path<'a>(
+    parent: &HashMap<&'a str, Option<&'a str>>,
+    terminal: &'a str,
+) -> Vec<String> {
+    let mut path: Vec<String> = Vec::new();
+    let mut node: Option<&str> = Some(terminal);
+    while let Some(n) = node {
+        path.push(n.to_string());
+        node = parent.get(n).copied().flatten();
+    }
+    path.reverse();
+    path
+}
+
 // ─── BFS ─────────────────────────────────────────────────────────────
 
 /// BFS traversal on a directed graph built from edges.
@@ -102,33 +154,7 @@ pub fn bfs_traversal(
         if depth >= max_depth {
             continue;
         }
-
-        let neighbors: Vec<&str> = match dir {
-            "backward" => graph
-                .predecessors
-                .get(current)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[])
-                .to_vec(),
-            "both" => {
-                let mut all: Vec<&str> = Vec::new();
-                if let Some(succ) = graph.successors.get(current) {
-                    all.extend(succ.iter());
-                }
-                if let Some(pred) = graph.predecessors.get(current) {
-                    all.extend(pred.iter());
-                }
-                all
-            }
-            _ => graph
-                .successors
-                .get(current)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[])
-                .to_vec(),
-        };
-
-        for n in neighbors {
+        for n in bfs_neighbors_for_direction(&graph, current, dir) {
             if !depths.contains_key(n) {
                 depths.insert(n, depth + 1);
                 queue.push_back(n);
@@ -166,24 +192,19 @@ pub fn shortest_path(edges: Vec<GraphEdge>, from_id: String, to_id: String) -> V
     queue.push_back(from_id.as_str());
 
     while let Some(current) = queue.pop_front() {
-        if let Some(neighbors) = graph.successors.get(current) {
-            for &neighbor in neighbors {
-                if parent.contains_key(neighbor) {
-                    continue;
-                }
-                parent.insert(neighbor, Some(current));
-                if neighbor == to_id.as_str() {
-                    let mut path: Vec<String> = Vec::new();
-                    let mut node: Option<&str> = Some(neighbor);
-                    while let Some(n) = node {
-                        path.push(n.to_string());
-                        node = parent.get(n).copied().flatten();
-                    }
-                    path.reverse();
-                    return path;
-                }
-                queue.push_back(neighbor);
+        let neighbors = match graph.successors.get(current) {
+            Some(n) => n,
+            None => continue,
+        };
+        for &neighbor in neighbors {
+            if parent.contains_key(neighbor) {
+                continue;
             }
+            parent.insert(neighbor, Some(current));
+            if neighbor == to_id.as_str() {
+                return reconstruct_bfs_path(&parent, neighbor);
+            }
+            queue.push_back(neighbor);
         }
     }
 
