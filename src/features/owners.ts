@@ -278,9 +278,11 @@ function computeOwnerBoundaries(
     if (noTests && (isTestFile(e.srcFile) || isTestFile(e.tgtFile))) continue;
     const srcOwners = matchOwners(e.srcFile, rules);
     const tgtOwners = matchOwners(e.tgtFile, rules);
-    // Cross-boundary: different owner sets (sort for deterministic comparison)
-    const srcKey = [...srcOwners].sort().join(',');
-    const tgtKey = [...tgtOwners].sort().join(',');
+    // Cross-boundary: different owner sets (sort for deterministic comparison + output)
+    const sortedSrc = [...srcOwners].sort();
+    const sortedTgt = [...tgtOwners].sort();
+    const srcKey = sortedSrc.join(',');
+    const tgtKey = sortedTgt.join(',');
     if (srcKey === tgtKey) continue;
     boundaries.push({
       from: {
@@ -288,9 +290,9 @@ function computeOwnerBoundaries(
         kind: e.srcKind,
         file: e.srcFile,
         line: e.srcLine,
-        owners: srcOwners,
+        owners: sortedSrc,
       },
-      to: { name: e.tgtName, kind: e.tgtKind, file: e.tgtFile, line: e.tgtLine, owners: tgtOwners },
+      to: { name: e.tgtName, kind: e.tgtKind, file: e.tgtFile, line: e.tgtLine, owners: sortedTgt },
       edgeKind: e.edgeKind,
     });
   }

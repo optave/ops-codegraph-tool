@@ -90,10 +90,11 @@ function isLeafNode(n: FlowNode, leaves: Array<{ name: string; file: string }>):
   return leaves.some((l) => l.name === n.name && l.file === n.file);
 }
 
-function printFlowSteps(data: FlowResult): void {
+/** Returns true when the node is a leaf (no steps); caller should skip cycle output. */
+function printFlowSteps(data: FlowResult): boolean {
   if (data.steps.length === 0) {
     console.log('  (leaf node — no callees)');
-    return;
+    return true;
   }
   for (const step of data.steps) {
     console.log(`  depth ${step.depth}:`);
@@ -102,6 +103,7 @@ function printFlowSteps(data: FlowResult): void {
       console.log(`    [${kindIcon(n.kind)}] ${n.name}  ${n.file}:${n.line}${leafTag}`);
     }
   }
+  return false;
 }
 
 function printFlowCycles(cycles: FlowCycle[]): void {
@@ -138,6 +140,8 @@ export function flow(
   }
 
   printFlowHeader(data);
-  printFlowSteps(data);
-  printFlowCycles(data.cycles);
+  const isLeaf = printFlowSteps(data);
+  if (!isLeaf) {
+    printFlowCycles(data.cycles);
+  }
 }

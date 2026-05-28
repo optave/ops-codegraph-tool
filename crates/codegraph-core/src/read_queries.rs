@@ -2150,11 +2150,15 @@ impl NativeDatabase {
         if no_tests {
             matched.retain(|n| !is_test_file(&n.file));
         }
-        matched.sort_by(|a, b| {
-            fn_deps_relevance_score(b, &lower_query)
-                .partial_cmp(&fn_deps_relevance_score(a, &lower_query))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Pre-compute scores once per element to avoid O(n log n) score calls
+        // inside sort_by (f64 does not implement Ord so sort_by_cached_key
+        // cannot be used directly; pre-computing achieves the same O(n) key cost).
+        let mut scored: Vec<(f64, FnDepsMatchedNode)> = matched
+            .into_iter()
+            .map(|n| (fn_deps_relevance_score(&n, &lower_query), n))
+            .collect();
+        scored.sort_by(|(sa, _), (sb, _)| sb.partial_cmp(sa).unwrap_or(std::cmp::Ordering::Equal));
+        let matched: Vec<FnDepsMatchedNode> = scored.into_iter().map(|(_, n)| n).collect();
 
         // ── Step 2: Build result for each matched node ────────────────────
         let mut file_hash_cache: HashMap<String, Option<String>> = HashMap::new();

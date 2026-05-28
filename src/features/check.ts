@@ -379,11 +379,13 @@ function runPredicates(
   return predicates;
 }
 
-const EMPTY_CHECK: CheckResult = {
-  predicates: [],
-  summary: { total: 0, passed: 0, failed: 0, changedFiles: 0, newFiles: 0 },
-  passed: true,
-};
+function makeEmptyCheck(): CheckResult {
+  return {
+    predicates: [],
+    summary: { total: 0, passed: 0, failed: 0, changedFiles: 0, newFiles: 0 },
+    passed: true,
+  };
+}
 
 export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}): CheckResult {
   const db = openReadonlyOrFail(customDbPath);
@@ -409,10 +411,10 @@ export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}
       return { error: `Failed to run git diff: ${(e as Error).message}` };
     }
 
-    if (!diffOutput.trim()) return EMPTY_CHECK;
+    if (!diffOutput.trim()) return makeEmptyCheck();
 
     const diff = parseDiffOutput(diffOutput);
-    if (diff.changedRanges.size === 0) return EMPTY_CHECK;
+    if (diff.changedRanges.size === 0) return makeEmptyCheck();
 
     const predicates = runPredicates(db, diff, flags, repoRoot, noTests, maxDepth);
 

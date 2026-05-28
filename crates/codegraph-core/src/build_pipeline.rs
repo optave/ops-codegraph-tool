@@ -348,9 +348,17 @@ fn run_role_classification(
     }
 }
 
+/// Return type for [`run_analysis_persistence`]. Using a named struct avoids
+/// the silent positional-swap bug that a `(bool, bool)` tuple allows.
+struct AnalysisPersistenceResult {
+    /// Whether any analysis phase was requested (`include_ast | include_dataflow | …`).
+    ran: bool,
+    /// Whether every requested phase succeeded.
+    ok: bool,
+}
+
 /// Stage 8b: persist AST, complexity, CFG, and dataflow data for the
-/// analysis scope. Returns `(do_analysis, analysis_ok)` so the caller can
-/// compute `analysis_complete`.
+/// analysis scope.
 fn run_analysis_persistence(
     conn: &Connection,
     file_symbols: &HashMap<String, FileSymbols>,
@@ -359,12 +367,12 @@ fn run_analysis_persistence(
     include_ast: bool,
     include_dataflow: bool,
     timing: &mut PipelineTiming,
-) -> (bool, bool) {
+) -> AnalysisPersistenceResult {
     let include_complexity = opts.complexity.unwrap_or(true);
     let include_cfg = opts.cfg.unwrap_or(true);
     let do_analysis = include_ast || include_dataflow || include_cfg || include_complexity;
     if !do_analysis {
-        return (false, true);
+        return AnalysisPersistenceResult { ran: false, ok: true };
     }
 
     let analysis_file_set: HashSet<&str> = match analysis_scope {
@@ -405,7 +413,7 @@ fn run_analysis_persistence(
         timing.dataflow_ms = t0.elapsed().as_secs_f64() * 1000.0;
     }
 
-    (do_analysis, analysis_ok)
+    AnalysisPersistenceResult { ran: do_analysis, ok: analysis_ok }
 }
 
 /// Run the full build pipeline in Rust.
@@ -582,7 +590,7 @@ pub fn run_pipeline(
     timing.roles_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 8b: Analysis persistence (AST, complexity, CFG, dataflow) ──
-    let (do_analysis, analysis_ok) = run_analysis_persistence(
+    let analysis = run_analysis_persistence(
         conn,
         &file_symbols,
         analysis_scope.as_ref(),
@@ -626,7 +634,7 @@ pub fn run_pipeline(
         removed_count: change_result.removed.len(),
         is_full_build: change_result.is_full_build,
         structure_handled: true,
-        analysis_complete: do_analysis && analysis_ok,
+        analysis_complete: !analysis.ran || analysis.ok,
     })
 }
 

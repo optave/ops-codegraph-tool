@@ -161,7 +161,9 @@ fn resolve_non_relative_import(
 }
 
 /// Probe the `.js → .ts/.tsx` remap candidates and return the first
-/// existing file's relative path, if any.
+/// existing file's root-relative path, if any.
+/// Skips candidates that exist but lie outside `root_dir` (strip_prefix
+/// would fail), preserving the original fall-through behaviour.
 fn probe_js_to_ts_remap(
     resolved_str: &str,
     root_dir: &str,
@@ -170,10 +172,14 @@ fn probe_js_to_ts_remap(
     if !resolved_str.ends_with(".js") {
         return None;
     }
+    let root = Path::new(root_dir);
     for replacement in [".ts", ".tsx"] {
         let candidate = resolved_str.replace(".js", replacement);
         if file_exists(&candidate, known_files, root_dir) {
-            return Some(relativize_to_root(&candidate, root_dir));
+            if let Ok(rel) = Path::new(&candidate).strip_prefix(root) {
+                return Some(normalize_path(&rel.display().to_string()));
+            }
+            // candidate exists but is outside root_dir — keep probing
         }
     }
     None
@@ -181,6 +187,8 @@ fn probe_js_to_ts_remap(
 
 /// Probe known extensions (TS/JS/Python plus index files) for an existing
 /// match against the normalized relative path stem.
+/// Skips candidates that exist but lie outside `root_dir` (strip_prefix
+/// would fail), preserving the original fall-through behaviour.
 fn probe_known_extensions(
     resolved_str: &str,
     root_dir: &str,
@@ -199,10 +207,14 @@ fn probe_known_extensions(
         "/index.js",
         "/__init__.py",
     ];
+    let root = Path::new(root_dir);
     for ext in EXTENSIONS {
         let candidate = format!("{resolved_str}{ext}");
         if file_exists(&candidate, known_files, root_dir) {
-            return Some(relativize_to_root(&candidate, root_dir));
+            if let Ok(rel) = Path::new(&candidate).strip_prefix(root) {
+                return Some(normalize_path(&rel.display().to_string()));
+            }
+            // candidate exists but is outside root_dir — keep probing
         }
     }
     None

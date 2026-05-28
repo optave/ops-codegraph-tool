@@ -18,7 +18,13 @@ import {
 } from '../db/index.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
-import type { BetterSqlite3Database, Definition, NodeRow, TreeSitterNode } from '../types.js';
+import type {
+  BetterSqlite3Database,
+  CfgRulesConfig,
+  Definition,
+  NodeRow,
+  TreeSitterNode,
+} from '../types.js';
 import { findNodes } from './shared/find-nodes.js';
 
 export { _makeCfgRules as makeCfgRules, CFG_RULES };
@@ -122,9 +128,8 @@ async function initCfgParsers(
   let getParserFn: unknown = null;
 
   if (needsFallback) {
-    const { createParsers } = await import('../domain/parser.js');
-    parsers = await createParsers();
     const mod = await import('../domain/parser.js');
+    parsers = await mod.createParsers();
     getParserFn = mod.getParser;
   }
 
@@ -187,7 +192,7 @@ interface VisitorCfgResult {
 
 function buildVisitorCfgMap(
   tree: { rootNode: TreeSitterNode } | null | undefined,
-  cfgRules: unknown,
+  cfgRules: CfgRulesConfig,
   symbols: FileSymbols,
   langId: string,
 ): Map<number, VisitorCfgResult[]> | null {
@@ -203,9 +208,8 @@ function buildVisitorCfgMap(
   if (!needsVisitor) return null;
 
   const visitor = createCfgVisitor(cfgRules);
-  const typedRules = cfgRules as { functionNodes: string[] };
   const walkerOpts = {
-    functionNodeTypes: new Set(typedRules.functionNodes),
+    functionNodeTypes: new Set(cfgRules.functionNodes),
     nestingNodeTypes: new Set<string>(),
     getFunctionName: (node: TreeSitterNode) => {
       const nameNode = node.childForFieldName?.('name');
