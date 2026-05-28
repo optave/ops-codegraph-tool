@@ -96,6 +96,326 @@ fn relative_path(root_dir: &str, abs_path: &str) -> String {
     }
 }
 
+/// Deserialized pipeline inputs assembled in Stage 1.
+struct PipelineSetup {
+    config: BuildConfig,
+    napi_aliases: crate::types::PathAliases,
+    opts: BuildOpts,
+    incremental: bool,
+    include_dataflow: bool,
+    include_ast: bool,
+    force_full_rebuild: bool,
+}
+
+fn pipeline_setup(
+    conn: &Connection,
+    config_json: &str,
+    aliases_json: &str,
+    opts_json: &str,
+) -> Result<PipelineSetup, String> {
+    let config: BuildConfig =
+        serde_json::from_str(config_json).map_err(|e| format!("config parse error: {e}"))?;
+    let aliases: BuildPathAliases =
+        serde_json::from_str(aliases_json).map_err(|e| format!("aliases parse error: {e}"))?;
+    let opts: BuildOpts =
+        serde_json::from_str(opts_json).map_err(|e| format!("opts parse error: {e}"))?;
+
+    let napi_aliases = aliases.to_napi_aliases();
+    let incremental = opts.incremental.unwrap_or(config.build.incremental);
+    let include_dataflow = opts.dataflow.unwrap_or(true);
+    let include_ast = opts.ast.unwrap_or(true);
+    let force_full_rebuild = check_version_mismatch(conn);
+
+    Ok(PipelineSetup {
+        config,
+        napi_aliases,
+        opts,
+        incremental,
+        include_dataflow,
+        include_ast,
+        force_full_rebuild,
+    })
+}
+
+/// Build a no-op early-exit result when no source files changed and we are
+/// in an incremental build with no removals. Mirrors the early-exit branch
+/// in `run_pipeline` exactly so it can be lifted out without behaviour change.
+fn early_exit_result(
+    file_count: usize,
+    timing: PipelineTiming,
+    conn: &Connection,
+    root_dir: &str,
+    metadata_updates: &[change_detection::MetadataUpdate],
+) -> BuildPipelineResult {
+    change_detection::heal_metadata(conn, metadata_updates);
+    journal::write_journal_header(root_dir, now_ms());
+    BuildPipelineResult {
+        phases: timing,
+        node_count: 0,
+        edge_count: 0,
+        file_count,
+        early_exit: true,
+        changed_files: Some(vec![]),
+        changed_count: 0,
+        removed_count: 0,
+        is_full_build: false,
+        structure_handled: true,
+        analysis_complete: true,
+    }
+}
+
+/// Save reverse-dep edges (and reverse-deps of removed files) before purging
+/// changed files. Mirrors the JS save-then-purge sequence in `build-edges.ts`
+/// (#1012). Returns `(saved_reverse_dep_edges, removal_reverse_deps)` so the
+/// pipeline can reconnect them after Stage 5 and reclassify roles in Stage 8.
+fn save_and_purge_changed(
+    conn: &Connection,
+    parse_changes: &[&change_detection::ChangedFile],
+    change_result: &change_detection::ChangeResult,
+    opts: &BuildOpts,
+    root_dir: &str,
+) -> (Vec<change_detection::SavedReverseDepEdge>, Vec<String>) {
+    let mut saved_reverse_dep_edges: Vec<change_detection::SavedReverseDepEdge> = Vec::new();
+    let mut removal_reverse_deps: Vec<String> = Vec::new();
+
+    if change_result.is_full_build {
+        let has_embeddings = change_detection::has_embeddings(conn);
+        change_detection::clear_all_graph_data(conn, has_embeddings);
+        return (saved_reverse_dep_edges, removal_reverse_deps);
+    }
+
+    let changed_paths: Vec<String> = parse_changes.iter().map(|c| c.rel_path.clone()).collect();
+
+    if !opts.no_reverse_deps.unwrap_or(false) {
+        saved_reverse_dep_edges = change_detection::save_reverse_dep_edges(conn, &changed_paths);
+
+        if !change_result.removed.is_empty() {
+            let removed_set: HashSet<String> = change_result.removed.iter().cloned().collect();
+            removal_reverse_deps =
+                change_detection::find_reverse_dependencies(conn, &removed_set, root_dir)
+                    .into_iter()
+                    .collect();
+        }
+    }
+
+    let files_to_purge: Vec<String> = change_result
+        .removed
+        .iter()
+        .chain(parse_changes.iter().map(|c| &c.rel_path))
+        .cloned()
+        .collect();
+    change_detection::purge_changed_files(conn, &files_to_purge, &[]);
+
+    (saved_reverse_dep_edges, removal_reverse_deps)
+}
+
+/// Parse a changed-file slice in parallel and key the results by relative path.
+fn parse_and_index_files(
+    parse_changes: &[&change_detection::ChangedFile],
+    root_dir: &str,
+    include_dataflow: bool,
+    include_ast: bool,
+) -> HashMap<String, FileSymbols> {
+    let files_to_parse: Vec<String> =
+        parse_changes.iter().map(|c| c.abs_path.clone()).collect();
+    let parsed =
+        parallel::parse_files_parallel(&files_to_parse, root_dir, include_dataflow, include_ast);
+    let mut file_symbols: HashMap<String, FileSymbols> = HashMap::new();
+    for mut sym in parsed {
+        let rel = relative_path(root_dir, &sym.file);
+        sym.file = rel.clone();
+        file_symbols.insert(rel, sym);
+    }
+    file_symbols
+}
+
+/// Build the batched import-resolution input set and run resolution, returning
+/// `(batch_resolved, known_files)`. Mirrors stage 6 of `run_pipeline`.
+fn resolve_pipeline_imports(
+    file_symbols: &HashMap<String, FileSymbols>,
+    collect_files: &[String],
+    root_dir: &str,
+    napi_aliases: &crate::types::PathAliases,
+) -> (HashMap<String, String>, HashSet<String>) {
+    let mut batch_inputs: Vec<ImportResolutionInput> = Vec::new();
+    for (rel_path, symbols) in file_symbols {
+        let abs_file = Path::new(root_dir).join(rel_path);
+        let abs_str = abs_file.to_str().unwrap_or("").replace('\\', "/");
+        for imp in &symbols.imports {
+            batch_inputs.push(ImportResolutionInput {
+                from_file: abs_str.clone(),
+                import_source: imp.source.clone(),
+            });
+        }
+    }
+    let known_files: HashSet<String> =
+        collect_files.iter().map(|f| relative_path(root_dir, f)).collect();
+    let resolved =
+        import_resolution::resolve_imports_batch(&batch_inputs, root_dir, napi_aliases, Some(&known_files));
+    let mut batch_resolved: HashMap<String, String> = HashMap::new();
+    for r in &resolved {
+        let key = format!("{}|{}", r.from_file, r.import_source);
+        batch_resolved.insert(key, r.resolved_path.clone());
+    }
+    (batch_resolved, known_files)
+}
+
+/// Reconnect any saved reverse-dep edges to the new target node IDs (#1012).
+fn reconnect_saved_reverse_dep_edges(
+    conn: &Connection,
+    saved: &[change_detection::SavedReverseDepEdge],
+) {
+    if saved.is_empty() {
+        return;
+    }
+    let (reconnected, dropped) = change_detection::reconnect_reverse_dep_edges(conn, saved);
+    if dropped > 0 {
+        eprintln!(
+            "[codegraph] reconnect_reverse_dep_edges: {reconnected} reconnected, {dropped} dropped (target nodes not found)"
+        );
+    }
+}
+
+/// Stage 8 (structure): decide between the fast incremental path and a full
+/// structure rebuild based on the same gates as the JS pipeline. The change
+/// set is read from `file_symbols.keys()` because only truly-changed files
+/// are present (reverse-deps are reconnected, not re-parsed).
+fn run_structure_phase(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    collect_directories: &HashSet<String>,
+    root_dir: &str,
+    line_count_map: &HashMap<String, i64>,
+    parse_changes_len: usize,
+    is_full_build: bool,
+) {
+    let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
+    let existing_file_count = structure::get_existing_file_count(conn);
+    let use_fast_path = !is_full_build
+        && parse_changes_len <= FAST_PATH_MAX_CHANGED_FILES
+        && existing_file_count > FAST_PATH_MIN_EXISTING_FILES;
+
+    if use_fast_path {
+        structure::update_changed_file_metrics(conn, &changed_files, line_count_map, file_symbols);
+    } else {
+        let changed_for_structure: Option<Vec<String>> = if is_full_build {
+            None
+        } else {
+            Some(changed_files.clone())
+        };
+        structure::build_full_structure(
+            conn,
+            file_symbols,
+            collect_directories,
+            root_dir,
+            line_count_map,
+            changed_for_structure.as_deref(),
+        );
+    }
+}
+
+/// Stage 8 (roles): classify roles for the affected file set. Removal
+/// reverse-deps need to be seeded explicitly because their fan-in/out can
+/// no longer be discovered via neighbour expansion once the deleted file's
+/// nodes are gone (#1027).
+fn run_role_classification(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    removal_reverse_deps: Vec<String>,
+    is_full_build: bool,
+) {
+    let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
+    let changed_file_list: Option<Vec<String>> = if is_full_build {
+        None
+    } else {
+        let mut files = changed_files;
+        if !removal_reverse_deps.is_empty() {
+            let existing: HashSet<String> = files.iter().cloned().collect();
+            for f in removal_reverse_deps {
+                if !existing.contains(&f) {
+                    files.push(f);
+                }
+            }
+        }
+        Some(files)
+    };
+    if let Some(ref files) = changed_file_list {
+        if !files.is_empty() {
+            let _ = roles_db::do_classify_incremental(conn, files);
+        }
+    } else {
+        let _ = roles_db::do_classify_full(conn);
+    }
+}
+
+/// Return type for [`run_analysis_persistence`]. Using a named struct avoids
+/// the silent positional-swap bug that a `(bool, bool)` tuple allows.
+struct AnalysisPersistenceResult {
+    /// Whether any analysis phase was requested (`include_ast | include_dataflow | …`).
+    ran: bool,
+    /// Whether every requested phase succeeded.
+    ok: bool,
+}
+
+/// Stage 8b: persist AST, complexity, CFG, and dataflow data for the
+/// analysis scope.
+fn run_analysis_persistence(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    analysis_scope: Option<&Vec<String>>,
+    opts: &BuildOpts,
+    include_ast: bool,
+    include_dataflow: bool,
+    timing: &mut PipelineTiming,
+) -> AnalysisPersistenceResult {
+    let include_complexity = opts.complexity.unwrap_or(true);
+    let include_cfg = opts.cfg.unwrap_or(true);
+    let do_analysis = include_ast || include_dataflow || include_cfg || include_complexity;
+    if !do_analysis {
+        return AnalysisPersistenceResult { ran: false, ok: true };
+    }
+
+    let analysis_file_set: HashSet<&str> = match analysis_scope {
+        Some(files) => files.iter().map(|s| s.as_str()).collect(),
+        None => file_symbols.keys().map(|s| s.as_str()).collect(),
+    };
+
+    let node_id_map = build_analysis_node_map(conn, &analysis_file_set);
+    let mut analysis_ok = true;
+
+    if include_ast {
+        let t0 = Instant::now();
+        let ast_batches = build_ast_batches(file_symbols, &analysis_file_set);
+        if ast_db::do_insert_ast_nodes(conn, &ast_batches).is_err() {
+            analysis_ok = false;
+        }
+        timing.ast_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    }
+    if include_complexity {
+        let t0 = Instant::now();
+        if !write_complexity(conn, file_symbols, &analysis_file_set, &node_id_map) {
+            analysis_ok = false;
+        }
+        timing.complexity_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    }
+    if include_cfg {
+        let t0 = Instant::now();
+        if !write_cfg(conn, file_symbols, &analysis_file_set, &node_id_map) {
+            analysis_ok = false;
+        }
+        timing.cfg_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    }
+    if include_dataflow {
+        let t0 = Instant::now();
+        if !write_dataflow(conn, file_symbols, &analysis_file_set) {
+            analysis_ok = false;
+        }
+        timing.dataflow_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    }
+
+    AnalysisPersistenceResult { ran: do_analysis, ok: analysis_ok }
+}
+
 /// Run the full build pipeline in Rust.
 ///
 /// Called from `NativeDatabase.build_graph()` via napi.
@@ -111,20 +431,16 @@ pub fn run_pipeline(
 
     // ── Stage 1: Deserialize config ────────────────────────────────────
     let t0 = Instant::now();
-    let config: BuildConfig =
-        serde_json::from_str(config_json).map_err(|e| format!("config parse error: {e}"))?;
-    let aliases: BuildPathAliases =
-        serde_json::from_str(aliases_json).map_err(|e| format!("aliases parse error: {e}"))?;
-    let opts: BuildOpts =
-        serde_json::from_str(opts_json).map_err(|e| format!("opts parse error: {e}"))?;
-
-    let napi_aliases = aliases.to_napi_aliases();
-    let incremental = opts.incremental.unwrap_or(config.build.incremental);
-    let include_dataflow = opts.dataflow.unwrap_or(true);
-    let include_ast = opts.ast.unwrap_or(true);
-
-    // Check engine/schema/version mismatch for forced full rebuild
-    let force_full_rebuild = check_version_mismatch(conn);
+    let setup = pipeline_setup(conn, config_json, aliases_json, opts_json)?;
+    let PipelineSetup {
+        config,
+        napi_aliases,
+        opts,
+        incremental,
+        include_dataflow,
+        include_ast,
+        force_full_rebuild,
+    } = setup;
     timing.setup_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 2: Collect files ─────────────────────────────────────────
@@ -162,89 +478,27 @@ pub fn run_pipeline(
     // Early exit: no changes
     if !change_result.is_full_build && parse_changes.is_empty() && change_result.removed.is_empty()
     {
-        // Heal metadata if needed
-        change_detection::heal_metadata(conn, &change_result.metadata_updates);
-        journal::write_journal_header(root_dir, now_ms());
-        return Ok(BuildPipelineResult {
-            phases: timing,
-            node_count: 0,
-            edge_count: 0,
-            file_count: collect_result.files.len(),
-            early_exit: true,
-            changed_files: Some(vec![]),
-            changed_count: 0,
-            removed_count: 0,
-            is_full_build: false,
-            structure_handled: true,
-            analysis_complete: true,
-        });
+        return Ok(early_exit_result(
+            collect_result.files.len(),
+            timing,
+            conn,
+            root_dir,
+            &change_result.metadata_updates,
+        ));
     }
 
-    // Save reverse-dep → changed-file edges before purge so we can reconnect
-    // them to new node IDs after Stage 5 (#1012). This matches the WASM/JS
-    // strategy and lets us skip re-parsing reverse-dep files entirely:
-    // parse/insert/structure/roles/analysis all scope to truly-changed files.
-    let mut saved_reverse_dep_edges: Vec<change_detection::SavedReverseDepEdge> = Vec::new();
-    // Files that import a removed file. Save+reconnect doesn't apply (the
-    // target node is gone for good), but their role records go stale because
-    // edges to the deleted file's nodes get purged in Stage 3. Reclassify them
-    // in Stage 8 so fan-out reflects reality. (#1027 review)
-    let mut removal_reverse_deps: Vec<String> = Vec::new();
-
-    // Handle full build: clear all graph data
-    if change_result.is_full_build {
-        let has_embeddings = change_detection::has_embeddings(conn);
-        change_detection::clear_all_graph_data(conn, has_embeddings);
-    } else {
-        // Incremental: save reverse-dep edges (if reverse-dep tracking is enabled),
-        // then purge changed files only.
-        let changed_paths: Vec<String> =
-            parse_changes.iter().map(|c| c.rel_path.clone()).collect();
-
-        if !opts.no_reverse_deps.unwrap_or(false) {
-            saved_reverse_dep_edges =
-                change_detection::save_reverse_dep_edges(conn, &changed_paths);
-
-            if !change_result.removed.is_empty() {
-                let removed_set: HashSet<String> =
-                    change_result.removed.iter().cloned().collect();
-                removal_reverse_deps =
-                    change_detection::find_reverse_dependencies(conn, &removed_set, root_dir)
-                        .into_iter()
-                        .collect();
-            }
-        }
-
-        let files_to_purge: Vec<String> = change_result
-            .removed
-            .iter()
-            .chain(parse_changes.iter().map(|c| &c.rel_path))
-            .cloned()
-            .collect();
-        // Pass empty reverse_dep_files: purge already deletes both directions
-        // for changed files (which removes the saved reverse-dep → changed-file
-        // edges from the live table), and other outgoing edges from reverse-dep
-        // files remain valid and must NOT be deleted — they will be reconnected
-        // to new target IDs after insert.
-        change_detection::purge_changed_files(conn, &files_to_purge, &[]);
-    }
+    // Stage 3b: save reverse-dep edges (incremental) or clear all (full),
+    // then purge changed files. Returns the saved edges for Stage 7
+    // reconnect and the removal reverse-dep set for Stage 8 reclassification.
+    let (saved_reverse_dep_edges, removal_reverse_deps) =
+        save_and_purge_changed(conn, &parse_changes, &change_result, &opts, root_dir);
 
     // ── Stage 4: Parse files ───────────────────────────────────────────
     // Only truly-changed files are parsed. Reverse-dep files are not re-parsed —
     // their edges to changed files are reconstructed via save+reconnect (#1012).
     let t0 = Instant::now();
-    let files_to_parse: Vec<String> =
-        parse_changes.iter().map(|c| c.abs_path.clone()).collect();
-    let parsed =
-        parallel::parse_files_parallel(&files_to_parse, root_dir, include_dataflow, include_ast);
-
-    // Build file symbols map (relative path → FileSymbols)
-    let mut file_symbols: HashMap<String, FileSymbols> = HashMap::new();
-    for mut sym in parsed {
-        let rel = relative_path(root_dir, &sym.file);
-        sym.file = rel.clone();
-        file_symbols.insert(rel, sym);
-    }
+    let mut file_symbols =
+        parse_and_index_files(&parse_changes, root_dir, include_dataflow, include_ast);
     timing.parse_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 5: Insert nodes ──────────────────────────────────────────
@@ -257,44 +511,13 @@ pub fn run_pipeline(
         &file_hashes,
         &change_result.removed,
     );
-    // Also heal metadata-only updates
     change_detection::heal_metadata(conn, &change_result.metadata_updates);
     timing.insert_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 6: Resolve imports ───────────────────────────────────────
     let t0 = Instant::now();
-    let mut batch_inputs: Vec<ImportResolutionInput> = Vec::new();
-    for (rel_path, symbols) in &file_symbols {
-        let abs_file = Path::new(root_dir).join(rel_path);
-        // Normalize to forward slashes so batch_resolved keys match Stage 6b lookups on Windows.
-        let abs_str = abs_file.to_str().unwrap_or("").replace('\\', "/");
-        for imp in &symbols.imports {
-            batch_inputs.push(ImportResolutionInput {
-                from_file: abs_str.clone(),
-                import_source: imp.source.clone(),
-            });
-        }
-    }
-
-    let known_files: HashSet<String> = collect_result
-        .files
-        .iter()
-        .map(|f| relative_path(root_dir, f))
-        .collect();
-
-    let resolved = import_resolution::resolve_imports_batch(
-        &batch_inputs,
-        root_dir,
-        &napi_aliases,
-        Some(&known_files),
-    );
-
-    // Build batch_resolved map: "absFile|importSource" -> resolved path
-    let mut batch_resolved: HashMap<String, String> = HashMap::new();
-    for r in &resolved {
-        let key = format!("{}|{}", r.from_file, r.import_source);
-        batch_resolved.insert(key, r.resolved_path.clone());
-    }
+    let (mut batch_resolved, known_files) =
+        resolve_pipeline_imports(&file_symbols, &collect_result.files, root_dir, &napi_aliases);
     timing.resolve_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 6b: Re-parse barrel candidates (incremental only) ─────────
@@ -332,20 +555,7 @@ pub fn run_pipeline(
     // internal logic. We load nodes from DB and pass to the edge builder.
     build_and_insert_call_edges(conn, &file_symbols, &import_ctx, !change_result.is_full_build);
 
-    // Reconnect saved reverse-dep edges to new node IDs (#1012). Mirrors
-    // `reconnectReverseDepEdges` in build-edges.ts — for each saved edge,
-    // look up the new target node and recreate the edge with the original
-    // source_id (still valid; reverse-dep nodes were never purged).
-    if !saved_reverse_dep_edges.is_empty() {
-        let (reconnected, dropped) =
-            change_detection::reconnect_reverse_dep_edges(conn, &saved_reverse_dep_edges);
-        if dropped > 0 {
-            eprintln!(
-                "[codegraph] reconnect_reverse_dep_edges: {reconnected} reconnected, {dropped} dropped (target nodes not found)"
-            );
-        }
-    }
-
+    reconnect_saved_reverse_dep_edges(conn, &saved_reverse_dep_edges);
     timing.edges_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 8: Structure + roles ─────────────────────────────────────
@@ -354,128 +564,41 @@ pub fn run_pipeline(
     // file_symbols only contains truly-changed files (reverse-deps are not
     // re-parsed; their edges are reconnected via save+reconnect — #1012), so
     // analysis_scope == changed_files.
-    let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
     let analysis_scope: Option<Vec<String>> = if change_result.is_full_build {
         None
     } else {
-        Some(changed_files.clone())
+        Some(file_symbols.keys().cloned().collect())
     };
-
-    let existing_file_count = structure::get_existing_file_count(conn);
-    let use_fast_path =
-        !change_result.is_full_build && parse_changes.len() <= FAST_PATH_MAX_CHANGED_FILES && existing_file_count > FAST_PATH_MIN_EXISTING_FILES;
-
-    if use_fast_path {
-        structure::update_changed_file_metrics(
-            conn,
-            &changed_files,
-            &line_count_map,
-            &file_symbols,
-        );
-    } else {
-        // Full structure: directory nodes, contains edges, file + directory metrics.
-        let changed_for_structure: Option<Vec<String>> = if change_result.is_full_build {
-            None
-        } else {
-            Some(changed_files.clone())
-        };
-        structure::build_full_structure(
-            conn,
-            &file_symbols,
-            &collect_result.directories,
-            root_dir,
-            &line_count_map,
-            changed_for_structure.as_deref(),
-        );
-    }
+    run_structure_phase(
+        conn,
+        &file_symbols,
+        &collect_result.directories,
+        root_dir,
+        &line_count_map,
+        parse_changes.len(),
+        change_result.is_full_build,
+    );
     timing.structure_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let t0 = Instant::now();
-    // Role classification needs the truly-changed files plus reverse-deps of
-    // any removed files. `do_classify_incremental` expands to neighbours via
-    // the edges table, so reverse-deps of *changed* files are picked up
-    // automatically when their fan-in/fan-out is affected. Reverse-deps of
-    // *removed* files have to be added explicitly — the deleted file's nodes
-    // are gone, so neighbour expansion can't reach the importer. Without this
-    // seed, removal-only builds skip role classification entirely. (#1027)
-    let changed_file_list: Option<Vec<String>> = if change_result.is_full_build {
-        None
-    } else {
-        let mut files = changed_files;
-        if !removal_reverse_deps.is_empty() {
-            let existing: HashSet<String> = files.iter().cloned().collect();
-            for f in removal_reverse_deps {
-                if !existing.contains(&f) {
-                    files.push(f);
-                }
-            }
-        }
-        Some(files)
-    };
-    if let Some(ref files) = changed_file_list {
-        if !files.is_empty() {
-            let _ = roles_db::do_classify_incremental(conn, files);
-        }
-    } else {
-        let _ = roles_db::do_classify_full(conn);
-    }
+    run_role_classification(
+        conn,
+        &file_symbols,
+        removal_reverse_deps,
+        change_result.is_full_build,
+    );
     timing.roles_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 8b: Analysis persistence (AST, complexity, CFG, dataflow) ──
-    // Write analysis data from parsed file_symbols directly to DB tables,
-    // eliminating the JS runPostNativeAnalysis step and its WASM re-parse.
-    let include_complexity = opts.complexity.unwrap_or(true);
-    let include_cfg = opts.cfg.unwrap_or(true);
-    let do_analysis = include_ast || include_dataflow || include_cfg || include_complexity;
-
-    let mut analysis_ok = true;
-    if do_analysis {
-        // Determine which files to analyze (excludes reverse-dep files)
-        let analysis_file_set: HashSet<&str> = match &analysis_scope {
-            Some(files) => files.iter().map(|s| s.as_str()).collect(),
-            None => file_symbols.keys().map(|s| s.as_str()).collect(),
-        };
-
-        // Build node ID lookup: (file, name, line) -> node_id
-        let node_id_map = build_analysis_node_map(conn, &analysis_file_set);
-
-        // AST nodes
-        if include_ast {
-            let t0 = Instant::now();
-            let ast_batches = build_ast_batches(&file_symbols, &analysis_file_set);
-            if ast_db::do_insert_ast_nodes(conn, &ast_batches).is_err() {
-                analysis_ok = false;
-            }
-            timing.ast_ms = t0.elapsed().as_secs_f64() * 1000.0;
-        }
-
-        // Complexity metrics
-        if include_complexity {
-            let t0 = Instant::now();
-            if !write_complexity(conn, &file_symbols, &analysis_file_set, &node_id_map) {
-                analysis_ok = false;
-            }
-            timing.complexity_ms = t0.elapsed().as_secs_f64() * 1000.0;
-        }
-
-        // CFG blocks + edges
-        if include_cfg {
-            let t0 = Instant::now();
-            if !write_cfg(conn, &file_symbols, &analysis_file_set, &node_id_map) {
-                analysis_ok = false;
-            }
-            timing.cfg_ms = t0.elapsed().as_secs_f64() * 1000.0;
-        }
-
-        // Dataflow edges
-        if include_dataflow {
-            let t0 = Instant::now();
-            if !write_dataflow(conn, &file_symbols, &analysis_file_set) {
-                analysis_ok = false;
-            }
-            timing.dataflow_ms = t0.elapsed().as_secs_f64() * 1000.0;
-        }
-    }
+    let analysis = run_analysis_persistence(
+        conn,
+        &file_symbols,
+        analysis_scope.as_ref(),
+        &opts,
+        include_ast,
+        include_dataflow,
+        &mut timing,
+    );
 
     // ── Stage 9: Finalize ──────────────────────────────────────────────
     let t0 = Instant::now();
@@ -511,7 +634,7 @@ pub fn run_pipeline(
         removed_count: change_result.removed.len(),
         is_full_build: change_result.is_full_build,
         structure_handled: true,
-        analysis_complete: do_analysis && analysis_ok,
+        analysis_complete: !analysis.ran || analysis.ok,
     })
 }
 
@@ -971,24 +1094,73 @@ fn build_file_hash_entries(
 /// miss transitively-required nodes (e.g. a call site whose receiver type
 /// is declared in a file that isn't a direct import target).
 ///
-/// Full builds always load every node — there is no smaller set anyway.
-fn build_and_insert_call_edges(
+/// Constant list of builtin JS receivers excluded from method-resolution
+/// (callers of `console.log` etc. shouldn't get linked to a user-defined
+/// `log` somewhere else). Mirrors `BUILTIN_RECEIVERS` in `build-edges.ts`.
+fn builtin_call_receivers() -> Vec<String> {
+    [
+        "console", "Math", "JSON", "Object", "Array", "String", "Number",
+        "Boolean", "Date", "RegExp", "Map", "Set", "WeakMap", "WeakSet",
+        "Promise", "Symbol", "Error", "TypeError", "RangeError", "Proxy",
+        "Reflect", "Intl", "globalThis", "window", "document", "process",
+        "Buffer", "require",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
+const EDGE_NODE_KIND_FILTER: &str = "kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')";
+
+/// For the scoped (incremental, small-batch) path of the edge builder,
+/// compute the set of files that must be loaded: changed/reverse-dep files
+/// plus their direct import targets plus barrel-only files plus the
+/// ultimate definition files barrel chains resolve to. Mirrors the JS
+/// `relevantFiles` accumulation in `loadNodes` (#976, greptile P1).
+fn compute_edge_relevant_files(
+    file_symbols: &HashMap<String, FileSymbols>,
+    import_ctx: &crate::import_edges::ImportEdgeContext,
+) -> HashSet<String> {
+    let mut relevant_files: HashSet<String> = file_symbols.keys().cloned().collect();
+    for (rel_path, symbols) in file_symbols {
+        let abs_file = Path::new(&import_ctx.root_dir).join(rel_path);
+        let abs_str = abs_file.to_str().unwrap_or("");
+        for imp in &symbols.imports {
+            let resolved = import_ctx.get_resolved(abs_str, &imp.source);
+            if resolved.is_empty() {
+                continue;
+            }
+            relevant_files.insert(resolved.clone());
+            if import_ctx.is_barrel_file(&resolved) {
+                for name in &imp.names {
+                    let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+                    let mut visited = HashSet::new();
+                    if let Some(ultimate) =
+                        import_ctx.resolve_barrel_export(&resolved, clean_name, &mut visited)
+                    {
+                        relevant_files.insert(ultimate);
+                    }
+                }
+            }
+        }
+    }
+    for barrel_path in &import_ctx.barrel_only_files {
+        relevant_files.insert(barrel_path.clone());
+    }
+    relevant_files
+}
+
+/// Load all candidate edge nodes either scoped via a temp _edge_files table
+/// (incremental small-batch) or globally (full build). Returns a flat
+/// `Vec<NodeInfo>` suitable for the native edge builder.
+fn load_edge_node_set(
     conn: &Connection,
     file_symbols: &HashMap<String, FileSymbols>,
-    import_ctx: &ImportEdgeContext,
+    import_ctx: &crate::import_edges::ImportEdgeContext,
     is_incremental: bool,
-) {
-    use crate::edge_builder::*;
+) -> Vec<crate::edge_builder::NodeInfo> {
+    use crate::edge_builder::NodeInfo;
 
-    let node_kind_filter = "kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')";
-
-    // Gate parity with `loadNodes` in `src/domain/graph/builder/stages/build-edges.ts`:
-    //   isFullBuild = false
-    //   && fileSymbols.size <= smallFilesThreshold (5)
-    //   && existingFileCount > FAST_PATH_MIN_EXISTING_FILES (20)
-    // Small fixtures skip the scoped path entirely — the savings are
-    // negligible at that scale and the scoped set can miss nodes that the
-    // edge builder needs for receiver-type resolution (#976).
     let existing_file_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM nodes WHERE kind = 'file'",
@@ -1000,174 +1172,156 @@ fn build_and_insert_call_edges(
         && file_symbols.len() <= crate::constants::FAST_PATH_MAX_CHANGED_FILES
         && existing_file_count > crate::constants::FAST_PATH_MIN_EXISTING_FILES;
 
-    let all_nodes: Vec<NodeInfo> = if scope_eligible {
-        // Build the scoped set: changed/reverse-dep files + their resolved
-        // import targets + any barrel files on the path + the **ultimate**
-        // source files that barrel chains resolve to. The FileEdgeInput
-        // construction below (see `imported_names` at ~L1035) rewrites
-        // `target_file` to the ultimate definition file via
-        // `resolve_barrel_export`; if that file isn't in `relevant_files`
-        // the edge builder's `nodes_by_name_and_file` lookup returns
-        // nothing and the call edge is silently dropped (greptile P1).
-        let mut relevant_files: HashSet<String> = file_symbols.keys().cloned().collect();
-        for (rel_path, symbols) in file_symbols {
-            let abs_file = Path::new(&import_ctx.root_dir).join(rel_path);
-            let abs_str = abs_file.to_str().unwrap_or("");
-            for imp in &symbols.imports {
-                let resolved = import_ctx.get_resolved(abs_str, &imp.source);
-                if resolved.is_empty() {
-                    continue;
-                }
-                relevant_files.insert(resolved.clone());
-                // If the resolved target is a barrel, walk the re-export
-                // chain and add every ultimate definition file that a
-                // named import could resolve to.
-                if import_ctx.is_barrel_file(&resolved) {
-                    for name in &imp.names {
-                        let clean_name = name.strip_prefix("* as ").unwrap_or(name);
-                        let mut visited = HashSet::new();
-                        if let Some(ultimate) = import_ctx.resolve_barrel_export(
-                            &resolved,
-                            clean_name,
-                            &mut visited,
-                        ) {
-                            relevant_files.insert(ultimate);
-                        }
-                    }
-                }
-            }
-        }
-        for barrel_path in &import_ctx.barrel_only_files {
-            relevant_files.insert(barrel_path.clone());
-        }
+    if !scope_eligible {
+        return load_all_edge_nodes(conn);
+    }
 
-        if relevant_files.is_empty() {
-            Vec::new()
-        } else {
-            // Schema qualification matches the existing `_analysis_files`
-            // pattern below: unqualified CREATE (temp schema is the
-            // default for TEMP tables), qualified `temp.` for every
-            // subsequent op. Index the file column so the INNER JOIN is
-            // a lookup rather than a table scan (greptile P2).
-            let _ = conn.execute_batch(
-                "CREATE TEMP TABLE IF NOT EXISTS _edge_files (file TEXT NOT NULL);\n                 CREATE INDEX IF NOT EXISTS _edge_files_file_idx ON _edge_files (file);",
-            );
-            let _ = conn.execute("DELETE FROM temp._edge_files", []);
-            {
-                let mut ins =
-                    match conn.prepare("INSERT INTO temp._edge_files (file) VALUES (?1)") {
-                        Ok(s) => s,
-                        Err(_) => return,
-                    };
-                for f in &relevant_files {
-                    let _ = ins.execute(rusqlite::params![f]);
-                }
-            }
+    let relevant_files = compute_edge_relevant_files(file_symbols, import_ctx);
+    if relevant_files.is_empty() {
+        return Vec::new();
+    }
 
-            let sql = format!(
-                "SELECT n.id, n.name, n.kind, n.file, n.line FROM nodes n \
-                 INNER JOIN temp._edge_files ef ON n.file = ef.file \
-                 WHERE n.{node_kind_filter}",
-            );
-            let nodes: Vec<NodeInfo> = match conn.prepare(&sql) {
-                Ok(mut stmt) => stmt
-                    .query_map([], |row| {
-                        Ok(NodeInfo {
-                            id: row.get::<_, i64>(0)? as u32,
-                            name: row.get(1)?,
-                            kind: row.get(2)?,
-                            file: row.get(3)?,
-                            line: row.get::<_, i64>(4)? as u32,
-                        })
-                    })
-                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                    .unwrap_or_default(),
-                Err(_) => Vec::new(),
-            };
-            let _ = conn.execute("DROP TABLE IF EXISTS temp._edge_files", []);
-            nodes
+    let _ = conn.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS _edge_files (file TEXT NOT NULL);\n         CREATE INDEX IF NOT EXISTS _edge_files_file_idx ON _edge_files (file);",
+    );
+    let _ = conn.execute("DELETE FROM temp._edge_files", []);
+    {
+        let mut ins = match conn.prepare("INSERT INTO temp._edge_files (file) VALUES (?1)") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        for f in &relevant_files {
+            let _ = ins.execute(rusqlite::params![f]);
         }
-    } else {
-        let sql = format!("SELECT id, name, kind, file, line FROM nodes WHERE {node_kind_filter}");
-        match conn.prepare(&sql) {
-            Ok(mut stmt) => stmt
-                .query_map([], |row| {
-                    Ok(NodeInfo {
-                        id: row.get::<_, i64>(0)? as u32,
-                        name: row.get(1)?,
-                        kind: row.get(2)?,
-                        file: row.get(3)?,
-                        line: row.get::<_, i64>(4)? as u32,
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
-        }
+    }
+
+    let sql = format!(
+        "SELECT n.id, n.name, n.kind, n.file, n.line FROM nodes n \
+         INNER JOIN temp._edge_files ef ON n.file = ef.file \
+         WHERE n.{EDGE_NODE_KIND_FILTER}",
+    );
+    let nodes: Vec<NodeInfo> = match conn.prepare(&sql) {
+        Ok(mut stmt) => stmt
+            .query_map([], read_edge_node_info)
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
     };
+    let _ = conn.execute("DROP TABLE IF EXISTS temp._edge_files", []);
+    nodes
+}
 
+/// Load every candidate edge node from the DB (full-build path).
+fn load_all_edge_nodes(conn: &Connection) -> Vec<crate::edge_builder::NodeInfo> {
+    let sql = format!(
+        "SELECT id, name, kind, file, line FROM nodes WHERE {EDGE_NODE_KIND_FILTER}",
+    );
+    match conn.prepare(&sql) {
+        Ok(mut stmt) => stmt
+            .query_map([], read_edge_node_info)
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Row-mapper for the `SELECT id, name, kind, file, line FROM nodes ...`
+/// shape used by both scoped and full edge-node loads.
+fn read_edge_node_info(row: &rusqlite::Row) -> rusqlite::Result<crate::edge_builder::NodeInfo> {
+    Ok(crate::edge_builder::NodeInfo {
+        id: row.get::<_, i64>(0)? as u32,
+        name: row.get(1)?,
+        kind: row.get(2)?,
+        file: row.get(3)?,
+        line: row.get::<_, i64>(4)? as u32,
+    })
+}
+
+/// Load all `file`-kind node IDs into a flat map (one query instead of one
+/// per file). The `name = file` guard avoids accidentally overwriting the
+/// map entry when an unrelated row happens to share the file path (#1028).
+fn load_file_node_id_map(conn: &Connection) -> HashMap<String, u32> {
+    let mut map = HashMap::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT file, id FROM nodes WHERE kind = 'file' AND line = 0 AND name = file",
+    ) {
+        if let Ok(rows) =
+            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32)))
+        {
+            for r in rows.flatten() {
+                map.insert(r.0, r.1);
+            }
+        }
+    }
+    map
+}
+
+/// Resolve a file's imports to the list of `ImportedName` entries the edge
+/// builder consumes. Walks barrel chains to the ultimate definition file so
+/// the edge builder's name-lookup can find the right target (#976 P1).
+fn collect_imported_names_for_file(
+    abs_str: &str,
+    symbols: &FileSymbols,
+    import_ctx: &crate::import_edges::ImportEdgeContext,
+) -> Vec<crate::edge_builder::ImportedName> {
+    use crate::edge_builder::ImportedName;
+    let mut imported_names: Vec<ImportedName> = Vec::new();
+    for imp in &symbols.imports {
+        let resolved_path = import_ctx.get_resolved(abs_str, &imp.source);
+        for name in &imp.names {
+            let clean_name = name.strip_prefix("* as ").unwrap_or(name).to_string();
+            let mut target_file = resolved_path.clone();
+            if import_ctx.is_barrel_file(&resolved_path) {
+                let mut visited = HashSet::new();
+                if let Some(actual) =
+                    import_ctx.resolve_barrel_export(&resolved_path, &clean_name, &mut visited)
+                {
+                    target_file = actual;
+                }
+            }
+            imported_names.push(ImportedName {
+                name: clean_name,
+                file: target_file,
+            });
+        }
+    }
+    imported_names
+}
+
+/// Insert the edges produced by the native edge builder into the edges table.
+fn insert_call_edge_rows(conn: &Connection, edges: &[crate::edge_builder::ComputedEdge]) {
+    if edges.is_empty() {
+        return;
+    }
+    let edge_rows: Vec<crate::edges_db::EdgeRow> = edges
+        .iter()
+        .map(|e| crate::edges_db::EdgeRow {
+            source_id: e.source_id,
+            target_id: e.target_id,
+            kind: e.kind.clone(),
+            confidence: e.confidence,
+            dynamic: e.dynamic,
+        })
+        .collect();
+    let _ = crate::edges_db::do_insert_edges(conn, &edge_rows);
+}
+
+/// Full builds always load every node — there is no smaller set anyway.
+fn build_and_insert_call_edges(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    import_ctx: &ImportEdgeContext,
+    is_incremental: bool,
+) {
+    use crate::edge_builder::*;
+
+    let all_nodes = load_edge_node_set(conn, file_symbols, import_ctx, is_incremental);
     if all_nodes.is_empty() {
         return;
     }
 
-    let builtin_receivers: Vec<String> = vec![
-        "console",
-        "Math",
-        "JSON",
-        "Object",
-        "Array",
-        "String",
-        "Number",
-        "Boolean",
-        "Date",
-        "RegExp",
-        "Map",
-        "Set",
-        "WeakMap",
-        "WeakSet",
-        "Promise",
-        "Symbol",
-        "Error",
-        "TypeError",
-        "RangeError",
-        "Proxy",
-        "Reflect",
-        "Intl",
-        "globalThis",
-        "window",
-        "document",
-        "process",
-        "Buffer",
-        "require",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
-
-    // Pre-load every file node ID into a HashMap with one query, replacing
-    // the per-file `query_row` cycle that paid a fresh sqlite3_prepare for
-    // each entry in `file_symbols` (#1013).
-    //
-    // The `name = file` predicate matches the legacy per-row lookup
-    // (`WHERE name = ? AND file = ?` with both binds set to `rel_path`).
-    // For file-kind nodes `name` and `file` are conventionally identical,
-    // but keeping the guard prevents an unrelated row from silently
-    // overwriting the map entry for `file` (#1028 review).
-    let file_node_ids: HashMap<String, u32> = {
-        let mut map = HashMap::new();
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT file, id FROM nodes WHERE kind = 'file' AND line = 0 AND name = file",
-        ) {
-            if let Ok(rows) = stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
-            }) {
-                for r in rows.flatten() {
-                    map.insert(r.0, r.1);
-                }
-            }
-        }
-        map
-    };
+    let builtin_receivers = builtin_call_receivers();
+    let file_node_ids = load_file_node_id_map(conn);
 
     // Build FileEdgeInput entries for the native edge builder
     let mut file_entries: Vec<FileEdgeInput> = Vec::new();
@@ -1175,35 +1329,14 @@ fn build_and_insert_call_edges(
         if import_ctx.barrel_only_files.contains(rel_path) {
             continue;
         }
-
         let file_node_id: u32 = match file_node_ids.get(rel_path) {
             Some(&id) => id,
             None => continue,
         };
 
-        // Build imported names from resolved imports
-        let mut imported_names: Vec<ImportedName> = Vec::new();
         let abs_file = Path::new(&import_ctx.root_dir).join(rel_path);
         let abs_str = abs_file.to_str().unwrap_or("");
-        for imp in &symbols.imports {
-            let resolved_path = import_ctx.get_resolved(abs_str, &imp.source);
-            for name in &imp.names {
-                let clean_name = name.strip_prefix("* as ").unwrap_or(name).to_string();
-                let mut target_file = resolved_path.clone();
-                if import_ctx.is_barrel_file(&resolved_path) {
-                    let mut visited = HashSet::new();
-                    if let Some(actual) =
-                        import_ctx.resolve_barrel_export(&resolved_path, &clean_name, &mut visited)
-                    {
-                        target_file = actual;
-                    }
-                }
-                imported_names.push(ImportedName {
-                    name: clean_name,
-                    file: target_file,
-                });
-            }
-        }
+        let imported_names = collect_imported_names_for_file(abs_str, symbols, import_ctx);
 
         let type_map: Vec<TypeMapInput> = symbols
             .type_map
@@ -1217,7 +1350,7 @@ fn build_and_insert_call_edges(
 
         file_entries.push(FileEdgeInput {
             file: rel_path.clone(),
-            file_node_id: file_node_id,
+            file_node_id,
             definitions: symbols
                 .definitions
                 .iter()
@@ -1252,23 +1385,8 @@ fn build_and_insert_call_edges(
         });
     }
 
-    // Call the native edge builder
     let computed_edges = build_call_edges(file_entries, all_nodes, builtin_receivers);
-
-    // Insert edges
-    if !computed_edges.is_empty() {
-        let edge_rows: Vec<crate::edges_db::EdgeRow> = computed_edges
-            .iter()
-            .map(|e| crate::edges_db::EdgeRow {
-                source_id: e.source_id,
-                target_id: e.target_id,
-                kind: e.kind.clone(),
-                confidence: e.confidence,
-                dynamic: e.dynamic,
-            })
-            .collect();
-        let _ = crate::edges_db::do_insert_edges(conn, &edge_rows);
-    }
+    insert_call_edge_rows(conn, &computed_edges);
 }
 
 // ── Analysis persistence helpers ─────────────────────────────────────────

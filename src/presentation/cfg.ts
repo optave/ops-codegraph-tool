@@ -1,6 +1,8 @@
 import { cfgData, cfgToDOT, cfgToMermaid } from '../features/cfg.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 
+type CfgData = ReturnType<typeof cfgData>;
+
 interface CfgCliOpts {
   json?: boolean;
   ndjson?: boolean;
@@ -36,13 +38,56 @@ interface CfgResultEntry {
   edges: CfgEdge[];
 }
 
+function renderBlockLocation(b: CfgBlock): string {
+  if (!b.startLine) return '';
+  const endSuffix = b.endLine && b.endLine !== b.startLine ? `-${b.endLine}` : '';
+  return ` L${b.startLine}${endSuffix}`;
+}
+
+function printCfgBlocks(blocks: CfgBlock[]): void {
+  if (blocks.length === 0) return;
+  console.log('\n  Blocks:');
+  for (const b of blocks) {
+    const label = b.label ? ` (${b.label})` : '';
+    console.log(`    [${b.index}] ${b.type}${label}${renderBlockLocation(b)}`);
+  }
+}
+
+function printCfgEdges(edges: CfgEdge[]): void {
+  if (edges.length === 0) return;
+  console.log('\n  Edges:');
+  for (const e of edges) {
+    console.log(`    B${e.source} → B${e.target}  [${e.kind}]`);
+  }
+}
+
+function printCfgEntry(r: CfgResultEntry): void {
+  console.log(`\n${r.kind} ${r.name}  (${r.file}:${r.line})`);
+  console.log('─'.repeat(60));
+  console.log(`  Blocks: ${r.summary.blockCount}  Edges: ${r.summary.edgeCount}`);
+  printCfgBlocks(r.blocks);
+  printCfgEdges(r.edges);
+}
+
+function tryRenderGraphFormat(format: string, data: CfgData): boolean {
+  if (format === 'dot') {
+    console.log(cfgToDOT(data));
+    return true;
+  }
+  if (format === 'mermaid') {
+    console.log(cfgToMermaid(data));
+    return true;
+  }
+  return false;
+}
+
 export function cfg(name: string, customDbPath: string | undefined, opts: CfgCliOpts = {}): void {
   const data = cfgData(name, customDbPath, opts);
 
   if (outputResult(data, 'results', opts)) return;
 
   if (data.warning) {
-    console.log(`\u26A0  ${data.warning}`);
+    console.log(`⚠  ${data.warning}`);
     return;
   }
   if (data.results.length === 0) {
@@ -50,38 +95,9 @@ export function cfg(name: string, customDbPath: string | undefined, opts: CfgCli
     return;
   }
 
-  const format = opts.format || 'text';
-  if (format === 'dot') {
-    console.log(cfgToDOT(data));
-    return;
-  }
-  if (format === 'mermaid') {
-    console.log(cfgToMermaid(data));
-    return;
-  }
+  if (tryRenderGraphFormat(opts.format || 'text', data)) return;
 
-  // Text format
   for (const r of data.results as CfgResultEntry[]) {
-    console.log(`\n${r.kind} ${r.name}  (${r.file}:${r.line})`);
-    console.log('\u2500'.repeat(60));
-    console.log(`  Blocks: ${r.summary.blockCount}  Edges: ${r.summary.edgeCount}`);
-
-    if (r.blocks.length > 0) {
-      console.log('\n  Blocks:');
-      for (const b of r.blocks) {
-        const loc = b.startLine
-          ? ` L${b.startLine}${b.endLine && b.endLine !== b.startLine ? `-${b.endLine}` : ''}`
-          : '';
-        const label = b.label ? ` (${b.label})` : '';
-        console.log(`    [${b.index}] ${b.type}${label}${loc}`);
-      }
-    }
-
-    if (r.edges.length > 0) {
-      console.log('\n  Edges:');
-      for (const e of r.edges) {
-        console.log(`    B${e.source} \u2192 B${e.target}  [${e.kind}]`);
-      }
-    }
+    printCfgEntry(r);
   }
 }

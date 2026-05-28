@@ -322,12 +322,15 @@ export function getParser(parsers: Map<string, Parser | null>, filePath: string)
  * without _tree", which was the source of #1036 — a single file missing one
  * analysis triggered a full-build re-parse of every WASM-parseable file.
  */
-export async function ensureWasmTrees(
+/**
+ * Select files from `fileSymbols` that still need analysis data and are
+ * parseable by an installed WASM grammar. Pure (no I/O) — safe to unit-test.
+ */
+function collectBackfillPending(
   fileSymbols: Map<string, any>,
   rootDir: string,
   needsFn?: (relPath: string, symbols: any) => boolean,
-): Promise<void> {
-  // Collect files that still need analysis data and are parseable by WASM.
+): Array<{ relPath: string; absPath: string; symbols: any }> {
   const pending: Array<{ relPath: string; absPath: string; symbols: any }> = [];
   for (const [relPath, symbols] of fileSymbols) {
     if (symbols._tree) continue; // legacy path — leave existing trees alone
@@ -335,6 +338,15 @@ export async function ensureWasmTrees(
     if (needsFn && !needsFn(relPath, symbols)) continue;
     pending.push({ relPath, absPath: path.join(rootDir, relPath), symbols });
   }
+  return pending;
+}
+
+export async function ensureWasmTrees(
+  fileSymbols: Map<string, any>,
+  rootDir: string,
+  needsFn?: (relPath: string, symbols: any) => boolean,
+): Promise<void> {
+  const pending = collectBackfillPending(fileSymbols, rootDir, needsFn);
   if (pending.length === 0) return;
 
   const pool = getWasmWorkerPool();
@@ -352,30 +364,37 @@ export async function ensureWasmTrees(
   }
 }
 
-/**
- * Merge pre-computed analysis data from a worker result onto existing symbols.
- * Only fills gaps — never overwrites fields the caller already populated.
- * Used to patch native-parsed symbols with worker-produced astNodes / dataflow /
- * per-definition complexity and cfg.
- */
-function mergeAnalysisData(symbols: any, worker: ExtractorOutput): void {
+/** Fill gap-only scalar metadata (`_langId`, `_lineCount`) from the worker output. */
+function mergeScalarMetadata(symbols: any, worker: ExtractorOutput): void {
   if (!symbols._langId && worker._langId) symbols._langId = worker._langId;
   if (!symbols._lineCount && worker._lineCount) symbols._lineCount = worker._lineCount;
+}
+
+/** Fill gap-only analysis arrays (`astNodes`, `dataflow`) from the worker output. */
+function mergeAnalysisArrays(symbols: any, worker: ExtractorOutput): void {
   if (!Array.isArray(symbols.astNodes) && Array.isArray(worker.astNodes)) {
     symbols.astNodes = worker.astNodes;
   }
   if (!symbols.dataflow && worker.dataflow) symbols.dataflow = worker.dataflow;
-  if (worker.typeMap && worker.typeMap.size > 0) {
-    if (!symbols.typeMap || !(symbols.typeMap instanceof Map)) {
-      symbols.typeMap = new Map(worker.typeMap);
-    } else {
-      for (const [k, v] of worker.typeMap) {
-        if (!symbols.typeMap.has(k)) symbols.typeMap.set(k, v);
-      }
-    }
+}
+
+/** Merge worker typeMap into existing symbols.typeMap with first-wins semantics. */
+function mergeTypeMap(symbols: any, worker: ExtractorOutput): void {
+  if (!worker.typeMap || worker.typeMap.size === 0) return;
+  if (!symbols.typeMap || !(symbols.typeMap instanceof Map)) {
+    symbols.typeMap = new Map(worker.typeMap);
+    return;
   }
+  for (const [k, v] of worker.typeMap) {
+    if (!symbols.typeMap.has(k)) symbols.typeMap.set(k, v);
+  }
+}
+
+/** Patch existing definitions with worker complexity/cfg when absent. */
+function mergeDefinitionAnalysis(symbols: any, worker: ExtractorOutput): void {
   const existingDefs: any[] = Array.isArray(symbols.definitions) ? symbols.definitions : [];
   const workerDefs: any[] = Array.isArray(worker.definitions) ? worker.definitions : [];
+  if (existingDefs.length === 0 || workerDefs.length === 0) return;
   // Index existing defs by (kind, name, line) — mirrors engine.ts matching key.
   const byKey = new Map<string, any>();
   for (const d of existingDefs) byKey.set(`${d.kind}|${d.name}|${d.line}`, d);
@@ -387,6 +406,19 @@ function mergeAnalysisData(symbols: any, worker: ExtractorOutput): void {
       existing.cfg = wd.cfg;
     }
   }
+}
+
+/**
+ * Merge pre-computed analysis data from a worker result onto existing symbols.
+ * Only fills gaps — never overwrites fields the caller already populated.
+ * Used to patch native-parsed symbols with worker-produced astNodes / dataflow /
+ * per-definition complexity and cfg.
+ */
+function mergeAnalysisData(symbols: any, worker: ExtractorOutput): void {
+  mergeScalarMetadata(symbols, worker);
+  mergeAnalysisArrays(symbols, worker);
+  mergeTypeMap(symbols, worker);
+  mergeDefinitionAnalysis(symbols, worker);
 }
 
 /**
@@ -592,24 +624,36 @@ function patchDefinitions(definitions: any[]): void {
   }
 }
 
+/**
+ * Field renames applied to each import record to bridge older native binaries
+ * that emit snake_case names. Each `[camel, snake]` pair becomes:
+ *   `if (imp[camel] === undefined) imp[camel] = imp[snake];`
+ * Defined as data so the loop body stays trivially linear in cognitive complexity.
+ */
+const IMPORT_FIELD_RENAMES: ReadonlyArray<readonly [string, string]> = [
+  ['typeOnly', 'type_only'],
+  ['wildcardReexport', 'wildcard_reexport'],
+  ['pythonImport', 'python_import'],
+  ['goImport', 'go_import'],
+  ['rustUse', 'rust_use'],
+  ['javaImport', 'java_import'],
+  ['csharpUsing', 'csharp_using'],
+  ['rubyRequire', 'ruby_require'],
+  ['phpUse', 'php_use'],
+  ['cInclude', 'c_include'],
+  ['kotlinImport', 'kotlin_import'],
+  ['swiftImport', 'swift_import'],
+  ['scalaImport', 'scala_import'],
+  ['bashSource', 'bash_source'],
+  ['dynamicImport', 'dynamic_import'],
+];
+
 /** Patch import fields for backward compat with older native binaries. */
 function patchImports(imports: any[]): void {
   for (const i of imports) {
-    if (i.typeOnly === undefined) i.typeOnly = i.type_only;
-    if (i.wildcardReexport === undefined) i.wildcardReexport = i.wildcard_reexport;
-    if (i.pythonImport === undefined) i.pythonImport = i.python_import;
-    if (i.goImport === undefined) i.goImport = i.go_import;
-    if (i.rustUse === undefined) i.rustUse = i.rust_use;
-    if (i.javaImport === undefined) i.javaImport = i.java_import;
-    if (i.csharpUsing === undefined) i.csharpUsing = i.csharp_using;
-    if (i.rubyRequire === undefined) i.rubyRequire = i.ruby_require;
-    if (i.phpUse === undefined) i.phpUse = i.php_use;
-    if (i.cInclude === undefined) i.cInclude = i.c_include;
-    if (i.kotlinImport === undefined) i.kotlinImport = i.kotlin_import;
-    if (i.swiftImport === undefined) i.swiftImport = i.swift_import;
-    if (i.scalaImport === undefined) i.scalaImport = i.scala_import;
-    if (i.bashSource === undefined) i.bashSource = i.bash_source;
-    if (i.dynamicImport === undefined) i.dynamicImport = i.dynamic_import;
+    for (const [camel, snake] of IMPORT_FIELD_RENAMES) {
+      if (i[camel] === undefined) i[camel] = i[snake];
+    }
   }
 }
 
@@ -1159,18 +1203,16 @@ export async function parseFilesWasmForBackfill(
 }
 
 /**
- * Parse multiple files in bulk and return a Map<relPath, symbols>.
+ * Run the native engine over `filePaths` and ingest the results into `result`.
+ * Returns the set of file paths the native engine successfully parsed and the
+ * TS/TSX files that need a typeMap backfill pass.
  */
-export async function parseFilesAuto(
+function ingestNativeResults(
+  native: any,
   filePaths: string[],
   rootDir: string,
-  opts: ParseEngineOpts = {},
-): Promise<Map<string, ExtractorOutput>> {
-  const { native } = resolveEngine(opts);
-
-  if (!native) return parseFilesWasm(filePaths, rootDir);
-
-  const result = new Map<string, ExtractorOutput>();
+  result: Map<string, ExtractorOutput>,
+): { nativeParsed: Set<string>; needsTypeMap: { filePath: string; relPath: string }[] } {
   // Always extract all analysis data (dataflow + AST nodes) during native parse.
   // This eliminates the need for any downstream WASM re-parse or native standalone calls.
   const nativeResults = native.parseFilesFull
@@ -1193,27 +1235,51 @@ export async function parseFilesAuto(
       needsTypeMap.push({ filePath: r.file, relPath });
     }
   }
-  if (needsTypeMap.length > 0) {
-    await backfillTypeMapBatch(needsTypeMap, result);
-  }
+  return { nativeParsed, needsTypeMap };
+}
 
-  // Engine parity: native may silently drop files whose extensions are in
-  // SUPPORTED_EXTENSIONS (because a WASM grammar exists) but whose Rust
-  // extractor/grammar is missing or fails. WASM handles these — fall back so
-  // both engines process the same file set (#967). Restrict to installed WASM
-  // grammars so we don't warn about files that neither engine can parse.
+/**
+ * Engine parity: native may silently drop files whose extensions are in
+ * SUPPORTED_EXTENSIONS (because a WASM grammar exists) but whose Rust
+ * extractor/grammar is missing or fails. WASM handles these — fall back so
+ * both engines process the same file set (#967). Restrict to installed WASM
+ * grammars so we don't warn about files that neither engine can parse.
+ */
+async function backfillNativeDrops(
+  filePaths: string[],
+  nativeParsed: Set<string>,
+  rootDir: string,
+  result: Map<string, ExtractorOutput>,
+): Promise<void> {
   const installedExts = getInstalledWasmExtensions();
   const dropped = filePaths.filter(
     (f) => !nativeParsed.has(f) && installedExts.has(path.extname(f).toLowerCase()),
   );
-  if (dropped.length > 0) {
-    warn(`Native engine dropped ${dropped.length} file(s); falling back to WASM for parity`);
-    const wasmResults = await parseFilesWasmForBackfill(dropped, rootDir);
-    for (const [relPath, symbols] of wasmResults) {
-      result.set(relPath, symbols);
-    }
+  if (dropped.length === 0) return;
+  warn(`Native engine dropped ${dropped.length} file(s); falling back to WASM for parity`);
+  const wasmResults = await parseFilesWasmForBackfill(dropped, rootDir);
+  for (const [relPath, symbols] of wasmResults) {
+    result.set(relPath, symbols);
   }
+}
 
+/**
+ * Parse multiple files in bulk and return a Map<relPath, symbols>.
+ */
+export async function parseFilesAuto(
+  filePaths: string[],
+  rootDir: string,
+  opts: ParseEngineOpts = {},
+): Promise<Map<string, ExtractorOutput>> {
+  const { native } = resolveEngine(opts);
+  if (!native) return parseFilesWasm(filePaths, rootDir);
+
+  const result = new Map<string, ExtractorOutput>();
+  const { nativeParsed, needsTypeMap } = ingestNativeResults(native, filePaths, rootDir, result);
+  if (needsTypeMap.length > 0) {
+    await backfillTypeMapBatch(needsTypeMap, result);
+  }
+  await backfillNativeDrops(filePaths, nativeParsed, rootDir, result);
   return result;
 }
 

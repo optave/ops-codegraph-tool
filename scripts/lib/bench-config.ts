@@ -125,6 +125,159 @@ export function parseArgs() {
 	return { version, npm, dist };
 }
 
+/** Resolve repo root from this module's URL (handles Windows drive prefix). */
+function repoRoot(): string {
+	return path.resolve(
+		path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')),
+		'..',
+		'..',
+	);
+}
+
+/** Local-mode resolution: use repo src/ (or dist/ when --dist). */
+function resolveBenchmarkSourceLocal(cliVersion: string | null, dist: boolean) {
+	const root = repoRoot();
+	const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+	let srcDir = path.join(root, 'src');
+	if (dist) {
+		const distDir = path.join(root, 'dist');
+		if (!fs.existsSync(distDir)) {
+			throw new Error(`--dist requested but ${distDir} does not exist. Run "npm run build" first.`);
+		}
+		srcDir = distDir;
+	}
+	return {
+		version: cliVersion || getBenchmarkVersion(pkg.version, root),
+		srcDir,
+		cleanup() {},
+	};
+}
+
+/**
+ * Run `npm install <spec>` in `cwd` with exponential-backoff retries.
+ * `label` is used only for diagnostic logging.
+ */
+async function npmInstallWithRetries(
+	spec: string,
+	cwd: string,
+	maxRetries: number,
+	label: string,
+	extraFlags: readonly string[] = [],
+): Promise<void> {
+	for (let attempt = 1; attempt <= maxRetries; attempt++) {
+		try {
+			execFileSync('npm', ['install', spec, '--no-audit', '--no-fund', ...extraFlags], {
+				cwd,
+				stdio: 'pipe',
+				timeout: 120_000,
+				shell: NPM_SHELL,
+			});
+			return;
+		} catch (err) {
+			if (attempt === maxRetries) throw err;
+			const delay = attempt * 15_000; // 15s, 30s, 45s, 60s
+			console.error(`  ${label} attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
+}
+
+/** Install @optave/codegraph@<version> into a fresh tmp dir; returns paths. */
+async function installCodegraphPackage(cliVersion: string | null): Promise<{ tmpDir: string; pkgDir: string; installedPkg: any; safeVersion: string }> {
+	const safeVersion = assertSafePkgVersion(cliVersion || 'latest');
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-bench-'));
+
+	console.error(`Installing @optave/codegraph@${safeVersion} into ${tmpDir}...`);
+	fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ private: true }));
+
+	const maxRetries = 5;
+	try {
+		await npmInstallWithRetries(`@optave/codegraph@${safeVersion}`, tmpDir, maxRetries, 'Codegraph install');
+	} catch (err) {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+		throw new Error(`Failed to install @optave/codegraph@${safeVersion} after ${maxRetries} attempts: ${(err as Error).message}`);
+	}
+
+	const pkgDir = path.join(tmpDir, 'node_modules', '@optave', 'codegraph');
+	const installedPkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+	return { tmpDir, pkgDir, installedPkg, safeVersion };
+}
+
+/** Detect platform-specific native package key (e.g. `codegraph-linux-x64-gnu`). */
+function detectNativePlatformKey(): string {
+	const platform = os.platform();
+	const arch = os.arch();
+	let libcSuffix = '';
+	if (platform === 'linux') {
+		try {
+			const files = fs.readdirSync('/lib');
+			libcSuffix = files.some((f) => f.startsWith('ld-musl-') && f.endsWith('.so.1')) ? '-musl' : '-gnu';
+		} catch {
+			libcSuffix = '-gnu';
+		}
+	}
+	return `codegraph-${platform}-${arch}${libcSuffix}`;
+}
+
+/**
+ * npm does not transitively install optionalDependencies of a dependency,
+ * so the platform-specific native binary is missing. Install it explicitly.
+ * Failures are logged and swallowed — benchmark can still run on WASM.
+ */
+async function installNativePackage(tmpDir: string, installedPkg: any): Promise<void> {
+	try {
+		const optDeps = installedPkg.optionalDependencies || {};
+		const platformKey = detectNativePlatformKey();
+		const nativePkg = Object.keys(optDeps).find((name) => name.includes(platformKey));
+		if (!nativePkg) {
+			console.error(`No native package found for platform ${platformKey}, skipping`);
+			return;
+		}
+		// Even though these originate from the installed package's
+		// optionalDependencies (i.e. the npm registry), validate before
+		// logging or interpolating into a `shell: true` command line.
+		const safeNativePkg = assertSafePkgName(nativePkg);
+		const safeNativeVersion = assertSafePkgVersion(optDeps[nativePkg]);
+		console.error(`Installing native package ${safeNativePkg}@${safeNativeVersion}...`);
+		const maxRetries = 5;
+		await npmInstallWithRetries(
+			`${safeNativePkg}@${safeNativeVersion}`,
+			tmpDir,
+			maxRetries,
+			'Native install',
+			['--no-save'],
+		);
+		console.error(`Installed ${safeNativePkg}@${safeNativeVersion}`);
+	} catch (err) {
+		console.error(`Warning: failed to install native package: ${(err as Error).message}`);
+	}
+}
+
+/**
+ * @huggingface/transformers is a devDependency (lazy-loaded for embeddings).
+ * Not installed as a transitive dep in npm mode, so install it explicitly so
+ * the embedding benchmark workers can import it. Failures are logged + swallowed.
+ */
+async function installTransformers(tmpDir: string): Promise<void> {
+	try {
+		const localPkg = JSON.parse(
+			fs.readFileSync(path.join(repoRoot(), 'package.json'), 'utf8'),
+		);
+		const hfVersion = localPkg.devDependencies?.['@huggingface/transformers'];
+		if (!hfVersion) return;
+		const safeHfVersion = assertSafePkgVersion(hfVersion);
+		console.error(`Installing @huggingface/transformers@${safeHfVersion} for embedding benchmarks...`);
+		execFileSync(
+			'npm',
+			['install', `@huggingface/transformers@${safeHfVersion}`, '--no-audit', '--no-fund', '--no-save'],
+			{ cwd: tmpDir, stdio: 'pipe', timeout: 120_000, shell: NPM_SHELL },
+		);
+		console.error('Installed @huggingface/transformers');
+	} catch (err) {
+		console.error(`Warning: failed to install @huggingface/transformers: ${(err as Error).message}`);
+	}
+}
+
 /**
  * Resolve where to import codegraph source from.
  *
@@ -141,137 +294,12 @@ export async function resolveBenchmarkSource() {
 	}
 
 	if (!npm) {
-		// Local mode — use repo src/ (or dist/ when --dist), version from git state
-		const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', '..');
-		const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-		let srcDir = path.join(root, 'src');
-		if (dist) {
-			const distDir = path.join(root, 'dist');
-			if (!fs.existsSync(distDir)) {
-				throw new Error(`--dist requested but ${distDir} does not exist. Run "npm run build" first.`);
-			}
-			srcDir = distDir;
-		}
-		return {
-			version: cliVersion || getBenchmarkVersion(pkg.version, root),
-			srcDir,
-			cleanup() {},
-		};
+		return resolveBenchmarkSourceLocal(cliVersion, dist);
 	}
 
-	// npm mode — install @optave/codegraph@<version> into a temp dir.
-	// Validate the version up-front so we never log or interpolate an
-	// unvalidated string (with `shell: true` on Windows, bad input would be a
-	// shell-injection surface).
-	const safeVersion = assertSafePkgVersion(cliVersion || 'latest');
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-bench-'));
-
-	console.error(`Installing @optave/codegraph@${safeVersion} into ${tmpDir}...`);
-
-	// Write a minimal package.json so npm install works
-	fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ private: true }));
-
-	// Retry with backoff for npm propagation delays
-	const maxRetries = 5;
-	for (let attempt = 1; attempt <= maxRetries; attempt++) {
-		try {
-			execFileSync('npm', ['install', `@optave/codegraph@${safeVersion}`, '--no-audit', '--no-fund'], {
-				cwd: tmpDir,
-				stdio: 'pipe',
-				timeout: 120_000,
-				shell: NPM_SHELL,
-			});
-			break;
-		} catch (err) {
-			if (attempt === maxRetries) {
-				// Clean up before throwing
-				fs.rmSync(tmpDir, { recursive: true, force: true });
-				throw new Error(`Failed to install @optave/codegraph@${safeVersion} after ${maxRetries} attempts: ${err.message}`);
-			}
-			const delay = attempt * 15_000; // 15s, 30s, 45s, 60s
-			console.error(`  Attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
-			await new Promise((resolve) => setTimeout(resolve, delay));
-		}
-	}
-
-	const pkgDir = path.join(tmpDir, 'node_modules', '@optave', 'codegraph');
-
-	const installedPkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
-
-	// npm does not transitively install optionalDependencies of a dependency,
-	// so the platform-specific native binary is missing. Install it explicitly.
-	try {
-		const optDeps = installedPkg.optionalDependencies || {};
-		const platform = os.platform();
-		const arch = os.arch();
-		let libcSuffix = '';
-		if (platform === 'linux') {
-			try {
-				const files = fs.readdirSync('/lib');
-				libcSuffix = files.some((f) => f.startsWith('ld-musl-') && f.endsWith('.so.1')) ? '-musl' : '-gnu';
-			} catch {
-				libcSuffix = '-gnu';
-			}
-		}
-		const platformKey = `codegraph-${platform}-${arch}${libcSuffix}`;
-		const nativePkg = Object.keys(optDeps).find((name) => name.includes(platformKey));
-		if (nativePkg) {
-			// Even though these originate from the installed package's
-			// optionalDependencies (i.e. the npm registry), validate before
-			// logging or interpolating into a `shell: true` command line.
-			const safeNativePkg = assertSafePkgName(nativePkg);
-			const safeNativeVersion = assertSafePkgVersion(optDeps[nativePkg]);
-			console.error(`Installing native package ${safeNativePkg}@${safeNativeVersion}...`);
-			for (let attempt = 1; attempt <= maxRetries; attempt++) {
-				try {
-					execFileSync('npm', ['install', `${safeNativePkg}@${safeNativeVersion}`, '--no-audit', '--no-fund', '--no-save'], {
-						cwd: tmpDir,
-						stdio: 'pipe',
-						timeout: 120_000,
-						shell: NPM_SHELL,
-					});
-					break;
-				} catch (innerErr) {
-					if (attempt === maxRetries) throw innerErr;
-					const delay = attempt * 15_000;
-					console.error(`  Native install attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
-					await new Promise((resolve) => setTimeout(resolve, delay));
-				}
-			}
-			console.error(`Installed ${safeNativePkg}@${safeNativeVersion}`);
-		} else {
-			console.error(`No native package found for platform ${platform}-${arch}${libcSuffix}, skipping`);
-		}
-	} catch (err) {
-		console.error(`Warning: failed to install native package: ${err.message}`);
-	}
-
-	// @huggingface/transformers is a devDependency (lazy-loaded for embeddings).
-	// It is not installed as a transitive dep in npm mode, so install it
-	// explicitly so the embedding benchmark workers can import it.
-	try {
-		const localPkg = JSON.parse(
-			fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', '..', 'package.json'), 'utf8'),
-		);
-		const hfVersion = localPkg.devDependencies?.['@huggingface/transformers'];
-		if (hfVersion) {
-			const safeHfVersion = assertSafePkgVersion(hfVersion);
-			console.error(`Installing @huggingface/transformers@${safeHfVersion} for embedding benchmarks...`);
-			execFileSync(
-				'npm',
-				['install', `@huggingface/transformers@${safeHfVersion}`, '--no-audit', '--no-fund', '--no-save'],
-				{
-					cwd: tmpDir,
-					stdio: 'pipe',
-					timeout: 120_000,
-					shell: NPM_SHELL,
-				},
-			);
-			console.error('Installed @huggingface/transformers');
-		}
-	} catch (err) {
-		console.error(`Warning: failed to install @huggingface/transformers: ${err.message}`);
-	}
+	const { tmpDir, pkgDir, installedPkg } = await installCodegraphPackage(cliVersion);
+	await installNativePackage(tmpDir, installedPkg);
+	await installTransformers(tmpDir);
 
 	// v3.4.0+ publishes compiled JS in dist/ alongside raw TS in src/.
 	// Node cannot strip types from node_modules, so prefer dist/ when available.
@@ -284,7 +312,6 @@ export async function resolveBenchmarkSource() {
 	}
 
 	const resolvedVersion = cliVersion || installedPkg.version;
-
 	console.error(`Installed @optave/codegraph@${installedPkg.version}`);
 
 	return {

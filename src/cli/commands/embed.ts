@@ -1,6 +1,36 @@
 import path from 'node:path';
-import { buildEmbeddings, DEFAULT_MODEL, EMBEDDING_STRATEGIES } from '../../domain/search/index.js';
+import { openReadonlyOrFail } from '../../db/index.js';
+import { getEmbeddingMeta } from '../../db/repository/embeddings.js';
+import {
+  buildEmbeddings,
+  DEFAULT_MODEL,
+  EMBEDDING_STRATEGIES,
+  MODELS,
+} from '../../domain/search/index.js';
+import { info, warn } from '../../infrastructure/logger.js';
 import type { CommandDefinition } from '../types.js';
+
+function resolveStickyModel(dbPath: string | undefined): string | null {
+  try {
+    const db = openReadonlyOrFail(dbPath);
+    try {
+      const storedName = getEmbeddingMeta(db, 'model');
+      if (!storedName) return null;
+      for (const [key, cfg] of Object.entries(MODELS)) {
+        if (cfg.name === storedName) return key;
+      }
+      warn(
+        `Stored embedding model "${storedName}" is no longer recognised — falling back to default. ` +
+          'Embeddings will be rebuilt with the new model.',
+      );
+      return null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
 
 export const command: CommandDefinition = {
   name: 'embed [dir]',
@@ -9,7 +39,7 @@ export const command: CommandDefinition = {
   options: [
     [
       '-m, --model <name>',
-      'Embedding model (default from config or minilm). Run `codegraph models` for details',
+      'Embedding model. Defaults to config, then the model used by existing embeddings, then the built-in default. Run `codegraph models` for options',
     ],
     [
       '-s, --strategy <name>',
@@ -25,8 +55,28 @@ export const command: CommandDefinition = {
   },
   async execute([dir], opts, ctx) {
     const root = path.resolve(dir || '.');
+    const dbPath = opts.db as string | undefined;
     const embeddingsConfig = ctx.config.embeddings;
-    const model = (opts.model as string) || (embeddingsConfig?.model as string) || DEFAULT_MODEL;
-    await buildEmbeddings(root, model, opts.db as string | undefined, { strategy: opts.strategy });
+    const flagModel = opts.model as string | undefined;
+    const configModel = (embeddingsConfig?.model as string | null | undefined) ?? null;
+
+    let model: string;
+    if (flagModel) {
+      model = flagModel;
+    } else if (configModel) {
+      model = configModel;
+    } else {
+      const sticky = resolveStickyModel(dbPath);
+      if (sticky) {
+        info(
+          `Reusing previously-stored embedding model "${sticky}". Pass --model to switch, or set embeddings.model in your config.`,
+        );
+        model = sticky;
+      } else {
+        model = DEFAULT_MODEL;
+      }
+    }
+
+    await buildEmbeddings(root, model, dbPath, { strategy: opts.strategy });
   },
 };

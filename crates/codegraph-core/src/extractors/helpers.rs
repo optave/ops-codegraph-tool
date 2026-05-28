@@ -984,6 +984,7 @@ pub fn push_type_map_entry(
 /// per-language declarator-unwrap helper. This helper centralises the
 /// shared walker; callers supply the language's `unwrap_declarator`
 /// closure (e.g. `unwrap_cpp_declarator`).
+///
 pub fn match_c_family_type_map<F>(
     node: &Node,
     source: &[u8],
