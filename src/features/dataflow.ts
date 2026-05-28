@@ -675,6 +675,51 @@ interface BfsParentEntry {
   expression: string;
 }
 
+type DataflowNeighbor = {
+  id: number;
+  file: string;
+  edge_kind: string;
+  expression: string;
+};
+
+interface DataflowBfsState {
+  visited: Set<number>;
+  parent: Map<number, BfsParentEntry>;
+  nextQueue: number[];
+  found: boolean;
+}
+
+/**
+ * Process a single neighbor in the dataflow BFS. Returns true once the target
+ * has been reached so the caller can stop expanding.
+ */
+function processDataflowNeighbor(
+  n: DataflowNeighbor,
+  currentId: number,
+  targetId: number,
+  noTests: boolean,
+  state: DataflowBfsState,
+): boolean {
+  if (noTests && isTestFile(n.file)) return false;
+  const entry: BfsParentEntry = {
+    parentId: currentId,
+    edgeKind: n.edge_kind,
+    expression: n.expression,
+  };
+  if (n.id === targetId) {
+    if (!state.found) {
+      state.found = true;
+      state.parent.set(n.id, entry);
+    }
+    return true;
+  }
+  if (state.visited.has(n.id)) return false;
+  state.visited.add(n.id);
+  state.parent.set(n.id, entry);
+  state.nextQueue.push(n.id);
+  return false;
+}
+
 /** BFS through dataflow edges to find a path from source to target. */
 function bfsDataflowPath(
   db: BetterSqlite3Database,
@@ -689,50 +734,28 @@ function bfsDataflowPath(
      WHERE d.source_id = ? AND d.kind IN ('flows_to', 'returns')`,
   );
 
-  const visited = new Set<number>([sourceId]);
-  const parent = new Map<number, BfsParentEntry>();
+  const state: DataflowBfsState = {
+    visited: new Set<number>([sourceId]),
+    parent: new Map<number, BfsParentEntry>(),
+    nextQueue: [],
+    found: false,
+  };
   let queue = [sourceId];
-  let found = false;
 
   for (let depth = 1; depth <= maxDepth; depth++) {
-    const nextQueue: number[] = [];
+    state.nextQueue = [];
     for (const currentId of queue) {
-      const neighbors = neighborStmt.all(currentId) as Array<{
-        id: number;
-        file: string;
-        edge_kind: string;
-        expression: string;
-      }>;
+      const neighbors = neighborStmt.all(currentId) as DataflowNeighbor[];
       for (const n of neighbors) {
-        if (noTests && isTestFile(n.file)) continue;
-        if (n.id === targetId) {
-          if (!found) {
-            found = true;
-            parent.set(n.id, {
-              parentId: currentId,
-              edgeKind: n.edge_kind,
-              expression: n.expression,
-            });
-          }
-          continue;
-        }
-        if (!visited.has(n.id)) {
-          visited.add(n.id);
-          parent.set(n.id, {
-            parentId: currentId,
-            edgeKind: n.edge_kind,
-            expression: n.expression,
-          });
-          nextQueue.push(n.id);
-        }
+        processDataflowNeighbor(n, currentId, targetId, noTests, state);
       }
     }
-    if (found) break;
-    queue = nextQueue;
+    if (state.found) break;
+    queue = state.nextQueue;
     if (queue.length === 0) break;
   }
 
-  return found ? parent : null;
+  return state.found ? state.parent : null;
 }
 
 /** Reconstruct a path from BFS parent map. */

@@ -532,6 +532,56 @@ function batchUpdateRoles(
   })();
 }
 
+interface CallableNodeRow {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  fan_in: number;
+  fan_out: number;
+}
+
+/** Build the activeFiles set: files with at least one callable connected to the graph. */
+function buildActiveFilesSet(rows: CallableNodeRow[]): Set<string> {
+  const activeFiles = new Set<string>();
+  for (const r of rows) {
+    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
+      activeFiles.add(r.file);
+    }
+  }
+  return activeFiles;
+}
+
+/** Map callable rows to classifier input objects, attaching exported/prod-fan-in/active-file metadata. */
+function buildClassifierInput(
+  rows: CallableNodeRow[],
+  exportedIds: Set<number>,
+  prodFanInMap: Map<number, number>,
+  activeFiles: Set<string>,
+): Array<{
+  id: string;
+  name: string;
+  kind: string;
+  file: string;
+  fanIn: number;
+  fanOut: number;
+  isExported: boolean;
+  productionFanIn: number;
+  hasActiveFileSiblings: boolean | undefined;
+}> {
+  return rows.map((r) => ({
+    id: String(r.id),
+    name: r.name,
+    kind: r.kind,
+    file: r.file,
+    fanIn: r.fan_in,
+    fanOut: r.fan_out,
+    isExported: exportedIds.has(r.id),
+    productionFanIn: prodFanInMap.get(r.id) || 0,
+    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
+  }));
+}
+
 function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
   // Leaf kinds (parameter, property) can never have callers/callees.
   // Classify them directly as dead-leaf without the expensive fan-in/fan-out JOINs.
@@ -558,14 +608,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
       ) fo ON n.id = fo.source_id
       WHERE n.kind NOT IN ('file', 'directory', 'parameter', 'property')`,
     )
-    .all() as {
-    id: number;
-    name: string;
-    kind: string;
-    file: string;
-    fan_in: number;
-    fan_out: number;
-  }[];
+    .all() as CallableNodeRow[];
 
   if (rows.length === 0 && leafRows.length === 0) return emptySummary;
 
@@ -629,28 +672,9 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     prodFanInMap.set(r.target_id, r.cnt);
   }
 
-  // Files with at least one callable (non-constant) connected to the graph.
-  // Constants in these files are likely consumed locally via identifier reference.
-  const activeFiles = new Set<string>();
-  for (const r of rows) {
-    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
-      activeFiles.add(r.file);
-    }
-  }
-
   // Delegate classification to the pure-logic classifier
-  const classifierInput = rows.map((r) => ({
-    id: String(r.id),
-    name: r.name,
-    kind: r.kind,
-    file: r.file,
-    fanIn: r.fan_in,
-    fanOut: r.fan_out,
-    isExported: exportedIds.has(r.id),
-    productionFanIn: prodFanInMap.get(r.id) || 0,
-    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
-  }));
-
+  const activeFiles = buildActiveFilesSet(rows);
+  const classifierInput = buildClassifierInput(rows, exportedIds, prodFanInMap, activeFiles);
   const roleMap = classifyRoles(classifierInput);
 
   const { summary, idsByRole } = buildRoleSummary(rows, leafRows, roleMap, emptySummary);
@@ -733,14 +757,7 @@ function classifyNodeRolesIncremental(
       WHERE n.kind NOT IN ('file', 'directory', 'parameter', 'property')
         AND n.file IN (${placeholders})`,
     )
-    .all(...allAffectedFiles) as {
-    id: number;
-    name: string;
-    kind: string;
-    file: string;
-    fan_in: number;
-    fan_out: number;
-  }[];
+    .all(...allAffectedFiles) as CallableNodeRow[];
 
   if (rows.length === 0 && leafRows.length === 0) return emptySummary;
 
@@ -810,25 +827,8 @@ function classifyNodeRolesIncremental(
   }
 
   // 5. Classify affected nodes using global medians
-  const activeFiles = new Set<string>();
-  for (const r of rows) {
-    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
-      activeFiles.add(r.file);
-    }
-  }
-
-  const classifierInput = rows.map((r) => ({
-    id: String(r.id),
-    name: r.name,
-    kind: r.kind,
-    file: r.file,
-    fanIn: r.fan_in,
-    fanOut: r.fan_out,
-    isExported: exportedIds.has(r.id),
-    productionFanIn: prodFanInMap.get(r.id) || 0,
-    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
-  }));
-
+  const activeFiles = buildActiveFilesSet(rows);
+  const classifierInput = buildClassifierInput(rows, exportedIds, prodFanInMap, activeFiles);
   const roleMap = classifyRoles(classifierInput, globalMedians);
 
   // 6. Build summary (only for affected nodes) and update only those nodes

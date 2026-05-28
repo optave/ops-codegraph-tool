@@ -276,16 +276,144 @@ fn collect_type_only_lookup_pairs(ctx: &ImportEdgeContext) -> HashSet<(String, S
 /// - `reexports` for re-exports
 ///
 /// Also creates barrel-through edges (confidence 0.9) for imports targeting barrel files.
+/// Classify an `ImportInfo` into the edge kind name used in the edges
+/// table: reexports / imports-type / dynamic-imports / imports.
+fn classify_import_kind(imp: &crate::types::Import) -> &'static str {
+    if imp.reexport.unwrap_or(false) {
+        "reexports"
+    } else if imp.type_only.unwrap_or(false) {
+        "imports-type"
+    } else if imp.dynamic_import.unwrap_or(false) {
+        "dynamic-imports"
+    } else {
+        "imports"
+    }
+}
+
+/// For a `type` import, emit one symbol-level `imports-type` edge per name
+/// so the target symbols receive fan-in credit and aren't classified dead.
+fn emit_type_only_symbol_rows(
+    edges: &mut Vec<EdgeRow>,
+    file_node_id: i64,
+    imp: &crate::types::Import,
+    resolved_path: &str,
+    ctx: &ImportEdgeContext,
+    symbol_node_ids: &HashMap<(String, String), i64>,
+) {
+    if !imp.type_only.unwrap_or(false) {
+        return;
+    }
+    for name in &imp.names {
+        let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+        let mut target_file = resolved_path.to_string();
+        if ctx.is_barrel_file(resolved_path) {
+            let mut visited = HashSet::new();
+            if let Some(actual) =
+                ctx.resolve_barrel_export(resolved_path, clean_name, &mut visited)
+            {
+                target_file = actual;
+            }
+        }
+        if let Some(&sym_id) = symbol_node_ids.get(&(clean_name.to_string(), target_file)) {
+            edges.push(EdgeRow {
+                source_id: file_node_id,
+                target_id: sym_id,
+                kind: "imports-type".to_string(),
+                confidence: 1.0,
+                dynamic: 0,
+            });
+        }
+    }
+}
+
+/// For a non-reexport import targeting a barrel file, emit `imports`-like
+/// edges to each ultimate definition file reached through the barrel chain.
+fn emit_barrel_through_rows(
+    edges: &mut Vec<EdgeRow>,
+    file_node_id: i64,
+    imp: &crate::types::Import,
+    resolved_path: &str,
+    edge_kind: &str,
+    ctx: &ImportEdgeContext,
+    file_node_ids: &HashMap<String, i64>,
+) {
+    let is_reexport = imp.reexport.unwrap_or(false);
+    if is_reexport || !ctx.is_barrel_file(resolved_path) {
+        return;
+    }
+    let through_kind = match edge_kind {
+        "imports-type" => "imports-type",
+        "dynamic-imports" => "dynamic-imports",
+        _ => "imports",
+    };
+    let mut resolved_sources: HashSet<String> = HashSet::new();
+    for name in &imp.names {
+        let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+        let mut visited = HashSet::new();
+        let actual_source =
+            match ctx.resolve_barrel_export(resolved_path, clean_name, &mut visited) {
+                Some(s) => s,
+                None => continue,
+            };
+        if actual_source == resolved_path || !resolved_sources.insert(actual_source.clone()) {
+            continue;
+        }
+        if let Some(&actual_id) = file_node_ids.get(&actual_source) {
+            edges.push(EdgeRow {
+                source_id: file_node_id,
+                target_id: actual_id,
+                kind: through_kind.to_string(),
+                confidence: 0.9,
+                dynamic: 0,
+            });
+        }
+    }
+}
+
+/// Emit all edges produced by a single import on a single source file.
+fn emit_edges_for_import(
+    edges: &mut Vec<EdgeRow>,
+    file_node_id: i64,
+    abs_str: &str,
+    imp: &crate::types::Import,
+    is_barrel_only: bool,
+    ctx: &ImportEdgeContext,
+    file_node_ids: &HashMap<String, i64>,
+    symbol_node_ids: &HashMap<(String, String), i64>,
+) {
+    let is_reexport = imp.reexport.unwrap_or(false);
+    if is_barrel_only && !is_reexport {
+        return;
+    }
+    let resolved_path = ctx.get_resolved(abs_str, &imp.source);
+    let target_id = match file_node_ids.get(&resolved_path) {
+        Some(&id) => id,
+        None => return,
+    };
+    let edge_kind = classify_import_kind(imp);
+    edges.push(EdgeRow {
+        source_id: file_node_id,
+        target_id,
+        kind: edge_kind.to_string(),
+        confidence: 1.0,
+        dynamic: 0,
+    });
+    emit_type_only_symbol_rows(edges, file_node_id, imp, &resolved_path, ctx, symbol_node_ids);
+    emit_barrel_through_rows(
+        edges,
+        file_node_id,
+        imp,
+        &resolved_path,
+        edge_kind,
+        ctx,
+        file_node_ids,
+    );
+}
+
 pub fn build_import_edges(conn: &Connection, ctx: &ImportEdgeContext) -> Vec<EdgeRow> {
     let mut edges = Vec::new();
 
-    // Pre-load all file node IDs once. Previously this was N x query_row,
-    // each of which ran a fresh sqlite3_prepare/step/finalize cycle (#1013).
     let file_node_ids = load_file_node_ids(conn);
-    // Only the symbols actually referenced by type-only imports are needed —
-    // skip the lookup entirely when no type-only imports exist (the common
-    // case), and otherwise issue a chunked `(name, file) IN (...)` query so
-    // memory stays bounded even on large monorepos (#1028 review).
     let needed_symbol_pairs = collect_type_only_lookup_pairs(ctx);
     let symbol_node_ids = if needed_symbol_pairs.is_empty() {
         HashMap::new()
@@ -304,92 +432,16 @@ pub fn build_import_edges(conn: &Connection, ctx: &ImportEdgeContext) -> Vec<Edg
         let abs_str = abs_file.to_str().unwrap_or("");
 
         for imp in &symbols.imports {
-            let is_reexport = imp.reexport.unwrap_or(false);
-            // Barrel-only files: only emit reexport edges, skip regular imports
-            if is_barrel_only && !is_reexport {
-                continue;
-            }
-
-            let resolved_path = ctx.get_resolved(abs_str, &imp.source);
-            let target_id = match file_node_ids.get(&resolved_path) {
-                Some(&id) => id,
-                None => continue,
-            };
-
-            let edge_kind = if is_reexport {
-                "reexports"
-            } else if imp.type_only.unwrap_or(false) {
-                "imports-type"
-            } else if imp.dynamic_import.unwrap_or(false) {
-                "dynamic-imports"
-            } else {
-                "imports"
-            };
-
-            edges.push(EdgeRow {
-                source_id: file_node_id,
-                target_id,
-                kind: edge_kind.to_string(),
-                confidence: 1.0,
-                dynamic: 0,
-            });
-
-            // Type-only imports: create symbol-level edges so the target symbols
-            // get fan-in credit and aren't falsely classified as dead code.
-            if imp.type_only.unwrap_or(false) {
-                for name in &imp.names {
-                    let clean_name = name.strip_prefix("* as ").unwrap_or(name);
-                    let mut target_file = resolved_path.clone();
-                    if ctx.is_barrel_file(&resolved_path) {
-                        let mut visited = HashSet::new();
-                        if let Some(actual) = ctx.resolve_barrel_export(&resolved_path, clean_name, &mut visited) {
-                            target_file = actual;
-                        }
-                    }
-                    if let Some(&sym_id) =
-                        symbol_node_ids.get(&(clean_name.to_string(), target_file))
-                    {
-                        edges.push(EdgeRow {
-                            source_id: file_node_id,
-                            target_id: sym_id,
-                            kind: "imports-type".to_string(),
-                            confidence: 1.0,
-                            dynamic: 0,
-                        });
-                    }
-                }
-            }
-
-            // Build barrel-through edges if the target is a barrel file
-            if !is_reexport && ctx.is_barrel_file(&resolved_path) {
-                let mut resolved_sources = HashSet::new();
-                for name in &imp.names {
-                    let clean_name = name.strip_prefix("* as ").unwrap_or(name);
-                    let mut visited = HashSet::new();
-                    if let Some(actual_source) =
-                        ctx.resolve_barrel_export(&resolved_path, clean_name, &mut visited)
-                    {
-                        if actual_source != resolved_path
-                            && resolved_sources.insert(actual_source.clone())
-                        {
-                            if let Some(&actual_id) = file_node_ids.get(&actual_source) {
-                                let through_kind = match edge_kind {
-                                    "imports-type" => "imports-type",
-                                    "dynamic-imports" => "dynamic-imports",
-                                    _ => "imports",
-                                };
-                                edges.push(EdgeRow {
-                                    source_id: file_node_id,
-                                    target_id: actual_id,
-                                    kind: through_kind.to_string(),
-                                    confidence: 0.9,
-                                    dynamic: 0,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            emit_edges_for_import(
+                &mut edges,
+                file_node_id,
+                abs_str,
+                imp,
+                is_barrel_only,
+                ctx,
+                &file_node_ids,
+                &symbol_node_ids,
+            );
         }
     }
 

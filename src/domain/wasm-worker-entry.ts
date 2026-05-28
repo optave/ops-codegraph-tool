@@ -573,6 +573,90 @@ interface SetupResult {
   dataflowVisitor: Visitor | null;
 }
 
+/**
+ * Build the AST-store visitor for `langId`. Returns `null` when AST is
+ * disabled or the language has no AST type map. db-free — passes an empty
+ * nodeIdMap. The main thread re-resolves parent node IDs in
+ * `features/ast.ts::collectFileAstRows`.
+ */
+function buildAstVisitor(
+  langId: string,
+  defs: ExtractorOutput['definitions'],
+  relPath: string,
+  enabled: boolean,
+): Visitor | null {
+  if (!enabled) return null;
+  const astTypeMap = AST_TYPE_MAPS.get(langId);
+  if (!astTypeMap) return null;
+  const stringConfig = AST_STRING_CONFIGS.get(langId);
+  return createAstStoreVisitor(
+    astTypeMap,
+    defs,
+    relPath,
+    new Map<string, number>(),
+    stringConfig,
+    astStopRecurseKinds(langId),
+  );
+}
+
+/**
+ * Build the complexity visitor when enabled, the language has complexity
+ * rules, and at least one definition still lacks a `complexity` payload.
+ * Side-effect: extends `walkerOpts` with nesting-node types and a
+ * `getFunctionName` resolver suitable for this language.
+ */
+function buildComplexityVisitor(
+  langId: string,
+  defs: ExtractorOutput['definitions'],
+  enabled: boolean,
+  walkerOpts: WalkOptions,
+): Visitor | null {
+  if (!enabled) return null;
+  const cRules = COMPLEXITY_RULES.get(langId);
+  if (!cRules || !defs.some((d) => hasFuncBody(d) && !d.complexity)) return null;
+
+  const hRules = HALSTEAD_RULES.get(langId);
+  const visitor = createComplexityVisitor(cRules, hRules, { fileLevelWalk: true, langId });
+  for (const t of cRules.nestingNodes) walkerOpts.nestingNodeTypes?.add(t);
+  const dfRules = DATAFLOW_RULES.get(langId);
+  walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
+    const nameNode = node.childForFieldName('name');
+    if (nameNode) return nameNode.text;
+    // dfRules shape varies per language; visitor-utils accepts any shape
+    if (dfRules) return getFuncName(node, dfRules as any);
+    return null;
+  };
+  return visitor;
+}
+
+/** Build the CFG visitor when enabled and at least one definition still lacks blocks. */
+function buildCfgVisitor(
+  langId: string,
+  defs: ExtractorOutput['definitions'],
+  enabled: boolean,
+): Visitor | null {
+  if (!enabled) return null;
+  const cfgRulesForLang = CFG_RULES.get(langId);
+  if (!cfgRulesForLang) return null;
+  const needsCfg = defs.some(
+    (d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks),
+  );
+  if (!needsCfg) return null;
+  return createCfgVisitor(cfgRulesForLang);
+}
+
+/** Build the dataflow visitor when enabled and `symbols.dataflow` is not yet populated. */
+function buildDataflowVisitor(
+  langId: string,
+  symbols: ExtractorOutput,
+  enabled: boolean,
+): Visitor | null {
+  if (!enabled) return null;
+  const dfRules = DATAFLOW_RULES.get(langId);
+  if (!dfRules || symbols.dataflow) return null;
+  return createDataflowVisitor(dfRules);
+}
+
 function setupVisitorsLocal(
   symbols: ExtractorOutput,
   relPath: string,
@@ -580,82 +664,161 @@ function setupVisitorsLocal(
   opts: WorkerParseRequest['opts'],
 ): SetupResult {
   const defs = symbols.definitions || [];
-  const visitors: Visitor[] = [];
   const walkerOpts: WalkOptions = {
     functionNodeTypes: new Set<string>(),
     nestingNodeTypes: new Set<string>(),
     getFunctionName: (_node: TreeSitterNode) => null,
   };
 
-  // AST-store: db-free — pass an empty nodeIdMap. The main thread re-resolves
-  // parent node IDs in features/ast.ts::collectFileAstRows.
-  let astVisitor: Visitor | null = null;
-  if (opts.ast) {
-    const astTypeMap = AST_TYPE_MAPS.get(langId);
-    if (astTypeMap) {
-      const stringConfig = AST_STRING_CONFIGS.get(langId);
-      astVisitor = createAstStoreVisitor(
-        astTypeMap,
-        defs,
-        relPath,
-        new Map<string, number>(),
-        stringConfig,
-        astStopRecurseKinds(langId),
-      );
-      visitors.push(astVisitor);
-    }
-  }
+  const astVisitor = buildAstVisitor(langId, defs, relPath, !!opts.ast);
+  const complexityVisitor = buildComplexityVisitor(langId, defs, !!opts.complexity, walkerOpts);
+  const cfgVisitor = buildCfgVisitor(langId, defs, !!opts.cfg);
+  const dataflowVisitor = buildDataflowVisitor(langId, symbols, !!opts.dataflow);
 
-  // Complexity
-  let complexityVisitor: Visitor | null = null;
-  if (opts.complexity) {
-    const cRules = COMPLEXITY_RULES.get(langId);
-    if (cRules && defs.some((d) => hasFuncBody(d) && !d.complexity)) {
-      const hRules = HALSTEAD_RULES.get(langId);
-      complexityVisitor = createComplexityVisitor(cRules, hRules, {
-        fileLevelWalk: true,
-        langId,
-      });
-      for (const t of cRules.nestingNodes) walkerOpts.nestingNodeTypes?.add(t);
-      const dfRules = DATAFLOW_RULES.get(langId);
-      walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) return nameNode.text;
-        // dfRules shape varies per language; visitor-utils accepts any shape
-        if (dfRules) return getFuncName(node, dfRules as any);
-        return null;
-      };
-      visitors.push(complexityVisitor);
-    }
-  }
-
-  // CFG
-  let cfgVisitor: Visitor | null = null;
-  if (opts.cfg) {
-    const cfgRulesForLang = CFG_RULES.get(langId);
-    if (
-      cfgRulesForLang &&
-      defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks))
-    ) {
-      cfgVisitor = createCfgVisitor(cfgRulesForLang);
-      visitors.push(cfgVisitor);
-    }
-  }
-
-  // Dataflow
-  let dataflowVisitor: Visitor | null = null;
-  if (opts.dataflow) {
-    const dfRules = DATAFLOW_RULES.get(langId);
-    if (dfRules && !symbols.dataflow) {
-      dataflowVisitor = createDataflowVisitor(dfRules);
-      visitors.push(dataflowVisitor);
-    }
-  }
+  const visitors: Visitor[] = [];
+  if (astVisitor) visitors.push(astVisitor);
+  if (complexityVisitor) visitors.push(complexityVisitor);
+  if (cfgVisitor) visitors.push(cfgVisitor);
+  if (dataflowVisitor) visitors.push(dataflowVisitor);
 
   return { visitors, walkerOpts, astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor };
 }
 
 // ── Main parse handler ──────────────────────────────────────────────────────
+
+/**
+ * Run tree-sitter parse + extractor on `code`. Returns `null` when either
+ * step yields no usable output. Throws (for the caller to report back to the
+ * pool) only on a hard tree-sitter parse error.
+ */
+function parseAndExtract(
+  parser: Parser,
+  entry: LanguageRegistryEntry,
+  filePath: string,
+  code: string,
+): { tree: Tree; symbols: ExtractorOutput } | null {
+  let tree: Tree | null;
+  try {
+    tree = parser.parse(code);
+  } catch (e: unknown) {
+    // Parse error — report back but keep worker alive.
+    throw new Error(`parse failed: ${(e as Error).message}`);
+  }
+  if (!tree) return null;
+
+  // Extractor — on failure, skip file (ok:true, null) to match parser.ts
+  // behavior where extractor issues don't crash the build. Dispose the tree
+  // before returning null so WASM linear memory doesn't accumulate in the worker.
+  let symbols: ExtractorOutput | null;
+  try {
+    const query = _queries.get(entry.id);
+    // tree-sitter's Tree/Query are structurally compatible with
+    // TreeSitterTree/TreeSitterQuery at runtime — same cast style as
+    // parser.ts::wasmExtractSymbols (parser.ts:789).
+    symbols = entry.extractor(tree as any, filePath, query as any) ?? null;
+  } catch {
+    disposeTree(tree);
+    return null;
+  }
+  if (!symbols) {
+    disposeTree(tree);
+    return null;
+  }
+  return { tree, symbols };
+}
+
+/**
+ * Project the visitor `ast-store` rows into the wire-safe shape returned to
+ * the main thread. Strips `file` and `parentNodeId` — both are re-resolved in
+ * `features/ast.ts::collectFileAstRows`. Always returns an array (even empty)
+ * so `engine.ts::fileNeedsWasmTree` doesn't treat the file as un-walked and
+ * trigger a full ensureWasmTrees re-parse (#1036).
+ */
+function projectAstNodes(results: WalkResults): SerializedExtractorOutput['astNodes'] {
+  const astRows = (results['ast-store'] || []) as Array<{
+    line: number;
+    kind: string;
+    name: string | null | undefined;
+    text: string | null;
+    receiver: string | null;
+    file?: string;
+    parentNodeId?: number | null;
+  }>;
+  return astRows.map((n) => ({
+    line: n.line,
+    kind: n.kind,
+    name: n.name ?? '',
+    text: n.text ?? undefined,
+    receiver: n.receiver ?? undefined,
+  }));
+}
+
+/**
+ * Run the configured visitor walk over `tree.rootNode` and apply each
+ * visitor's results back onto `symbols`. Returns the serialized astNodes
+ * (or `undefined` when AST is disabled / no rows produced).
+ *
+ * Mirrors engine.ts:791-829. Runs BEFORE `tree.delete()` because
+ * storeComplexityResults / storeCfgResults read `funcNode` off live nodes.
+ */
+function runVisitorWalk(
+  tree: Tree,
+  symbols: ExtractorOutput,
+  langId: string,
+  setup: SetupResult,
+): SerializedExtractorOutput['astNodes'] {
+  if (setup.visitors.length === 0) return undefined;
+  // rootNode shape matches TreeSitterNode at runtime — same cast as parser.ts:789.
+  const results = walkWithVisitors(tree.rootNode as any, setup.visitors, langId, setup.walkerOpts);
+  const defs = symbols.definitions || [];
+  let serializedAstNodes: SerializedExtractorOutput['astNodes'];
+  if (setup.astVisitor) serializedAstNodes = projectAstNodes(results);
+  if (setup.complexityVisitor) storeComplexityResults(results, defs, langId);
+  if (setup.cfgVisitor) storeCfgResults(results, defs);
+  if (setup.dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
+  return serializedAstNodes;
+}
+
+/**
+ * Pack the in-memory ExtractorOutput into the structured-clone-safe shape
+ * sent back across the worker boundary. Converts the typeMap into a tuple
+ * array and intentionally omits `_tree` (cannot cross the boundary).
+ */
+function serializeExtractorOutput(
+  symbols: ExtractorOutput,
+  langId: LanguageId,
+  code: string,
+  astNodes: SerializedExtractorOutput['astNodes'],
+): SerializedExtractorOutput {
+  return {
+    definitions: symbols.definitions,
+    calls: symbols.calls,
+    imports: symbols.imports,
+    classes: symbols.classes,
+    exports: symbols.exports,
+    typeMap: Array.from(symbols.typeMap.entries()),
+    _langId: langId,
+    _lineCount: code.split('\n').length,
+    dataflow: symbols.dataflow,
+    astNodes,
+  };
+}
+
+/**
+ * Release WASM linear memory backing a tree. Best-effort — swallows errors so
+ * the worker keeps serving requests. Deferring this would let trees accumulate
+ * in the worker's WASM heap and defeat the point of isolating parse calls.
+ */
+function disposeTree(tree: Tree | null): void {
+  if (!tree) return;
+  const deletable = tree as unknown as { delete?: () => void };
+  if (typeof deletable.delete !== 'function') return;
+  try {
+    deletable.delete();
+  } catch {
+    // best-effort cleanup — swallow; worker continues.
+  }
+}
 
 async function handleParse(msg: WorkerParseRequest): Promise<SerializedExtractorOutput | null> {
   const ext = path.extname(msg.filePath).toLowerCase();
@@ -666,100 +829,20 @@ async function handleParse(msg: WorkerParseRequest): Promise<SerializedExtractor
   const parser = await loadLanguageLazy(entry);
   if (!parser) return null;
 
-  let tree: Tree | null = null;
+  const parsed = parseAndExtract(parser, entry, msg.filePath, msg.code);
+  if (!parsed) return null;
+  const { tree, symbols } = parsed;
+
   try {
-    try {
-      tree = parser.parse(msg.code);
-    } catch (e: unknown) {
-      // Parse error — report back but keep worker alive.
-      throw new Error(`parse failed: ${(e as Error).message}`);
-    }
-    if (!tree) return null;
-
-    // Extractor — on failure, skip file (ok:true, null) to match parser.ts
-    // behavior where extractor issues don't crash the build.
-    let symbols: ExtractorOutput | null;
-    try {
-      const query = _queries.get(entry.id);
-      // tree-sitter's Tree/Query are structurally compatible with
-      // TreeSitterTree/TreeSitterQuery at runtime — same cast style as
-      // parser.ts::wasmExtractSymbols (parser.ts:789).
-      symbols = entry.extractor(tree as any, msg.filePath, query as any) ?? null;
-    } catch {
-      return null;
-    }
-    if (!symbols) return null;
-
-    // Unified visitor walk — mirrors engine.ts:791-829. Runs BEFORE tree.delete()
-    // because storeComplexityResults/storeCfgResults read funcNode off live nodes.
-    const { visitors, walkerOpts, astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor } =
-      setupVisitorsLocal(symbols, msg.filePath, entry.id, msg.opts);
-
-    // astNodes are kept in the serialized shape (without `file`/`parentNodeId`),
+    const setup = setupVisitorsLocal(symbols, msg.filePath, entry.id, msg.opts);
+    // astNodes kept in the serialized shape (without `file`/`parentNodeId`),
     // not assigned back to symbols.astNodes — ExtractorOutput.astNodes is
     // ASTNodeRow[] (DB row shape with node_id), which is a different type.
-    let serializedAstNodes: SerializedExtractorOutput['astNodes'];
-
-    if (visitors.length > 0) {
-      // rootNode shape matches TreeSitterNode at runtime — same cast as parser.ts:789.
-      const results = walkWithVisitors(tree.rootNode as any, visitors, entry.id, walkerOpts);
-
-      const defs = symbols.definitions || [];
-      if (astVisitor) {
-        const astRows = (results['ast-store'] || []) as Array<{
-          line: number;
-          kind: string;
-          name: string | null | undefined;
-          text: string | null;
-          receiver: string | null;
-          file?: string;
-          parentNodeId?: number | null;
-        }>;
-        // Always set an array (even empty) — leaving astNodes undefined makes
-        // engine.ts::fileNeedsWasmTree treat the file as un-walked and trigger
-        // a full ensureWasmTrees re-parse of every WASM-parseable file (#1036).
-        // Strip `file` and `parentNodeId` — main thread re-resolves both in
-        // features/ast.ts::collectFileAstRows.
-        serializedAstNodes = astRows.map((n) => ({
-          line: n.line,
-          kind: n.kind,
-          name: n.name ?? '',
-          text: n.text ?? undefined,
-          receiver: n.receiver ?? undefined,
-        }));
-      }
-
-      if (complexityVisitor) storeComplexityResults(results, defs, entry.id);
-      if (cfgVisitor) storeCfgResults(results, defs);
-      if (dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
-    }
-
-    // Serialize — convert Map<string, TypeMapEntry> to tuple array for the wire.
-    const serialized: SerializedExtractorOutput = {
-      definitions: symbols.definitions,
-      calls: symbols.calls,
-      imports: symbols.imports,
-      classes: symbols.classes,
-      exports: symbols.exports,
-      typeMap: Array.from(symbols.typeMap.entries()),
-      _langId: entry.id as LanguageId,
-      _lineCount: msg.code.split('\n').length,
-      dataflow: symbols.dataflow,
-      astNodes: serializedAstNodes,
-    };
-    // _tree is deliberately not serialized — it cannot cross the worker boundary.
-    return serialized;
+    const serializedAstNodes = runVisitorWalk(tree, symbols, entry.id, setup);
+    return serializeExtractorOutput(symbols, entry.id as LanguageId, msg.code, serializedAstNodes);
   } finally {
-    // ALWAYS release WASM memory before responding. Deferring this would let
-    // trees accumulate in the worker's WASM heap across requests and defeat
-    // the point of isolating parse calls.
-    if (tree && typeof (tree as unknown as { delete?: () => void }).delete === 'function') {
-      try {
-        (tree as unknown as { delete: () => void }).delete();
-      } catch {
-        // best-effort cleanup — swallow; worker continues.
-      }
-    }
+    // ALWAYS release WASM memory before responding (see disposeTree note).
+    disposeTree(tree);
   }
 }
 

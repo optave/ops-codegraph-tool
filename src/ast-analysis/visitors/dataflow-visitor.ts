@@ -405,6 +405,79 @@ function handleReturn(
   }
 }
 
+/** Collect parameter entries for a function and push a new scope onto the stack. */
+function enterFunctionScope(
+  funcNode: TreeSitterNode,
+  rules: AnyRules,
+  scopeStack: ScopeEntry[],
+  parameters: DataflowParam[],
+): void {
+  const name = functionName(funcNode, rules);
+  const paramsNode = funcNode.childForFieldName(rules.paramListField);
+  const paramList = extractParams(paramsNode, rules);
+  const paramMap = new Map<string, number>();
+  for (const p of paramList) {
+    paramMap.set(p.name, p.index);
+    if (name) {
+      parameters.push({
+        funcName: name,
+        paramName: p.name,
+        paramIndex: p.index,
+        line: (paramsNode?.startPosition?.row ?? funcNode.startPosition.row) + 1,
+      });
+    }
+  }
+  scopeStack.push({ funcName: name, funcNode, params: paramMap, locals: new Map() });
+}
+
+interface DataflowDispatchCtx {
+  rules: AnyRules;
+  scopeStack: ScopeEntry[];
+  returns: DataflowReturnEntry[];
+  assignments: DataflowAssignment[];
+  argFlows: DataflowArgFlow[];
+  mutations: DataflowMutation[];
+  isCallNode: (t: string) => boolean;
+}
+
+/**
+ * Route a node to the appropriate dataflow handler based on its type.
+ * Function-definition nodes are short-circuited with an early return.
+ */
+function dispatchDataflowNode(ctx: DataflowDispatchCtx, node: TreeSitterNode): void {
+  const { rules } = ctx;
+  const t = node.type;
+
+  if (rules.functionNodes.has(t)) return;
+
+  if (rules.returnNode && t === rules.returnNode) {
+    handleReturn(node, rules, ctx.scopeStack, ctx.returns);
+    return;
+  }
+
+  if (
+    (rules.varDeclaratorNode && t === rules.varDeclaratorNode) ||
+    rules.varDeclaratorNodes?.has(t)
+  ) {
+    handleVarDeclarator(node, rules, ctx.scopeStack, ctx.assignments, ctx.isCallNode);
+    return;
+  }
+
+  if (ctx.isCallNode(t)) {
+    handleCallExpr(node, rules, ctx.scopeStack, ctx.argFlows);
+    return;
+  }
+
+  if (rules.assignmentNode && t === rules.assignmentNode) {
+    handleAssignment(node, rules, ctx.scopeStack, ctx.assignments, ctx.mutations, ctx.isCallNode);
+    return;
+  }
+
+  if (rules.expressionStmtNode && t === rules.expressionStmtNode) {
+    handleExprStmtMutation(node, rules, ctx.scopeStack, ctx.mutations, ctx.isCallNode);
+  }
+}
+
 export function createDataflowVisitor(rules: AnyRules): Visitor {
   const isCallNode: (t: string) => boolean = rules.callNodes
     ? (t: string) => rules.callNodes.has(t)
@@ -417,6 +490,16 @@ export function createDataflowVisitor(rules: AnyRules): Visitor {
   const mutations: DataflowMutation[] = [];
   const scopeStack: ScopeEntry[] = [];
 
+  const dispatchCtx: DataflowDispatchCtx = {
+    rules,
+    scopeStack,
+    returns,
+    assignments,
+    argFlows,
+    mutations,
+    isCallNode,
+  };
+
   return {
     name: 'dataflow',
     functionNodeTypes: rules.functionNodes,
@@ -426,22 +509,7 @@ export function createDataflowVisitor(rules: AnyRules): Visitor {
       _funcName: string | null,
       _context: VisitorContext,
     ): void {
-      const name = functionName(funcNode, rules);
-      const paramsNode = funcNode.childForFieldName(rules.paramListField);
-      const paramList = extractParams(paramsNode, rules);
-      const paramMap = new Map<string, number>();
-      for (const p of paramList) {
-        paramMap.set(p.name, p.index);
-        if (name) {
-          parameters.push({
-            funcName: name,
-            paramName: p.name,
-            paramIndex: p.index,
-            line: (paramsNode?.startPosition?.row ?? funcNode.startPosition.row) + 1,
-          });
-        }
-      }
-      scopeStack.push({ funcName: name, funcNode, params: paramMap, locals: new Map() });
+      enterFunctionScope(funcNode, rules, scopeStack, parameters);
     },
 
     exitFunction(
@@ -453,37 +521,8 @@ export function createDataflowVisitor(rules: AnyRules): Visitor {
     },
 
     enterNode(node: TreeSitterNode, _context: VisitorContext): EnterNodeResult | undefined {
-      const t = node.type;
-
-      if (rules.functionNodes.has(t)) return;
-
-      if (rules.returnNode && t === rules.returnNode) {
-        handleReturn(node, rules, scopeStack, returns);
-        return;
-      }
-
-      if (rules.varDeclaratorNode && t === rules.varDeclaratorNode) {
-        handleVarDeclarator(node, rules, scopeStack, assignments, isCallNode);
-        return;
-      }
-      if (rules.varDeclaratorNodes?.has(t)) {
-        handleVarDeclarator(node, rules, scopeStack, assignments, isCallNode);
-        return;
-      }
-
-      if (isCallNode(t)) {
-        handleCallExpr(node, rules, scopeStack, argFlows);
-        return;
-      }
-
-      if (rules.assignmentNode && t === rules.assignmentNode) {
-        handleAssignment(node, rules, scopeStack, assignments, mutations, isCallNode);
-        return;
-      }
-
-      if (rules.expressionStmtNode && t === rules.expressionStmtNode) {
-        handleExprStmtMutation(node, rules, scopeStack, mutations, isCallNode);
-      }
+      dispatchDataflowNode(dispatchCtx, node);
+      return undefined;
     },
 
     finish(): DataflowResultInternal {
