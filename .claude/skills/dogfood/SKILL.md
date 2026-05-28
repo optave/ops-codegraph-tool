@@ -493,34 +493,16 @@ Write the report to `generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md` with this 
 ### 10.1 <suggestion>
 ### 10.2 <suggestion>
 
-## 11. Standard Checklist (Executed)
+## 11. Testing Plan
 
-This is a **results section**, not a future plan. Every checkbox in the two checklists below must be ticked with a brief one-line result before the report ships. If an item could not be executed, leave it `[ ]` and explicitly state **why** on the same line (e.g. "deferred — full sweep needs ~3.5 h on this hardware"). Never ship unchecked boxes or unfilled `<result>` placeholders silently — both make the report read as if work was skipped.
+### General Testing Plan (Any Release)
+<Checklist of standard tests every release should pass>
 
-> **Important:** the checklist below ships with `- [ ]` and `<result>` placeholders. Before the report lands you must (a) replace `[ ]` with `[x]` and (b) replace the `<result>` placeholder with the actual one-line outcome. A `[x]` left next to a literal `<result>` placeholder is still considered an unchecked item.
+### Release-Specific Testing Plan (v$ARGUMENTS)
+<Focused checklist based on CHANGELOG changes>
 
-### General Checklist (Any Release) — executed this session
-- [ ] `npm install @optave/codegraph@<v>` clean, no peer-dep warnings — <result>
-- [ ] `codegraph --version` matches — <result>
-- [ ] `optionalDependencies` pinned to same `<v>` — <result>
-- [ ] `codegraph info` reports native engine, version matches — <result>
-- [ ] Cold-start: every command surfaces a graceful DB_ERROR — <result, ref §2>
-- [ ] Build (incremental & full) produces consistent counts — <result, ref §4>
-- [ ] No-op rebuild ≤ 100 ms — <result>
-- [ ] All query commands handle `--json`, `-n`, `--kind`, `--no-tests` — <result>
-- [ ] MCP `tools/list` returns expected tool count (single-repo and `--multi-repo`); compare against the previous release's count — <result, e.g. "34 / 35, unchanged from v$PREV">
-- [ ] Programmatic API import surface unchanged from prior release — <result>
-- [ ] Engine parity within 5% on nodes/edges — <result, ref §5>
-- [ ] Native ≥ 3× faster than WASM on full builds — <result, ref §8>
-- [ ] Watch lifecycle: start → modify → Ctrl+C clean — <result>
-
-### Release-Specific Checklist (v$ARGUMENTS) — see §6 for full results
-Do **not** duplicate the §6 Release-Specific Tests table here. Instead, give a one-line summary:
-- `<N> / <M>` items PASS
-- List any deferred / failing items with reason (e.g. "embedding benchmark full sweep deferred — see §8")
-
-### Proposed Additional Tests (forward-looking)
-Ideas from Phase 6 for **future** dogfood sessions or CI tests to add — these are suggestions, not unchecked work from this session. Make this clear in the prose so readers don't misread it as skipped scope.
+### Proposed Additional Tests
+<Tests you thought of in Phase 6 that should be added to future dogfooding>
 
 ## 12. Overall Assessment
 <Summary paragraph>
@@ -569,7 +551,6 @@ The dogfood report **must** be committed to the repository — do not leave it a
 - Report the raw truth. A dogfood report that finds 0 bugs is suspicious.
 - Include exact command invocations and outputs for any bugs found.
 - The report should be useful to a developer who wasn't in the session.
-- **No unchecked boxes or unfilled `<result>` placeholders at ship time.** §11 is a results section: every `- [ ]` must be flipped to `- [x]` *and* its `<result>` placeholder replaced with the actual one-line outcome, or explicitly marked deferred with a reason. Before the report lands, grep the report for both `- [ ]` and `<result>` — any hit is a blocker. The previous template had a §11 "Release-Specific Testing Plan" that duplicated §6 — keep §6 as the canonical results table and have §11's release-specific subsection point to it. Reports with rows of unchecked boxes alongside a ✓-filled §6 mislead readers into thinking work was skipped.
 
 ## Self-Improvement
 

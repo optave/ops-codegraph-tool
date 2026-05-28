@@ -549,120 +549,161 @@ pub fn build_import_edges(
     );
 
     let mut edges = Vec::new();
-
+    let normalized_root = root_dir.replace('\\', "/");
     for file_input in &files {
-        let abs_file = format!("{}/{}", root_dir.replace('\\', "/"), file_input.file);
-
+        let abs_file = format!("{normalized_root}/{}", file_input.file);
         for imp in &file_input.imports {
-            // Barrel-only files: only emit reexport edges
-            if file_input.is_barrel_only && !imp.reexport {
-                continue;
-            }
+            process_single_import(&mut edges, file_input, imp, &abs_file, &ctx);
+        }
+    }
+    edges
+}
 
-            // Look up resolved path
-            let resolve_key = format!("{}|{}", abs_file, imp.source);
-            let resolved_path = match ctx.resolved.get(resolve_key.as_str()) {
-                Some(p) => *p,
-                None => continue,
-            };
+// ── build_import_edges helpers ──────────────────────────────────────────
 
-            // Look up target file node ID
-            let target_node_id = match ctx.file_node_map.get(resolved_path) {
-                Some(id) => *id,
-                None => continue,
-            };
+/// Strip a `"* as "` / `"*\tas "` prefix from an import name so the bare
+/// symbol can be looked up against the target's exports. JS equivalent:
+/// `name.replace(/^\*\s+as\s+/, '')`.
+fn strip_star_as_prefix(name: &str) -> &str {
+    if name.starts_with("* as ") || name.starts_with("*\tas ") {
+        &name[5..]
+    } else {
+        name
+    }
+}
 
-            // Determine edge kind
-            let edge_kind = if imp.reexport {
-                "reexports"
-            } else if imp.type_only {
-                "imports-type"
-            } else if imp.dynamic_import {
-                "dynamic-imports"
-            } else {
-                "imports"
-            };
+/// Classify an import into its edge kind: reexports / imports-type /
+/// dynamic-imports / imports. Mirrors the JS classifier in `build-edges.ts`.
+fn classify_import_edge_kind(imp: &ImportInfo) -> &'static str {
+    if imp.reexport {
+        "reexports"
+    } else if imp.type_only {
+        "imports-type"
+    } else if imp.dynamic_import {
+        "dynamic-imports"
+    } else {
+        "imports"
+    }
+}
 
+/// For a `type` import targeting a barrel or resolved file, emit one
+/// symbol-level `imports-type` edge per named symbol so the target symbols
+/// receive fan-in credit and aren't misclassified as dead code.
+fn emit_type_only_symbol_edges(
+    edges: &mut Vec<ComputedEdge>,
+    file_input: &ImportEdgeFileInput,
+    imp: &ImportInfo,
+    resolved_path: &str,
+    ctx: &ImportEdgeContext,
+) {
+    if !imp.type_only || ctx.symbol_node_map.is_empty() {
+        return;
+    }
+    for name in &imp.names {
+        let clean_name = strip_star_as_prefix(name);
+        let barrel_target = if ctx.barrel_set.contains(resolved_path) {
+            let mut visited = HashSet::new();
+            barrel_resolution::resolve_barrel_export(ctx, resolved_path, clean_name, &mut visited)
+        } else {
+            None
+        };
+        let sym_id = barrel_target
+            .as_deref()
+            .and_then(|f| ctx.symbol_node_map.get(&(clean_name, f)))
+            .or_else(|| ctx.symbol_node_map.get(&(clean_name, resolved_path)));
+        if let Some(&id) = sym_id {
             edges.push(ComputedEdge {
                 source_id: file_input.file_node_id,
-                target_id: target_node_id,
-                kind: edge_kind.to_string(),
+                target_id: id,
+                kind: "imports-type".to_string(),
                 confidence: 1.0,
                 dynamic: 0,
             });
-
-            // Type-only imports: create symbol-level edges so the target symbols
-            // get fan-in credit and aren't falsely classified as dead code.
-            if imp.type_only && !ctx.symbol_node_map.is_empty() {
-                for name in &imp.names {
-                    let clean_name = if name.starts_with("* as ") || name.starts_with("*\tas ") {
-                        &name[5..]
-                    } else {
-                        name.as_str()
-                    };
-                    // Try barrel resolution first, then fall back to the resolved path
-                    let barrel_target = if ctx.barrel_set.contains(resolved_path) {
-                        let mut visited = HashSet::new();
-                        barrel_resolution::resolve_barrel_export(&ctx, resolved_path, clean_name, &mut visited)
-                    } else {
-                        None
-                    };
-                    let sym_id = barrel_target
-                        .as_deref()
-                        .and_then(|f| ctx.symbol_node_map.get(&(clean_name, f)))
-                        .or_else(|| ctx.symbol_node_map.get(&(clean_name, resolved_path)));
-                    if let Some(&id) = sym_id {
-                        edges.push(ComputedEdge {
-                            source_id: file_input.file_node_id,
-                            target_id: id,
-                            kind: "imports-type".to_string(),
-                            confidence: 1.0,
-                            dynamic: 0,
-                        });
-                    }
-                }
-            }
-
-            // Barrel resolution: if not reexport and target is a barrel file
-            if !imp.reexport && ctx.barrel_set.contains(resolved_path) {
-                let mut resolved_sources: HashSet<String> = HashSet::new();
-                for name in &imp.names {
-                    let clean_name = if name.starts_with("* as ") || name.starts_with("*\tas ") {
-                        // Strip "* as " or "*\tas " prefix (both exactly 5 bytes)
-                        // JS equivalent: name.replace(/^\*\s+as\s+/, '')
-                        &name[5..]
-                    } else {
-                        name.as_str()
-                    };
-
-                    let mut visited = HashSet::new();
-                    let actual = barrel_resolution::resolve_barrel_export(&ctx, resolved_path, clean_name, &mut visited);
-
-                    if let Some(actual_source) = actual {
-                        if actual_source != resolved_path && !resolved_sources.contains(&actual_source) {
-                            if let Some(&actual_node_id) = ctx.file_node_map.get(actual_source.as_str()) {
-                                let barrel_kind = match edge_kind {
-                                    "imports-type" => "imports-type",
-                                    "dynamic-imports" => "dynamic-imports",
-                                    _ => "imports",
-                                };
-                                edges.push(ComputedEdge {
-                                    source_id: file_input.file_node_id,
-                                    target_id: actual_node_id,
-                                    kind: barrel_kind.to_string(),
-                                    confidence: 0.9,
-                                    dynamic: 0,
-                                });
-                            }
-                            resolved_sources.insert(actual_source);
-                        }
-                    }
-                }
-            }
         }
     }
+}
 
-    edges
+/// For a non-reexport import targeting a barrel file, walk the barrel
+/// chain for each named symbol and emit a barrel-through edge to the
+/// ultimate definition file. Deduplicates target files via
+/// `resolved_sources`.
+fn emit_barrel_through_edges(
+    edges: &mut Vec<ComputedEdge>,
+    file_input: &ImportEdgeFileInput,
+    imp: &ImportInfo,
+    resolved_path: &str,
+    edge_kind: &str,
+    ctx: &ImportEdgeContext,
+) {
+    if imp.reexport || !ctx.barrel_set.contains(resolved_path) {
+        return;
+    }
+    let barrel_kind = match edge_kind {
+        "imports-type" => "imports-type",
+        "dynamic-imports" => "dynamic-imports",
+        _ => "imports",
+    };
+    let mut resolved_sources: HashSet<String> = HashSet::new();
+    for name in &imp.names {
+        let clean_name = strip_star_as_prefix(name);
+        let mut visited = HashSet::new();
+        let actual = barrel_resolution::resolve_barrel_export(
+            ctx,
+            resolved_path,
+            clean_name,
+            &mut visited,
+        );
+        let actual_source = match actual {
+            Some(s) => s,
+            None => continue,
+        };
+        if actual_source == resolved_path || resolved_sources.contains(&actual_source) {
+            continue;
+        }
+        if let Some(&actual_node_id) = ctx.file_node_map.get(actual_source.as_str()) {
+            edges.push(ComputedEdge {
+                source_id: file_input.file_node_id,
+                target_id: actual_node_id,
+                kind: barrel_kind.to_string(),
+                confidence: 0.9,
+                dynamic: 0,
+            });
+        }
+        resolved_sources.insert(actual_source);
+    }
+}
+
+/// Process a single import from a file, emitting the primary file-to-file
+/// edge plus any type-symbol and barrel-through edges.
+fn process_single_import(
+    edges: &mut Vec<ComputedEdge>,
+    file_input: &ImportEdgeFileInput,
+    imp: &ImportInfo,
+    abs_file: &str,
+    ctx: &ImportEdgeContext,
+) {
+    if file_input.is_barrel_only && !imp.reexport {
+        return;
+    }
+    let resolve_key = format!("{abs_file}|{}", imp.source);
+    let resolved_path = match ctx.resolved.get(resolve_key.as_str()) {
+        Some(p) => *p,
+        None => return,
+    };
+    let target_node_id = match ctx.file_node_map.get(resolved_path) {
+        Some(id) => *id,
+        None => return,
+    };
+    let edge_kind = classify_import_edge_kind(imp);
+    edges.push(ComputedEdge {
+        source_id: file_input.file_node_id,
+        target_id: target_node_id,
+        kind: edge_kind.to_string(),
+        confidence: 1.0,
+        dynamic: 0,
+    });
+    emit_type_only_symbol_edges(edges, file_input, imp, resolved_path, ctx);
+    emit_barrel_through_edges(edges, file_input, imp, resolved_path, edge_kind, ctx);
 }
 
 #[cfg(test)]

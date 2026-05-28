@@ -1,5 +1,13 @@
 import type { ExtractorOutput, SubDeclaration, TreeSitterNode, TreeSitterTree } from '../types.js';
-import { findChild, nodeEndLine } from './helpers.js';
+import {
+  findChild,
+  findFirstChildOfTypes,
+  nodeEndLine,
+  nodeStartLine,
+  pushCall,
+  pushImport,
+  stripQuotes,
+} from './helpers.js';
 
 /**
  * Extract symbols from R files.
@@ -58,7 +66,7 @@ function handleBinaryOp(node: TreeSitterNode, ctx: ExtractorOutput): void {
     ctx.definitions.push({
       name: lhs.text,
       kind: 'function',
-      line: node.startPosition.row + 1,
+      line: nodeStartLine(node),
       endLine: nodeEndLine(node),
       children: params.length > 0 ? params : undefined,
     });
@@ -68,7 +76,7 @@ function handleBinaryOp(node: TreeSitterNode, ctx: ExtractorOutput): void {
       ctx.definitions.push({
         name: lhs.text,
         kind: 'variable',
-        line: node.startPosition.row + 1,
+        line: nodeStartLine(node),
         endLine: nodeEndLine(node),
       });
     }
@@ -87,14 +95,14 @@ function extractRParams(funcDef: TreeSitterNode): SubDeclaration[] {
       // parameter node has name and possibly default value
       const nameNode = child.childForFieldName('name') || findChild(child, 'identifier');
       if (nameNode) {
-        params.push({ name: nameNode.text, kind: 'parameter', line: child.startPosition.row + 1 });
+        params.push({ name: nameNode.text, kind: 'parameter', line: nodeStartLine(child) });
       } else if (child.text && child.text !== ',' && child.text !== '(' && child.text !== ')') {
         // Some grammars have the param as plain text
-        params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
+        params.push({ name: child.text, kind: 'parameter', line: nodeStartLine(child) });
       }
     }
     if (child.type === 'identifier') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
+      params.push({ name: child.text, kind: 'parameter', line: nodeStartLine(child) });
     }
   }
   return params;
@@ -137,15 +145,13 @@ function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
   // Regular call
   if (funcNode.type === 'identifier') {
-    ctx.calls.push({ name: funcName, line: node.startPosition.row + 1 });
+    pushCall(ctx, node, funcName);
   } else if (funcNode.type === 'namespace_operator') {
     // pkg::func
     const parts = funcName.split('::');
     if (parts.length >= 2) {
-      ctx.calls.push({
-        name: parts[parts.length - 1]!,
+      pushCall(ctx, node, parts[parts.length - 1]!, {
         receiver: parts.slice(0, -1).join('::'),
-        line: node.startPosition.row + 1,
       });
     }
   }
@@ -164,20 +170,12 @@ function handleLibraryCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
         const arg = child.child(j);
         if (!arg) continue;
         if (arg.type === 'identifier') {
-          ctx.imports.push({
-            source: arg.text,
-            names: [arg.text],
-            line: node.startPosition.row + 1,
-          });
+          pushImport(ctx, node, arg.text, [arg.text]);
           return;
         }
         if (arg.type === 'string' || arg.type === 'string_content') {
-          const text = arg.text.replace(/^["']|["']$/g, '');
-          ctx.imports.push({
-            source: text,
-            names: [text],
-            line: node.startPosition.row + 1,
-          });
+          const text = stripQuotes(arg.text);
+          pushImport(ctx, node, text, [text]);
           return;
         }
         // Argument might be wrapped
@@ -202,12 +200,8 @@ function handleLibraryCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
             }
           }
           if (pick) {
-            const text = pick.text.replace(/^["']|["']$/g, '');
-            ctx.imports.push({
-              source: text,
-              names: [text],
-              line: node.startPosition.row + 1,
-            });
+            const text = stripQuotes(pick.text);
+            pushImport(ctx, node, text, [text]);
             return;
           }
         }
@@ -220,11 +214,7 @@ function handleSourceCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // source() only accepts string literals — `source(varname)` is not an import.
   const path = firstStringArgument(node);
   if (path === null) return;
-  ctx.imports.push({
-    source: path,
-    names: ['source'],
-    line: node.startPosition.row + 1,
-  });
+  pushImport(ctx, node, path, ['source']);
 }
 
 function handleSetClass(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -233,7 +223,7 @@ function handleSetClass(node: TreeSitterNode, ctx: ExtractorOutput): void {
   ctx.definitions.push({
     name,
     kind: 'class',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
 }
@@ -244,7 +234,7 @@ function handleSetGeneric(node: TreeSitterNode, ctx: ExtractorOutput): void {
   ctx.definitions.push({
     name,
     kind: 'function',
-    line: node.startPosition.row + 1,
+    line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
 }
@@ -258,7 +248,7 @@ function handleSetGeneric(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleSetMethod(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const name = firstStringArgument(node);
   if (name === null) return;
-  ctx.calls.push({ name, line: node.startPosition.row + 1 });
+  pushCall(ctx, node, name);
 }
 
 // tree-sitter-r wraps each positional argument in an `argument` node that
@@ -266,28 +256,20 @@ function handleSetMethod(node: TreeSitterNode, ctx: ExtractorOutput): void {
 // must be unwrapped — checking `child.type === 'string'` directly misses it.
 // Mirrors `first_argument_value` in the Rust extractor for parity.
 function firstStringArgument(node: TreeSitterNode): string | null {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child || child.type !== 'arguments') continue;
-    for (let j = 0; j < child.childCount; j++) {
-      const arg = child.child(j);
-      if (!arg) continue;
-      if (arg.type === 'string') {
-        return stripQuotes(arg.text);
-      }
-      if (arg.type === 'argument') {
-        const valueNode = arg.childForFieldName('value');
-        if (valueNode && valueNode.type === 'string') return stripQuotes(valueNode.text);
-        for (let k = 0; k < arg.childCount; k++) {
-          const inner = arg.child(k);
-          if (inner && inner.type === 'string') return stripQuotes(inner.text);
-        }
-      }
+  const args = findFirstChildOfTypes(node, ['arguments']);
+  if (!args) return null;
+  for (let j = 0; j < args.childCount; j++) {
+    const arg = args.child(j);
+    if (!arg) continue;
+    if (arg.type === 'string') {
+      return stripQuotes(arg.text);
+    }
+    if (arg.type === 'argument') {
+      const valueNode = arg.childForFieldName('value');
+      if (valueNode && valueNode.type === 'string') return stripQuotes(valueNode.text);
+      const innerStr = findFirstChildOfTypes(arg, ['string']);
+      if (innerStr) return stripQuotes(innerStr.text);
     }
   }
   return null;
-}
-
-function stripQuotes(text: string): string {
-  return text.replace(/^["']|["']$/g, '');
 }

@@ -88,78 +88,118 @@ export function extractParams(
   return result;
 }
 
-/** Extract names from a rest parameter (e.g. `...args`). */
-function extractRestParamNames(node: TreeSitterNode, rules: LanguageRules): string[] {
-  const nameNode = node.childForFieldName('name');
-  if (nameNode) return [nameNode.text];
-  for (const child of node.namedChildren) {
-    if (child.type === rules.paramIdentifier) return [child.text];
-  }
-  return [];
-}
-
-/** Extract names from an object destructuring pattern (e.g. `{ a, b: c }`). */
-function extractObjectDestructNames(node: TreeSitterNode, rules: LanguageRules): string[] {
-  const names: string[] = [];
-  for (const child of node.namedChildren) {
-    if (rules.shorthandPropPattern && child.type === rules.shorthandPropPattern) {
-      names.push(child.text);
-    } else if (rules.pairPatternType && child.type === rules.pairPatternType) {
-      const value = child.childForFieldName('value');
-      if (value) names.push(...extractParamNames(value, rules));
-    } else if (rules.restParamType && child.type === rules.restParamType) {
-      names.push(...extractParamNames(child, rules));
-    }
-  }
-  return names;
-}
-
-/** Extract names from an array destructuring pattern (e.g. `[a, b]`). */
-function extractArrayDestructNames(node: TreeSitterNode, rules: LanguageRules): string[] {
-  const names: string[] = [];
-  for (const child of node.namedChildren) {
-    names.push(...extractParamNames(child, rules));
-  }
-  return names;
-}
-
 /**
- * Extract parameter names from a single parameter node.
+ * Resolve a single parameter node to either a direct list of names (base case)
+ * or a list of child nodes that still need processing. Returns `null` if the
+ * node yields nothing.
+ *
+ * This base case keeps destructuring helpers from recursing back into
+ * `extractParamNames`, breaking the 3-node mutual recursion cycle between
+ * `extractParamNames`, `extractObjectDestructNames`, and `extractArrayDestructNames`.
  */
-export function extractParamNames(node: TreeSitterNode | null, rules: LanguageRules): string[] {
-  if (!node) return [];
+function resolveParamNode(
+  node: TreeSitterNode,
+  rules: LanguageRules,
+): { names?: string[]; next?: TreeSitterNode[] } | null {
   const t = node.type;
 
   if (rules.extractParamName) {
     const result = rules.extractParamName(node);
-    if (result) return result;
+    if (result) return { names: result };
   }
 
-  if (t === rules.paramIdentifier) return [node.text];
+  if (t === rules.paramIdentifier) return { names: [node.text] };
 
   if (rules.paramWrapperTypes.has(t)) {
     const pattern = node.childForFieldName('pattern') || node.childForFieldName('name');
-    return pattern ? extractParamNames(pattern, rules) : [];
+    return pattern ? { next: [pattern] } : null;
   }
 
   if (rules.defaultParamType && t === rules.defaultParamType) {
     const left = node.childForFieldName('left') || node.childForFieldName('name');
-    return left ? extractParamNames(left, rules) : [];
+    return left ? { next: [left] } : null;
   }
 
   if (rules.restParamType && t === rules.restParamType) {
-    return extractRestParamNames(node, rules);
+    const nameNode = node.childForFieldName('name');
+    if (nameNode) return { names: [nameNode.text] };
+    for (const child of node.namedChildren) {
+      if (child.type === rules.paramIdentifier) return { names: [child.text] };
+    }
+    return null;
   }
 
   if (rules.objectDestructType && t === rules.objectDestructType) {
-    return extractObjectDestructNames(node, rules);
+    return { next: collectObjectDestructChildren(node, rules) };
   }
 
   if (rules.arrayDestructType && t === rules.arrayDestructType) {
-    return extractArrayDestructNames(node, rules);
+    return { next: [...node.namedChildren] };
   }
 
-  return [];
+  return null;
+}
+
+/**
+ * Collect child nodes from an object destructuring pattern that should be
+ * processed for further name extraction. Returns nodes (not names) so the
+ * caller drives traversal via a worklist instead of recursion.
+ */
+function collectObjectDestructChildren(
+  node: TreeSitterNode,
+  rules: LanguageRules,
+): TreeSitterNode[] {
+  const next: TreeSitterNode[] = [];
+  for (const child of node.namedChildren) {
+    if (rules.shorthandPropPattern && child.type === rules.shorthandPropPattern) {
+      // Shorthand prop is a direct identifier — handled by the shorthand
+      // guard in the `extractParamNames` worklist loop (before `resolveParamNode`).
+      next.push(child);
+    } else if (rules.pairPatternType && child.type === rules.pairPatternType) {
+      const value = child.childForFieldName('value');
+      if (value) next.push(value);
+    } else if (rules.restParamType && child.type === rules.restParamType) {
+      next.push(child);
+    }
+  }
+  return next;
+}
+
+/**
+ * Extract parameter names from a single parameter node.
+ *
+ * Uses an iterative worklist to handle nested destructuring (objects, arrays,
+ * defaults, rest, wrappers) without mutual recursion through helper functions.
+ */
+export function extractParamNames(node: TreeSitterNode | null, rules: LanguageRules): string[] {
+  if (!node) return [];
+
+  const names: string[] = [];
+  const stack: TreeSitterNode[] = [node];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    // Shorthand identifier inside an object destructuring is just the node's text.
+    if (rules.shorthandPropPattern && current.type === rules.shorthandPropPattern) {
+      names.push(current.text);
+      continue;
+    }
+
+    const resolved = resolveParamNode(current, rules);
+    if (!resolved) continue;
+    if (resolved.names) names.push(...resolved.names);
+    if (resolved.next) {
+      // Push in reverse so traversal order matches the previous recursive order.
+      for (let i = resolved.next.length - 1; i >= 0; i--) {
+        const child = resolved.next[i];
+        if (child) stack.push(child);
+      }
+    }
+  }
+
+  return names;
 }
 
 /**

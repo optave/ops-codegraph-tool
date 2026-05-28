@@ -226,11 +226,7 @@ fn handle_at_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         .or_else(|| find_child(node, "identifier"));
     if let Some(m) = module_node {
         let name = node_text(&m, source).to_string();
-        symbols.imports.push(Import::new(
-            name.clone(),
-            vec![name],
-            start_line(node),
-        ));
+        push_import(symbols, node, name.clone(), vec![name], |_| {});
     }
 }
 
@@ -329,14 +325,7 @@ fn handle_c_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         (node_text(&fn_node, source).to_string(), None)
     };
 
-    if !name.is_empty() {
-        symbols.calls.push(Call {
-            name,
-            line: start_line(node),
-            dynamic: None,
-            receiver,
-        });
-    }
+    push_call(symbols, node, name, receiver, None);
 }
 
 /// `[receiver selector:arg ...]` message send. The grammar gives every
@@ -347,16 +336,7 @@ fn handle_message_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         .map(|n| node_text(&n, source).to_string());
 
     let selector = build_message_selector(node, source);
-    if selector.is_empty() {
-        return;
-    }
-
-    symbols.calls.push(Call {
-        name: selector,
-        line: start_line(node),
-        dynamic: None,
-        receiver,
-    });
+    push_call(symbols, node, selector, receiver, None);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

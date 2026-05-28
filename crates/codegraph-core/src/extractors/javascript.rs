@@ -61,11 +61,7 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                     // Type annotation: confidence 0.9
                     if let Some(type_anno) = find_child(node, "type_annotation") {
                         if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
-                            symbols.type_map.push(TypeMapEntry {
-                                name: var_name.to_string(),
-                                type_name: type_name.to_string(),
-                                confidence: 0.9,
-                            });
+                            push_type_map_entry(symbols, var_name.to_string(), type_name.to_string());
                         }
                     }
                     // Constructor: confidence 1.0 (overrides annotation in edge builder)
@@ -91,11 +87,11 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                 if name_node.kind() == "identifier" {
                     if let Some(type_anno) = find_child(node, "type_annotation") {
                         if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
-                            symbols.type_map.push(TypeMapEntry {
-                                name: node_text(&name_node, source).to_string(),
-                                type_name: type_name.to_string(),
-                                confidence: 0.9,
-                            });
+                            push_type_map_entry(
+                                symbols,
+                                node_text(&name_node, source).to_string(),
+                                type_name.to_string(),
+                            );
                         }
                     }
                 }
@@ -333,12 +329,7 @@ fn handle_new_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(ctor) = ctor else { return };
     match ctor.kind() {
         "identifier" => {
-            symbols.calls.push(Call {
-                name: node_text(&ctor, source).to_string(),
-                line: start_line(node),
-                dynamic: None,
-                receiver: None,
-            });
+            push_simple_call(symbols, node, node_text(&ctor, source).to_string());
         }
         "member_expression" => {
             if let Some(call_info) = extract_call_info(&ctor, node, source) {
