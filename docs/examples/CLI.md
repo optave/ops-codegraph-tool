@@ -705,11 +705,11 @@ codegraph models
 ```
 Available embedding models:
 
-  minilm        384d  256 ctx   Smallest, fastest (~23MB). General text. (default)
+  minilm        384d  256 ctx   Smallest, fastest (~23MB). General text.
   jina-small    512d  8192 ctx  Small, good quality (~33MB). General text.
   jina-base     768d  8192 ctx  Good quality (~137MB). General text, 8192 token context.
   jina-code     768d  8192 ctx  Code-aware (~137MB). Trained on code+text, best for code search.
-  nomic         768d  8192 ctx  Good local quality (~137MB). 8192 context.
+  nomic         768d  8192 ctx  Good local quality (~137MB). 8192 context. (default)
   nomic-v1.5    768d  8192 ctx  Matryoshka MRL trained (~137MB). 8192 context. Codegraph stores full 768d (no truncation); v1 scores higher on our benchmark.
   bge-large    1024d  512 ctx   Best general retrieval (~335MB). Top MTEB scores.
   mxbai-xsmall  384d  4096 ctx  Tiny model with long context (~50MB). 4096 ctx.
