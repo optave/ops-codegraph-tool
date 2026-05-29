@@ -30,11 +30,23 @@ Your goal: read `sync.json`, find the next incomplete execution phase, make the 
    ```
    If not in a worktree, stop: "Run `/worktree` first."
 
-2. **Sync with main:**
+2. **Sync with main (conditional):**
    ```bash
-   git fetch origin main && git merge origin/main --no-edit
+   git fetch origin main
+   behind=$(git rev-list HEAD..origin/main --count)
    ```
-   If there are merge conflicts, stop: "Merge conflict detected. Resolve conflicts and re-run `/titan-forge`."
+   - If `behind == 0` → already up to date, skip the merge entirely and print "Already up to date with origin/main."
+   - If `behind > 0` → merge:
+     ```bash
+     git merge origin/main --no-edit
+     ```
+     If there are merge conflicts, stop: "Merge conflict detected. Resolve conflicts and re-run `/titan-forge`."
+
+     After a successful merge, run a **duplicate-commit check** to detect re-applied work:
+     ```bash
+     git log origin/main..HEAD --no-merges --format="%s" | sort | uniq -d
+     ```
+     If any subjects are duplicated, print a warning listing them: "WARNING: Duplicate commit subjects found after merge — prior work may have been re-applied. Step 5 will auto-recover completed targets from git log so they are skipped." Do not stop — proceed to Step 3.
 
 3. **Load artifacts.** Read:
    - `.codegraph/titan/sync.json` — execution plan (if missing: "Run `/titan-sync` first.")
@@ -44,22 +56,33 @@ Your goal: read `sync.json`, find the next incomplete execution phase, make the 
 
 4. **Validate state.** If `titan-state.json` has `currentPhase` other than `"sync"` and no existing `execution` block, stop: "State not ready. Run `/titan-sync` first."
 
-5. **Initialize execution state** (if first run). Add to `titan-state.json`:
+5. **Initialize execution state** (if first run). Before writing a blank `execution` block, **recover already-completed work from the branch's git log** to prevent re-doing commits that are already on the branch:
+
+   ```bash
+   git log origin/main..HEAD --no-merges --format="%s"
+   ```
+
+   Cross-reference each subject line against `sync.json → executionOrder[*].targets[*].commitMessage`. For every match, mark that target as already completed and its phase as completed if all targets in the phase matched.
+
+   Then write `titan-state.json` with the recovered state (pre-populated `completedTargets`, `completedPhases`, and `commits` from `git log origin/main..HEAD --no-merges --format="%H %s"`):
+
    ```json
    {
      "execution": {
-       "currentPhase": 1,
-       "completedPhases": [],
+       "currentPhase": <lowest incomplete phase, or 1 if none recovered>,
+       "completedPhases": [<phases where all targets matched>],
        "currentTarget": null,
-       "completedTargets": [],
+       "completedTargets": [<targets whose commit subjects appeared in git log>],
        "failedTargets": [],
-       "commits": [],
+       "commits": [<SHAs of matched commits>],
        "currentSubphase": null,
        "completedSubphases": [],
        "diffWarnings": []
      }
    }
    ```
+
+   If any targets were recovered, print: "Recovered N completed targets from branch git log — skipping re-application."
 
 6. **Determine next phase.** Use `--phase N` if provided, otherwise find the lowest phase number not in `completedPhases`.
 
