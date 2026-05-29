@@ -30,6 +30,7 @@ export interface IncrementalStmts {
   insertEdge: { run: (...params: unknown[]) => unknown };
   getNodeId: { get: (...params: unknown[]) => { id: number } | undefined };
   countNodes: { get: (...params: unknown[]) => { c: number } | undefined };
+  countEdges: { get: (...params: unknown[]) => { c: number } | undefined };
   listSymbols: { all: (...params: unknown[]) => unknown[] };
   findNodeInFile: { all: (...params: unknown[]) => unknown[] };
   findNodeByName: { all: (...params: unknown[]) => unknown[] };
@@ -40,6 +41,7 @@ interface RebuildResult {
   nodesAdded: number;
   nodesRemoved: number;
   edgesAdded: number;
+  edgesBefore: number;
   deleted?: boolean;
   event?: string;
   symbolDiff?: unknown;
@@ -515,6 +517,7 @@ function buildCallEdges(
 function buildDeletionResult(
   relPath: string,
   oldNodes: number,
+  edgesBefore: number,
   oldSymbols: unknown[],
   diffSymbols: ((old: unknown[], new_: unknown[]) => unknown) | undefined,
 ): RebuildResult {
@@ -524,6 +527,7 @@ function buildDeletionResult(
     nodesAdded: 0,
     nodesRemoved: oldNodes,
     edgesAdded: 0,
+    edgesBefore,
     deleted: true,
     event: 'deleted',
     symbolDiff,
@@ -642,6 +646,7 @@ export async function rebuildFile(
   const { diffSymbols } = options;
   const relPath = normalizePath(path.relative(rootDir, filePath));
   const oldNodes = stmts.countNodes.get(relPath)?.c || 0;
+  const edgesBefore = stmts.countEdges.get(relPath)?.c || 0;
   const oldSymbols: unknown[] = diffSymbols ? stmts.listSymbols.all(relPath) : [];
 
   // Find reverse-deps BEFORE purging (edges still reference the old nodes)
@@ -655,7 +660,7 @@ export async function rebuildFile(
 
   if (!fs.existsSync(filePath)) {
     if (cache) (cache as { remove(p: string): void }).remove(filePath);
-    return buildDeletionResult(relPath, oldNodes, oldSymbols, diffSymbols);
+    return buildDeletionResult(relPath, oldNodes, edgesBefore, oldSymbols, diffSymbols);
   }
 
   let code: string;
@@ -676,7 +681,13 @@ export async function rebuildFile(
 
   const fileNodeRow = stmts.getNodeId.get(relPath, 'file', relPath, 0);
   if (!fileNodeRow)
-    return { file: relPath, nodesAdded: newNodes, nodesRemoved: oldNodes, edgesAdded: 0 };
+    return {
+      file: relPath,
+      nodesAdded: newNodes,
+      nodesRemoved: oldNodes,
+      edgesAdded: 0,
+      edgesBefore,
+    };
 
   let edgesAdded = rebuildEdgesForTargetFile(db, stmts, relPath, symbols, fileNodeRow, rootDir);
   edgesAdded += await runReverseDepCascade(db, rootDir, reverseDeps, stmts, engineOpts, cache);
@@ -689,6 +700,7 @@ export async function rebuildFile(
     nodesAdded: newNodes,
     nodesRemoved: oldNodes,
     edgesAdded,
+    edgesBefore,
     deleted: false,
     event,
     symbolDiff,

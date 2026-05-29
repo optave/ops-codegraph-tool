@@ -31,6 +31,9 @@ function prepareWatcherStatements(db: ReturnType<typeof openDb>): IncrementalStm
       'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)',
     ),
     countNodes: db.prepare('SELECT COUNT(*) as c FROM nodes WHERE file = ?'),
+    countEdges: db.prepare(
+      'SELECT COUNT(*) as c FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    ),
     findNodeInFile: db.prepare(
       "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant') AND file = ?",
     ),
@@ -52,6 +55,7 @@ interface RebuildResult {
   nodesAdded: number;
   nodesRemoved: number;
   edgesAdded: number;
+  edgesBefore: number;
 }
 
 /** Process a batch of pending file changes: rebuild, journal, and log. */
@@ -125,7 +129,9 @@ function logRebuildResults(updates: RebuildResult[]): void {
     if (r.deleted) {
       info(`Removed: ${r.file} (-${r.nodesRemoved} nodes)`);
     } else {
-      info(`Updated: ${r.file} (${nodeStr} nodes, +${r.edgesAdded} edges)`);
+      const edgeDelta = r.edgesAdded - r.edgesBefore;
+      const edgeStr = edgeDelta >= 0 ? `+${edgeDelta}` : `${edgeDelta}`;
+      info(`Updated: ${r.file} (${nodeStr} nodes, ${edgeStr} edges)`);
     }
   }
 }
