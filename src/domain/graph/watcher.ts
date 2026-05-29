@@ -111,7 +111,7 @@ function writeJournalAndChangeEvents(rootDir: string, updates: RebuildResult[]):
     buildChangeEvent(r.file, r.event, r.symbolDiff, {
       nodesBefore: r.nodesBefore,
       nodesAfter: r.nodesAfter,
-      edgesAdded: r.edgesAdded,
+      edgesAdded: r.edgesAdded - r.edgesBefore,
     }),
   );
   try {

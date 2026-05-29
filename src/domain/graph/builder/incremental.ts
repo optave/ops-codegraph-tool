@@ -556,24 +556,30 @@ function rebuildEdgesForTargetFile(
 
 /**
  * Re-parse the reverse-deps and delete their outgoing edges so the cascade
- * can rebuild them.
+ * can rebuild them. Returns the parsed symbols map together with the total
+ * edge count across all deps measured *before* deletion — callers add this
+ * to their own `edgesBefore` so the net delta stays correct even when the
+ * reverse-dep cascade re-inserts edges.
  */
 async function parseReverseDeps(
   db: BetterSqlite3Database,
   rootDir: string,
   reverseDeps: string[],
+  stmts: IncrementalStmts,
   engineOpts: EngineOpts,
   cache: unknown,
-): Promise<Map<string, ExtractorOutput>> {
+): Promise<{ depSymbols: Map<string, ExtractorOutput>; reverseDepsEdgesBefore: number }> {
   const depSymbols = new Map<string, ExtractorOutput>();
+  let reverseDepsEdgesBefore = 0;
   for (const depRelPath of reverseDeps) {
     const symbols_ = await parseReverseDep(rootDir, depRelPath, engineOpts, cache);
     if (symbols_) {
+      reverseDepsEdgesBefore += stmts.countEdges.get(depRelPath)?.c ?? 0;
       deleteOutgoingEdges(db, depRelPath);
       depSymbols.set(depRelPath, symbols_);
     }
   }
-  return depSymbols;
+  return { depSymbols, reverseDepsEdgesBefore };
 }
 
 /**
@@ -610,6 +616,8 @@ function emitBarrelImportEdgesForReverseDeps(
  * Two-pass reverse-dep cascade:
  *   1. Rebuild direct edges (creating `reexports` edges for barrels).
  *   2. Add barrel import edges (which need `reexports` edges to exist).
+ * Returns both the gross edges-added count and the pre-deletion edge count
+ * for all reverse deps so callers can compute a true net delta.
  */
 async function runReverseDepCascade(
   db: BetterSqlite3Database,
@@ -618,8 +626,15 @@ async function runReverseDepCascade(
   stmts: IncrementalStmts,
   engineOpts: EngineOpts,
   cache: unknown,
-): Promise<number> {
-  const depSymbols = await parseReverseDeps(db, rootDir, reverseDeps, engineOpts, cache);
+): Promise<{ edgesAdded: number; reverseDepsEdgesBefore: number }> {
+  const { depSymbols, reverseDepsEdgesBefore } = await parseReverseDeps(
+    db,
+    rootDir,
+    reverseDeps,
+    stmts,
+    engineOpts,
+    cache,
+  );
 
   let edgesAdded = 0;
   // Pass 1: direct edges only (no barrel resolution) — creates reexports edges
@@ -628,7 +643,7 @@ async function runReverseDepCascade(
   }
   // Pass 2: add barrel import edges (reexports edges now exist)
   edgesAdded += emitBarrelImportEdgesForReverseDeps(db, stmts, depSymbols, rootDir);
-  return edgesAdded;
+  return { edgesAdded, reverseDepsEdgesBefore };
 }
 
 /**
@@ -690,7 +705,19 @@ export async function rebuildFile(
     };
 
   let edgesAdded = rebuildEdgesForTargetFile(db, stmts, relPath, symbols, fileNodeRow, rootDir);
-  edgesAdded += await runReverseDepCascade(db, rootDir, reverseDeps, stmts, engineOpts, cache);
+  const { edgesAdded: cascadeEdges, reverseDepsEdgesBefore } = await runReverseDepCascade(
+    db,
+    rootDir,
+    reverseDeps,
+    stmts,
+    engineOpts,
+    cache,
+  );
+  edgesAdded += cascadeEdges;
+  // Include pre-deletion edge counts from reverse deps so the net delta
+  // (edgesAdded - edgesBefore) is correct even when the cascade re-inserts
+  // their edges unchanged.
+  const totalEdgesBefore = edgesBefore + reverseDepsEdgesBefore;
 
   const symbolDiff = diffSymbols ? diffSymbols(oldSymbols, newSymbols) : null;
   const event = oldNodes === 0 ? 'added' : 'modified';
@@ -700,7 +727,7 @@ export async function rebuildFile(
     nodesAdded: newNodes,
     nodesRemoved: oldNodes,
     edgesAdded,
-    edgesBefore,
+    edgesBefore: totalEdgesBefore,
     deleted: false,
     event,
     symbolDiff,
