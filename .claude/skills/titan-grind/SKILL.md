@@ -224,44 +224,148 @@ If any of these apply → classify as **false-positive**. Append to `.codegraph/
 {"phase":"grind","timestamp":"<ISO 8601>","severity":"bug","category":"codegraph","description":"False positive dead-code detection: <symbol> in <file> — <reason>","context":"<detection method that failed>"}
 ```
 
-### 2c. Duplicate-logic scan
+### 2c. Duplicate-logic scan (codebase-wide — mandatory)
 
-Search the codebase for inline code that duplicates what the helper does:
+> **This scan must cover the entire codebase, not just forge-touched files.** Stopping after finding the first few matches or only checking files the forge phase touched is the primary cause of redundant helpers being created in later runs. You must prove the pattern is absent elsewhere before classifying.
 
+Read the helper's source to identify its core pattern (the 2–5 token signature that distinguishes it from generic code). Then run all three of the following — not just one:
+
+**1. Semantic search** (catches renamed or restructured duplicates):
 ```bash
-codegraph query <helper-name> -T --json
+codegraph search "<describe what the helper does in plain language>" --json
+```
+**Retain these results in memory — Step 2e reuses them.** Inline-pattern matches (anonymous code inside functions) belong to Step 2c; named-function results that describe a pre-existing helper belong to Step 2e. Evaluate both in a single pass rather than issuing a second identical query later.
+
+**2. Token-level grep** across all source files (catches exact inline duplicates):
+```bash
+# Discover actual TypeScript source roots from repo layout (do not assume src/)
+node -e "
+const fs = require('fs');
+const roots = [];
+// Check tsconfig for rootDir (strip JSONC comments and trailing commas first)
+if (fs.existsSync('tsconfig.json')) {
+  try {
+    const raw = fs.readFileSync('tsconfig.json','utf8')
+      .replace(/\/\/[^\n]*/g,'')       // strip // line comments
+      .replace(/,(\s*[}\]])/g,'\$1');  // strip trailing commas
+    const tc = JSON.parse(raw);
+    if (tc.compilerOptions?.rootDir) roots.push(tc.compilerOptions.rootDir);
+  } catch {}
+}
+// Check package.json workspaces
+if (fs.existsSync('package.json')) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+    const wsGlobs = Array.isArray(pkg.workspaces) ? pkg.workspaces : (pkg.workspaces?.packages ?? []);
+    wsGlobs.forEach(w => roots.push(w.replace(/\/\*\*?.*$/, '')));
+  } catch {}
+}
+// Fall back to any top-level dir that contains TS/JS source files
+if (roots.length === 0) {
+  const srcExts = ['.ts','.tsx','.mts','.cts','.js','.jsx'];
+  fs.readdirSync('.').filter(d => {
+    try { return fs.statSync(d).isDirectory() && fs.readdirSync(d).some(f => srcExts.some(e => f.endsWith(e))); } catch { return false; }
+  }).forEach(d => roots.push(d));
+}
+console.log([...new Set(roots)].join(' ') || 'src');
+"
+# Use the discovered roots (e.g. src, packages/core, lib) — never hardcode
+grep -rn "<key-token-1>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git --exclude-dir=.cache -l
+grep -rn "<key-token-2>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git --exclude-dir=.cache -l
+# Discover Rust workspace members if applicable
+if [ -f Cargo.toml ]; then
+  cargo metadata --no-deps --format-version 1 2>/dev/null | node -e "
+    const d=[];process.stdin.on('data',c=>d.push(c));
+    process.stdin.on('end',()=>{ try { const m=JSON.parse(Buffer.concat(d));
+      // Use packages[].manifest_path to get actual source directories — workspace_members
+      // only contains names, not paths. Print one path per line for xargs to iterate.
+      const paths = (m.packages||[]).map(p => require('path').dirname(p.manifest_path));
+      const unique = [...new Set(paths)];
+      if (unique.length) { console.log(unique.join('\n')); } else { console.log('.'); }
+    } catch{} });
+  " | xargs -I{} grep -rn "<key-token>" {} --include="*.rs" --exclude-dir=target --exclude-dir=.git -l
+fi
 ```
 
-Read the helper's source to extract its key pattern. Then search for that pattern:
-
+**3. Symbol-level duplicate scan** (catches helpers with different names but identical purpose):
 ```bash
-# Use Grep with patterns derived from the helper's implementation
-# Example: if helper is toSymbolRef({ name, kind, file, line }),
-# search for the inline pattern it replaces
+# Extract 2-3 meaningful tokens from the helper name and filter dead symbols by those tokens.
+# This keeps output focused on candidates actually worth reviewing — not the full dead-symbol list.
+codegraph roles --role dead -T --json | node -e "
+const helperName = '<helper-name>';
+// Split camelCase/snake_case into tokens; take the 2-3 most distinctive (skip generic words)
+const stopWords = new Set(['get','set','is','has','to','from','by','on','of','the','a','an','format','parse','build','make','create','handle','process','run','check','with','use']);
+const tokens = helperName
+  .replace(/([a-z])([A-Z])/g,'\$1 \$2')
+  .replace(/[_-]+/g,' ')
+  .toLowerCase()
+  .split(' ')
+  .filter(t => t.length > 2 && !stopWords.has(t))
+  .slice(0, 3);
+const d=[];process.stdin.on('data',c=>d.push(c));
+process.stdin.on('end',()=>{ try {
+  const items=JSON.parse(Buffer.concat(d));
+  const candidates = items.filter(i =>
+    i.name !== helperName &&
+    tokens.some(t => i.name.toLowerCase().includes(t))
+  );
+  console.log(JSON.stringify(candidates));
+} catch { console.log('[]'); } });
+"
 ```
 
-Use `Grep` with patterns derived from the helper's implementation. Look for:
+For each file that produces a match in any of the three scans: read the matching region, confirm whether it duplicates the helper's logic, and add it to the consumer list if so. A match list of zero across all three scans is required before concluding "no duplicates found" — do not assume absence without running all three.
+
+Look for:
 - Identical multi-line patterns (e.g., object literal mappings)
-- Equivalent `.map()` callbacks that the helper could replace
+- Equivalent `.map()` / `.reduce()` callbacks the helper could replace
 - Hand-rolled loops that duplicate the helper's logic
 - Similar function signatures doing the same work in a different module
 
-### 2d. Consumer-wiring scan
+### 2d. Consumer-wiring scan (all call sites — mandatory)
 
-Check if the helper should be called by existing code that currently does the same work:
+Check if the helper should be called by existing code that currently does the same work. **This must scan the full codebase, not only files in the current forge phase.**
 
 ```bash
 codegraph fn-impact <helper-name> -T --json
+```
+
+For borderline cases where you need to confirm whether a path exists between the helper and a specific suspected consumer:
+
+```bash
 codegraph path <helper-name> <potential-consumer> -T --json
 ```
 
-If the helper wraps a common operation (error construction, AST traversal, data mapping), search for call sites of the underlying operation that could use the wrapper instead:
+If the helper wraps an underlying operation, find every call site of that underlying operation across the entire codebase:
 
 ```bash
 codegraph ast --kind call <underlying-function> -T --json
 ```
 
-### 2e. Re-export check
+The result is a list of all call sites. For each site NOT already using the helper: read the surrounding code and determine if the helper is a drop-in replacement. Add every adoptable site to the consumer list — not just the ones in forge-touched files.
+
+If the underlying operation is called in >10 files and fewer than half are in the consumer list, that is a red flag — re-run the grep and semantic search before classifying.
+
+### 2e. Pre-existing duplicate helper check
+
+Before classifying as **adopt**, **promote**, or **re-export**, check whether a semantically equivalent helper already exists elsewhere in the codebase (a different name, same purpose). This is how redundant helpers accumulate across Titan runs.
+
+**Re-use Scan 1 results from Step 2c if already completed — do not issue a second identical query.** The semantic search from Step 2c covers the same space; here you are evaluating named-function results (not inline patterns) from that result set. Only rerun if the Step 2c results were not retained:
+
+```bash
+codegraph search "<describe helper purpose>" --json
+```
+
+Evaluate the named-function results against the current helper:
+
+- **No semantically equivalent helper found** → proceed with the original classification unchanged (adopt, promote, or re-export as determined in Steps 2d–2f).
+- **Pre-existing helper found, more broadly used** → classify the new helper as **remove (redirect)**: wire consumers to the existing helper, then delete the new one. Use `redirect_to` to record the target name and `redirect_to_file` to record its file path (see persist schema below).
+- **Pre-existing helper found, narrower scope** → classify the new helper as **adopt** or **promote** (as applicable) but file an issue to consolidate later:
+  ```bash
+  gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up." --label "follow-up" || gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up."
+  ```
+
+### 2f. Re-export check
 
 If the helper is in a module with a barrel file (index.ts, mod.rs), check if it needs to be re-exported:
 
@@ -269,7 +373,7 @@ If the helper is in a module with a barrel file (index.ts, mod.rs), check if it 
 codegraph exports <barrel-file> -T --json
 ```
 
-### 2f. Classify and persist
+### 2g. Classify and persist
 
 For each grind target, assign one of:
 
@@ -284,8 +388,10 @@ For each grind target, assign one of:
 
 **Persist each classification immediately** to `.codegraph/titan/grind-targets.ndjson` (one JSON object per line, append-only):
 ```json
-{"target":"<name>","file":"<file>","phase":N,"classification":"adopt|re-export|promote|false-positive|intentionally-private|remove","reason":"<why>","consumers":["file1.ts"],"pattern":"<what to search for>","timestamp":"<ISO 8601>"}
+{"target":"<name>","file":"<file>","phase":N,"classification":"adopt|re-export|promote|false-positive|intentionally-private|remove","reason":"<why>","consumers":["file1.ts"],"pattern":"<what to search for>","redirect_to":"<existing-helper-name-or-null>","redirect_to_file":"<path/to/file-or-null>","timestamp":"<ISO 8601>"}
 ```
+
+`redirect_to` and `redirect_to_file` are only set when classification is `remove` and the removal reason is a pre-existing equivalent identified in Step 2e. `redirect_to_file` records the file path of the target helper so import rewiring is unambiguous on resume (two helpers may share a name across different modules). Leave both `null` (or omit) for ordinary removals.
 
 This ensures resume works — if interrupted, re-running loads existing entries and skips already-classified targets.
 
@@ -331,7 +437,9 @@ For each grind target classified as **adopt**, **re-export**, **promote**, or **
    - **adopt**: Replace inline duplications with calls to the helper. Add imports at each consumer. Verify semantic equivalence — the replacement must produce identical behavior.
    - **re-export**: Add the symbol to the barrel file's export list.
    - **promote**: Add `export` keyword (or `pub` visibility in Rust), add to barrel if applicable, then wire consumers as in **adopt**.
-   - **remove**: Delete the symbol. Clean up orphaned imports. Verify no consumers with `codegraph fn-impact <target> -T --json` first.
+   - **remove**: Two sub-cases based on `redirect_to` in the `grind-targets.ndjson` entry:
+     - `redirect_to` is set (Step 2e redirect case): Wire each consumer in the `consumers` list to call `redirect_to` instead of the current helper. Use `redirect_to_file` to resolve the correct import path unambiguously (update import paths and call sites). After wiring, run `codegraph fn-impact <target> -T --json` to verify no remaining consumers. If `fn-impact` still reports callsites that were **absent** from the original `consumers` list: wire those additional consumers to `redirect_to` as well and re-verify. If re-wiring is not safe (e.g. different semantics or cross-package boundary) → **DIFF FAIL** (do not delete). Only delete the helper when `fn-impact` reports zero remaining callsites.
+     - `redirect_to` is null/absent (ordinary unused removal): Verify no consumers first with `codegraph fn-impact <target> -T --json`. If consumers exist → **DIFF FAIL** (do not delete). If no consumers → delete the symbol and clean up orphaned imports.
 
 8. **Stage changed files:**
    ```bash
@@ -594,6 +702,8 @@ Run /titan-close to finalize.
 - **Gate before commit.** Every commit must pass `/titan-gate`. No exceptions.
 - **Stage only specific files.** Never `git add .` or `git add -A`.
 - **Never change control flow.** Adoptions must be semantically identical to the code they replace. If the helper does something slightly different from the inline pattern, skip it.
+- **Codebase-wide scan is mandatory.** Steps 2c and 2d must cover the entire source tree, not just forge-touched files. "No duplicates found" requires zero matches across all three scan methods (semantic search, token grep, symbol scan). Stopping early is the primary cause of redundant helpers in later runs.
+- **Check for pre-existing equivalents before adopting (Step 2e).** If a helper with the same purpose already exists elsewhere, wire consumers to it and remove the new one — don't create two helpers that do the same thing.
 - **Rollback restores graph snapshot** — `codegraph snapshot restore`, then `git restore --staged` + `git checkout --`, then `codegraph build`. Never `git reset --hard`.
 - **Persist state after every target.** Write `titan-state.json` after each commit, failure, or classification. Back up after every write. The `.ndjson` files are append-only — never rewrite them.
 - **Log false positives to issues.ndjson.** These are codegraph bugs. Close phase compiles them into the report and opens GitHub issues.
