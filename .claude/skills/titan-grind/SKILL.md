@@ -355,7 +355,7 @@ codegraph search "<describe helper purpose>" --json
 
 Evaluate the named-function results against the current helper:
 
-- **No semantically equivalent helper found** → proceed with the original classification unchanged (adopt or promote as determined in Step 2d).
+- **No semantically equivalent helper found** → proceed with the original classification unchanged (adopt, promote, or re-export as determined in Steps 2d–2f).
 - **Pre-existing helper found, more broadly used** → classify the new helper as **remove (redirect)**: wire consumers to the existing helper, then delete the new one. Use `redirect_to` to record the target (see persist schema below).
 - **Pre-existing helper found, narrower scope** → classify the new helper as **adopt** or **promote** (as applicable) but file an issue to consolidate later:
   ```bash
@@ -435,7 +435,7 @@ For each grind target classified as **adopt**, **re-export**, **promote**, or **
    - **re-export**: Add the symbol to the barrel file's export list.
    - **promote**: Add `export` keyword (or `pub` visibility in Rust), add to barrel if applicable, then wire consumers as in **adopt**.
    - **remove**: Two sub-cases based on `redirect_to` in the `grind-targets.ndjson` entry:
-     - `redirect_to` is set (Step 2e redirect case): Wire each consumer in the `consumers` list to call `redirect_to` instead of the current helper. Use `redirect_to_file` to resolve the correct import path unambiguously (update import paths and call sites), then delete the helper. Verify no remaining consumers with `codegraph fn-impact <target> -T --json` after wiring before deleting.
+     - `redirect_to` is set (Step 2e redirect case): Wire each consumer in the `consumers` list to call `redirect_to` instead of the current helper. Use `redirect_to_file` to resolve the correct import path unambiguously (update import paths and call sites). After wiring, run `codegraph fn-impact <target> -T --json` to verify no remaining consumers. If `fn-impact` still reports callsites that were **absent** from the original `consumers` list: wire those additional consumers to `redirect_to` as well and re-verify. If re-wiring is not safe (e.g. different semantics or cross-package boundary) → **DIFF FAIL** (do not delete). Only delete the helper when `fn-impact` reports zero remaining callsites.
      - `redirect_to` is null/absent (ordinary unused removal): Verify no consumers first with `codegraph fn-impact <target> -T --json`. If consumers exist → **DIFF FAIL** (do not delete). If no consumers → delete the symbol and clean up orphaned imports.
 
 8. **Stage changed files:**
