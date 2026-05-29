@@ -113,7 +113,9 @@ impl GlobCache {
 
     fn insert(&mut self, key: Vec<String>, value: Arc<GlobSet>) {
         if self.map.contains_key(&key) {
-            self.map.insert(key, value);
+            // Another thread already compiled and cached this pattern list while
+            // we were building ours. Keep the first-winner entry so all callers
+            // that received the cached Arc continue to see the same pointer.
             return;
         }
         if self.map.len() >= COMPILE_CACHE_MAX {
@@ -376,6 +378,11 @@ fn normalize_path(p: &Path) -> String {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
+
+    /// Serializes tests that read/write the global glob cache so they cannot
+    /// race each other when Rust's test harness runs them in parallel.
+    static GLOB_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn collect_finds_supported_files() {
@@ -500,6 +507,11 @@ mod tests {
         // Guards the performance optimization: long-running hosts (watch mode,
         // MCP server) must reuse the compiled GlobSet across buildGraph calls
         // instead of recompiling from scratch every time.
+        //
+        // Hold the test-level lock for the entire test so a concurrent
+        // `clear_glob_cache()` call in another cache test cannot invalidate
+        // the entry we just inserted.
+        let _guard = GLOB_CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_glob_cache();
         let patterns = vec!["src/**/*.ts".to_string(), "**/*.test.ts".to_string()];
         let first = build_glob_set(&patterns).expect("compiles");
@@ -512,6 +524,7 @@ mod tests {
 
     #[test]
     fn build_glob_set_cache_distinguishes_different_lists() {
+        let _guard = GLOB_CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_glob_cache();
         let a = build_glob_set(&["src/**/*.ts".to_string()]).expect("compiles");
         let b = build_glob_set(&["src/**/*.js".to_string()]).expect("compiles");
