@@ -242,10 +242,13 @@ codegraph search "<describe what the helper does in plain language>" --json
 node -e "
 const fs = require('fs');
 const roots = [];
-// Check tsconfig for rootDir
+// Check tsconfig for rootDir (strip JSONC comments and trailing commas first)
 if (fs.existsSync('tsconfig.json')) {
   try {
-    const tc = JSON.parse(fs.readFileSync('tsconfig.json','utf8'));
+    const raw = fs.readFileSync('tsconfig.json','utf8')
+      .replace(/\/\/[^\n]*/g,'')       // strip // line comments
+      .replace(/,(\s*[}\]])/g,'\$1');  // strip trailing commas
+    const tc = JSON.parse(raw);
     if (tc.compilerOptions?.rootDir) roots.push(tc.compilerOptions.rootDir);
   } catch {}
 }
@@ -267,8 +270,8 @@ if (roots.length === 0) {
 console.log([...new Set(roots)].join(' ') || 'src');
 "
 # Use the discovered roots (e.g. src, packages/core, lib) — never hardcode
-grep -rn "<key-token-1>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" -l
-grep -rn "<key-token-2>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" -l
+grep -rn "<key-token-1>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git --exclude-dir=.cache -l
+grep -rn "<key-token-2>" <discovered-ts-roots> --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.mts" --include="*.cts" --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git --exclude-dir=.cache -l
 # Discover Rust workspace members if applicable
 if [ -f Cargo.toml ]; then
   cargo metadata --no-deps --format-version 1 2>/dev/null | node -e "
@@ -280,7 +283,7 @@ if [ -f Cargo.toml ]; then
       const unique = [...new Set(paths)];
       if (unique.length) { console.log(unique.join('\n')); } else { console.log('.'); }
     } catch{} });
-  " | xargs -I{} grep -rn "<key-token>" {} --include="*.rs" -l
+  " | xargs -I{} grep -rn "<key-token>" {} --include="*.rs" --exclude-dir=target --exclude-dir=.git -l
 fi
 ```
 
