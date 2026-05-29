@@ -356,7 +356,7 @@ codegraph search "<describe helper purpose>" --json
 Evaluate the named-function results against the current helper:
 
 - **No semantically equivalent helper found** → proceed with the original classification unchanged (adopt, promote, or re-export as determined in Steps 2d–2f).
-- **Pre-existing helper found, more broadly used** → classify the new helper as **remove (redirect)**: wire consumers to the existing helper, then delete the new one. Use `redirect_to` to record the target (see persist schema below).
+- **Pre-existing helper found, more broadly used** → classify the new helper as **remove (redirect)**: wire consumers to the existing helper, then delete the new one. Use `redirect_to` to record the target name and `redirect_to_file` to record its file path (see persist schema below).
 - **Pre-existing helper found, narrower scope** → classify the new helper as **adopt** or **promote** (as applicable) but file an issue to consolidate later:
   ```bash
   gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up." --label "follow-up" || gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up."
