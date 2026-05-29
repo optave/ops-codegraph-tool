@@ -345,7 +345,7 @@ If the underlying operation is called in >10 files and fewer than half are in th
 
 ### 2e. Pre-existing duplicate helper check
 
-Before classifying as **adopt** or **promote**, check whether a semantically equivalent helper already exists elsewhere in the codebase (a different name, same purpose). This is how redundant helpers accumulate across Titan runs.
+Before classifying as **adopt**, **promote**, or **re-export**, check whether a semantically equivalent helper already exists elsewhere in the codebase (a different name, same purpose). This is how redundant helpers accumulate across Titan runs.
 
 **Re-use Scan 1 results from Step 2c if already completed — do not issue a second identical query.** The semantic search from Step 2c covers the same space; here you are evaluating named-function results (not inline patterns) from that result set. Only rerun if the Step 2c results were not retained:
 
@@ -359,7 +359,7 @@ Evaluate the named-function results against the current helper:
 - **Pre-existing helper found, more broadly used** → classify the new helper as **remove (redirect)**: wire consumers to the existing helper, then delete the new one. Use `redirect_to` to record the target (see persist schema below).
 - **Pre-existing helper found, narrower scope** → classify the new helper as **adopt** or **promote** (as applicable) but file an issue to consolidate later:
   ```bash
-  gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up." --label "follow-up"
+  gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up." --label "follow-up" || gh issue create --title "Consolidate duplicate helpers: <new> and <existing>" --body "Both do <purpose>. Created by forge phase N. Consolidate in a follow-up."
   ```
 
 ### 2f. Re-export check
@@ -385,10 +385,10 @@ For each grind target, assign one of:
 
 **Persist each classification immediately** to `.codegraph/titan/grind-targets.ndjson` (one JSON object per line, append-only):
 ```json
-{"target":"<name>","file":"<file>","phase":N,"classification":"adopt|re-export|promote|false-positive|intentionally-private|remove","reason":"<why>","consumers":["file1.ts"],"pattern":"<what to search for>","redirect_to":"<existing-helper-name-or-null>","timestamp":"<ISO 8601>"}
+{"target":"<name>","file":"<file>","phase":N,"classification":"adopt|re-export|promote|false-positive|intentionally-private|remove","reason":"<why>","consumers":["file1.ts"],"pattern":"<what to search for>","redirect_to":"<existing-helper-name-or-null>","redirect_to_file":"<path/to/file-or-null>","timestamp":"<ISO 8601>"}
 ```
 
-`redirect_to` is only set when classification is `remove` and the removal reason is a pre-existing equivalent identified in Step 2e. Leave `null` (or omit) for ordinary removals.
+`redirect_to` and `redirect_to_file` are only set when classification is `remove` and the removal reason is a pre-existing equivalent identified in Step 2e. `redirect_to_file` records the file path of the target helper so import rewiring is unambiguous on resume (two helpers may share a name across different modules). Leave both `null` (or omit) for ordinary removals.
 
 This ensures resume works — if interrupted, re-running loads existing entries and skips already-classified targets.
 
@@ -435,7 +435,7 @@ For each grind target classified as **adopt**, **re-export**, **promote**, or **
    - **re-export**: Add the symbol to the barrel file's export list.
    - **promote**: Add `export` keyword (or `pub` visibility in Rust), add to barrel if applicable, then wire consumers as in **adopt**.
    - **remove**: Two sub-cases based on `redirect_to` in the `grind-targets.ndjson` entry:
-     - `redirect_to` is set (Step 2e redirect case): Wire each consumer in the `consumers` list to call `redirect_to` instead of the current helper (update import paths and call sites), then delete the helper. Verify no remaining consumers with `codegraph fn-impact <target> -T --json` after wiring before deleting.
+     - `redirect_to` is set (Step 2e redirect case): Wire each consumer in the `consumers` list to call `redirect_to` instead of the current helper. Use `redirect_to_file` to resolve the correct import path unambiguously (update import paths and call sites), then delete the helper. Verify no remaining consumers with `codegraph fn-impact <target> -T --json` after wiring before deleting.
      - `redirect_to` is null/absent (ordinary unused removal): Verify no consumers first with `codegraph fn-impact <target> -T --json`. If consumers exist → **DIFF FAIL** (do not delete). If no consumers → delete the symbol and clean up orphaned imports.
 
 8. **Stage changed files:**
