@@ -69,9 +69,11 @@ This removes:
 Delete all local titan working branches. These accumulate across runs and leave orphaned commits that never reach main. The actual PR content lives on focused PR branches created by `/titan-close` — the working branches are safe to remove.
 
 ```bash
-git branch --list 'refactor/titan-*' | xargs -r git branch -D
-git branch --list 'docs/titan-*' | xargs -r git branch -D
+git branch --list 'refactor/titan-*' | xargs -r -I{} git branch -D {} || true
+git branch --list 'docs/titan-*' | xargs -r -I{} git branch -D {} || true
 ```
+
+> **Note:** `-I{}` ensures each branch is deleted individually so a failure on one (e.g. the currently checked-out worktree branch, which git refuses to delete in-place) is skipped rather than aborting the entire pipeline. The current worktree branch is cleaned up when the worktree itself is torn down.
 
 Delete from remote (best-effort — failures are non-fatal):
 ```bash
