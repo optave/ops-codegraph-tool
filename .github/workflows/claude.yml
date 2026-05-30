@@ -49,7 +49,7 @@ jobs:
 
       - name: Run Automated AI Review
         id: automated-review
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@de8e0b9c42c6cb58e904c857f164aa072244c1ac
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           model: claude-sonnet-4-6
@@ -208,7 +208,7 @@ jobs:
 
       - name: Run Interactive AI Assistant
         id: interactive-claude
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@de8e0b9c42c6cb58e904c857f164aa072244c1ac
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           model: claude-sonnet-4-6

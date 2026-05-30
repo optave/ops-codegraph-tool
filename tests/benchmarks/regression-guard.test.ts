@@ -243,6 +243,31 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   BENCHMARKS.md, which is not loaded at build time. Exempt this release;
  *   remove once 3.12.0+ data confirms stabilization under whatever runner
  *   generation is current at that time.
+ *
+ * - 3.11.1:DB bytes/file — same methodology-scope artifact as 3.10.0:DB
+ *   bytes/file. The 3.11.0 release does not have query benchmark data
+ *   committed to history, so findLatestPair falls back to 3.10.0 as the
+ *   baseline. The 3.10.0 corpus included resolution fixtures (~745 files);
+ *   3.11.1 measures only the codegraph source (~607 files) after #1134
+ *   excluded resolution fixtures from the build sweep. The denominator
+ *   shrinks while total DB content stays roughly constant, inflating
+ *   dbSizeBytes/file: native 41614 → 54107 (+30%), wasm 41543 → 53517
+ *   (+29%). No schema or extraction change; remove once 3.12.0+ data is
+ *   captured with the full 3.11.x baseline in committed query history.
+ *
+ * - 3.11.1:fnDeps depth 3 / 3.11.1:fnDeps depth 5 — same baseline-gap
+ *   root cause as 3.11.1:DB bytes/file. Because 3.11.0 query benchmark
+ *   data is absent from committed history, the guard compares 3.11.1
+ *   against the pre-3.11.0 3.10.0 baseline. The 3.10.0 query numbers
+ *   predate the steady-state established in 3.11.0 (fnDeps depth 3: 33ms,
+ *   depth 5: 33ms), so 3.11.1's equivalent values appear as regressions:
+ *     - native fnDeps depth 3: 24.3 → 34.7 (+43%)
+ *     - native fnDeps depth 5: 24.7 → 34.7 (+40%)
+ *     - wasm   fnDeps depth 3: 33   → 43.2 (+31%)
+ *     - wasm   fnDeps depth 5: 33   → 43.5 (+32%)
+ *   No fn_deps Rust implementation, fnDepsData JS wrapper, or DB index
+ *   changed between 3.10.0 and 3.11.1. Remove once 3.12.0+ data confirms
+ *   stable query numbers against a 3.11.x baseline.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
@@ -257,6 +282,9 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.0:fnDeps depth 3',
   '3.11.0:fnDeps depth 5',
   '3.11.0:Full build',
+  '3.11.1:DB bytes/file',
+  '3.11.1:fnDeps depth 3',
+  '3.11.1:fnDeps depth 5',
 ]);
 
 /**
