@@ -268,6 +268,29 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   No fn_deps Rust implementation, fnDepsData JS wrapper, or DB index
  *   changed between 3.10.0 and 3.11.1. Remove once 3.12.0+ data confirms
  *   stable query numbers against a 3.11.x baseline.
+ *
+ * - 3.11.1:No-op rebuild — CI runner noise on a sub-30ms metric (already in
+ *   NOISY_METRICS, so it gets the 50% threshold). The build-benchmark history
+ *   has no 3.11.0 entry, so 3.11.1 compares against the 3.10.0 wasm baseline
+ *   of 15ms; the publish runner measured 25ms (+67%), an absolute delta of
+ *   exactly 10ms — the MIN_ABSOLUTE_DELTA noise floor. Historical wasm no-op
+ *   values span 5–22ms across 3.0.x–3.10.0, so 25ms is one runner-jitter step
+ *   beyond the envelope, not a real slowdown. The native no-op figure did not
+ *   trip, and no incremental-build codepath changed between 3.10.0 and 3.11.1.
+ *   Same shape as 3.10.0:No-op rebuild and 3.11.0:No-op rebuild. Remove once
+ *   3.12.0+ data is captured against a committed 3.11.x build baseline.
+ *
+ * - 3.11.1:Full build — same CI runner-variance root cause as 3.11.0:Full
+ *   build, on the multi-second wasm full-build metric. The incremental history
+ *   has a 3.11.0 wasm baseline of 7664ms; the publish runner re-measured
+ *   3.11.1 at 9833ms (+28%, threshold 25%). Historical wasm full-build numbers
+ *   on this corpus span 7.2s–14.0s across 3.9.0–3.11.0 (3.9.6 was 14036ms,
+ *   3.10.0 was 8404ms), so 9.8s sits comfortably inside the runner-noise
+ *   envelope. The native full build (2263 → unchanged range) did not trip,
+ *   confirming no real extractor/builder regression — only the wasm wall-clock
+ *   on a fresh shared runner. Same shape as 3.11.0:Full build (7664 → 9765).
+ *   Remove once 3.12.0+ data confirms stabilization under the current runner
+ *   generation.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
@@ -285,6 +308,8 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.1:DB bytes/file',
   '3.11.1:fnDeps depth 3',
   '3.11.1:fnDeps depth 5',
+  '3.11.1:No-op rebuild',
+  '3.11.1:Full build',
 ]);
 
 /**
