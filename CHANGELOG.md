@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.11.1](https://github.com/optave/ops-codegraph-tool/compare/v3.11.0...v3.11.1) (2026-05-29)
+
+**Four new embedding models, sticky model resolution, and a large internal refactor.** `codegraph embed` adds `mxbai-large`, `mxbai-xsmall`, `bge-m3`, and `modernbert` to the model registry — all publicly accessible without an HF token, covering multilingual, high-quality large, tiny-with-long-context, and ModernBERT-architecture use cases. Sticky model resolution ensures that subsequent `codegraph embed` runs on an existing graph reuse the model it was originally built with rather than the global default; the default for fresh graphs shifts from `nomic-v1.5` to `nomic` (same dimensions and context window, but the public Xenova mirror instead of the occasionally-gated nomic-ai org). Watch mode delta reporting is corrected — the rebuild log now shows the net edge change instead of an inflated gross re-insertion count. Under the hood, a 10-PR refactor (Titan Grind) decomposed the largest modules — `ast-analysis`, `domain`, `graph`, `presentation`, `extractors`, and `core-rs` — into focused, independently-testable units with no user-visible behavioral changes.
+
+### Features
+
+* **embed:** add `mxbai-large`, `mxbai-xsmall`, `bge-m3`, and `modernbert` embedding models — all Apache-2.0/MIT licensed, no `HF_TOKEN` required; `bge-m3` is multilingual (100+ languages, 8192 ctx), `mxbai-large` tops the MTEB BERT-large leaderboard, `mxbai-xsmall` is tiny with 4096-token context, `modernbert` uses the ModernBERT architecture ([#1229](https://github.com/optave/ops-codegraph-tool/pull/1229))
+* **embed:** sticky model resolution — `codegraph embed` on an existing graph now reuses the model stored in `embedding_meta` rather than falling back to the global default; the default for fresh graphs changes from `nomic-v1.5` to `nomic` (same dim/context, public Xenova mirror avoids occasional HF gating) ([#1228](https://github.com/optave/ops-codegraph-tool/pull/1228))
+
+### Bug Fixes
+
+* **watch:** report net edge delta in rebuild log — previously the count was inflated by re-inserted edges that cancel out; now shows only the true net change ([#1245](https://github.com/optave/ops-codegraph-tool/pull/1245), [#1220](https://github.com/optave/ops-codegraph-tool/pull/1220))
+
+### Refactors
+
+* **ast-analysis:** decompose engine and visitors, break visitor-utils cycle ([#1231](https://github.com/optave/ops-codegraph-tool/pull/1231))
+* **extractors:** shared helpers across language extractors (TS+Rust); adopt shared child-iteration helpers ([#1230](https://github.com/optave/ops-codegraph-tool/pull/1230), [#1238](https://github.com/optave/ops-codegraph-tool/pull/1238))
+* **core-rs:** decompose pipeline, read_queries, edge_builders; collapse walker recursion ([#1232](https://github.com/optave/ops-codegraph-tool/pull/1232))
+* **graph:** decompose Leiden optimiser and roles classifier ([#1233](https://github.com/optave/ops-codegraph-tool/pull/1233))
+* **presentation:** extract shared rendering helpers in cfg and flow ([#1234](https://github.com/optave/ops-codegraph-tool/pull/1234))
+* **domain:** decompose parser, analysis, and search modules ([#1236](https://github.com/optave/ops-codegraph-tool/pull/1236))
+* **features:** decompose complexity/structure/owners; reduce cfg/cochange/feature-warnings complexity ([#1237](https://github.com/optave/ops-codegraph-tool/pull/1237))
+* **parity:** render orchestrator-drop summary as a per-extension table ([#1225](https://github.com/optave/ops-codegraph-tool/pull/1225), [#1240](https://github.com/optave/ops-codegraph-tool/pull/1240))
+
 ## [3.11.0](https://github.com/optave/ops-codegraph-tool/compare/v3.10.0...v3.11.0) (2026-05-25)
 
 **Native engine reaches feature parity with WASM, plus an engine-parity sweep across 14 languages.** The final 11 extractors (Clojure, CUDA, Julia, Solidity, Erlang, R, Groovy, Gleam, Objective-C, F#, Verilog) are now ported to Rust, so every supported language extracts symbols natively when the prebuilt binary is available — no more silent fallback to WASM for these. In parallel, a multi-PR parity sweep aligned the `contains`/parameter/inheritance edges that the two engines disagreed on across Java/Kotlin/CUDA/Ruby/Objective-C/HCL/Dart/Scala/Elixir/Haskell/Python/C#/Groovy/C++, so the native engine no longer drops parameters, function-pointer fields, default-value arguments, or interface inheritance edges that WASM was already emitting. F# `.fsi` signature files now route through a dedicated grammar instead of being parsed as `.fs` source. On the CLI, `-n` is now the short form of `--limit` on every limit-accepting command (previously only on five), `build` accepts `-d/--db`, and MCP `semantic_search` accepts `file_pattern` to scope hybrid/semantic/keyword searches to a subtree. Watch mode no longer crashes on rebuild when embeddings exist for the file, and barrel-chain re-parse discovery iterates until stable so chained re-exports stop dropping edges.
