@@ -1,6 +1,6 @@
 # Codegraph Feature Backlog
 
-**Last updated:** 2026-05-27
+**Last updated:** 2026-05-29
 **Source:** Features derived from [COMPETITIVE_ANALYSIS.md](../../generated/competitive/COMPETITIVE_ANALYSIS.md) and internal roadmap discussions.
 
 ---
