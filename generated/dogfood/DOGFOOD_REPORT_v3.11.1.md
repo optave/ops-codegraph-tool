@@ -57,7 +57,7 @@ From the build benchmark (625-file source repo):
 | Edges | 40,000 | 39,999 | — |
 | Query (avg) | 32.5 ms | 24.6 ms | 1.3× |
 
-The 1-node / 1-edge delta between engines is a pre-existing minor divergence, not introduced this release.
+The 1-node / 1-edge delta between engines is a pre-existing divergence, not introduced this release. Tracked for investigation in #1263.
 
 ## 6. Release-Specific Tests (v3.11.1)
 
@@ -103,7 +103,11 @@ Native `complexityMs` (17.9) is far **below** WASM (829.6) — confirming the na
 
 `roles` dominates the 1-file rebuild on both engines (~18–20 ms) — it always recomputes globally regardless of how little changed. Candidate for incremental scoping, but not a regression.
 
+**Why native wall-clock (79 ms) exceeds WASM (56 ms) despite faster individual phases:** the per-phase times sum to ~29 ms native vs ~44 ms WASM, yet the wall-clock total inverts. The remaining ~50 ms on the native path is FFI/IPC call overhead — each phase boundary crossing the Node.js ↔ native addon boundary adds serialisation and thread-dispatch latency. For large builds this overhead is amortised over many files (hence the 5.4× full-build speedup); for a single-file incremental payload the fixed per-call overhead dominates, making the native addon slower on small incremental payloads than the in-process WASM module. This is a known characteristic of native addons on small workloads, not a regression.
+
 ### Incremental & resolution
+
+> **Note:** The "Full build" row here (6,510 ms WASM / 1,417 ms native) is from a separate benchmark run to the per-phase Build table above (7,529 ms / 1,393 ms). Both measured the same 625-file source repo but on different runs; the ~1,000 ms WASM gap and ~24 ms native gap reflect normal run-to-run JIT and scheduling variance, not a measurement inconsistency.
 
 | Metric | WASM | Native |
 |--------|------|--------|
@@ -140,6 +144,8 @@ The watcher's `rebuildFile` reverse-dep cascade carried its **own** call resolve
 On the codegraph repo, a **comment-only** watch rebuild of a widely-imported file inflated `calls` edges by **~700**. The existing parity tests never caught it because they drive `buildGraph` (native orchestrator), which never exercises the JS watch cascade.
 
 **Fix (PR #1261, branch `fix/dogfood-incremental-call-resolution`):** ported the full-build resolution semantics into `incremental.ts` — barrel-target follow in the import-scoped branch, a shared `resolveByMethodOrGlobal` helper applying the same receiver gating + `>= 0.5` confidence filter, and per-rebuild edge dedup via a `seenCallEdges` set. Result: **exact `calls`-edge parity (10,178 / 10,178, zero duplicates)** between a watch-cascade rebuild and a clean full build on the real repo. Added regression test `tests/integration/issue-1259-watch-call-resolution.test.ts` (drives `rebuildFile` directly; fails on pre-fix code, passes after). Full suite green (2,788 passed, 11 skipped, 0 failed).
+
+> **Note on edge counts:** The parity figure (10,178 / 10,178) was measured on the fix branch at the commit validated for PR #1261. The §2 built-graph state table shows 10,192 `calls` edges because it was measured on the worktree at report time, which includes additional changes (including the #1260-related residual divergence and subsequent merges to `main`) applied after the fix-branch validation snapshot. The two counts refer to different code states and are both accurate for their respective commits.
 
 ### #1260 — Watch cascade under-rebuilds receiver/extends/dynamic-import edges (Medium) — **OPEN**
 
