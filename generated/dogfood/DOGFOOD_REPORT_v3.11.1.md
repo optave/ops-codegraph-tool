@@ -163,6 +163,7 @@ After the #1259 fix landed exact `calls` parity, a residual **±36-edge** diverg
 |-----|-------|----------|-------|
 | #1259 | watch-mode incremental cascade inflates `calls` edges (resolver divergence) | High | **Fixed** (PR #1261) |
 | #1260 | watch-mode cascade under-rebuilds receiver/extends/dynamic-import edges | Medium | Open |
+| #1263 | pre-existing 1-node / 1-edge WASM vs native full-build divergence (§5) | Low | Open |
 | PR #1261 | fix(watch): align incremental call resolver with full build | — | Open |
 
 ## 12. Overall Assessment
