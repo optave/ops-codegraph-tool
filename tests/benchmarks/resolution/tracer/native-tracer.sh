@@ -52,6 +52,7 @@ trace_c_cpp() {
 
     cp "$FIXTURE_DIR"/*."$ext" "$TMP_DIR/" 2>/dev/null || true
     cp "$FIXTURE_DIR"/*.h "$TMP_DIR/" 2>/dev/null || true
+    cp "$FIXTURE_DIR"/*.hpp "$TMP_DIR/" 2>/dev/null || true
 
     # Create instrumentation support
     cat > "$TMP_DIR/trace_support.c" <<'CTRACE'

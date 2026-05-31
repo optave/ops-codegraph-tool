@@ -29,8 +29,33 @@ fn match_ruby_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth
         "method" => handle_method(node, source, symbols),
         "singleton_method" => handle_singleton_method(node, source, symbols),
         "call" => handle_call(node, source, symbols),
+        "assignment" => handle_assignment(node, source, symbols),
         _ => {}
     }
+}
+
+/// Extract top-level constant assignments (e.g. `FOO = %w[...].freeze`).
+/// Constants inside class/module bodies are collected separately via
+/// `extract_ruby_class_children`, so only program-level assignments are handled
+/// here to mirror the WASM extractor's `handleRubyAssignment`.
+fn handle_assignment(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if node.parent().map(|p| p.kind()) != Some("program") {
+        return;
+    }
+    let Some(left) = node.child_by_field_name("left") else { return };
+    if left.kind() != "constant" {
+        return;
+    }
+    symbols.definitions.push(Definition {
+        name: node_text(&left, source).to_string(),
+        kind: "constant".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: None,
+    });
 }
 
 // ── Per-node-kind handlers for walk_node_depth ───────────────────────────────
@@ -309,4 +334,45 @@ fn extract_ruby_string_content(node: &Node, source: &[u8]) -> Option<String> {
         return Some(node_text(node, source).to_string());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tree_sitter::Parser;
+
+    fn parse_ruby(code: &str) -> FileSymbols {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_ruby::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        RubyExtractor.extract(&tree, code.as_bytes(), "test.rb")
+    }
+
+    #[test]
+    fn extracts_top_level_constant() {
+        let s = parse_ruby("SKIP_CLASSES = %w[Object Kernel BasicObject].freeze");
+        let c = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "SKIP_CLASSES")
+            .expect("top-level constant extracted");
+        assert_eq!(c.kind, "constant");
+    }
+
+    #[test]
+    fn ignores_local_variable_assignment() {
+        let s = parse_ruby("edges = []");
+        assert!(!s.definitions.iter().any(|d| d.name == "edges"));
+    }
+
+    #[test]
+    fn does_not_duplicate_class_body_constant_at_top_level() {
+        // A constant inside a class body must be collected as a class child, not
+        // as a top-level definition.
+        let s = parse_ruby("class Foo\n  BAR = 1\nend");
+        let top = s.definitions.iter().filter(|d| d.name == "BAR").count();
+        assert_eq!(top, 0, "class-body constant should not be a top-level def");
+    }
 }
