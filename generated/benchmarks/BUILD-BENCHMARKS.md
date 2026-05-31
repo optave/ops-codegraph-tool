@@ -5,8 +5,10 @@ Metrics are normalized per file for cross-version comparability.
 
 | Version | Engine | Date | Files | Build (ms/file) | Query (ms) | Nodes/file | Edges/file | DB (bytes/file) |
 |---------|--------|------|------:|----------------:|-----------:|-----------:|-----------:|----------------:|
-| 3.11.1 | native | 2026-05-30 | 625 | 3.7 ↓23% | 34.3 ↓31% | 30.9 ↑29% | 64 ↑28% | 53949 ↑30% |
-| 3.11.1 | wasm | 2026-05-30 | 625 | 18.4 ~ | 45.7 ↑22% | 30.9 ↑27% | 64 ↑26% | 53504 ↑29% |
+| 3.11.1 | native | 2026-05-30 | 625 | 3.7 ↑16% | 34.3 ↑28% | 30.9 ↑7% | 64 ↑6% | 53949 ↑4% |
+| 3.11.1 | wasm | 2026-05-30 | 625 | 18.4 ↑19% | 45.7 ↑41% | 30.9 ↑7% | 64 ↑6% | 53504 ↑4% |
+| 3.11.0 | native | 2026-05-25 | 623 | 3.2 ↓33% | 26.7 ↓46% | 29 ↑21% | 60.3 ↑20% | 51979 ↑25% |
+| 3.11.0 | wasm | 2026-05-25 | 623 | 15.4 ↓15% | 32.5 ↓14% | 29 ↑19% | 60.3 ↑19% | 51453 ↑24% |
 | 3.10.0 | native | 2026-05-11 | 745 | 4.8 ↓17% | 49.6 ↑6% | 24 ~ | 50.1 ~ | 41614 ~ |
 | 3.10.0 | wasm | 2026-05-11 | 745 | 18.1 ↓36% | 37.6 ↓12% | 24.4 ~ | 50.6 ~ | 41543 ~ |
 | 3.9.6 | native | 2026-04-30 | 744 | 5.8 ↑81% | 47 ↑60% | 24 ↓6% | 50 ↓7% | 41422 ↓7% |
@@ -119,8 +121,10 @@ Extrapolated linearly from per-file metrics above.
 
 | Version | Engine | No-op (ms) | 1-file (ms) |
 |---------|--------|----------:|-----------:|
-| 3.11.1 | native | 24 ~ | 81 ↑21% |
-| 3.11.1 | wasm | 20 ↑33% | 68 ↑33% |
+| 3.11.1 | native | 24 ↑26% | 81 ↑16% |
+| 3.11.1 | wasm | 20 ↑11% | 68 ↑28% |
+| 3.11.0 | native | 19 ↓21% | 70 ↑4% |
+| 3.11.0 | wasm | 18 ↑20% | 53 ↑4% |
 | 3.10.0 | native | 24 ↑85% | 67 ↓14% |
 | 3.10.0 | wasm | 15 ↓89% | 51 ↓25% |
 | 3.9.6 | native | 13 ↑30% | 78 ↓80% |
@@ -177,8 +181,10 @@ Extrapolated linearly from per-file metrics above.
 
 | Version | Engine | fn-deps (ms) | fn-impact (ms) | path (ms) | roles (ms) |
 |---------|--------|------------:|--------------:|----------:|----------:|
-| 3.11.1 | native | 2.5 ↑14% | 2.6 ↑18% | 2.5 ↑9% | 38.5 ↑11% |
-| 3.11.1 | wasm | 2.3 ↑10% | 2.4 ↑9% | 2.3 ↑10% | 35.4 ↑19% |
+| 3.11.1 | native | 2.5 ↑19% | 2.6 ↑24% | 2.5 ↑25% | 38.5 ↑40% |
+| 3.11.1 | wasm | 2.3 ↑28% | 2.4 ↑33% | 2.3 ↑28% | 35.4 ↑43% |
+| 3.11.0 | native | 2.1 ↓5% | 2.1 ↓5% | 2 ↓13% | 27.4 ↓21% |
+| 3.11.0 | wasm | 1.8 ↓14% | 1.8 ↓18% | 1.8 ↓14% | 24.8 ↓17% |
 | 3.10.0 | native | 2.2 ↓35% | 2.2 ↓29% | 2.3 ↓26% | 34.8 ↓6% |
 | 3.10.0 | wasm | 2.1 ↓12% | 2.2 ↓8% | 2.1 ↓5% | 29.8 ↓5% |
 | 3.9.6 | native | 3.4 ↑36% | 3.1 ↑24% | 3.1 ↑29% | 37 ↓5% |
@@ -233,6 +239,18 @@ Extrapolated linearly from per-file metrics above.
 
 <!-- NOTES_START -->
 ### Notes
+
+**Benchmark corpus reduction (v3.10.0 745 files → v3.11.0 623 files, –16%):**
+Methodology change from PR #1134, which excluded
+`tests/benchmarks/resolution/fixtures/**` from the dogfooding `buildGraph`
+sweep so heavyweight new grammars (e.g. Verilog #1107) no longer inflate
+timing. Per-file metrics (`Build ms/file`, `Query ms`, `Nodes/file`,
+`Edges/file`, `DB bytes/file`) remain comparable across versions — they're
+normalized by the file count actually measured. Absolute totals in the
+"Raw totals (latest)" block (build time, DB size, total nodes/edges) are
+scoped to the post-#1134 corpus and are **not** directly comparable to
+v3.10.0 absolute totals. The lower file count is expected and intentional.
+The corpus grew slightly from 623 (v3.11.0) to 625 (v3.11.1).
 
 **Native 1-file rebuild regression (v3.8.1 42 ms → v3.9.0 562 ms, ↑1238%):** The native incremental
 path is re-running graph-wide work on single-file rebuilds. The phase breakdown shows `structureMs`
