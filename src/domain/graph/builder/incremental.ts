@@ -449,7 +449,8 @@ function resolveCallTargets(
   if (!targets || targets.length === 0) {
     targets = stmts.findNodeInFile.all(call.name, relPath) as Array<{ id: number; file: string }>;
     if (targets.length === 0) {
-      targets = stmts.findNodeByName.all(call.name) as Array<{ id: number; file: string }>;
+      const allByName = stmts.findNodeByName.all(call.name) as Array<{ id: number; file: string }>;
+      targets = allByName.filter((n) => computeConfidence(relPath, n.file, null) >= 0.5);
     }
   }
   // Type-aware resolution: translate variable receiver to declared type
@@ -487,6 +488,7 @@ function buildCallEdges(
             ]),
           )
         : new Map();
+  const seenCallEdges = new Set<string>();
   let edgesAdded = 0;
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
@@ -501,7 +503,9 @@ function buildCallEdges(
     );
 
     for (const t of targets) {
-      if (t.id !== caller.id) {
+      const edgeKey = `${caller.id}|${t.id}`;
+      if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+        seenCallEdges.add(edgeKey);
         const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
         stmts.insertEdge.run(caller.id, t.id, 'calls', confidence, call.dynamic ? 1 : 0);
         edgesAdded++;
