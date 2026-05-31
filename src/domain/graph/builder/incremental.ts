@@ -465,7 +465,15 @@ function resolveCallTargets(
       targets = resolveByMethodOrGlobal(stmts, call, relPath, typeMap);
     }
   }
-  return { targets: targets ?? [], importedFrom };
+  const resolved = targets ?? [];
+  if (resolved.length > 1) {
+    resolved.sort((a, b) => {
+      const confA = computeConfidence(relPath, a.file, importedFrom ?? null);
+      const confB = computeConfidence(relPath, b.file, importedFrom ?? null);
+      return confB - confA;
+    });
+  }
+  return { targets: resolved, importedFrom };
 }
 
 /**
@@ -483,7 +491,7 @@ function resolveByMethodOrGlobal(
   relPath: string,
   typeMap: Map<string, unknown>,
 ): Array<{ id: number; file: string }> {
-  if (call.receiver && typeMap) {
+  if (call.receiver) {
     const typeEntry = typeMap.get(call.receiver);
     const typeName = typeEntry
       ? typeof typeEntry === 'string'
