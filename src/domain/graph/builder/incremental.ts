@@ -550,12 +550,12 @@ function buildCallEdges(
             ]),
           )
         : new Map();
-  let edgesAdded = 0;
   // Dedup within this file's rebuild, mirroring the full-build resolver's
   // `seenCallEdges` set — a single call site can resolve to the same target
   // more than once, and `insertEdge` is a plain INSERT (no OR IGNORE). Without
   // this we write duplicate `calls` rows on every rebuild (issue #1259).
   const seenCallEdges = new Set<string>();
+  let edgesAdded = 0;
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
