@@ -76,7 +76,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=22.6"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "tsc && node -e \"require('fs').writeFileSync('dist/index.cjs',require('fs').readFileSync('src/index.cjs','utf8').replaceAll('./index.ts','./index.js'))\"",
@@ -119,7 +119,7 @@
   "homepage": "https://github.com/optave/ops-codegraph-tool#readme",
   "dependencies": {
     "better-sqlite3": "^12.6.2",
-    "commander": "^14.0.3",
+    "commander": "^15.0.0",
     "web-tree-sitter": "^0.26.5"
   },
   "peerDependencies": {
