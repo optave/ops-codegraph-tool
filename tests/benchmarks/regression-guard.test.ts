@@ -64,6 +64,39 @@ const NOISY_METRIC_THRESHOLD = 0.5;
 const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild', 'fnDeps depth 1']);
 
 /**
+ * Wider regression threshold applied to *timing* metrics measured under the
+ * WASM engine (build/query/incremental tests pass `engine: 'wasm'`).
+ *
+ * Why a dedicated WASM tolerance: the WASM engine runs every build/query
+ * through the tree-sitter-wasm interpreter, so its wall-clock is 3–5× slower
+ * than native and dominated by interpreter + GC overhead. The same ±10–20ms
+ * of shared-runner jitter therefore lands as a much larger *percentage* swing
+ * than on native. Empirically, WASM timing metrics on the publish runner swing
+ * run-to-run by +27–67% on byte-identical code (No-op rebuild 15→25 = +67%,
+ * Query time 32.5→44.2 = +36%, fnDeps depth 3/5 ~+31%, Full build 7664→9833
+ * = +28%), which previously required a per-version KNOWN_REGRESSIONS entry for
+ * each metric on every release — an endless whack-a-mole.
+ *
+ * Why this is safe: the native engine shares all extraction, resolution, and
+ * query logic with WASM (the WASM path only swaps the parser/runtime), so any
+ * *real* algorithmic regression shows up on the native numbers too — and native
+ * keeps the strict 25% / 50% thresholds. Native is the canary. WASM timing only
+ * needs to catch gross WASM-specific catastrophes (the 100–220% blowups seen in
+ * v3.0.1–3.4.0), which 70% still flags, while absorbing the ≤67% shared-runner
+ * jitter. Size metrics (DB bytes/file) are engine-independent and excluded from
+ * this widening via SIZE_METRICS below — they keep the strict threshold.
+ */
+const WASM_TIMING_THRESHOLD = 0.7;
+
+/**
+ * Metric labels that measure size/count rather than wall-clock time. These are
+ * deterministic across runs (a no-op for CI jitter) and engine-independent, so
+ * they are NOT given the WASM_TIMING_THRESHOLD widening — a genuine size jump
+ * should be caught at the strict threshold regardless of engine.
+ */
+const SIZE_METRICS = new Set<string>(['DB bytes/file']);
+
+/**
  * Minimum absolute delta required before a regression is flagged.
  * Small measurements fluctuate heavily from CI runner load, GC, and
  * OS scheduling jitter — a 13ms→19ms jump is +46% but only 6ms of noise.
@@ -268,6 +301,12 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   No fn_deps Rust implementation, fnDepsData JS wrapper, or DB index
  *   changed between 3.10.0 and 3.11.1. Remove once 3.12.0+ data confirms
  *   stable query numbers against a 3.11.x baseline.
+ *
+ * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
+ * handled structurally by WASM_TIMING_THRESHOLD (see above). The 3.11.x
+ * entries that remain are kept because they trip the *native* engine too
+ * (fnDeps depth 3/5: native 24.3→34.7, 24.7→34.7) or are size metrics
+ * (DB bytes/file), neither of which the WASM widening covers.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
@@ -465,7 +504,10 @@ function checkRegression(
   return { label, current, previous, pctChange };
 }
 
-function thresholdFor(label: string): number {
+function thresholdFor(label: string, engine?: string): number {
+  // WASM timing metrics get the widest tolerance (see WASM_TIMING_THRESHOLD).
+  // Size metrics are engine-independent and excluded from the widening.
+  if (engine === 'wasm' && !SIZE_METRICS.has(label)) return WASM_TIMING_THRESHOLD;
   return NOISY_METRICS.has(label) ? NOISY_METRIC_THRESHOLD : REGRESSION_THRESHOLD;
 }
 
@@ -473,10 +515,11 @@ function assertNoRegressions(
   checks: (RegressionCheck | null)[],
   version?: string,
   baselineVersion?: string,
+  engine?: string,
 ) {
   const real = checks.filter(Boolean) as RegressionCheck[];
   const regressions = real.filter((c) => {
-    if (c.pctChange <= thresholdFor(c.label)) return false;
+    if (c.pctChange <= thresholdFor(c.label, engine)) return false;
     if (version && KNOWN_REGRESSIONS.has(`${version}:${c.label}`)) return false;
     // When `latest` is the rolling 'dev' build, KNOWN_REGRESSIONS entries
     // are anchored to the release where the regression was first observed
@@ -497,7 +540,7 @@ function assertNoRegressions(
     const details = regressions
       .map(
         (r) =>
-          `  ${r.label}: ${r.previous} → ${r.current} (+${Math.round(r.pctChange * 100)}%, threshold ${Math.round(thresholdFor(r.label) * 100)}%)`,
+          `  ${r.label}: ${r.previous} → ${r.current} (+${Math.round(r.pctChange * 100)}%, threshold ${Math.round(thresholdFor(r.label, engine) * 100)}%)`,
       )
       .join('\n');
     expect.fail(`Benchmark regressions exceed threshold:\n${details}`);
@@ -650,6 +693,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
           ],
           latest.version,
           previous.version,
+          engineKey,
         );
       });
     }
@@ -688,6 +732,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
           ],
           latest.version,
           previous.version,
+          engineKey,
         );
       });
     }
@@ -718,6 +763,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
           ],
           latest.version,
           previous.version,
+          engineKey,
         );
       });
     }
