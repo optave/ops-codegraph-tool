@@ -113,4 +113,27 @@ end`);
       expect.objectContaining({ name: 'User', implements: 'ClassMethods' }),
     );
   });
+
+  it('extracts top-level constant assignment', () => {
+    const symbols = parseRuby(`SKIP_CLASSES = %w[Foo Bar].freeze`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'SKIP_CLASSES', kind: 'constant', line: 1 }),
+    );
+  });
+
+  it('does not extract local variable assignment as a constant', () => {
+    const symbols = parseRuby(`edges = []`);
+    const constantDefs = symbols.definitions.filter((d) => d.kind === 'constant');
+    expect(constantDefs).toHaveLength(0);
+  });
+
+  it('does not extract class-body constant as a top-level definition', () => {
+    const symbols = parseRuby(`class Foo
+  BAR = 1
+end`);
+    const topLevelConstant = symbols.definitions.find(
+      (d) => d.kind === 'constant' && d.name === 'BAR',
+    );
+    expect(topLevelConstant).toBeUndefined();
+  });
 });
