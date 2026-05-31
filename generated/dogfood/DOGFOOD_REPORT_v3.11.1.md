@@ -49,6 +49,8 @@ The **full-build** path (used by `build`, both engines) is at parity on `calls` 
 
 From the build benchmark (625-file source repo):
 
+> **Note on file count:** The benchmarks in §5 and §8 report a 625-file source repo, while §2's built-graph state shows 777 files. The benchmark was run with `--no-tests` (`-T`), which excludes test files from the parse sweep. The worktree build in §2 was run without that flag, so it includes test files and other generated artefacts absent from the benchmark run. The speedup ratios apply to the filtered 625-file set; the graph-quality and edge-count metrics in §2 describe the full 777-file worktree.
+
 | Metric | WASM | Native | Native speedup |
 |--------|------|--------|----------------|
 | Full build | 7,529 ms | 1,393 ms | **5.4×** |
