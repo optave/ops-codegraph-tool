@@ -185,7 +185,7 @@ function rebuildReverseDepEdges(
     aliases,
     skipBarrel ? null : db,
   );
-  const importedNames = buildImportedNamesMap(symbols, rootDir, depRelPath, aliases);
+  const importedNames = buildImportedNamesMap(symbols, rootDir, depRelPath, aliases, db);
   edgesAdded += buildCallEdges(db, stmts, depRelPath, symbols, fileNodeRow, importedNames);
   return edgesAdded;
 }
@@ -387,6 +387,7 @@ function buildImportedNamesMap(
   rootDir: string,
   relPath: string,
   aliases: PathAliases,
+  db: BetterSqlite3Database,
 ): Map<string, string> {
   const importedNames = new Map<string, string>();
   for (const imp of symbols.imports) {
@@ -397,7 +398,17 @@ function buildImportedNamesMap(
       aliases,
     );
     for (const name of imp.names) {
-      importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      // Mirror full-build's `buildImportedNamesMap`: follow barrel re-exports so
+      // `importedNames` maps to the *defining* file, not the barrel. This ensures
+      // `computeConfidence` gets `importedFrom === targetFile` and returns 1.0
+      // instead of the cross-directory fallback (0.3).
+      let targetFile = resolvedPath;
+      if (isBarrelFile(db, resolvedPath)) {
+        const actual = resolveBarrelTarget(db, resolvedPath, cleanName);
+        if (actual) targetFile = actual;
+      }
+      importedNames.set(cleanName, targetFile);
     }
   }
   return importedNames;
@@ -500,7 +511,9 @@ function resolveByMethodOrGlobal(
       : null;
     if (typeName) {
       const qualified = `${typeName}.${call.name}`;
-      const typed = stmts.findNodeByName.all(qualified) as Array<{ id: number; file: string }>;
+      const typed = (
+        stmts.findNodeByName.all(qualified) as Array<{ id: number; file: string; kind?: string }>
+      ).filter((n) => n.kind === 'method');
       if (typed.length > 0) return typed;
     }
   }
@@ -607,7 +620,7 @@ function rebuildEdgesForTargetFile(
   let edgesAdded = buildContainmentEdges(db, stmts, relPath, symbols);
   edgesAdded += rebuildDirContainment(db, stmts, relPath);
   edgesAdded += buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeRow.id, aliases, db);
-  const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases);
+  const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases, db);
   edgesAdded += buildCallEdges(db, stmts, relPath, symbols, fileNodeRow, importedNames);
   return edgesAdded;
 }

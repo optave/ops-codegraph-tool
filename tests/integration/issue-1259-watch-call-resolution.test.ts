@@ -60,7 +60,7 @@ function readEdges(dbPath: string) {
   try {
     return db
       .prepare(
-        `SELECT n1.file AS src_file, n1.name AS src, n2.file AS tgt_file, n2.name AS tgt, e.kind
+        `SELECT n1.file AS src_file, n1.name AS src, n2.file AS tgt_file, n2.name AS tgt, e.kind, e.confidence, e.dynamic
          FROM edges e
          JOIN nodes n1 ON e.source_id = n1.id
          JOIN nodes n2 ON e.target_id = n2.id
@@ -95,7 +95,7 @@ function makeStmts(db: ReturnType<typeof openDb>) {
       "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant') AND file = ?",
     ),
     findNodeByName: db.prepare(
-      "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')",
+      "SELECT id, file, kind FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')",
     ),
     listSymbols: db.prepare("SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'"),
   };
