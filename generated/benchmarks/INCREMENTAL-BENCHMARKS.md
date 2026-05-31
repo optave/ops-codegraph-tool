@@ -6,6 +6,8 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.11.1 | native | 625 | 2.2s ~ | 18ms ↑20% | 80ms ↑25% | 6ms ↑43% | 10ms ↑27% |
+| 3.11.1 | wasm | 625 | 9.4s ↑23% | 17ms ↑13% | 62ms ↑22% | 6ms ↑43% | 10ms ↑27% |
 | 3.11.0 | native | 623 | 2.3s ↑16% | 15ms ~ | 64ms ↓3% | 4ms ↓21% | 8ms ↑22% |
 | 3.11.0 | wasm | 623 | 7.7s ↓9% | 15ms ↑15% | 51ms ~ | 4ms ↓21% | 8ms ↑22% |
 | 3.10.0 | native | 745 | 2.0s ↓34% | 15ms ↑50% | 66ms ↑22% | 5ms ↓18% | 7ms ↓38% |
@@ -61,34 +63,34 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.11.0 | **Files:** 623 | **Date:** 2026-05-25
+**Version:** 3.11.1 | **Files:** 625 | **Date:** 2026-05-30
 
 #### Native (Rust)
 
 | Metric | Value |
 |--------|------:|
-| Full build | 2.3s |
-| No-op rebuild | 15ms |
-| 1-file rebuild | 64ms |
+| Full build | 2.2s |
+| No-op rebuild | 18ms |
+| 1-file rebuild | 80ms |
 
 #### WASM
 
 | Metric | Value |
 |--------|------:|
-| Full build | 7.7s |
-| No-op rebuild | 15ms |
-| 1-file rebuild | 51ms |
+| Full build | 9.4s |
+| No-op rebuild | 17ms |
+| 1-file rebuild | 62ms |
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 989 |
-| Native batch | 4ms |
-| JS fallback | 8ms |
+| Import pairs | 1006 |
+| Native batch | 6ms |
+| JS fallback | 10ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 1.9x |
+| Speedup ratio | 1.7x |
 
 <!-- NOTES_START -->
 **Note (3.9.5):** No build/rebuild metrics for this release (both engines null) — only import resolution data was collected. Both the WASM and native workers reached the 1-file rebuild phase and then hung past the benchmark's 10-minute per-engine timeout (see `scripts/lib/fork-engine.ts`), so each was killed (`SIGKILL`) before returning results. Import resolution is unaffected because it runs in the parent process and doesn't depend on the full build. 3.9.5 is consequently absent from the top-level version-history comparison table since there are no build-time figures to compare against prior releases. The workflow run is [here](https://github.com/optave/ops-codegraph-tool/actions/runs/24863501577); the root cause will be investigated and the numbers backfilled in a follow-up if possible.
@@ -96,6 +98,60 @@ Import resolution: native batch vs JS fallback throughput.
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.11.1",
+    "date": "2026-05-30",
+    "files": 625,
+    "wasm": {
+      "fullBuildMs": 9418,
+      "noopRebuildMs": 17,
+      "oneFileRebuildMs": 62,
+      "oneFilePhases": {
+        "setupMs": 5.8,
+        "collectMs": 9.4,
+        "detectMs": 7.8,
+        "parseMs": 1.6,
+        "insertMs": 0.4,
+        "resolveMs": 0.5,
+        "edgesMs": 1.7,
+        "structureMs": 3.2,
+        "rolesMs": 26.7,
+        "astMs": 0.6,
+        "complexityMs": 0.5,
+        "cfgMs": 0.3,
+        "dataflowMs": 0.4,
+        "finalizeMs": 0.4
+      }
+    },
+    "native": {
+      "fullBuildMs": 2249,
+      "noopRebuildMs": 18,
+      "oneFileRebuildMs": 80,
+      "oneFilePhases": {
+        "setupMs": 3,
+        "collectMs": 4.8,
+        "detectMs": 2.5,
+        "parseMs": 0.3,
+        "insertMs": 0.2,
+        "resolveMs": 0.3,
+        "edgesMs": 5,
+        "structureMs": 4.6,
+        "rolesMs": 25.5,
+        "astMs": 0.2,
+        "complexityMs": 0,
+        "cfgMs": 0,
+        "dataflowMs": 0,
+        "finalizeMs": 0.5
+      }
+    },
+    "resolve": {
+      "imports": 1006,
+      "nativeBatchMs": 6,
+      "jsFallbackMs": 10,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.11.0",
     "date": "2026-05-25",
