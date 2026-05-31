@@ -260,6 +260,18 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   remove once 3.12.0+ data confirms the new steady-state on whatever
  *   runner generation is current at that time.
  *
+ * - 3.11.0:1-file rebuild — CI runner variance on a sub-100ms native
+ *   incremental metric. The 3.11.0 baseline was captured at 64ms; the
+ *   per-PR gate re-measures dev on a fresh runner and can land +45ms
+ *   higher (e.g. 64 → 109ms = +70%, threshold 50%) on runs where the
+ *   runner is under load. No incremental, Rust, or JS change in the
+ *   dev tree accounts for this delta — other dep-only PRs running
+ *   concurrently measured 64 → 80ms (+25%) on the same corpus
+ *   (run 26706695868), confirming per-runner noise rather than a
+ *   structural slowdown. The 50% NOISY_METRIC_THRESHOLD is razor-thin
+ *   for a sub-100ms metric at shared-runner noise floor (~20ms). Exempt
+ *   this release; remove once 3.12.0+ data confirms stabilization.
+ *
  * - 3.11.0:Full build — same CI runner-variance root cause as the four
  *   3.11.0 entries above, but on the multi-second WASM full-build metric
  *   rather than the sub-50ms group. Surfaced on the embedding-bench docs
@@ -318,6 +330,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:DB bytes/file',
   '3.11.0:Query time',
   '3.11.0:No-op rebuild',
+  '3.11.0:1-file rebuild',
   '3.11.0:fnDeps depth 3',
   '3.11.0:fnDeps depth 5',
   '3.11.0:Full build',
