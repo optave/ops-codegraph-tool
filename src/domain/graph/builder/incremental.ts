@@ -185,8 +185,8 @@ function rebuildReverseDepEdges(
     aliases,
     skipBarrel ? null : db,
   );
-  const importedNames = buildImportedNamesMap(symbols, rootDir, depRelPath, aliases);
-  edgesAdded += buildCallEdges(stmts, depRelPath, symbols, fileNodeRow, importedNames);
+  const importedNames = buildImportedNamesMap(symbols, rootDir, depRelPath, aliases, db);
+  edgesAdded += buildCallEdges(db, stmts, depRelPath, symbols, fileNodeRow, importedNames);
   return edgesAdded;
 }
 
@@ -387,6 +387,7 @@ function buildImportedNamesMap(
   rootDir: string,
   relPath: string,
   aliases: PathAliases,
+  db: BetterSqlite3Database,
 ): Map<string, string> {
   const importedNames = new Map<string, string>();
   for (const imp of symbols.imports) {
@@ -397,7 +398,17 @@ function buildImportedNamesMap(
       aliases,
     );
     for (const name of imp.names) {
-      importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      // Mirror full-build's `buildImportedNamesMap`: follow barrel re-exports so
+      // `importedNames` maps to the *defining* file, not the barrel. This ensures
+      // `computeConfidence` gets `importedFrom === targetFile` and returns 1.0
+      // instead of the cross-directory fallback (0.3).
+      let targetFile = resolvedPath;
+      if (isBarrelFile(db, resolvedPath)) {
+        const actual = resolveBarrelTarget(db, resolvedPath, cleanName);
+        if (actual) targetFile = actual;
+      }
+      importedNames.set(cleanName, targetFile);
     }
   }
   return importedNames;
@@ -432,6 +443,7 @@ function findCaller(
 }
 
 function resolveCallTargets(
+  db: BetterSqlite3Database,
   stmts: IncrementalStmts,
   call: ExtractorOutput['calls'][number],
   relPath: string,
@@ -445,15 +457,52 @@ function resolveCallTargets(
       id: number;
       file: string;
     }>;
+    // Follow barrel re-exports to the defining file, matching the full-build
+    // resolver — without this, calls to symbols imported through an index/barrel
+    // file resolve to nothing and the edge is dropped (issue #1259).
+    if (targets.length === 0 && isBarrelFile(db, importedFrom)) {
+      const actualSource = resolveBarrelTarget(db, importedFrom, call.name);
+      if (actualSource) {
+        targets = stmts.findNodeInFile.all(call.name, actualSource) as Array<{
+          id: number;
+          file: string;
+        }>;
+      }
+    }
   }
   if (!targets || targets.length === 0) {
     targets = stmts.findNodeInFile.all(call.name, relPath) as Array<{ id: number; file: string }>;
     if (targets.length === 0) {
-      targets = stmts.findNodeByName.all(call.name) as Array<{ id: number; file: string }>;
+      targets = resolveByMethodOrGlobal(stmts, call, relPath, typeMap);
     }
   }
-  // Type-aware resolution: translate variable receiver to declared type
-  if ((!targets || targets.length === 0) && call.receiver && typeMap) {
+  const resolved = targets ?? [];
+  if (resolved.length > 1) {
+    resolved.sort((a, b) => {
+      const confA = computeConfidence(relPath, a.file, importedFrom ?? null);
+      const confB = computeConfidence(relPath, b.file, importedFrom ?? null);
+      return confB - confA;
+    });
+  }
+  return { targets: resolved, importedFrom };
+}
+
+/**
+ * Last-resort resolution mirroring the full-build resolver
+ * (`stages/build-edges.ts`). The incremental cascade must use identical
+ * semantics or it drifts away from the full graph: a type-aware lookup for
+ * receiver calls, then an unqualified global match that is gated to
+ * receiver-less / this/self/super calls and filtered to confidence >= 0.5.
+ * Without this gate every reverse-dep rebuild fans out low-confidence edges to
+ * every same-named symbol in the graph (issue #1259).
+ */
+function resolveByMethodOrGlobal(
+  stmts: IncrementalStmts,
+  call: ExtractorOutput['calls'][number],
+  relPath: string,
+  typeMap: Map<string, unknown>,
+): Array<{ id: number; file: string }> {
+  if (call.receiver) {
     const typeEntry = typeMap.get(call.receiver);
     const typeName = typeEntry
       ? typeof typeEntry === 'string'
@@ -462,13 +511,27 @@ function resolveCallTargets(
       : null;
     if (typeName) {
       const qualified = `${typeName}.${call.name}`;
-      targets = stmts.findNodeByName.all(qualified) as Array<{ id: number; file: string }>;
+      const typed = (
+        stmts.findNodeByName.all(qualified) as Array<{ id: number; file: string; kind?: string }>
+      ).filter((n) => n.kind === 'method');
+      if (typed.length > 0) return typed;
     }
   }
-  return { targets: targets ?? [], importedFrom };
+  if (
+    !call.receiver ||
+    call.receiver === 'this' ||
+    call.receiver === 'self' ||
+    call.receiver === 'super'
+  ) {
+    return (stmts.findNodeByName.all(call.name) as Array<{ id: number; file: string }>).filter(
+      (t) => computeConfidence(relPath, t.file, null) >= 0.5,
+    );
+  }
+  return [];
 }
 
 function buildCallEdges(
+  db: BetterSqlite3Database,
   stmts: IncrementalStmts,
   relPath: string,
   symbols: ExtractorOutput,
@@ -488,11 +551,17 @@ function buildCallEdges(
           )
         : new Map();
   let edgesAdded = 0;
+  // Dedup within this file's rebuild, mirroring the full-build resolver's
+  // `seenCallEdges` set — a single call site can resolve to the same target
+  // more than once, and `insertEdge` is a plain INSERT (no OR IGNORE). Without
+  // this we write duplicate `calls` rows on every rebuild (issue #1259).
+  const seenCallEdges = new Set<string>();
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(call, symbols.definitions, relPath, stmts) || fileNodeRow;
     const { targets, importedFrom } = resolveCallTargets(
+      db,
       stmts,
       call,
       relPath,
@@ -501,7 +570,9 @@ function buildCallEdges(
     );
 
     for (const t of targets) {
-      if (t.id !== caller.id) {
+      const edgeKey = `${caller.id}|${t.id}`;
+      if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+        seenCallEdges.add(edgeKey);
         const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
         stmts.insertEdge.run(caller.id, t.id, 'calls', confidence, call.dynamic ? 1 : 0);
         edgesAdded++;
@@ -549,8 +620,8 @@ function rebuildEdgesForTargetFile(
   let edgesAdded = buildContainmentEdges(db, stmts, relPath, symbols);
   edgesAdded += rebuildDirContainment(db, stmts, relPath);
   edgesAdded += buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeRow.id, aliases, db);
-  const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases);
-  edgesAdded += buildCallEdges(stmts, relPath, symbols, fileNodeRow, importedNames);
+  const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases, db);
+  edgesAdded += buildCallEdges(db, stmts, relPath, symbols, fileNodeRow, importedNames);
   return edgesAdded;
 }
 
