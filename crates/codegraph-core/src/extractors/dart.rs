@@ -18,7 +18,10 @@ impl SymbolExtractor for DartExtractor {
 
 fn match_dart_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "class_definition" => handle_dart_class(node, source, symbols),
+        // tree-sitter-dart 0.0.4 uses `class_definition`; 0.2 renamed it to
+        // `class_declaration`. Accept both so the extractor works across crate
+        // versions and during any transition period.
+        "class_definition" | "class_declaration" => handle_dart_class(node, source, symbols),
         "enum_declaration" => handle_dart_enum(node, source, symbols),
         "mixin_declaration" => handle_dart_mixin(node, source, symbols),
         "extension_declaration" => handle_dart_extension(node, source, symbols),
@@ -94,19 +97,43 @@ fn handle_dart_class(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 fn extract_dart_class_methods(body: &Node, class_name: &str, source: &[u8], symbols: &mut FileSymbols) {
     for i in 0..body.child_count() {
         if let Some(member) = body.child(i) {
-            // tree-sitter-dart 0.0.4 wraps method/function signatures in a
-            // `class_member_definition` container; newer grammar versions
-            // place the signatures directly under `class_body`. Either way,
-            // search the subtree for the first `method_signature` /
-            // `function_signature` so leading anonymous nodes, metadata, or
-            // modifier keywords don't cause us to silently drop the method.
-            let sig = if member.kind() == "class_member_definition" {
-                match find_dart_signature_child(&member) {
-                    Some(s) => s,
-                    None => continue,
+            // Resolve the signature node from the various wrapper layers that
+            // different tree-sitter-dart crate versions produce:
+            //
+            // 0.0.4 — class_body → class_member_definition → method_signature
+            // 0.2   — class_body → class_member → method_declaration
+            //                                     (field "signature" → method_signature)
+            //
+            // In all cases we ultimately want the `method_signature` /
+            // `function_signature` node to extract the function name and
+            // build CFG/complexity metrics.
+            let sig = match member.kind() {
+                "class_member_definition" => {
+                    // 0.0.4 path: member wraps the signature directly
+                    match find_dart_signature_child(&member) {
+                        Some(s) => s,
+                        None => continue,
+                    }
                 }
-            } else {
-                member
+                "class_member" => {
+                    // 0.2 path: member → method_declaration (field "signature")
+                    // or member → declaration (variable/field — skip those)
+                    let method_decl = find_child(&member, "method_declaration");
+                    match method_decl {
+                        Some(md) => {
+                            // method_declaration has field "signature" → method_signature
+                            match md.child_by_field_name("signature")
+                                .or_else(|| find_dart_signature_child(&md))
+                            {
+                                Some(s) => s,
+                                None => continue,
+                            }
+                        }
+                        None => continue,
+                    }
+                }
+                // Direct signatures at the top of the class body (some grammar versions)
+                _ => member,
             };
             match sig.kind() {
                 "method_signature" | "function_signature" => {
@@ -284,7 +311,10 @@ fn is_inside_class(node: &Node) -> bool {
     let mut current = node.parent();
     while let Some(parent) = current {
         match parent.kind() {
-            "class_body" | "class_definition" | "enum_body" | "mixin_declaration" => return true,
+            // Accept both 0.0.4 (`class_definition`) and 0.2 (`class_declaration`)
+            // node names to guard function_signature extraction from top-level scope.
+            "class_body" | "class_definition" | "class_declaration"
+            | "enum_body" | "mixin_declaration" => return true,
             _ => {}
         }
         current = parent.parent();
