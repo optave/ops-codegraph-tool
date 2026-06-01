@@ -38,6 +38,12 @@ pub struct CfgRules {
     pub block_node: Option<&'static str>,
     pub block_nodes: &'static [&'static str],
     pub labeled_node: Option<&'static str>,
+    /// When set, a node of this kind appearing as a child of a block is
+    /// transparently unwrapped so its own children are treated as statements.
+    /// Required for Go ≥0.25: `block` now has a visible `statement_list`
+    /// child (old grammar used `_statement_list`, a hidden node that was
+    /// inlined directly into `block`'s named-child list).
+    pub stmt_list_node: Option<&'static str>,
 }
 
 fn matches_opt(kind: &str, opt: Option<&str>) -> bool {
@@ -83,6 +89,7 @@ pub static JS_TS_CFG: CfgRules = CfgRules {
     block_node: Some("statement_block"),
     block_nodes: &[],
     labeled_node: Some("labeled_statement"),
+    stmt_list_node: None,
 };
 
 pub static PYTHON_CFG: CfgRules = CfgRules {
@@ -118,6 +125,7 @@ pub static PYTHON_CFG: CfgRules = CfgRules {
     block_node: Some("block"),
     block_nodes: &[],
     labeled_node: None,
+    stmt_list_node: None,
 };
 
 pub static GO_CFG: CfgRules = CfgRules {
@@ -153,6 +161,9 @@ pub static GO_CFG: CfgRules = CfgRules {
     block_node: Some("block"),
     block_nodes: &[],
     labeled_node: Some("labeled_statement"),
+    // tree-sitter-go ≥0.25 wraps block statements in a visible `statement_list`
+    // node (previously `_statement_list`, a hidden node inlined into `block`).
+    stmt_list_node: Some("statement_list"),
 };
 
 pub static RUST_CFG: CfgRules = CfgRules {
@@ -188,6 +199,7 @@ pub static RUST_CFG: CfgRules = CfgRules {
     block_node: Some("block"),
     block_nodes: &[],
     labeled_node: None,
+    stmt_list_node: None,
 };
 
 pub static JAVA_CFG: CfgRules = CfgRules {
@@ -223,6 +235,7 @@ pub static JAVA_CFG: CfgRules = CfgRules {
     block_node: Some("block"),
     block_nodes: &[],
     labeled_node: Some("labeled_statement"),
+    stmt_list_node: None,
 };
 
 pub static CSHARP_CFG: CfgRules = CfgRules {
@@ -258,6 +271,7 @@ pub static CSHARP_CFG: CfgRules = CfgRules {
     block_node: Some("block"),
     block_nodes: &[],
     labeled_node: Some("labeled_statement"),
+    stmt_list_node: None,
 };
 
 pub static RUBY_CFG: CfgRules = CfgRules {
@@ -293,6 +307,7 @@ pub static RUBY_CFG: CfgRules = CfgRules {
     block_node: None,
     block_nodes: &["then", "do", "body_statement"],
     labeled_node: None,
+    stmt_list_node: None,
 };
 
 pub static PHP_CFG: CfgRules = CfgRules {
@@ -328,6 +343,7 @@ pub static PHP_CFG: CfgRules = CfgRules {
     block_node: Some("compound_statement"),
     block_nodes: &[],
     labeled_node: None,
+    stmt_list_node: None,
 };
 
 pub static C_CFG: CfgRules = CfgRules {
@@ -363,6 +379,7 @@ pub static C_CFG: CfgRules = CfgRules {
     block_node: Some("compound_statement"),
     block_nodes: &[],
     labeled_node: Some("labeled_statement"),
+    stmt_list_node: None,
 };
 
 pub static CPP_CFG: CfgRules = CfgRules {
@@ -398,6 +415,7 @@ pub static CPP_CFG: CfgRules = CfgRules {
     block_node: Some("compound_statement"),
     block_nodes: &[],
     labeled_node: Some("labeled_statement"),
+    stmt_list_node: None,
 };
 
 pub static KOTLIN_CFG: CfgRules = CfgRules {
@@ -433,6 +451,7 @@ pub static KOTLIN_CFG: CfgRules = CfgRules {
     block_node: None,
     block_nodes: &["statements"],
     labeled_node: None,
+    stmt_list_node: None,
 };
 
 pub static SWIFT_CFG: CfgRules = CfgRules {
@@ -468,6 +487,7 @@ pub static SWIFT_CFG: CfgRules = CfgRules {
     block_node: None,
     block_nodes: &["code_block", "class_body"],
     labeled_node: Some("labeled_statement"),
+    stmt_list_node: None,
 };
 
 pub static SCALA_CFG: CfgRules = CfgRules {
@@ -503,6 +523,7 @@ pub static SCALA_CFG: CfgRules = CfgRules {
     block_node: Some("block"),
     block_nodes: &["template_body"],
     labeled_node: None,
+    stmt_list_node: None,
 };
 
 pub static BASH_CFG: CfgRules = CfgRules {
@@ -538,6 +559,7 @@ pub static BASH_CFG: CfgRules = CfgRules {
     block_node: Some("compound_statement"),
     block_nodes: &[],
     labeled_node: None,
+    stmt_list_node: None,
 };
 
 /// Get CFG rules for a language ID.
@@ -648,7 +670,16 @@ impl<'a> CfgBuilder<'a> {
             let mut stmts = Vec::new();
             let cursor = &mut node.walk();
             for child in node.named_children(cursor) {
-                stmts.push(child);
+                // Transparently unwrap a visible statement-list wrapper if the
+                // language uses one (e.g. tree-sitter-go ≥0.25 `statement_list`).
+                if matches_opt(child.kind(), self.rules.stmt_list_node) {
+                    let inner_cursor = &mut child.walk();
+                    for inner in child.named_children(inner_cursor) {
+                        stmts.push(inner);
+                    }
+                } else {
+                    stmts.push(child);
+                }
             }
             return stmts;
         }

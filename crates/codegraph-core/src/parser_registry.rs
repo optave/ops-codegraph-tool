@@ -205,7 +205,7 @@ impl LanguageKind {
             Self::Bash => tree_sitter_bash::LANGUAGE.into(),
             Self::Elixir => tree_sitter_elixir::LANGUAGE.into(),
             Self::Lua => tree_sitter_lua::LANGUAGE.into(),
-            Self::Dart => tree_sitter_dart::language().into(),
+            Self::Dart => tree_sitter_dart::LANGUAGE.into(),
             Self::Zig => tree_sitter_zig::LANGUAGE.into(),
             Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
