@@ -92,7 +92,7 @@ function makeStmts(db: ReturnType<typeof openDb>) {
       'SELECT COUNT(*) as c FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
     ),
     findNodeInFile: db.prepare(
-      "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant') AND file = ?",
+      "SELECT id, kind, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant') AND file = ?",
     ),
     findNodeByName: db.prepare(
       // `kind` column included for resolveByMethodOrGlobal's method filter.
