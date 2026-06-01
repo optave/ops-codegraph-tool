@@ -21,6 +21,12 @@ import type {
 } from '../../../types.js';
 import { parseFileIncremental } from '../../parser.js';
 import { computeConfidence, resolveImportPath } from '../resolve.js';
+import {
+  type CallNodeLookup,
+  findCaller,
+  resolveCallTargets,
+  resolveReceiverEdge,
+} from './call-resolver.js';
 import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
 
 // ── Local types ─────────────────────────────────────────────────────────
@@ -428,7 +434,6 @@ type NodeWithKind = { id: number; kind: string; file: string };
 const HIERARCHY_SOURCE_KINDS = new Set(['class', 'struct', 'record', 'enum']);
 const EXTENDS_TARGET_KINDS = new Set(['class', 'struct', 'trait', 'record']);
 const IMPLEMENTS_TARGET_KINDS = new Set(['interface', 'trait', 'class']);
-const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', 'module']);
 
 function buildClassHierarchyEdges(
   stmts: IncrementalStmts,
@@ -464,118 +469,17 @@ function buildClassHierarchyEdges(
 
 // ── Call edge building ──────────────────────────────────────────────────
 
-function findCaller(
-  call: ExtractorOutput['calls'][number],
-  definitions: ExtractorOutput['definitions'],
-  relPath: string,
-  stmts: IncrementalStmts,
-): { id: number } | null {
-  let caller: { id: number } | null = null;
-  let callerSpan = Infinity;
-  for (const def of definitions) {
-    if (def.line <= call.line) {
-      const end = def.endLine || Infinity;
-      if (call.line <= end) {
-        const span = end - def.line;
-        if (span < callerSpan) {
-          const row = stmts.getNodeId.get(def.name, def.kind, relPath, def.line);
-          if (row) {
-            caller = row;
-            callerSpan = span;
-          }
-        }
-      }
-    }
-  }
-  return caller;
-}
-
-function resolveCallTargets(
-  db: BetterSqlite3Database,
-  stmts: IncrementalStmts,
-  call: ExtractorOutput['calls'][number],
-  relPath: string,
-  importedNames: Map<string, string>,
-  typeMap: Map<string, unknown>,
-): { targets: Array<{ id: number; file: string }>; importedFrom: string | undefined } {
-  const importedFrom = importedNames.get(call.name);
-  let targets: Array<{ id: number; file: string }> | undefined;
-  if (importedFrom) {
-    targets = stmts.findNodeInFile.all(call.name, importedFrom) as Array<{
-      id: number;
-      file: string;
-    }>;
-    // Follow barrel re-exports to the defining file, matching the full-build
-    // resolver — without this, calls to symbols imported through an index/barrel
-    // file resolve to nothing and the edge is dropped (issue #1259).
-    if (targets.length === 0 && isBarrelFile(db, importedFrom)) {
-      const actualSource = resolveBarrelTarget(db, importedFrom, call.name);
-      if (actualSource) {
-        targets = stmts.findNodeInFile.all(call.name, actualSource) as Array<{
-          id: number;
-          file: string;
-        }>;
-      }
-    }
-  }
-  if (!targets || targets.length === 0) {
-    targets = stmts.findNodeInFile.all(call.name, relPath) as Array<{ id: number; file: string }>;
-    if (targets.length === 0) {
-      targets = resolveByMethodOrGlobal(stmts, call, relPath, typeMap);
-    }
-  }
-  const resolved = targets ?? [];
-  if (resolved.length > 1) {
-    resolved.sort((a, b) => {
-      const confA = computeConfidence(relPath, a.file, importedFrom ?? null);
-      const confB = computeConfidence(relPath, b.file, importedFrom ?? null);
-      return confB - confA;
-    });
-  }
-  return { targets: resolved, importedFrom };
-}
-
-/**
- * Last-resort resolution mirroring the full-build resolver
- * (`stages/build-edges.ts`). The incremental cascade must use identical
- * semantics or it drifts away from the full graph: a type-aware lookup for
- * receiver calls, then an unqualified global match that is gated to
- * receiver-less / this/self/super calls and filtered to confidence >= 0.5.
- * Without this gate every reverse-dep rebuild fans out low-confidence edges to
- * every same-named symbol in the graph (issue #1259).
- */
-function resolveByMethodOrGlobal(
-  stmts: IncrementalStmts,
-  call: ExtractorOutput['calls'][number],
-  relPath: string,
-  typeMap: Map<string, unknown>,
-): Array<{ id: number; file: string }> {
-  if (call.receiver) {
-    const typeEntry = typeMap.get(call.receiver);
-    const typeName = typeEntry
-      ? typeof typeEntry === 'string'
-        ? typeEntry
-        : (typeEntry as { type?: string }).type
-      : null;
-    if (typeName) {
-      const qualified = `${typeName}.${call.name}`;
-      const typed = (
-        stmts.findNodeByName.all(qualified) as Array<{ id: number; file: string; kind?: string }>
-      ).filter((n) => n.kind === 'method');
-      if (typed.length > 0) return typed;
-    }
-  }
-  if (
-    !call.receiver ||
-    call.receiver === 'this' ||
-    call.receiver === 'self' ||
-    call.receiver === 'super'
-  ) {
-    return (stmts.findNodeByName.all(call.name) as Array<{ id: number; file: string }>).filter(
-      (t) => computeConfidence(relPath, t.file, null) >= 0.5,
-    );
-  }
-  return [];
+function makeIncrementalLookup(db: BetterSqlite3Database, stmts: IncrementalStmts): CallNodeLookup {
+  return {
+    byNameAndFile: (name, file) =>
+      stmts.findNodeInFile.all(name, file) as Array<{ id: number; file: string; kind?: string }>,
+    byName: (name) =>
+      stmts.findNodeByName.all(name) as Array<{ id: number; file: string; kind?: string }>,
+    isBarrel: (file) => isBarrelFile(db, file),
+    resolveBarrel: (barrelFile, symbolName) => resolveBarrelTarget(db, barrelFile, symbolName),
+    nodeId: (name, kind, file, line) =>
+      stmts.getNodeId.get(name, kind, file, line) as { id: number } | undefined,
+  };
 }
 
 function buildCallEdges(
@@ -598,19 +502,16 @@ function buildCallEdges(
             ]),
           )
         : new Map();
-  // Dedup within this file's rebuild, mirroring the full-build resolver's
-  // `seenCallEdges` set — a single call site can resolve to the same target
-  // more than once, and `insertEdge` is a plain INSERT (no OR IGNORE). Without
-  // this we write duplicate `calls` rows on every rebuild (issue #1259).
   const seenCallEdges = new Set<string>();
+  const lookup = makeIncrementalLookup(db, stmts);
   let edgesAdded = 0;
+
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
-    const caller = findCaller(call, symbols.definitions, relPath, stmts) || fileNodeRow;
+    const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
     const { targets, importedFrom } = resolveCallTargets(
-      db,
-      stmts,
+      lookup,
       call,
       relPath,
       importedNames,
@@ -627,7 +528,6 @@ function buildCallEdges(
       }
     }
 
-    // Receiver edge — mirrors buildReceiverEdge in build-edges.ts
     if (
       call.receiver &&
       !BUILTIN_RECEIVERS.has(call.receiver) &&
@@ -635,35 +535,17 @@ function buildCallEdges(
       call.receiver !== 'self' &&
       call.receiver !== 'super'
     ) {
-      const typeEntry = typeMap.get(call.receiver);
-      const typeName = typeEntry
-        ? typeof typeEntry === 'string'
-          ? typeEntry
-          : ((typeEntry as { type?: string }).type ?? null)
-        : null;
-      const typeConfidence =
-        typeEntry && typeof typeEntry !== 'string'
-          ? ((typeEntry as { confidence?: number }).confidence ?? null)
-          : null;
-      const effectiveReceiver = typeName || call.receiver;
-      const sameFile = (
-        stmts.findNodeInFile.all(effectiveReceiver, relPath) as NodeWithKind[]
-      ).filter((n) => RECEIVER_KINDS.has(n.kind));
-      const candidates =
-        sameFile.length > 0
-          ? sameFile
-          : (stmts.findNodeByName.all(effectiveReceiver) as NodeWithKind[]).filter((n) =>
-              RECEIVER_KINDS.has(n.kind),
-            );
-      if (candidates.length > 0) {
-        const recvTarget = candidates[0]!;
-        const recvKey = `recv|${caller.id}|${recvTarget.id}`;
-        if (!seenCallEdges.has(recvKey)) {
-          seenCallEdges.add(recvKey);
-          const confidence = typeConfidence ?? (typeName ? 0.9 : 0.7);
-          stmts.insertEdge.run(caller.id, recvTarget.id, 'receiver', confidence, 0);
-          edgesAdded++;
-        }
+      const recv = resolveReceiverEdge(
+        lookup,
+        { name: call.name, receiver: call.receiver },
+        caller,
+        relPath,
+        typeMap,
+        seenCallEdges,
+      );
+      if (recv) {
+        stmts.insertEdge.run(recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0);
+        edgesAdded++;
       }
     }
   }

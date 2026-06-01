@@ -20,6 +20,12 @@ import type {
   TypeMapEntry,
 } from '../../../../types.js';
 import { computeConfidence } from '../../resolve.js';
+import {
+  type CallNodeLookup,
+  findCaller,
+  resolveCallTargets,
+  resolveReceiverEdge,
+} from '../call-resolver.js';
 import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
 
@@ -486,6 +492,7 @@ function buildCallEdgesJS(
   allEdgeRows: EdgeRowTuple[],
 ): void {
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
+  const lookup = makeContextLookup(ctx, getNodeIdStmt);
 
   for (const [relPath, symbols] of fileSymbols) {
     if (barrelOnlyFiles.has(relPath)) continue;
@@ -497,13 +504,12 @@ function buildCallEdgesJS(
     const seenCallEdges = new Set<string>();
 
     buildFileCallEdges(
-      ctx,
       relPath,
       symbols,
       fileNodeRow,
       importedNames,
       seenCallEdges,
-      getNodeIdStmt,
+      lookup,
       allEdgeRows,
       typeMap,
     );
@@ -540,127 +546,37 @@ function buildImportedNamesMap(
   return importedNames;
 }
 
-function findCaller(
-  call: Call,
-  definitions: ReadonlyArray<{ name: string; kind: string; line: number; endLine?: number | null }>,
-  relPath: string,
-  getNodeIdStmt: NodeIdStmt,
-  fileNodeRow: { id: number },
-): { id: number } {
-  let caller: { id: number } | null = null;
-  let callerSpan = Infinity;
-  for (const def of definitions) {
-    if (def.line <= call.line) {
-      const end = def.endLine || Infinity;
-      if (call.line <= end) {
-        const span = end - def.line;
-        if (span < callerSpan) {
-          const row = getNodeIdStmt.get(def.name, def.kind, relPath, def.line);
-          if (row) {
-            caller = row;
-            callerSpan = span;
-          }
-        }
-      }
-    }
-  }
-  return caller || fileNodeRow;
-}
-
-function resolveCallTargets(
-  ctx: PipelineContext,
-  call: Call,
-  relPath: string,
-  importedNames: Map<string, string>,
-  typeMap: Map<string, TypeMapEntry | string>,
-): { targets: NodeRow[]; importedFrom: string | undefined } {
-  const importedFrom = importedNames.get(call.name);
-  let targets: NodeRow[] | undefined;
-
-  if (importedFrom) {
-    targets = ctx.nodesByNameAndFile.get(`${call.name}|${importedFrom}`) || [];
-    if (targets.length === 0 && isBarrelFile(ctx, importedFrom)) {
-      const actualSource = resolveBarrelExport(ctx, importedFrom, call.name);
-      if (actualSource) {
-        targets = ctx.nodesByNameAndFile.get(`${call.name}|${actualSource}`) || [];
-      }
-    }
-  }
-
-  if (!targets || targets.length === 0) {
-    targets = ctx.nodesByNameAndFile.get(`${call.name}|${relPath}`) || [];
-    if (targets.length === 0) {
-      targets = resolveByMethodOrGlobal(ctx, call, relPath, typeMap);
-    }
-  }
-
-  if (targets.length > 1) {
-    targets.sort((a, b) => {
-      const confA = computeConfidence(relPath, a.file, importedFrom ?? null);
-      const confB = computeConfidence(relPath, b.file, importedFrom ?? null);
-      return confB - confA;
-    });
-  }
-
-  return { targets, importedFrom };
-}
-
-function resolveByMethodOrGlobal(
-  ctx: PipelineContext,
-  call: Call,
-  relPath: string,
-  typeMap: Map<string, TypeMapEntry | string>,
-): NodeRow[] {
-  // Type-aware resolution: translate variable receiver to its declared type
-  if (call.receiver && typeMap) {
-    const typeEntry = typeMap.get(call.receiver);
-    const typeName = typeEntry
-      ? typeof typeEntry === 'string'
-        ? typeEntry
-        : typeEntry.type
-      : null;
-    if (typeName) {
-      const qualifiedName = `${typeName}.${call.name}`;
-      const typed = (ctx.nodesByName.get(qualifiedName) || []).filter((n) => n.kind === 'method');
-      if (typed.length > 0) return typed;
-    }
-  }
-
-  if (
-    !call.receiver ||
-    call.receiver === 'this' ||
-    call.receiver === 'self' ||
-    call.receiver === 'super'
-  ) {
-    return (ctx.nodesByName.get(call.name) || []).filter(
-      (n) => computeConfidence(relPath, n.file, null) >= 0.5,
-    );
-  }
-  return [];
+function makeContextLookup(ctx: PipelineContext, getNodeIdStmt: NodeIdStmt): CallNodeLookup {
+  return {
+    byNameAndFile: (name, file) => ctx.nodesByNameAndFile.get(`${name}|${file}`) ?? [],
+    byName: (name) => ctx.nodesByName.get(name) ?? [],
+    isBarrel: (file) => isBarrelFile(ctx, file),
+    resolveBarrel: (barrelFile, symbolName) => resolveBarrelExport(ctx, barrelFile, symbolName),
+    nodeId: (name, kind, file, line) => getNodeIdStmt.get(name, kind, file, line),
+  };
 }
 
 function buildFileCallEdges(
-  ctx: PipelineContext,
   relPath: string,
   symbols: ExtractorOutput,
   fileNodeRow: { id: number },
   importedNames: Map<string, string>,
   seenCallEdges: Set<string>,
-  getNodeIdStmt: NodeIdStmt,
+  lookup: CallNodeLookup,
   allEdgeRows: EdgeRowTuple[],
   typeMap: Map<string, TypeMapEntry | string>,
 ): void {
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
-    const caller = findCaller(call, symbols.definitions, relPath, getNodeIdStmt, fileNodeRow);
+    const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
     const isDynamic: number = call.dynamic ? 1 : 0;
     const { targets, importedFrom } = resolveCallTargets(
-      ctx,
+      lookup,
       call,
       relPath,
       importedNames,
-      typeMap,
+      typeMap as Map<string, unknown>,
     );
 
     for (const t of targets) {
@@ -672,7 +588,6 @@ function buildFileCallEdges(
       }
     }
 
-    // Receiver edge
     if (
       call.receiver &&
       !BUILTIN_RECEIVERS.has(call.receiver) &&
@@ -680,36 +595,17 @@ function buildFileCallEdges(
       call.receiver !== 'self' &&
       call.receiver !== 'super'
     ) {
-      buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows, typeMap);
-    }
-  }
-}
-
-function buildReceiverEdge(
-  ctx: PipelineContext,
-  call: Call,
-  caller: { id: number },
-  relPath: string,
-  seenCallEdges: Set<string>,
-  allEdgeRows: EdgeRowTuple[],
-  typeMap: Map<string, TypeMapEntry | string>,
-): void {
-  const receiverKinds = new Set(['class', 'struct', 'interface', 'type', 'module']);
-  const typeEntry = typeMap?.get(call.receiver!);
-  const typeName = typeEntry ? (typeof typeEntry === 'string' ? typeEntry : typeEntry.type) : null;
-  const typeConfidence = typeEntry && typeof typeEntry === 'object' ? typeEntry.confidence : null;
-  const effectiveReceiver = typeName || call.receiver!;
-  const samefile = ctx.nodesByNameAndFile.get(`${effectiveReceiver}|${relPath}`) || [];
-  const candidates = samefile.length > 0 ? samefile : ctx.nodesByName.get(effectiveReceiver) || [];
-  const receiverNodes = candidates.filter((n) => receiverKinds.has(n.kind));
-  if (receiverNodes.length > 0 && caller) {
-    const recvTarget = receiverNodes[0]!;
-    const recvKey = `recv|${caller.id}|${recvTarget.id}`;
-    if (!seenCallEdges.has(recvKey)) {
-      seenCallEdges.add(recvKey);
-      // Use type source confidence when available, otherwise 0.7 for untyped receiver
-      const confidence = typeConfidence ?? (typeName ? 0.9 : 0.7);
-      allEdgeRows.push([caller.id, recvTarget.id, 'receiver', confidence, 0]);
+      const recv = resolveReceiverEdge(
+        lookup,
+        { name: call.name, receiver: call.receiver },
+        caller,
+        relPath,
+        typeMap as Map<string, unknown>,
+        seenCallEdges,
+      );
+      if (recv) {
+        allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0]);
+      }
     }
   }
 }

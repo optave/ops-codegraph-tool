@@ -1958,4 +1958,44 @@ mod tests {
         assert!(s.definitions.iter().any(|d| d.name == "renamed"), "should use the local alias");
         assert!(!s.definitions.iter().any(|d| d.name == "original"), "should not use the original key");
     }
+
+    /// Regression test for issue #1271: native engine missing receiver edges.
+    /// Uses the exact sample-project index.js content (CommonJS, constructor
+    /// inside a function body). The extractor must produce:
+    ///   - a typeMap entry: calc → Calculator (confidence 1.0)
+    ///   - a call with name="compute" and receiver=Some("calc")
+    #[test]
+    fn extracts_type_map_from_constructor_assignment() {
+        let s = parse_js(
+            "const { sumOfSquares, Calculator } = require('./utils');\n\
+             const { add } = require('./math');\n\
+             function main() {\n\
+               console.log(add(1, 2));\n\
+               console.log(sumOfSquares(3, 4));\n\
+               const calc = new Calculator();\n\
+               console.log(calc.compute(5, 6));\n\
+             }\n\
+             module.exports = { main };",
+        );
+        let tm = s.type_map.iter().find(|t| t.name == "calc");
+        assert!(
+            tm.is_some(),
+            "type_map should contain an entry for 'calc'; got: {:?}",
+            s.type_map
+        );
+        assert_eq!(tm.unwrap().type_name, "Calculator");
+        assert_eq!(tm.unwrap().confidence, 1.0);
+
+        let compute_call = s.calls.iter().find(|c| c.name == "compute");
+        assert!(
+            compute_call.is_some(),
+            "calls should contain 'compute'; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, &c.receiver)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            compute_call.unwrap().receiver.as_deref(),
+            Some("calc"),
+            "compute call should have receiver='calc'"
+        );
+    }
 }
