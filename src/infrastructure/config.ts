@@ -79,6 +79,7 @@ export const DEFAULTS = {
     briefImporterDepth: 5,
     briefHighRiskCallers: 10,
     briefMediumRiskCallers: 3,
+    typePropagationDepth: 3,
   },
   community: {
     resolution: 1.0,

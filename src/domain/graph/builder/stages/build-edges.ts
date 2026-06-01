@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
+import { setTypeMapEntry } from '../../../../extractors/helpers.js';
 import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
@@ -385,6 +386,64 @@ function buildImportEdgesNative(
 
   for (const e of nativeEdges) {
     allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+  }
+}
+
+// ── Phase 8.2: Cross-file return-type propagation ───────────────────────
+
+/**
+ * Augment each file's typeMap with return types from imported functions.
+ *
+ * The per-file extractor already resolves same-file call assignments (intra-file
+ * propagation). This function handles the cross-file case: when a file imports a
+ * function from another file and assigns its return value to a variable, we look up
+ * the callee's return type in the source file's returnTypeMap and inject it.
+ *
+ * Called once before call-edge building so both the native and JS paths benefit.
+ */
+function propagateReturnTypesAcrossFiles(
+  fileSymbols: Map<string, ExtractorOutput>,
+  ctx: PipelineContext,
+  rootDir: string,
+): void {
+  // Index: filePath → per-file return-type map
+  const returnTypeIndex = new Map<string, Map<string, TypeMapEntry>>();
+  for (const [relPath, symbols] of fileSymbols) {
+    if (symbols.returnTypeMap?.size) returnTypeIndex.set(relPath, symbols.returnTypeMap);
+  }
+  if (returnTypeIndex.size === 0) return;
+
+  // Flat global map for qualified method lookups (TypeName.methodName → entry).
+  // Conflicts resolved by keeping the highest-confidence entry.
+  const globalReturnTypeMap = new Map<string, TypeMapEntry>();
+  for (const rtm of returnTypeIndex.values()) {
+    for (const [name, entry] of rtm) {
+      const existing = globalReturnTypeMap.get(name);
+      if (!existing || entry.confidence > existing.confidence) globalReturnTypeMap.set(name, entry);
+    }
+  }
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (!symbols.callAssignments?.length) continue;
+    const importedNamesMap = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+
+    for (const ca of symbols.callAssignments) {
+      if (symbols.typeMap.has(ca.varName)) continue; // already resolved locally
+
+      let returnEntry: TypeMapEntry | undefined;
+      if (ca.receiverTypeName) {
+        returnEntry = globalReturnTypeMap.get(`${ca.receiverTypeName}.${ca.calleeName}`);
+      } else {
+        const importedFrom = importedNamesMap.get(ca.calleeName);
+        if (importedFrom) returnEntry = returnTypeIndex.get(importedFrom)?.get(ca.calleeName);
+      }
+
+      if (returnEntry) {
+        const propagatedConf = returnEntry.confidence - 0.1;
+        if (propagatedConf > 0)
+          setTypeMapEntry(symbols.typeMap, ca.varName, returnEntry.type, propagatedConf);
+      }
+    }
   }
 }
 
@@ -845,6 +904,10 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     } else {
       buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
     }
+
+    // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
+    // call-edge building so both native and JS paths see the enriched typeMaps.
+    propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
 
     // Skip native call-edge path for small incremental builds: napi-rs
     // marshaling overhead for allNodes exceeds Rust computation savings.
