@@ -129,16 +129,13 @@ export function resolveCallTargets(
  * Returns the edge tuple to insert, or null if nothing matched or the edge
  * was already seen.  Callers are responsible for the actual DB/array insert.
  *
- * Receiver resolution applies the RECEIVER_KINDS filter before deciding
- * whether to fall back from same-file to global candidates.  This matches
- * the incremental-path behaviour and is intentionally different from the
- * old full-build `buildReceiverEdge`, which collected all same-file
- * candidates first (no kind filter), then fell back to global only when
- * that unfiltered set was empty.  The practical effect: if the same file
- * contains a `function` named `effectiveReceiver` but no class/struct/etc.,
- * this implementation falls through to a matching global type — an edge the
- * old full-build would never have emitted.  Adopting the incremental
- * semantics here is the correct alignment; both paths now behave identically.
+ * Receiver resolution collects all same-file candidates first (no kind
+ * filter), falls back to global candidates only when the same-file set is
+ * entirely empty, then filters the chosen set by RECEIVER_KINDS.  This
+ * matches the native Rust build path: if a file imports a name that happens
+ * to be emitted as `kind='function'` in the importer, the same-file set is
+ * non-empty and blocks the global fallback, so no receiver edge is emitted.
+ * Keeping this behaviour identical to the Rust path maintains engine parity.
  */
 export function resolveReceiverEdge(
   lookup: CallNodeLookup,
@@ -159,13 +156,9 @@ export function resolveReceiverEdge(
       ? ((typeEntry as { confidence?: number }).confidence ?? null)
       : null;
   const effectiveReceiver = typeName || call.receiver;
-  const sameFile = lookup
-    .byNameAndFile(effectiveReceiver, relPath)
-    .filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
-  const candidates =
-    sameFile.length > 0
-      ? sameFile
-      : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  const sameFile = lookup.byNameAndFile(effectiveReceiver, relPath);
+  const unfiltered = sameFile.length > 0 ? sameFile : lookup.byName(effectiveReceiver);
+  const candidates = unfiltered.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
   if (candidates.length === 0) return null;
   const recvTarget = candidates[0]!;
   const recvKey = `recv|${caller.id}|${recvTarget.id}`;
