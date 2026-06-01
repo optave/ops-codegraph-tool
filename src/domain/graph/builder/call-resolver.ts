@@ -128,6 +128,17 @@ export function resolveCallTargets(
  * Resolve the receiver-type edge for a call site.
  * Returns the edge tuple to insert, or null if nothing matched or the edge
  * was already seen.  Callers are responsible for the actual DB/array insert.
+ *
+ * Receiver resolution applies the RECEIVER_KINDS filter before deciding
+ * whether to fall back from same-file to global candidates.  This matches
+ * the incremental-path behaviour and is intentionally different from the
+ * old full-build `buildReceiverEdge`, which collected all same-file
+ * candidates first (no kind filter), then fell back to global only when
+ * that unfiltered set was empty.  The practical effect: if the same file
+ * contains a `function` named `effectiveReceiver` but no class/struct/etc.,
+ * this implementation falls through to a matching global type — an edge the
+ * old full-build would never have emitted.  Adopting the incremental
+ * semantics here is the correct alignment; both paths now behave identically.
  */
 export function resolveReceiverEdge(
   lookup: CallNodeLookup,
