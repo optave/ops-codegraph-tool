@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { getNodeId, testFilterSQL } from '../db/index.js';
+import { getBuildMeta, getNodeId, setBuildMeta, testFilterSQL } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
 import { normalizePath } from '../shared/constants.js';
 import type { BetterSqlite3Database } from '../types.js';
@@ -582,6 +582,111 @@ function buildClassifierInput(
   }));
 }
 
+// ─── Median cache helpers ─────────────────────────────────────────────────────
+
+const ROLES_MEDIANS_KEY = 'roles_medians';
+
+// Invalidate cached medians when the edge count drifts past this threshold.
+// A 1-file rebuild adds/removes < 100 edges — well within the margin.
+const MEDIAN_INVALIDATION_DELTA = 500;
+
+/**
+ * Full edge-table GROUP BY scan — O(M). Only runs on cache miss.
+ *
+ * Joins `nodes` to restrict to the same non-leaf kinds that
+ * `classifyNodeRolesFull` uses when computing medians from in-memory rows
+ * (excludes 'file', 'directory', 'parameter', 'property'). This keeps the
+ * two paths consistent so a cold-cache fallback produces the same distribution
+ * as the full-build cached value.
+ *
+ * Also returns the filtered edge count used for computing the medians so the
+ * caller can pass it directly to `writeMedianCache` without a second query.
+ */
+function computeGlobalMediansFromEdges(db: BetterSqlite3Database): {
+  fanIn: number;
+  fanOut: number;
+  edgeCount: number;
+} {
+  const excludedKinds = `('file', 'directory', 'parameter', 'property')`;
+  const fanInRows = db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM edges e
+       JOIN nodes t ON e.target_id = t.id
+       WHERE e.kind IN ('calls', 'imports-type')
+         AND t.kind NOT IN ${excludedKinds}
+       GROUP BY e.target_id`,
+    )
+    .all() as { cnt: number }[];
+  const fanOutRows = db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM edges e
+       JOIN nodes s ON e.source_id = s.id
+       WHERE e.kind = 'calls'
+         AND s.kind NOT IN ${excludedKinds}
+       GROUP BY e.source_id`,
+    )
+    .all() as { cnt: number }[];
+  const fanInDist = fanInRows.map((r) => r.cnt).sort((a, b) => a - b);
+  const fanOutDist = fanOutRows.map((r) => r.cnt).sort((a, b) => a - b);
+  // Sum of fanInRows[*].cnt equals the total edge count for the relevant
+  // edge subset — no extra COUNT query needed.
+  const edgeCount = fanInRows.reduce((acc, r) => acc + r.cnt, 0);
+  return { fanIn: median(fanInDist), fanOut: median(fanOutDist), edgeCount };
+}
+
+/**
+ * Read cached role medians from build_meta. Returns null when absent or stale
+ * (edge count moved beyond MEDIAN_INVALIDATION_DELTA from the cached value).
+ *
+ * The staleness check uses the same edge subset (calls + imports-type) that
+ * the medians are derived from, so only changes to the edges that actually
+ * influence fan-in/fan-out can evict the cache.
+ */
+function readCachedMedians(db: BetterSqlite3Database): { fanIn: number; fanOut: number } | null {
+  const raw = getBuildMeta(db, ROLES_MEDIANS_KEY);
+  if (!raw) return null;
+  try {
+    const cached = JSON.parse(raw) as { fanIn: number; fanOut: number; edgeCount: number };
+    // Count only the edge kinds that drive median computation — same subset
+    // used by computeGlobalMediansFromEdges and classifyNodeRolesFull.
+    const currentCount = (
+      db
+        .prepare(`SELECT COUNT(*) AS cnt FROM edges WHERE kind IN ('calls', 'imports-type')`)
+        .get() as { cnt: number }
+    ).cnt;
+    if (
+      Math.abs(currentCount - cached.edgeCount) >
+      Math.max(MEDIAN_INVALIDATION_DELTA, cached.edgeCount * 0.1)
+    )
+      return null;
+    return { fanIn: cached.fanIn, fanOut: cached.fanOut };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist global role medians + current edge count to build_meta.
+ *
+ * @param edgeCount - pre-computed calls+imports-type edge count. When provided,
+ *   the function skips the COUNT query entirely. Pass when the count is already
+ *   known at the call site (e.g. from `computeGlobalMediansFromEdges`).
+ */
+function writeMedianCache(
+  db: BetterSqlite3Database,
+  medians: { fanIn: number; fanOut: number },
+  edgeCount?: number,
+): void {
+  const cnt =
+    edgeCount ??
+    (
+      db
+        .prepare(`SELECT COUNT(*) AS cnt FROM edges WHERE kind IN ('calls', 'imports-type')`)
+        .get() as { cnt: number }
+    ).cnt;
+  setBuildMeta(db, { [ROLES_MEDIANS_KEY]: JSON.stringify({ ...medians, edgeCount: cnt }) });
+}
+
 function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
   // Leaf kinds (parameter, property) can never have callers/callees.
   // Classify them directly as dead-leaf without the expensive fan-in/fan-out JOINs.
@@ -672,10 +777,28 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     prodFanInMap.set(r.target_id, r.cnt);
   }
 
-  // Delegate classification to the pure-logic classifier
+  // Delegate classification to the pure-logic classifier.
+  // Compute medians from the already-loaded rows (no extra DB round-trip),
+  // pass them as overrides to avoid recomputing inside classifyRoles,
+  // and cache them for subsequent incremental builds.
   const activeFiles = buildActiveFilesSet(rows);
   const classifierInput = buildClassifierInput(rows, exportedIds, prodFanInMap, activeFiles);
-  const roleMap = classifyRoles(classifierInput);
+  const nonZeroFanIn = classifierInput
+    .filter((n) => n.fanIn > 0)
+    .map((n) => n.fanIn)
+    .sort((a, b) => a - b);
+  const nonZeroFanOut = classifierInput
+    .filter((n) => n.fanOut > 0)
+    .map((n) => n.fanOut)
+    .sort((a, b) => a - b);
+  const globalMedians = { fanIn: median(nonZeroFanIn), fanOut: median(nonZeroFanOut) };
+  const roleMap = classifyRoles(classifierInput, globalMedians);
+  // Derive the edge count from already-loaded in-memory rows: summing fan_in
+  // across all nodes equals COUNT(*) FROM edges WHERE kind IN ('calls','imports-type'),
+  // since the full-build query left-joins every matching edge exactly once per target.
+  // Passing this avoids an extra COUNT query on the full-build path.
+  const inMemoryEdgeCount = rows.reduce((acc, r) => acc + r.fan_in, 0);
+  writeMedianCache(db, globalMedians, inMemoryEdgeCount);
 
   const { summary, idsByRole } = buildRoleSummary(rows, leafRows, roleMap, emptySummary);
 
@@ -691,7 +814,9 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
  * plus their immediate edge neighbours (callers and callees in other files).
  *
  * Uses indexed point lookups for fan-in/fan-out instead of full table scans.
- * Global medians are computed from edge distribution (fast GROUP BY on index).
+ * Global medians are read from the build_meta cache written by the last full
+ * classification; the cache is only recomputed when the edge count drifts
+ * beyond MEDIAN_INVALIDATION_DELTA (i.e. large structural changes).
  * Unchanged files not connected to changed files keep their roles from the
  * previous build.
  */
@@ -718,25 +843,20 @@ function classifyNodeRolesIncremental(
   const allAffectedFiles = [...changedFiles, ...neighbourFiles.map((r) => r.file)];
   const placeholders = allAffectedFiles.map(() => '?').join(',');
 
-  // 1. Compute global medians from edge distribution (fast: scans edge index, no node join)
-  const fanInDist = (
-    db
-      .prepare(
-        `SELECT COUNT(*) AS cnt FROM edges WHERE kind IN ('calls', 'imports-type') GROUP BY target_id`,
-      )
-      .all() as { cnt: number }[]
-  )
-    .map((r) => r.cnt)
-    .sort((a, b) => a - b);
-  const fanOutDist = (
-    db
-      .prepare(`SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY source_id`)
-      .all() as { cnt: number }[]
-  )
-    .map((r) => r.cnt)
-    .sort((a, b) => a - b);
-
-  const globalMedians = { fanIn: median(fanInDist), fanOut: median(fanOutDist) };
+  // 1. Read global medians from cache; fall back to full edge scan only on miss.
+  // The median barely moves for a 1-file change, so the cache is almost always
+  // valid, eliminating 2× full edge-table GROUP BY queries (~10-15 ms on large graphs).
+  const cachedMedians = readCachedMedians(db);
+  let globalMedians: { fanIn: number; fanOut: number };
+  if (cachedMedians) {
+    globalMedians = cachedMedians;
+  } else {
+    const computed = computeGlobalMediansFromEdges(db);
+    // Pass the edgeCount returned by computeGlobalMediansFromEdges so
+    // writeMedianCache does not issue a second COUNT query.
+    writeMedianCache(db, computed, computed.edgeCount);
+    globalMedians = computed;
+  }
 
   // 2a. Leaf kinds (parameter, property) in affected files — always dead-leaf
   const leafRows = db

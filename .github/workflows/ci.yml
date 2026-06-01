@@ -202,6 +202,20 @@ jobs:
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           node $STRIP_FLAG scripts/verify-imports.ts
 
+  grammar-version-parity:
+    runs-on: ubuntu-latest
+    name: Grammar version parity
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Check grammar major-version parity (npm vs Cargo)
+        run: node scripts/check-grammar-versions.mjs
+
   parity:
     needs: native-host-build
     strategy:
@@ -469,7 +483,7 @@ jobs:
 
   ci-pipeline:
     if: always()
-    needs: [lint, native-host-build, test, typecheck, audit, verify-imports, rust-check, parity, pre-publish-benchmark]
+    needs: [lint, native-host-build, test, typecheck, audit, verify-imports, grammar-version-parity, rust-check, parity, pre-publish-benchmark]
     runs-on: ubuntu-latest
     name: CI Testing Pipeline
     steps:
