@@ -41,8 +41,11 @@ check_attribution() {
 
 check_attribution "$cmd" "body"
 
-# Also check --body-file path
+# Also check --body-file path (handles both --body-file <path> and --body-file=<path>)
 BODY_FILE=$(echo "$cmd" | grep -oE '\-\-body-file[[:space:]]+[^[:space:]]+' | awk '{print $2}' || true)
+if [ -z "$BODY_FILE" ]; then
+  BODY_FILE=$(echo "$cmd" | grep -oE '\-\-body-file=[^[:space:]]+' | sed 's/--body-file=//' || true)
+fi
 if [ -n "$BODY_FILE" ] && [ -f "$BODY_FILE" ]; then
   check_attribution "$(cat "$BODY_FILE")" "body file"
 fi
