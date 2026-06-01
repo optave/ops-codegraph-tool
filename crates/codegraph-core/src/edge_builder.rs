@@ -321,14 +321,25 @@ fn emit_receiver_edge(
     let effective_receiver = type_map.get(receiver.as_str()).map(|&(t, _)| t).unwrap_or(receiver.as_str());
     let type_resolved = effective_receiver != receiver.as_str();
 
-    let samefile = ctx.nodes_by_name_and_file
+    // Filter-before: apply receiver_kinds to same-file candidates first, then
+    // fall back to global candidates (also filtered) only when same-file yields
+    // nothing.  This prevents an imported name emitted as kind='function' in the
+    // importing file from blocking the fallback to the actual class/struct/etc.
+    // node in the defining file.
+    let samefile_candidates: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
         .get(&(effective_receiver, rel_path))
-        .cloned().unwrap_or_default();
-    let candidates = if !samefile.is_empty() { samefile } else {
+        .cloned().unwrap_or_default()
+        .into_iter()
+        .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
+        .collect();
+    let receiver_nodes: Vec<&NodeInfo> = if !samefile_candidates.is_empty() {
+        samefile_candidates
+    } else {
         ctx.nodes_by_name.get(effective_receiver).cloned().unwrap_or_default()
+            .into_iter()
+            .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
+            .collect()
     };
-    let receiver_nodes: Vec<&NodeInfo> = candidates.into_iter()
-        .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str())).collect();
 
     if let Some(recv_target) = receiver_nodes.first() {
         // High bit separates receiver keys from call keys (matches JS recv| prefix)
@@ -998,5 +1009,138 @@ mod import_edge_tests {
         let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
         // 1 direct import + 1 barrel-through (deduped, not 2)
         assert_eq!(edges.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod call_edge_tests {
+    use super::*;
+
+    fn node(id: u32, name: &str, kind: &str, file: &str, line: u32) -> NodeInfo {
+        NodeInfo { id, name: name.to_string(), kind: kind.to_string(), file: file.to_string(), line }
+    }
+
+    fn def(name: &str, kind: &str, line: u32, end_line: u32) -> DefInfo {
+        DefInfo { name: name.to_string(), kind: kind.to_string(), line, end_line: Some(end_line) }
+    }
+
+    fn call(name: &str, line: u32, receiver: Option<&str>) -> CallInfo {
+        CallInfo { name: name.to_string(), line, dynamic: None, receiver: receiver.map(|s| s.to_string()) }
+    }
+
+    fn type_map_entry(name: &str, type_name: &str, confidence: f64) -> TypeMapInput {
+        TypeMapInput { name: name.to_string(), type_name: type_name.to_string(), confidence }
+    }
+
+    fn make_file(
+        file: &str,
+        file_node_id: u32,
+        defs: Vec<DefInfo>,
+        calls: Vec<CallInfo>,
+        type_map: Vec<TypeMapInput>,
+        classes: Vec<ClassInfo>,
+    ) -> FileEdgeInput {
+        FileEdgeInput {
+            file: file.to_string(),
+            file_node_id,
+            definitions: defs,
+            calls,
+            imported_names: vec![],
+            classes,
+            type_map,
+        }
+    }
+
+    /// Mirrors the sample-project scenario: `const calc = new Calculator()` then
+    /// `calc.compute(5, 6)` inside `main`. The native engine must emit a
+    /// `receiver` edge from `main` → `Calculator`.
+    #[test]
+    fn receiver_edge_via_type_map() {
+        let all_nodes = vec![
+            node(1, "main",       "function", "index.js", 3),
+            node(2, "Calculator", "class",    "utils.js", 1),
+            node(3, "compute",    "method",   "utils.js", 3),
+        ];
+
+        let files = vec![make_file(
+            "index.js",
+            /* file_node_id */ 10,
+            vec![def("main", "function", 3, 8)],
+            vec![call("compute", 7, Some("calc"))],
+            vec![type_map_entry("calc", "Calculator", 1.0)],
+            vec![],
+        )];
+
+        let edges = build_call_edges(files, all_nodes, vec![]);
+
+        let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
+        assert!(
+            receiver_edge.is_some(),
+            "expected a receiver edge but got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+        let re = receiver_edge.unwrap();
+        assert_eq!(re.source_id, 1, "receiver edge source should be main (id=1)");
+        assert_eq!(re.target_id, 2, "receiver edge target should be Calculator (id=2)");
+    }
+
+    /// Regression: when the same file has a `kind="function"` node for the
+    /// effective receiver (e.g. `Calculator` imported via destructuring), the
+    /// same-file "function" node must NOT block the fallback to the global
+    /// class node in another file.  Filter-before semantics required.
+    #[test]
+    fn receiver_edge_filter_before_skips_same_file_function_node() {
+        let all_nodes = vec![
+            node(1, "main",       "function", "index.js", 3),
+            // Destructured import `const { Calculator } = require('./utils')` → kind "function" in index.js
+            node(4, "Calculator", "function", "index.js", 1),
+            node(2, "Calculator", "class",    "utils.js", 1),
+            node(3, "compute",    "method",   "utils.js", 3),
+        ];
+
+        let files = vec![make_file(
+            "index.js",
+            10,
+            vec![def("main", "function", 3, 8)],
+            vec![call("compute", 7, Some("calc"))],
+            vec![type_map_entry("calc", "Calculator", 1.0)],
+            vec![],
+        )];
+
+        let edges = build_call_edges(files, all_nodes, vec![]);
+
+        let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
+        assert!(
+            receiver_edge.is_some(),
+            "same-file 'function' node must not block fallback to global class; got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+        let re = receiver_edge.unwrap();
+        assert_eq!(re.target_id, 2, "receiver edge must point to Calculator class (id=2), not function (id=4)");
+    }
+
+    /// When the receiver name is already a class (not a variable), the edge
+    /// should still be emitted using the raw receiver name as lookup key.
+    #[test]
+    fn receiver_edge_direct_class_name() {
+        let all_nodes = vec![
+            node(1, "main",       "function", "index.js", 1),
+            node(2, "Calculator", "class",    "utils.js", 1),
+        ];
+
+        let files = vec![make_file(
+            "index.js",
+            10,
+            vec![def("main", "function", 1, 5)],
+            vec![call("compute", 3, Some("Calculator"))],
+            vec![],  // no typeMap — receiver IS the class name
+            vec![],
+        )];
+
+        let edges = build_call_edges(files, all_nodes, vec![]);
+
+        let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
+        assert!(receiver_edge.is_some(), "expected receiver edge for direct class-name receiver");
+        assert_eq!(receiver_edge.unwrap().target_id, 2);
     }
 }

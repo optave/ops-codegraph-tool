@@ -156,9 +156,18 @@ export function resolveReceiverEdge(
       ? ((typeEntry as { confidence?: number }).confidence ?? null)
       : null;
   const effectiveReceiver = typeName || call.receiver;
-  const sameFile = lookup.byNameAndFile(effectiveReceiver, relPath);
-  const unfiltered = sameFile.length > 0 ? sameFile : lookup.byName(effectiveReceiver);
-  const candidates = unfiltered.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  // Filter-before: apply RECEIVER_KINDS to same-file candidates first, then
+  // fall back to global candidates (also filtered) only when same-file yields
+  // nothing.  This prevents an imported name emitted as kind='function' in the
+  // importing file from blocking the fallback to the actual class/struct/etc.
+  // node in the defining file.
+  const sameFileCandidates = lookup
+    .byNameAndFile(effectiveReceiver, relPath)
+    .filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  const candidates =
+    sameFileCandidates.length > 0
+      ? sameFileCandidates
+      : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
   if (candidates.length === 0) return null;
   const recvTarget = candidates[0]!;
   const recvKey = `recv|${caller.id}|${recvTarget.id}`;
