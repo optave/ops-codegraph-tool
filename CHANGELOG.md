@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.11.2](https://github.com/optave/ops-codegraph-tool/compare/v3.11.1...v3.11.2) (2026-06-01)
+
+**Watch mode correctness sweep.** Five independent bugs in the incremental rebuild path are fixed: the call resolver had drifted from the full-build authoritative version, causing inflated `calls` edges on any watch rebuild touching a widely-imported file; a missing dedup set let the same `(caller, target)` pair be inserted multiple times; `receiver`, `extends`, `implements`, and `dynamic-import` edges were silently absent from watch-mode rebuilds; top-level Ruby constants and program-level Python assignments were dropped by the native extractor while WASM captured them; and 10 native grammar crate versions had drifted from their WASM npm counterparts. A new shared `call-resolver.ts` module now backs both the full-build and incremental paths, closing the structural gap that let these bugs accumulate.
+
+### Bug Fixes
+
+* **watch:** align incremental call resolver with full build — the watcher's `resolveCallTargets`/`buildCallEdges` had drifted from the authoritative full-build resolver in `build-edges.ts`; on a comment-only rebuild of a widely-imported file, `calls` edges inflated by ~700 ([#1261](https://github.com/optave/ops-codegraph-tool/pull/1261))
+* **watcher:** eliminate calls-edge inflation in incremental cascade — adds the missing `seenCallEdges` dedup set to `buildCallEdges` in the incremental path, and tightens the global name fallback in `resolveCallTargets` to match the full-build resolver ([#1264](https://github.com/optave/ops-codegraph-tool/pull/1264))
+* **extract:** eliminate WASM/native node divergence — native Ruby extractor now handles top-level `assignment` nodes (program-level constants); native Python extractor extracts program-level function and class definitions that were previously dropped; eliminates the persistent full-build node count gap between engines ([#1266](https://github.com/optave/ops-codegraph-tool/pull/1266))
+* **watcher:** add missing receiver/extends/implements/dynamic-import edges — `receiver` edges (method call receiver resolution), `extends`/`implements` class hierarchy edges, and `dynamic-import` edges were silently absent from watch-mode incremental rebuilds; now parity-aligned with the full build ([#1267](https://github.com/optave/ops-codegraph-tool/pull/1267))
+* **engine:** align native grammar crate versions with WASM npm packages — upgrades 10 Rust tree-sitter grammar crates in `Cargo.toml` to match the npm devDependency versions, eliminating grammar-version drift identified as the structural source of native/WASM call-edge divergence ([#1268](https://github.com/optave/ops-codegraph-tool/pull/1268))
+
+### Refactors
+
+* **engine:** extract shared call-resolver, eliminate build/watch duplication — `findCaller`, `resolveByMethodOrGlobal`, `resolveCallTargets`, and `resolveReceiverEdge` extracted into `src/domain/graph/builder/call-resolver.ts`; both the full-build and incremental paths share a single implementation via a `CallNodeLookup` interface ([#1272](https://github.com/optave/ops-codegraph-tool/pull/1272))
+
+### Chores
+
+* **ci:** add grammar version parity check between npm devDeps and Cargo.toml — new `scripts/check-grammar-versions.mjs` compares grammar major versions across both package managers; wired as a lightweight CI job to catch future drift early ([#1270](https://github.com/optave/ops-codegraph-tool/pull/1270))
+* **deps:** bump commander from 14.0.3 to 15.0.0 ([#1251](https://github.com/optave/ops-codegraph-tool/pull/1251)), tree-sitter-erlang to 0.18 ([#1252](https://github.com/optave/ops-codegraph-tool/pull/1252)), @biomejs/biome to 2.4.16 ([#1250](https://github.com/optave/ops-codegraph-tool/pull/1250)), @commitlint to 21.0.2 ([#1253](https://github.com/optave/ops-codegraph-tool/pull/1253), [#1254](https://github.com/optave/ops-codegraph-tool/pull/1254))
+
 ## [3.11.1](https://github.com/optave/ops-codegraph-tool/compare/v3.11.0...v3.11.1) (2026-05-29)
 
 **Four new embedding models, sticky model resolution, and a large internal refactor.** `codegraph embed` adds `mxbai-large`, `mxbai-xsmall`, `bge-m3`, and `modernbert` to the model registry — all publicly accessible without an HF token, covering multilingual, high-quality large, tiny-with-long-context, and ModernBERT-architecture use cases. Sticky model resolution ensures that subsequent `codegraph embed` runs on an existing graph reuse the model it was originally built with rather than the global default; the default for fresh graphs shifts from `nomic-v1.5` to `nomic` (same dimensions and context window, but the public Xenova mirror instead of the occasionally-gated nomic-ai org). Watch mode delta reporting is corrected — the rebuild log now shows the net edge change instead of an inflated gross re-insertion count. Under the hood, a 10-PR refactor (Titan Grind) decomposed the largest modules — `ast-analysis`, `domain`, `graph`, `presentation`, `extractors`, and `core-rs` — into focused, independently-testable units with no user-visible behavioral changes.
