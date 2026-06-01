@@ -187,6 +187,7 @@ function rebuildReverseDepEdges(
   );
   const importedNames = buildImportedNamesMap(symbols, rootDir, depRelPath, aliases, db);
   edgesAdded += buildCallEdges(db, stmts, depRelPath, symbols, fileNodeRow, importedNames);
+  edgesAdded += buildClassHierarchyEdges(stmts, depRelPath, symbols);
   return edgesAdded;
 }
 
@@ -353,7 +354,13 @@ function emitEdgesForImport(
   const targetRow = stmts.getNodeId.get(resolvedPath, 'file', resolvedPath, 0);
   if (!targetRow) return 0;
 
-  const edgeKind = imp.reexport ? 'reexports' : imp.typeOnly ? 'imports-type' : 'imports';
+  const edgeKind = imp.reexport
+    ? 'reexports'
+    : imp.typeOnly
+      ? 'imports-type'
+      : imp.dynamicImport
+        ? 'dynamic-imports'
+        : 'imports';
   stmts.insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
   let edgesAdded = 1;
 
@@ -412,6 +419,47 @@ function buildImportedNamesMap(
     }
   }
   return importedNames;
+}
+
+// ── Class hierarchy edges ───────────────────────────────────────────────
+
+type NodeWithKind = { id: number; kind: string; file: string };
+
+const HIERARCHY_SOURCE_KINDS = new Set(['class', 'struct', 'record', 'enum']);
+const EXTENDS_TARGET_KINDS = new Set(['class', 'struct', 'trait', 'record']);
+const IMPLEMENTS_TARGET_KINDS = new Set(['interface', 'trait', 'class']);
+const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', 'module']);
+
+function buildClassHierarchyEdges(
+  stmts: IncrementalStmts,
+  relPath: string,
+  symbols: ExtractorOutput,
+): number {
+  let edgesAdded = 0;
+  for (const cls of symbols.classes) {
+    const sourceRow = (stmts.findNodeInFile.all(cls.name, relPath) as NodeWithKind[]).find((n) =>
+      HIERARCHY_SOURCE_KINDS.has(n.kind),
+    );
+    if (!sourceRow) continue;
+
+    if (cls.extends) {
+      for (const t of (stmts.findNodeByName.all(cls.extends) as NodeWithKind[]).filter((n) =>
+        EXTENDS_TARGET_KINDS.has(n.kind),
+      )) {
+        stmts.insertEdge.run(sourceRow.id, t.id, 'extends', 1.0, 0);
+        edgesAdded++;
+      }
+    }
+    if (cls.implements) {
+      for (const t of (stmts.findNodeByName.all(cls.implements) as NodeWithKind[]).filter((n) =>
+        IMPLEMENTS_TARGET_KINDS.has(n.kind),
+      )) {
+        stmts.insertEdge.run(sourceRow.id, t.id, 'implements', 1.0, 0);
+        edgesAdded++;
+      }
+    }
+  }
+  return edgesAdded;
 }
 
 // ── Call edge building ──────────────────────────────────────────────────
@@ -578,6 +626,46 @@ function buildCallEdges(
         edgesAdded++;
       }
     }
+
+    // Receiver edge — mirrors buildReceiverEdge in build-edges.ts
+    if (
+      call.receiver &&
+      !BUILTIN_RECEIVERS.has(call.receiver) &&
+      call.receiver !== 'this' &&
+      call.receiver !== 'self' &&
+      call.receiver !== 'super'
+    ) {
+      const typeEntry = typeMap.get(call.receiver);
+      const typeName = typeEntry
+        ? typeof typeEntry === 'string'
+          ? typeEntry
+          : ((typeEntry as { type?: string }).type ?? null)
+        : null;
+      const typeConfidence =
+        typeEntry && typeof typeEntry !== 'string'
+          ? ((typeEntry as { confidence?: number }).confidence ?? null)
+          : null;
+      const effectiveReceiver = typeName || call.receiver;
+      const sameFile = (
+        stmts.findNodeInFile.all(effectiveReceiver, relPath) as NodeWithKind[]
+      ).filter((n) => RECEIVER_KINDS.has(n.kind));
+      const candidates =
+        sameFile.length > 0
+          ? sameFile
+          : (stmts.findNodeByName.all(effectiveReceiver) as NodeWithKind[]).filter((n) =>
+              RECEIVER_KINDS.has(n.kind),
+            );
+      if (candidates.length > 0) {
+        const recvTarget = candidates[0]!;
+        const recvKey = `recv|${caller.id}|${recvTarget.id}`;
+        if (!seenCallEdges.has(recvKey)) {
+          seenCallEdges.add(recvKey);
+          const confidence = typeConfidence ?? (typeName ? 0.9 : 0.7);
+          stmts.insertEdge.run(caller.id, recvTarget.id, 'receiver', confidence, 0);
+          edgesAdded++;
+        }
+      }
+    }
   }
   return edgesAdded;
 }
@@ -622,6 +710,7 @@ function rebuildEdgesForTargetFile(
   edgesAdded += buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeRow.id, aliases, db);
   const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases, db);
   edgesAdded += buildCallEdges(db, stmts, relPath, symbols, fileNodeRow, importedNames);
+  edgesAdded += buildClassHierarchyEdges(stmts, relPath, symbols);
   return edgesAdded;
 }
 
