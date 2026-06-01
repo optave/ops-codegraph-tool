@@ -1119,6 +1119,8 @@ export interface CodegraphConfig {
     dbPath: string;
     driftThreshold: number;
     smallFilesThreshold: number;
+    /** Use the TypeScript compiler API to enrich typeMap for .ts/.tsx files. Default: true. */
+    typescriptResolver: boolean;
   };
 
   query: {
