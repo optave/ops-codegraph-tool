@@ -114,7 +114,9 @@ fn match_js_return_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbol
             let Some(name_n) = node.child_by_field_name("name") else { return };
             let fn_name = node_text(&name_n, source);
             if fn_name == "constructor" { return; }
-            let key = match find_parent_class(node, source) {
+            // Use the boundary-aware variant: nested function declarations inside
+            // method bodies must not inherit the class prefix (matches WASM behaviour).
+            let key = match find_parent_class_no_fn_boundary(node, source) {
                 Some(cls) => format!("{}.{}", cls, fn_name),
                 None => fn_name.to_string(),
             };
@@ -124,6 +126,8 @@ fn match_js_return_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbol
             let Some(name_n) = node.child_by_field_name("name") else { return };
             let method_name = node_text(&name_n, source);
             if method_name == "constructor" { return; }
+            // method_definition is always a direct child of class_body — plain
+            // find_parent_class is correct here.
             let key = match find_parent_class(node, source) {
                 Some(cls) => format!("{}.{}", cls, method_name),
                 None => method_name.to_string(),
@@ -134,11 +138,14 @@ fn match_js_return_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbol
             let Some(name_n) = node.child_by_field_name("name") else { return };
             if name_n.kind() != "identifier" { return; }
             let Some(value_n) = node.child_by_field_name("value") else { return };
-            if !matches!(value_n.kind(), "arrow_function" | "function_expression" | "function") {
+            // Only arrow_function and function_expression match the TS reference;
+            // "function" is not a valid tree-sitter value-expression kind here.
+            if !matches!(value_n.kind(), "arrow_function" | "function_expression") {
                 return;
             }
             let var_name = node_text(&name_n, source);
-            let key = match find_parent_class(node, source) {
+            // Use the boundary-aware variant for the same reason as function_declaration.
+            let key = match find_parent_class_no_fn_boundary(node, source) {
                 Some(cls) => format!("{}.{}", cls, var_name),
                 None => var_name.to_string(),
             };
@@ -1400,6 +1407,38 @@ const JS_CLASS_KINDS: &[&str] = &["class_declaration", "class"];
 
 fn find_parent_class(node: &Node, source: &[u8]) -> Option<String> {
     find_enclosing_type_name(node, JS_CLASS_KINDS, source)
+}
+
+/// Like `find_parent_class` but stops at function scope boundaries.
+///
+/// The WASM `extractReturnTypeMapWalk` resets `currentClass` to `null` before
+/// recursing into any function or method body. This means nested function
+/// declarations and arrow-function variable declarators inside a method body
+/// are never attributed to the enclosing class. This function replicates that
+/// behavior by halting the ancestor walk when a function/method node is found
+/// before reaching a class.
+const JS_FN_SCOPE_KINDS: &[&str] = &[
+    "function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+];
+
+fn find_parent_class_no_fn_boundary(node: &Node, source: &[u8]) -> Option<String> {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        let kind = parent.kind();
+        if JS_FN_SCOPE_KINDS.contains(&kind) {
+            // Crossed a function scope boundary — stop, as WASM does.
+            return None;
+        }
+        if JS_CLASS_KINDS.contains(&kind) {
+            return named_child_text(&parent, "name", source)
+                .map(|s| s.to_string());
+        }
+        current = parent.parent();
+    }
+    None
 }
 
 /// Extract named bindings from a dynamic `import()` call expression.
