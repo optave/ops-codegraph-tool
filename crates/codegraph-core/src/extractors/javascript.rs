@@ -13,6 +13,9 @@ impl SymbolExtractor for JsExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_node);
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_type_map);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_return_type_map);
+        // call_assignments runs after type_map is populated (needs receiver types)
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_call_assignments);
         symbols
     }
 }
@@ -96,6 +99,137 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                     }
                 }
             }
+        }
+        _ => {}
+    }
+}
+
+// ── Return-type map extraction (Phase 8.2 parity) ───────────────────────────
+
+/// Walk the AST collecting function/method return types into `symbols.return_type_map`.
+/// Mirrors `extractReturnTypeMapWalk` in src/extractors/javascript.ts.
+fn match_js_return_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    match node.kind() {
+        "function_declaration" => {
+            let Some(name_n) = node.child_by_field_name("name") else { return };
+            let fn_name = node_text(&name_n, source);
+            if fn_name == "constructor" { return; }
+            let key = match find_parent_class(node, source) {
+                Some(cls) => format!("{}.{}", cls, fn_name),
+                None => fn_name.to_string(),
+            };
+            store_return_type(node, &key, source, symbols);
+        }
+        "method_definition" => {
+            let Some(name_n) = node.child_by_field_name("name") else { return };
+            let method_name = node_text(&name_n, source);
+            if method_name == "constructor" { return; }
+            let key = match find_parent_class(node, source) {
+                Some(cls) => format!("{}.{}", cls, method_name),
+                None => method_name.to_string(),
+            };
+            store_return_type(node, &key, source, symbols);
+        }
+        "variable_declarator" => {
+            let Some(name_n) = node.child_by_field_name("name") else { return };
+            if name_n.kind() != "identifier" { return; }
+            let Some(value_n) = node.child_by_field_name("value") else { return };
+            if !matches!(value_n.kind(), "arrow_function" | "function_expression" | "function") {
+                return;
+            }
+            let var_name = node_text(&name_n, source);
+            let key = match find_parent_class(node, source) {
+                Some(cls) => format!("{}.{}", cls, var_name),
+                None => var_name.to_string(),
+            };
+            store_return_type(&value_n, &key, source, symbols);
+        }
+        _ => {}
+    }
+}
+
+/// Extract the return type of `fn_node` and push it into `symbols.return_type_map`.
+/// Prefers explicit return type annotation (confidence 1.0) over inferred `return new X()`
+/// (confidence 0.85). Higher confidence wins on conflict.
+fn store_return_type(fn_node: &Node, fn_name: &str, source: &[u8], symbols: &mut FileSymbols) {
+    // Explicit return type annotation
+    if let Some(ret_type_node) = fn_node.child_by_field_name("return_type") {
+        if let Some(type_name) = extract_simple_type_name(&ret_type_node, source) {
+            push_return_type_entry(symbols, fn_name, type_name, 1.0);
+            return;
+        }
+    }
+    // Infer from first `return new Constructor()` in body
+    if let Some(body) = fn_node.child_by_field_name("body") {
+        if let Some(type_name) = find_return_new_expr_type(&body, source) {
+            push_return_type_entry(symbols, fn_name, type_name, 0.85);
+        }
+    }
+}
+
+/// Scan direct children of `body` for the first `return new X()` and return the constructor name.
+fn find_return_new_expr_type<'a>(body: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    for i in 0..body.child_count() {
+        let Some(child) = body.child(i) else { continue };
+        if child.kind() != "return_statement" { continue; }
+        for j in 0..child.child_count() {
+            let Some(expr) = child.child(j) else { continue };
+            if expr.kind() == "new_expression" {
+                return extract_new_expr_type_name(&expr, source);
+            }
+        }
+    }
+    None
+}
+
+/// Insert `(fn_name → type_name)` into `return_type_map`, keeping the highest-confidence entry.
+fn push_return_type_entry(symbols: &mut FileSymbols, fn_name: &str, type_name: &str, confidence: f64) {
+    if let Some(pos) = symbols.return_type_map.iter().position(|e| e.name == fn_name) {
+        if symbols.return_type_map[pos].confidence >= confidence { return; }
+        symbols.return_type_map.swap_remove(pos);
+    }
+    symbols.return_type_map.push(TypeMapEntry {
+        name: fn_name.to_string(),
+        type_name: type_name.to_string(),
+        confidence,
+    });
+}
+
+// ── Call-assignment extraction (Phase 8.2 parity) ───────────────────────────
+
+/// Walk the AST recording variable assignments from call expressions into
+/// `symbols.call_assignments` for cross-file return-type propagation.
+/// Mirrors `recordCallAssignment` in src/extractors/javascript.ts.
+fn match_js_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    if node.kind() != "variable_declarator" { return; }
+    let Some(name_n) = node.child_by_field_name("name") else { return };
+    if name_n.kind() != "identifier" { return; }
+    let Some(value_n) = node.child_by_field_name("value") else { return };
+    if value_n.kind() != "call_expression" { return; }
+
+    let var_name = node_text(&name_n, source).to_string();
+    let Some(fn_node) = value_n.child_by_field_name("function") else { return };
+
+    match fn_node.kind() {
+        "identifier" => {
+            symbols.call_assignments.push(NativeCallAssignment {
+                var_name,
+                callee_name: node_text(&fn_node, source).to_string(),
+                receiver_type_name: None,
+            });
+        }
+        "member_expression" => {
+            let Some(obj) = fn_node.child_by_field_name("object") else { return };
+            let Some(prop) = fn_node.child_by_field_name("property") else { return };
+            if obj.kind() != "identifier" { return; }
+            let receiver_type = symbols.type_map.iter()
+                .find(|e| e.name == node_text(&obj, source))
+                .map(|e| e.type_name.clone());
+            symbols.call_assignments.push(NativeCallAssignment {
+                var_name,
+                callee_name: node_text(&prop, source).to_string(),
+                receiver_type_name: receiver_type,
+            });
         }
         _ => {}
     }
