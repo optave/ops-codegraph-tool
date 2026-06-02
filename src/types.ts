@@ -1243,6 +1243,8 @@ export interface CodegraphConfig {
     briefMediumRiskCallers: number;
     /** Maximum chain depth for inter-procedural return-type propagation (Phase 8.2). */
     typePropagationDepth: number;
+    /** Maximum fixed-point iterations for the Phase 8.3 points-to solver. */
+    pointsToMaxIterations: number;
   };
 
   community: {

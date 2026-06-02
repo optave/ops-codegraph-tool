@@ -80,10 +80,14 @@ export const DEFAULTS = {
     briefImporterDepth: 5,
     briefHighRiskCallers: 10,
     briefMediumRiskCallers: 3,
-    // TODO(Phase 8.3): wire this into PROPAGATION_HOP_PENALTY / MAX_PROPAGATION_DEPTH once
-    // config is threaded through to extractSymbols. Currently the depth is controlled by
-    // the hardcoded MAX_PROPAGATION_DEPTH constant in src/extractors/javascript.ts.
+    // TODO(Phase 8.3): wire these into the points-to solver and type-propagation path
+    // once config is threaded through to extractSymbols / buildPointsToMap. Currently
+    // controlled by hardcoded constants in src/extractors/javascript.ts
+    // (MAX_PROPAGATION_DEPTH, PROPAGATION_HOP_PENALTY) and in
+    // src/domain/graph/resolver/points-to.ts (MAX_SOLVER_ITERATIONS).
     typePropagationDepth: 3,
+    /** Maximum fixed-point iterations for the Phase 8.3 points-to solver. */
+    pointsToMaxIterations: 50,
   },
   community: {
     resolution: 1.0,

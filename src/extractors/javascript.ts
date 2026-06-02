@@ -1410,7 +1410,15 @@ function handleVarDeclaratorTypeMap(
     } else if (valueN.type === 'member_expression') {
       const prop = valueN.childForFieldName('property');
       const obj = valueN.childForFieldName('object');
-      if (prop && obj?.type === 'identifier' && !BUILTIN_GLOBALS.has(obj.text)) {
+      // Guard: only static property access (property_identifier or identifier), not
+      // computed subscript expressions like obj[expr] where prop.text would be the
+      // full expression rather than a simple name — those can never match pts keys.
+      if (
+        prop &&
+        (prop.type === 'property_identifier' || prop.type === 'identifier') &&
+        obj?.type === 'identifier' &&
+        !BUILTIN_GLOBALS.has(obj.text)
+      ) {
         fnRefBindings.push({ lhs: nameN.text, rhs: prop.text, rhsReceiver: obj.text });
       }
     }

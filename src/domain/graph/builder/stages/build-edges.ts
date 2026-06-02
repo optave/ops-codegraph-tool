@@ -623,6 +623,12 @@ function makeContextLookup(ctx: PipelineContext, getNodeIdStmt: NodeIdStmt): Cal
 /**
  * Build a per-file points-to map for Phase 8.3 alias resolution.
  * Returns null fast when the file has no function-reference bindings.
+ *
+ * Only callable definitions (function/method) are seeded as concrete targets.
+ * Class and interface names are intentionally excluded — aliasing a constructor
+ * (`const Svc = MyService`) is an uncommon pattern that would require tracking
+ * `new`-expression flows separately from the alias chain. That is left to Phase
+ * 8.2 call-assignment propagation, which already handles constructor assignments.
  */
 function buildPointsToMapForFile(
   symbols: ExtractorOutput,
@@ -678,9 +684,12 @@ function buildFileCallEdges(
     // extra indirection.
     if (targets.length === 0 && call.dynamic && !call.receiver && ptsMap) {
       for (const alias of resolveViaPointsTo(call.name, ptsMap)) {
+        // Resolve the concrete alias target. Only `name` is needed here — receiver
+        // and line are not relevant for alias resolution (we are looking up the
+        // aliased function by name, not dispatching a method call).
         const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
           lookup,
-          { name: alias },
+          { name: alias, dynamic: false },
           relPath,
           importedNames,
           typeMap as Map<string, unknown>,

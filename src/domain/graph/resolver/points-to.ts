@@ -23,7 +23,12 @@ import type { FnRefBinding } from '../../../types.js';
 
 export type PointsToMap = Map<string, Set<string>>;
 
-/** Maximum fixed-point iterations before bailing out (prevents divergence). */
+/**
+ * Maximum fixed-point iterations before bailing out (prevents divergence).
+ * Mirrors `DEFAULTS.analysis.pointsToMaxIterations` in config.ts.
+ * TODO(Phase 8.3): thread config through buildPointsToMap so this can be tuned
+ * per-repo via `.codegraphrc.json` (tracked alongside typePropagationDepth).
+ */
 const MAX_SOLVER_ITERATIONS = 50;
 
 /**

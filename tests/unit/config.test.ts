@@ -96,6 +96,7 @@ describe('DEFAULTS', () => {
       briefHighRiskCallers: 10,
       briefMediumRiskCallers: 3,
       typePropagationDepth: 3,
+      pointsToMaxIterations: 50,
     });
   });
 
