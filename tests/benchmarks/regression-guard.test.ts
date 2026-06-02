@@ -314,6 +314,17 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   changed between 3.10.0 and 3.11.1. Remove once 3.12.0+ data confirms
  *   stable query numbers against a 3.11.x baseline.
  *
+ * - 3.11.2:No-op rebuild — CI runner variance on a sub-30ms native metric.
+ *   The 3.11.2 baseline captures noopRebuildMs=25 (build benchmark) and
+ *   noopRebuildMs=19 (incremental benchmark); the per-PR gate re-measures
+ *   dev on a fresh runner and lands at 45ms (+80%) and 37ms (+95%) on run
+ *   26792023287 — both exceed the NOISY_METRIC_THRESHOLD of 50% due to
+ *   sub-30ms variance. No watcher, builder, or incremental-orchestrator
+ *   change is present in the dev tree for this docs-only PR (#1282);
+ *   the delta is entirely shared-runner scheduling noise. Same shape and
+ *   root cause as the 3.11.0 and 3.11.1 entries above. Exempt this
+ *   release; remove once 3.12.0+ data confirms the steady-state.
+ *
  * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
  * handled structurally by WASM_TIMING_THRESHOLD (see above). The 3.11.x
  * entries that remain are kept because they trip the *native* engine too
@@ -337,6 +348,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.1:DB bytes/file',
   '3.11.1:fnDeps depth 3',
   '3.11.1:fnDeps depth 5',
+  '3.11.2:No-op rebuild',
 ]);
 
 /**
