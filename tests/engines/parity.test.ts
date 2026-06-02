@@ -726,6 +726,113 @@ end
     }
   });
 
+  // Explicit guards for #1286: normalize() above strips returnTypeMap and
+  // callAssignments from the structural comparison loop, so a regression where
+  // either field is missing or wrong on native would slip through undetected.
+  // These two tests lock in native-engine parity for those fields, preventing
+  // a recurrence of the bug introduced in #1279 and fixed in #1283.
+  //
+  // Note on native format: the native engine returns returnTypeMap as a raw
+  // array of { name, typeName, confidence } objects. patchReturnTypeMap()
+  // (called by parseFileAuto/parseFilesAuto in production) converts that array
+  // to a Map<string, TypeMapEntry>. These tests check the extraction layer
+  // directly — WASM asserts on the Map, native asserts on the raw array.
+  // Native assertions are skipped if the installed binary predates #1283
+  // (field is absent rather than empty, so a simple existence check suffices).
+
+  it('JS — returnTypeMap is populated by WASM; native when binary >= #1283', () => {
+    // extractReturnTypeMapWalk / match_js_return_type_map infer the return type
+    // when a class method body contains `return new Constructor()` (confidence 0.85).
+    const code = `
+class UserService {
+  getUser() { return new User(); }
+  buildQuery() { return new QueryBuilder(); }
+}
+`;
+    const wasm = wasmExtract(code, 'service.js');
+    expect(wasm?.returnTypeMap).toBeInstanceOf(Map);
+    const getUserEntry = wasm?.returnTypeMap?.get('UserService.getUser');
+    expect(getUserEntry, 'WASM returnTypeMap missing UserService.getUser').toBeDefined();
+    expect(getUserEntry).toMatchObject({
+      type: 'User',
+      confidence: 0.85,
+    });
+    const buildQueryEntry = wasm?.returnTypeMap?.get('UserService.buildQuery');
+    expect(buildQueryEntry, 'WASM returnTypeMap missing UserService.buildQuery').toBeDefined();
+    expect(buildQueryEntry).toMatchObject({
+      type: 'QueryBuilder',
+      confidence: 0.85,
+    });
+
+    if (!hasNative) return;
+    const raw = nativeExtract(code, 'service.js');
+    // Binaries older than #1283 don't emit returnTypeMap — skip those.
+    if (raw?.returnTypeMap === undefined) return;
+    // Native returns Vec<TypeMapEntry> as an array; patchReturnTypeMap converts
+    // it to a Map in production. Assert the raw extraction is correct here.
+    const entries = raw.returnTypeMap as Array<{
+      name: string;
+      typeName: string;
+      confidence: number;
+    }>;
+    expect(entries).toBeInstanceOf(Array);
+    const nativeGetUser = entries.find((e) => e.name === 'UserService.getUser');
+    expect(nativeGetUser, 'native returnTypeMap missing UserService.getUser').toBeDefined();
+    expect(nativeGetUser).toMatchObject({
+      name: 'UserService.getUser',
+      typeName: 'User',
+      confidence: 0.85,
+    });
+    const nativeBuildQuery = entries.find((e) => e.name === 'UserService.buildQuery');
+    expect(nativeBuildQuery, 'native returnTypeMap missing UserService.buildQuery').toBeDefined();
+    expect(nativeBuildQuery).toMatchObject({
+      name: 'UserService.buildQuery',
+      typeName: 'QueryBuilder',
+      confidence: 0.85,
+    });
+  });
+
+  it('JS — callAssignments is populated by WASM; native when binary >= #1283', () => {
+    // recordCallAssignment / match_js_call_assignments fire when a variable is
+    // assigned from a call expression whose return type is NOT resolvable within
+    // the current file. Here, UserRepository.findById is not defined in the
+    // snippet, so resolveCallExprReturnType returns null and the assignment falls
+    // through to callAssignments with the receiver type from typeMap.
+    const code = `
+const repo = new UserRepository();
+const user = repo.findById('alice');
+`;
+    const wasm = wasmExtract(code, 'service.js');
+    expect(wasm?.callAssignments).toBeInstanceOf(Array);
+    const wasmUserAssignment = wasm?.callAssignments?.find((ca) => ca.varName === 'user');
+    expect(wasmUserAssignment, "WASM callAssignments missing entry for 'user'").toBeDefined();
+    expect(wasmUserAssignment).toMatchObject({
+      varName: 'user',
+      calleeName: 'findById',
+      receiverTypeName: 'UserRepository',
+    });
+
+    if (!hasNative) return;
+    const raw = nativeExtract(code, 'service.js');
+    // Binaries older than #1283 don't emit callAssignments — skip those.
+    if (raw?.callAssignments === undefined) return;
+    // Native returns Vec<NativeCallAssignment> with the same shape as CallAssignment.
+    expect(raw.callAssignments).toBeInstanceOf(Array);
+    const nativeUserAssignment = (
+      raw.callAssignments as Array<{
+        varName: string;
+        calleeName: string;
+        receiverTypeName?: string;
+      }>
+    ).find((ca) => ca.varName === 'user');
+    expect(nativeUserAssignment, "native callAssignments missing entry for 'user'").toBeDefined();
+    expect(nativeUserAssignment).toMatchObject({
+      varName: 'user',
+      calleeName: 'findById',
+      receiverTypeName: 'UserRepository',
+    });
+  });
+
   // Explicit guard for the WASM Python fix in #1189. The structural parity
   // loop above strips `self` from both sides via normalize(), so a regression
   // where WASM re-emits self/cls would slip through. Assert it directly.
