@@ -1119,7 +1119,13 @@ export interface CodegraphConfig {
     dbPath: string;
     driftThreshold: number;
     smallFilesThreshold: number;
-    /** Use the TypeScript compiler API to enrich typeMap for .ts/.tsx files. Default: true. */
+    /**
+     * Use the TypeScript compiler API to enrich typeMap for .ts/.tsx files.
+     * Improves method-call edge accuracy for patterns like `const svc = container.get<MyService>()`.
+     * Disabled by default because `ts.createProgram` adds ~1s overhead per build;
+     * enable in `.codegraphrc.json` when you need accurate type-resolved call edges.
+     * Default: false.
+     */
     typescriptResolver: boolean;
   };
 
