@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Block PR creation if the body contains "generated with" (case-insensitive)
+# Block PR creation if the body contains AI attribution (case-insensitive)
 
 set -euo pipefail
 
@@ -17,35 +17,37 @@ cmd=$(echo "$INPUT" | node -e "
 
 echo "$cmd" | grep -qi 'gh pr create' || exit 0
 
-# Block if body contains "generated with"
-if echo "$cmd" | grep -qi 'generated with'; then
+deny_pr() {
+  local reason="$1"
   node -e "
     console.log(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: 'BLOCKED: Remove any \'Generated with ...\' line from the PR body.'
+        permissionDecisionReason: process.argv[1]
       }
     }));
-  "
+  " "$reason"
   exit 0
-fi
+}
 
-# Also check --body-file path
-BODY_FILE=$(echo "$cmd" | grep -oP '(?<=--body-file\s)\S+' || true)
-if [ -n "$BODY_FILE" ] && [ -f "$BODY_FILE" ]; then
-  if grep -qi 'generated with' "$BODY_FILE"; then
-    node -e "
-      console.log(JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'deny',
-          permissionDecisionReason: 'BLOCKED: Remove any \'Generated with ...\' line from the PR body file.'
-        }
-      }));
-    "
-    exit 0
+check_attribution() {
+  local text="$1"
+  local source="$2"
+  if echo "$text" | grep -qiE 'generated with claude|generated with \[claude|co-authored-by:.*claude|co-authored-by:.*anthropic|built with claude|claude\.ai'; then
+    deny_pr "BLOCKED: Remove AI attribution lines (Co-Authored-By with Claude/Anthropic, 'Generated with Claude', 'Built with Claude', claude.ai URLs) from the PR ${source}."
   fi
+}
+
+check_attribution "$cmd" "body"
+
+# Also check --body-file path (handles both --body-file <path> and --body-file=<path>)
+BODY_FILE=$(echo "$cmd" | grep -oE '\-\-body-file[[:space:]]+[^[:space:]]+' | awk '{print $2}' || true)
+if [ -z "$BODY_FILE" ]; then
+  BODY_FILE=$(echo "$cmd" | grep -oE '\-\-body-file=[^[:space:]]+' | sed 's/--body-file=//' || true)
+fi
+if [ -n "$BODY_FILE" ] && [ -f "$BODY_FILE" ]; then
+  check_attribution "$(cat "$BODY_FILE")" "body file"
 fi
 
 exit 0

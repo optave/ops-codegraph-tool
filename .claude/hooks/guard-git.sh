@@ -170,6 +170,27 @@ if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)gh[[:space:]]+pr[[
   validate_branch_name
 fi
 
+# --- Block AI attribution in commit messages ---
+
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+commit'; then
+  if echo "$COMMAND" | grep -qiE 'co-authored-by:.*claude|co-authored-by:.*anthropic|generated with claude|generated with \[claude|built with claude|claude\.ai'; then
+    deny "BLOCKED: Remove AI attribution lines (Co-Authored-By with Claude/Anthropic, 'Generated with Claude', 'Built with Claude', claude.ai URLs) from the commit message."
+  fi
+  # Extract -F <file> or --file=<file> or --file <file> (all equivalent git commit forms)
+  MSG_FILE=$(echo "$COMMAND" | grep -oE '\-F[[:space:]]+[^[:space:]]+' | awk '{print $2}' || true)
+  if [ -z "$MSG_FILE" ]; then
+    MSG_FILE=$(echo "$COMMAND" | grep -oE '\-\-file=[^[:space:]]+' | sed 's/--file=//' || true)
+  fi
+  if [ -z "$MSG_FILE" ]; then
+    MSG_FILE=$(echo "$COMMAND" | grep -oE '\-\-file[[:space:]]+[^[:space:]]+' | awk '{print $2}' || true)
+  fi
+  if [ -n "$MSG_FILE" ] && [ -f "$MSG_FILE" ]; then
+    if grep -qiE 'co-authored-by:.*claude|co-authored-by:.*anthropic|generated with claude|generated with \[claude|built with claude|claude\.ai' "$MSG_FILE"; then
+      deny "BLOCKED: Remove AI attribution lines from the commit message file '$MSG_FILE'."
+    fi
+  fi
+fi
+
 # --- Commit validation against edit log ---
 
 if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+commit'; then
