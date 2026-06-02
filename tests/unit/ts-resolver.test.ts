@@ -259,3 +259,285 @@ class MyService {
     expect(symbols.returnTypeMap).toBeUndefined();
   });
 });
+
+describe('enrichTypeMapWithTsc Phase 8.1 typeMap enrichment', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    fs.writeFileSync(
+      path.join(tmpDir, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.ts'] }),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('enriches typeMap for typed function parameters', async () => {
+    const srcFile = 'handler.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class RequestHandler {}
+function process(handler: RequestHandler): void {}
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const { typeMap } = fileSymbols.get(srcFile)!;
+    expect(typeMap.get('handler')).toEqual({ type: 'RequestHandler', confidence: 1.0 });
+  });
+
+  it('enriches typeMap for typed variable declarations', async () => {
+    const srcFile = 'session.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class Session {}
+const session = new Session();
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const { typeMap } = fileSymbols.get(srcFile)!;
+    expect(typeMap.get('session')).toEqual({ type: 'Session', confidence: 1.0 });
+  });
+
+  it('does NOT overwrite confidence-1.0 entries already in typeMap', async () => {
+    const srcFile = 'preseeded.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class OrderService {}
+function place(svc: OrderService): void {}
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    fileSymbols.get(srcFile)!.typeMap.set('svc', { type: 'OriginalService', confidence: 1.0 });
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const { typeMap } = fileSymbols.get(srcFile)!;
+    expect(typeMap.get('svc')).toEqual({ type: 'OriginalService', confidence: 1.0 });
+  });
+
+  it('replaces low-confidence typeMap entries with compiler-verified ones', async () => {
+    const srcFile = 'replace.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class PaymentService {}
+function pay(svc: PaymentService): void {}
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    fileSymbols.get(srcFile)!.typeMap.set('svc', { type: 'GuessedType', confidence: 0.8 });
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const { typeMap } = fileSymbols.get(srcFile)!;
+    expect(typeMap.get('svc')).toEqual({ type: 'PaymentService', confidence: 1.0 });
+  });
+
+  it('excludes ambiguous parameter names where same name maps to different types across functions', async () => {
+    const srcFile = 'ambiguous-params.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class LoggerA {}
+class LoggerB {}
+function logA(logger: LoggerA): void {}
+function logB(logger: LoggerB): void {}
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const { typeMap } = fileSymbols.get(srcFile)!;
+    // 'logger' appears with two distinct types — must not be written as a bare name
+    expect(typeMap.has('logger')).toBe(false);
+  });
+
+  it('does not add typeMap entries for primitive/built-in parameter types', async () => {
+    const srcFile = 'primitives.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+function process(name: string, count: number, flag: boolean): void {}
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const { typeMap } = fileSymbols.get(srcFile)!;
+    expect(typeMap.has('name')).toBe(false);
+    expect(typeMap.has('count')).toBe(false);
+    expect(typeMap.has('flag')).toBe(false);
+  });
+});
+
+describe('enrichTypeMapWithTsc callAssignment receiver type and deduplication', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    fs.writeFileSync(
+      path.join(tmpDir, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.ts'] }),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('captures receiverTypeName for method call assignments when receiver is in typeMap', async () => {
+    const srcFile = 'method-call.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class DataService {
+  getData(): any { return null; }
+}
+const svc = new DataService();
+const result = svc.getData();
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    const ca = symbols.callAssignments!.find((c) => c.varName === 'result');
+    expect(ca).toBeDefined();
+    expect(ca!.calleeName).toBe('getData');
+    expect(ca!.receiverTypeName).toBe('DataService');
+  });
+
+  it('does not add callAssignment for varName already resolved in typeMap', async () => {
+    const srcFile = 'skip-resolved.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+declare function createConfig(): any;
+const config = createConfig();
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    // Pre-seeding typeMap simulates that config was already resolved by a prior pass
+    fileSymbols.get(srcFile)!.typeMap.set('config', { type: 'Config', confidence: 1.0 });
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    expect(symbols.callAssignments!.find((c) => c.varName === 'config')).toBeUndefined();
+  });
+
+  it('variables resolved by enrichSourceFile are not duplicated in callAssignments', async () => {
+    const srcFile = 'no-dupe.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class MyService {}
+declare function createService(): MyService;
+const svc = createService();
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    // enrichSourceFile resolves svc → MyService; enrichCallAssignments must skip it
+    expect(symbols.typeMap.get('svc')).toEqual({ type: 'MyService', confidence: 1.0 });
+    expect(symbols.callAssignments!.find((c) => c.varName === 'svc')).toBeUndefined();
+  });
+});
+
+describe('enrichTypeMapWithTsc edge cases', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('processes .tsx files and backfills returnTypeMap', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.tsx'] }),
+    );
+    const srcFile = 'component.tsx';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class ComponentState {}
+function getInitialState(): ComponentState { return new ComponentState(); }
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    expect(symbols.returnTypeMap).toBeInstanceOf(Map);
+    expect(symbols.returnTypeMap!.get('getInitialState')).toEqual({
+      type: 'ComponentState',
+      confidence: 1.0,
+    });
+  });
+
+  it('enriches returnTypeMap for regular function expressions (not just arrow functions)', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.ts'] }),
+    );
+    const srcFile = 'func-expr.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class Widget {}
+const makeWidget = function(): Widget { return new Widget(); };
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    expect(symbols.returnTypeMap!.get('makeWidget')).toEqual({ type: 'Widget', confidence: 1.0 });
+  });
+
+  it('excludes returnTypeMap entries for functions returning primitive types', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.ts'] }),
+    );
+    const srcFile = 'primitives-return.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+function getName(): string { return 'hello'; }
+function getCount(): number { return 42; }
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    expect(symbols.returnTypeMap!.has('getName')).toBe(false);
+    expect(symbols.returnTypeMap!.has('getCount')).toBe(false);
+  });
+});
