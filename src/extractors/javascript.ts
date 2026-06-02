@@ -6,6 +6,7 @@ import type {
   Definition,
   Export,
   ExtractorOutput,
+  FnRefBinding,
   Import,
   SubDeclaration,
   TreeSitterNode,
@@ -314,6 +315,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const typeMap: Map<string, TypeMapEntry> = new Map();
   const returnTypeMap: Map<string, TypeMapEntry> = new Map();
   const callAssignments: CallAssignment[] = [];
+  const fnRefBindings: FnRefBinding[] = [];
 
   const matches = query.matches(tree.rootNode);
 
@@ -334,7 +336,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   extractReturnTypeMapWalk(tree.rootNode, returnTypeMap);
 
   // Extract typeMap with intra-file return-type propagation
-  extractTypeMapWalk(tree.rootNode, typeMap, returnTypeMap, callAssignments);
+  extractTypeMapWalk(tree.rootNode, typeMap, returnTypeMap, callAssignments, fnRefBindings);
 
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
@@ -348,6 +350,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     typeMap,
     returnTypeMap,
     callAssignments,
+    fnRefBindings,
   };
 }
 
@@ -578,13 +581,20 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     typeMap: new Map(),
     returnTypeMap: new Map(),
     callAssignments: [],
+    fnRefBindings: [],
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
   // Phase 8.2: Extract function return types first so propagation can use them
   extractReturnTypeMapWalk(tree.rootNode, ctx.returnTypeMap!);
   // Populate typeMap with type annotations and intra-file return-type propagation
-  extractTypeMapWalk(tree.rootNode, ctx.typeMap!, ctx.returnTypeMap, ctx.callAssignments);
+  extractTypeMapWalk(
+    tree.rootNode,
+    ctx.typeMap!,
+    ctx.returnTypeMap,
+    ctx.callAssignments,
+    ctx.fnRefBindings,
+  );
   return ctx;
 }
 
@@ -1359,12 +1369,13 @@ function extractTypeMapWalk(
   typeMap: Map<string, TypeMapEntry>,
   returnTypeMap?: Map<string, TypeMapEntry>,
   callAssignments?: CallAssignment[],
+  fnRefBindings?: FnRefBinding[],
 ): void {
   function walk(node: TreeSitterNode, depth: number): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
     if (t === 'variable_declarator') {
-      handleVarDeclaratorTypeMap(node, typeMap, returnTypeMap, callAssignments);
+      handleVarDeclaratorTypeMap(node, typeMap, returnTypeMap, callAssignments, fnRefBindings);
     } else if (t === 'required_parameter' || t === 'optional_parameter') {
       handleParamTypeMap(node, typeMap);
     }
@@ -1381,12 +1392,29 @@ function handleVarDeclaratorTypeMap(
   typeMap: Map<string, TypeMapEntry>,
   returnTypeMap?: Map<string, TypeMapEntry>,
   callAssignments?: CallAssignment[],
+  fnRefBindings?: FnRefBinding[],
 ): void {
   const nameN = node.childForFieldName('name');
   if (!nameN || nameN.type !== 'identifier') return;
 
   const typeAnno = findChild(node, 'type_annotation');
   const valueN = node.childForFieldName('value');
+
+  // Phase 8.3: record function-reference bindings before any type-analysis early returns.
+  // Captures `const fn = handler` (identifier) and `const fn = obj.method` (member_expression).
+  // call_expression and new_expression are intentionally excluded — those are handled by
+  // Phase 8.2 callAssignments and the constructor type-map respectively.
+  if (fnRefBindings && valueN) {
+    if (valueN.type === 'identifier' && !BUILTIN_GLOBALS.has(valueN.text)) {
+      fnRefBindings.push({ lhs: nameN.text, rhs: valueN.text });
+    } else if (valueN.type === 'member_expression') {
+      const prop = valueN.childForFieldName('property');
+      const obj = valueN.childForFieldName('object');
+      if (prop && obj?.type === 'identifier' && !BUILTIN_GLOBALS.has(obj.text)) {
+        fnRefBindings.push({ lhs: nameN.text, rhs: prop.text, rhsReceiver: obj.text });
+      }
+    }
+  }
 
   // Constructor on the same declaration wins over annotation: the runtime type is
   // what matters for call resolution (e.g. `const x: Base = new Derived()` should

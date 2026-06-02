@@ -536,6 +536,20 @@ export interface CallAssignment {
   receiverTypeName?: string;
 }
 
+/**
+ * A function-reference binding recorded during extraction for points-to analysis (Phase 8.3).
+ * Captures `const fn = handler` or `const fn = obj.method` patterns where the right-hand
+ * side is a named function reference (not a call expression or literal).
+ */
+export interface FnRefBinding {
+  /** Variable being assigned (the left-hand side identifier). */
+  lhs: string;
+  /** Named function/property on the right-hand side. */
+  rhs: string;
+  /** If rhs is a member expression (obj.method), the receiver object name. */
+  rhsReceiver?: string;
+}
+
 /** The normalized output shape returned by every language extractor. */
 export interface ExtractorOutput {
   definitions: Definition[];
@@ -555,6 +569,12 @@ export interface ExtractorOutput {
    * per-file returnTypeMap. Consumed by build-edges.ts to propagate cross-file return types.
    */
   callAssignments?: CallAssignment[];
+  /**
+   * Function-reference bindings for points-to analysis (Phase 8.3).
+   * Records `const fn = handler` and `const fn = obj.method` patterns so the
+   * edge builder can follow aliases when a call target has no direct definition.
+   */
+  fnRefBindings?: FnRefBinding[];
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */
