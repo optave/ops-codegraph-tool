@@ -95,7 +95,7 @@ export async function enrichTypeMapWithTsc(
   }
 
   const t0 = Date.now();
-  const program = createProgram(ts, tsconfigPath, rootDir);
+  const program = createProgram(ts, tsconfigPath);
   if (!program) return;
 
   const checker = program.getTypeChecker();
@@ -172,11 +172,7 @@ function findTsconfig(rootDir: string): string | null {
   return null;
 }
 
-function createProgram(
-  ts: TsModule,
-  tsconfigPath: string,
-  rootDir: string,
-): import('typescript').Program | null {
+function createProgram(ts: TsModule, tsconfigPath: string): import('typescript').Program | null {
   try {
     const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
     if (configFile.error) {
@@ -186,7 +182,11 @@ function createProgram(
       return null;
     }
 
-    const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, rootDir);
+    const parsed = ts.parseJsonConfigFileContent(
+      configFile.config,
+      ts.sys,
+      path.dirname(tsconfigPath),
+    );
 
     if (parsed.errors.length > 0) {
       for (const err of parsed.errors) {
@@ -241,8 +241,13 @@ function enrichSourceFile(
   checker: import('typescript').TypeChecker,
   typeMap: Map<string, TypeMapEntry>,
 ): void {
-  // First pass: collect all resolved types keyed by bare name
-  const nameToTypes = new Map<string, string[]>();
+  // First pass: collect resolved types keyed by bare identifier name.
+  // Track both the short name (for typeMap writes) and the fully-qualified name
+  // (module-path-prefixed) for ambiguity detection. Two classes may share the
+  // same short name (e.g., `OrderService` from two different modules), and
+  // symbol.getName() returns the declared name — not the local alias — so
+  // deduplication on short names alone would incorrectly collapse them.
+  const nameToEntries = new Map<string, { shortName: string; qualifiedName: string }[]>();
 
   function visit(node: import('typescript').Node): void {
     let identName: string | null = null;
@@ -257,13 +262,13 @@ function enrichSourceFile(
     }
 
     if (identName && nameNode) {
-      const typeName = resolveTypeName(nameNode, checker);
-      if (typeName) {
-        const existing = nameToTypes.get(identName);
+      const resolved = resolveTypeName(nameNode, checker);
+      if (resolved) {
+        const existing = nameToEntries.get(identName);
         if (existing) {
-          existing.push(typeName);
+          existing.push(resolved);
         } else {
-          nameToTypes.set(identName, [typeName]);
+          nameToEntries.set(identName, [resolved]);
         }
       }
     }
@@ -272,14 +277,14 @@ function enrichSourceFile(
   }
   ts.forEachChild(sourceFile, visit);
 
-  // Second pass: only write unambiguous entries (single unique type for a name)
-  for (const [name, types] of nameToTypes) {
-    const uniqueTypes = [...new Set(types)];
-    if (uniqueTypes.length !== 1) continue; // ambiguous — skip to avoid wrong edges
-    const typeName = uniqueTypes[0] as string;
+  // Second pass: only write unambiguous entries (single unique qualified type for a name)
+  for (const [name, entries] of nameToEntries) {
+    const uniqueQualified = [...new Set(entries.map((e) => e.qualifiedName))];
+    if (uniqueQualified.length !== 1) continue; // ambiguous across modules — skip
+    const shortName = (entries[0] as { shortName: string }).shortName;
     const existing = typeMap.get(name);
     if (!existing || existing.confidence < 1.0) {
-      typeMap.set(name, { type: typeName, confidence: 1.0 });
+      typeMap.set(name, { type: shortName, confidence: 1.0 });
     }
   }
 }
@@ -437,21 +442,35 @@ function enrichCallAssignments(
 }
 
 /**
- * Ask the type checker for the type of a name node and return its symbol name,
- * or null when the type is a primitive, anonymous, or otherwise not useful for
- * method-call resolution.
+ * Ask the type checker for the type of a name node and return both the short
+ * declared name and the fully-qualified module-prefixed name. Returns null when
+ * the type is a primitive, anonymous, or otherwise not useful for resolution.
+ *
+ * The fully-qualified name (e.g., `"./legacy/service".OrderService`) is used for
+ * ambiguity detection — it distinguishes two classes that share the same short
+ * declaration name but come from different modules. The short name is what the
+ * call-edge resolver looks up in the typeMap.
  */
 function resolveTypeName(
   nameNode: import('typescript').Identifier,
   checker: import('typescript').TypeChecker,
-): string | null {
+): { shortName: string; qualifiedName: string } | null {
   try {
     const type = checker.getTypeAtLocation(nameNode);
     const symbol = type.getSymbol() ?? type.aliasSymbol;
     if (!symbol) return null;
-    const name = symbol.getName();
-    if (!name || name === '__type' || name === '__object' || SKIP_TYPE_NAMES.has(name)) return null;
-    return name;
+    const shortName = symbol.getName();
+    if (
+      !shortName ||
+      shortName === '__type' ||
+      shortName === '__object' ||
+      SKIP_TYPE_NAMES.has(shortName)
+    )
+      return null;
+    // getFullyQualifiedName returns e.g. `"./path/to/module".ClassName` for
+    // imported symbols — unique across modules even when short names collide.
+    const qualifiedName = checker.getFullyQualifiedName(symbol);
+    return { shortName, qualifiedName };
   } catch {
     return null;
   }
