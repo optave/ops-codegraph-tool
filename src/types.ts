@@ -523,6 +523,19 @@ export interface TypeMapEntry {
   confidence: number;
 }
 
+/**
+ * A variable assignment from a call expression, recorded during extraction for
+ * cross-file return-type propagation (Phase 8.2).
+ */
+export interface CallAssignment {
+  /** Variable being assigned to. */
+  varName: string;
+  /** Name of the function or method being called. */
+  calleeName: string;
+  /** Resolved receiver type, if the call is a method call (e.g. service.getRepo()). */
+  receiverTypeName?: string;
+}
+
 /** The normalized output shape returned by every language extractor. */
 export interface ExtractorOutput {
   definitions: Definition[];
@@ -531,6 +544,17 @@ export interface ExtractorOutput {
   classes: ClassRelation[];
   exports: Export[];
   typeMap: Map<string, TypeMapEntry>;
+  /**
+   * Maps function/method names to their declared or inferred return types.
+   * Keys: plain name (e.g. "createUser") or qualified name (e.g. "UserService.getUser").
+   * Populated by JS/TS extractor; used for inter-procedural type propagation (Phase 8.2).
+   */
+  returnTypeMap?: Map<string, TypeMapEntry>;
+  /**
+   * Variable assignments from call expressions that could not be resolved from the
+   * per-file returnTypeMap. Consumed by build-edges.ts to propagate cross-file return types.
+   */
+  callAssignments?: CallAssignment[];
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */
@@ -1119,6 +1143,14 @@ export interface CodegraphConfig {
     dbPath: string;
     driftThreshold: number;
     smallFilesThreshold: number;
+    /**
+     * Use the TypeScript compiler API to enrich typeMap for .ts/.tsx files.
+     * Improves method-call edge accuracy for patterns like `const svc = container.get<MyService>()`.
+     * Disabled by default because `ts.createProgram` adds ~1s overhead per build;
+     * enable in `.codegraphrc.json` when you need accurate type-resolved call edges.
+     * Default: false.
+     */
+    typescriptResolver: boolean;
   };
 
   query: {
@@ -1189,6 +1221,8 @@ export interface CodegraphConfig {
     briefImporterDepth: number;
     briefHighRiskCallers: number;
     briefMediumRiskCallers: number;
+    /** Maximum chain depth for inter-procedural return-type propagation (Phase 8.2). */
+    typePropagationDepth: number;
   };
 
   community: {

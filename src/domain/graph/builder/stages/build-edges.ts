@@ -7,6 +7,8 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
+import { setTypeMapEntry } from '../../../../extractors/helpers.js';
+import { PROPAGATION_HOP_PENALTY } from '../../../../extractors/javascript.js';
 import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
@@ -20,6 +22,7 @@ import type {
   TypeMapEntry,
 } from '../../../../types.js';
 import { computeConfidence } from '../../resolve.js';
+import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
   type CallNodeLookup,
   findCaller,
@@ -28,7 +31,6 @@ import {
 } from '../call-resolver.js';
 import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
-
 import { getResolved, isBarrelFile, resolveBarrelExport } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -385,6 +387,64 @@ function buildImportEdgesNative(
 
   for (const e of nativeEdges) {
     allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+  }
+}
+
+// ── Phase 8.2: Cross-file return-type propagation ───────────────────────
+
+/**
+ * Augment each file's typeMap with return types from imported functions.
+ *
+ * The per-file extractor already resolves same-file call assignments (intra-file
+ * propagation). This function handles the cross-file case: when a file imports a
+ * function from another file and assigns its return value to a variable, we look up
+ * the callee's return type in the source file's returnTypeMap and inject it.
+ *
+ * Called once before call-edge building so both the native and JS paths benefit.
+ */
+function propagateReturnTypesAcrossFiles(
+  fileSymbols: Map<string, ExtractorOutput>,
+  ctx: PipelineContext,
+  rootDir: string,
+): void {
+  // Index: filePath → per-file return-type map
+  const returnTypeIndex = new Map<string, Map<string, TypeMapEntry>>();
+  for (const [relPath, symbols] of fileSymbols) {
+    if (symbols.returnTypeMap?.size) returnTypeIndex.set(relPath, symbols.returnTypeMap);
+  }
+  if (returnTypeIndex.size === 0) return;
+
+  // Flat global map for qualified method lookups (TypeName.methodName → entry).
+  // Conflicts resolved by keeping the highest-confidence entry.
+  const globalReturnTypeMap = new Map<string, TypeMapEntry>();
+  for (const rtm of returnTypeIndex.values()) {
+    for (const [name, entry] of rtm) {
+      const existing = globalReturnTypeMap.get(name);
+      if (!existing || entry.confidence > existing.confidence) globalReturnTypeMap.set(name, entry);
+    }
+  }
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (!symbols.callAssignments?.length) continue;
+    const importedNamesMap = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+
+    for (const ca of symbols.callAssignments) {
+      if (symbols.typeMap.has(ca.varName)) continue; // already resolved locally
+
+      let returnEntry: TypeMapEntry | undefined;
+      if (ca.receiverTypeName) {
+        returnEntry = globalReturnTypeMap.get(`${ca.receiverTypeName}.${ca.calleeName}`);
+      } else {
+        const importedFrom = importedNamesMap.get(ca.calleeName);
+        if (importedFrom) returnEntry = returnTypeIndex.get(importedFrom)?.get(ca.calleeName);
+      }
+
+      if (returnEntry) {
+        const propagatedConf = returnEntry.confidence - PROPAGATION_HOP_PENALTY;
+        if (propagatedConf > 0)
+          setTypeMapEntry(symbols.typeMap, ca.varName, returnEntry.type, propagatedConf);
+      }
+    }
   }
 }
 
@@ -803,6 +863,14 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   addLazyFallback(ctx, scopedLoad);
 
   const t0 = performance.now();
+
+  // Enrich typeMap for .ts/.tsx files using the TypeScript compiler API.
+  // Runs before call-edge construction so the accurate types are available
+  // for method-call resolution. Gated on config so users can opt out.
+  if (ctx.config.build.typescriptResolver) {
+    await enrichTypeMapWithTsc(ctx.rootDir, ctx.fileSymbols);
+  }
+
   const native = engineName === 'native' ? loadNative() : null;
 
   // Phase 1: Compute edges inside a better-sqlite3 transaction.
@@ -864,6 +932,11 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       batchInsertEdges(db, allEdgeRows);
     }
   });
+  // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
+  // the transaction opens. This is pure in-memory mutation (no DB I/O) and must
+  // run outside the transaction to avoid leaving ctx.fileSymbols in a partial
+  // state if the transaction rolls back unexpectedly.
+  propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
   computeEdgesTx();
 
   // Phase 2: Native rusqlite bulk insert (outside better-sqlite3 transaction

@@ -5,10 +5,10 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
-| 3.11.1 | native | 34.5 ↑35% | 34.6 ↑34% | 34.6 ↑28% | 5.4 ↑23% | 5.6 ↑22% | 5.6 ↑17% | 8.7ms ↓7% |
-| 3.11.1 | wasm | 45.5 ↑41% | 46.1 ↑37% | 46.2 ↑39% | 5.1 ↑34% | 5.2 ↑37% | 5.2 ↑33% | 12.1ms ↑75% |
-| 3.11.0 | native | 25.6 ↑4% | 25.8 ↑6% | 27.1 ↑10% | 4.4 ↑2% | 4.6 ↑5% | 4.8 ↑9% | 9.4ms ↑12% |
-| 3.11.0 | wasm | 32.2 ~ | 33.6 ~ | 33.3 ~ | 3.8 ↓10% | 3.8 ↓10% | 3.9 ↓9% | 6.9ms ↓13% |
+| 3.11.2 | native | 34 ~ | 33.7 ↓3% | 33.9 ↓2% | 5.3 ~ | 5.5 ~ | 5.5 ~ | 9.6ms ↑10% |
+| 3.11.2 | wasm | 43.4 ↓5% | 43.8 ↓5% | 44 ↓5% | 5.1 ~ | 5.3 ~ | 5.7 ↑10% | 9.9ms ↓18% |
+| 3.11.1 | native | 34.5 ↑40% | 34.6 ↑42% | 34.6 ↑40% | 5.4 ↑26% | 5.6 ↑27% | 5.6 ↑27% | 8.7ms ↑4% |
+| 3.11.1 | wasm | 45.5 ↑39% | 46.1 ↑40% | 46.2 ↑40% | 5.1 ↑21% | 5.2 ↑24% | 5.2 ↑21% | 12.1ms ↑53% |
 | 3.10.0 | native | 24.7 ↓14% | 24.3 ↓16% | 24.7 ↓26% | 4.3 ↓19% | 4.4 ↓20% | 4.4 ↓19% | 8.4ms ↓50% |
 | 3.10.0 | wasm | 32.8 ↓15% | 33 ↓17% | 33 ↓14% | 4.2 ↓16% | 4.2 ↓16% | 4.3 ↓12% | 7.9ms ↓31% |
 | 3.9.6 | native | 28.7 ↑7% | 29.1 ↑7% | 33.2 ↑22% | 5.3 ↑8% | 5.5 ↑8% | 5.4 ↑6% | 16.7ms ↑129% |
@@ -61,37 +61,37 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.11.1 | **Date:** 2026-05-30
+**Version:** 3.11.2 | **Date:** 2026-06-01
 
 #### Native (Rust)
 
-**Targets:** hub=`buildGraph`, mid=`db`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`customDbPath`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 34.5ms |
-| fnDeps depth 3 | 34.6ms |
-| fnDeps depth 5 | 34.6ms |
-| fnImpact depth 1 | 5.4ms |
-| fnImpact depth 3 | 5.6ms |
-| fnImpact depth 5 | 5.6ms |
-| diffImpact latency | 8.7ms |
+| fnDeps depth 1 | 34ms |
+| fnDeps depth 3 | 33.7ms |
+| fnDeps depth 5 | 33.9ms |
+| fnImpact depth 1 | 5.3ms |
+| fnImpact depth 3 | 5.5ms |
+| fnImpact depth 5 | 5.5ms |
+| diffImpact latency | 9.6ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 #### WASM
 
-**Targets:** hub=`buildGraph`, mid=`db`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`customDbPath`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 45.5ms |
-| fnDeps depth 3 | 46.1ms |
-| fnDeps depth 5 | 46.2ms |
+| fnDeps depth 1 | 43.4ms |
+| fnDeps depth 3 | 43.8ms |
+| fnDeps depth 5 | 44ms |
 | fnImpact depth 1 | 5.1ms |
-| fnImpact depth 3 | 5.2ms |
-| fnImpact depth 5 | 5.2ms |
-| diffImpact latency | 12.1ms |
+| fnImpact depth 3 | 5.3ms |
+| fnImpact depth 5 | 5.7ms |
+| diffImpact latency | 9.9ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
@@ -114,6 +114,54 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.11.2",
+    "date": "2026-06-01",
+    "wasm": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "customDbPath",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 43.4,
+        "depth3Ms": 43.8,
+        "depth5Ms": 44
+      },
+      "fnImpact": {
+        "depth1Ms": 5.1,
+        "depth3Ms": 5.3,
+        "depth5Ms": 5.7
+      },
+      "diffImpact": {
+        "latencyMs": 9.9,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "customDbPath",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 34,
+        "depth3Ms": 33.7,
+        "depth5Ms": 33.9
+      },
+      "fnImpact": {
+        "depth1Ms": 5.3,
+        "depth3Ms": 5.5,
+        "depth5Ms": 5.5
+      },
+      "diffImpact": {
+        "latencyMs": 9.6,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.11.1",
     "date": "2026-05-30",

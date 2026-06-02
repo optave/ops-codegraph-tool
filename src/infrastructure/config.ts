@@ -24,6 +24,7 @@ export const DEFAULTS = {
     dbPath: '.codegraph/graph.db',
     driftThreshold: 0.2,
     smallFilesThreshold: 5,
+    typescriptResolver: false,
   },
   query: {
     defaultDepth: 3,
@@ -79,6 +80,10 @@ export const DEFAULTS = {
     briefImporterDepth: 5,
     briefHighRiskCallers: 10,
     briefMediumRiskCallers: 3,
+    // TODO(Phase 8.3): wire this into PROPAGATION_HOP_PENALTY / MAX_PROPAGATION_DEPTH once
+    // config is threaded through to extractSymbols. Currently the depth is controlled by
+    // the hardcoded MAX_PROPAGATION_DEPTH constant in src/extractors/javascript.ts.
+    typePropagationDepth: 3,
   },
   community: {
     resolution: 1.0,

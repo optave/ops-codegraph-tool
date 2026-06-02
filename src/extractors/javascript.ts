@@ -1,6 +1,7 @@
 import { debug } from '../infrastructure/logger.js';
 import type {
   Call,
+  CallAssignment,
   ClassRelation,
   Definition,
   Export,
@@ -77,6 +78,11 @@ const BUILTIN_GLOBALS: Set<string> = new Set([
   'EventEmitter',
   'Stream',
 ]);
+
+/** Maximum chain depth for inter-procedural return-type propagation (Phase 8.2). */
+const MAX_PROPAGATION_DEPTH = 3;
+/** Confidence penalty applied per propagation hop (1.0 → 0.9 → 0.8 → 0.7). */
+export const PROPAGATION_HOP_PENALTY = 0.1;
 
 /**
  * Extract symbols from a JS/TS parsed AST.
@@ -306,6 +312,8 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const classes: ClassRelation[] = [];
   const exps: Export[] = [];
   const typeMap: Map<string, TypeMapEntry> = new Map();
+  const returnTypeMap: Map<string, TypeMapEntry> = new Map();
+  const callAssignments: CallAssignment[] = [];
 
   const matches = query.matches(tree.rootNode);
 
@@ -322,13 +330,25 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract dynamic import() calls via targeted walk (query patterns don't match `import` function type)
   extractDynamicImportsWalk(tree.rootNode, imports);
 
-  // Extract typeMap from type annotations and new expressions
-  extractTypeMapWalk(tree.rootNode, typeMap);
+  // Phase 8.2: Extract function return types first so propagation can use them
+  extractReturnTypeMapWalk(tree.rootNode, returnTypeMap);
+
+  // Extract typeMap with intra-file return-type propagation
+  extractTypeMapWalk(tree.rootNode, typeMap, returnTypeMap, callAssignments);
 
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
-  return { definitions, calls, imports, classes, exports: exps, typeMap };
+  return {
+    definitions,
+    calls,
+    imports,
+    classes,
+    exports: exps,
+    typeMap,
+    returnTypeMap,
+    callAssignments,
+  };
 }
 
 /** Node types that define a function scope — constants inside these are skipped. */
@@ -556,11 +576,15 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     classes: [],
     exports: [],
     typeMap: new Map(),
+    returnTypeMap: new Map(),
+    callAssignments: [],
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
-  // Populate typeMap for variables and parameter type annotations
-  extractTypeMapWalk(tree.rootNode, ctx.typeMap!);
+  // Phase 8.2: Extract function return types first so propagation can use them
+  extractReturnTypeMapWalk(tree.rootNode, ctx.returnTypeMap!);
+  // Populate typeMap with type annotations and intra-file return-type propagation
+  extractTypeMapWalk(tree.rootNode, ctx.typeMap!, ctx.returnTypeMap, ctx.callAssignments);
   return ctx;
 }
 
@@ -1114,22 +1138,233 @@ function extractNewExprTypeName(newExprNode: TreeSitterNode): string | null {
   return null;
 }
 
+// ── Phase 8.2: Inter-Procedural Return Type Propagation ─────────────────────
+
+/**
+ * Walk the AST and record the return type of every function/method definition.
+ *
+ * Keys: plain name (e.g. "createUser") or "ClassName.methodName" for methods.
+ * Confidence:
+ *   - 1.0: explicit TypeScript return type annotation
+ *   - 0.85: inferred from the first `return new Constructor()` in the body
+ */
+function extractReturnTypeMapWalk(
+  rootNode: TreeSitterNode,
+  returnTypeMap: Map<string, TypeMapEntry>,
+): void {
+  function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    const t = node.type;
+
+    if (t === 'class_declaration' || t === 'class') {
+      const nameNode = node.childForFieldName('name');
+      const className = nameNode?.text ?? null;
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, className);
+      }
+      return;
+    }
+
+    if (t === 'function_declaration') {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode?.type === 'identifier' && nameNode.text !== 'constructor') {
+        const fnName = currentClass ? `${currentClass}.${nameNode.text}` : nameNode.text;
+        storeReturnType(node, fnName, returnTypeMap);
+      }
+      // Recurse into the function body with null currentClass so nested
+      // function declarations are not stored under the enclosing class name.
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
+    } else if (t === 'method_definition') {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode && currentClass && nameNode.text !== 'constructor') {
+        storeReturnType(node, `${currentClass}.${nameNode.text}`, returnTypeMap);
+      }
+      // Recurse into the method body with null currentClass so nested
+      // function declarations are not stored under the enclosing class name.
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
+    } else if (t === 'variable_declarator') {
+      // const foo = (): ReturnType => …  or  const foo = function(): ReturnType { … }
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN) {
+        const vt = valueN.type;
+        if (vt === 'arrow_function' || vt === 'function_expression') {
+          const fnName = currentClass ? `${currentClass}.${nameN.text}` : nameN.text;
+          storeReturnType(valueN, fnName, returnTypeMap);
+        }
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1, currentClass);
+    }
+  }
+  walk(rootNode, 0, null);
+}
+
+/** Extract the return type of a function node and store it in the returnTypeMap. */
+function storeReturnType(
+  fnNode: TreeSitterNode,
+  fnName: string,
+  returnTypeMap: Map<string, TypeMapEntry>,
+): void {
+  const returnTypeNode = fnNode.childForFieldName('return_type');
+  if (returnTypeNode) {
+    const typeName = extractSimpleTypeName(returnTypeNode);
+    if (typeName) {
+      const existing = returnTypeMap.get(fnName);
+      if (!existing || existing.confidence < 1.0)
+        returnTypeMap.set(fnName, { type: typeName, confidence: 1.0 });
+      return;
+    }
+  }
+  // Infer from first `return new Constructor()` in the function body
+  const body = fnNode.childForFieldName('body');
+  if (body) {
+    const inferred = findReturnNewExprType(body);
+    if (inferred) {
+      const existing = returnTypeMap.get(fnName);
+      if (!existing || 0.85 > existing.confidence)
+        returnTypeMap.set(fnName, { type: inferred, confidence: 0.85 });
+    }
+  }
+}
+
+/** Return the constructor name from the first `return new Constructor()` in a body, or null. */
+function findReturnNewExprType(bodyNode: TreeSitterNode): string | null {
+  for (let i = 0; i < bodyNode.childCount; i++) {
+    const child = bodyNode.child(i);
+    if (!child || child.type !== 'return_statement') continue;
+    for (let j = 0; j < child.childCount; j++) {
+      const expr = child.child(j);
+      if (expr?.type === 'new_expression') return extractNewExprTypeName(expr);
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the return type of a call_expression node using returnTypeMap.
+ * Handles: createUser() (identifier), service.getRepo() (member), and
+ * getService().getRepo() (chained call) up to MAX_PROPAGATION_DEPTH hops.
+ *
+ * `depth` tracks total chain hops consumed so far.  Each call boundary — both
+ * resolving the receiver and resolving the final return type — costs one hop.
+ * Confidence = annotated return type confidence − 0.1 × (depth + 1).
+ *
+ * Examples (annotated sources → confidence 1.0):
+ *   createUser()          depth=0 → 1.0 − 0.1 = 0.9 (1 hop)
+ *   svc.getUser()         depth=0 → 1.0 − 0.1 = 0.9 (1 hop; receiver from typeMap)
+ *   getService().getRepo() depth=0 → inner resolved at depth=1, outer at depth+1 → 0.8 (2 hops)
+ */
+function resolveCallExprReturnType(
+  callNode: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+  returnTypeMap: Map<string, TypeMapEntry>,
+  depth: number,
+): TypeMapEntry | null {
+  if (depth >= MAX_PROPAGATION_DEPTH) return null;
+
+  const fn = callNode.childForFieldName('function');
+  if (!fn) return null;
+
+  if (fn.type === 'identifier') {
+    const entry = returnTypeMap.get(fn.text);
+    if (!entry) return null;
+    const confidence = entry.confidence - PROPAGATION_HOP_PENALTY * (depth + 1);
+    return confidence > 0 ? { type: entry.type, confidence } : null;
+  }
+
+  if (fn.type === 'member_expression') {
+    const obj = fn.childForFieldName('object');
+    const prop = fn.childForFieldName('property');
+    if (!obj || !prop) return null;
+
+    let receiverType: string | null = null;
+    // effectiveDepth tracks the depth at which THIS call's return type is charged.
+    // When the receiver is itself a call expression (chain), we've already consumed
+    // a hop resolving it, so charge this call at depth+1.
+    let effectiveDepth = depth;
+
+    if (obj.type === 'identifier') {
+      const typeEntry = typeMap.get(obj.text);
+      receiverType = typeEntry ? typeEntry.type : null;
+    } else if (obj.type === 'call_expression') {
+      // Each link in a call chain costs an extra hop.
+      const innerResult = resolveCallExprReturnType(obj, typeMap, returnTypeMap, depth + 1);
+      receiverType = innerResult ? innerResult.type : null;
+      effectiveDepth = depth + 1;
+    }
+
+    if (receiverType) {
+      const entry = returnTypeMap.get(`${receiverType}.${prop.text}`);
+      if (entry) {
+        const confidence = entry.confidence - PROPAGATION_HOP_PENALTY * (effectiveDepth + 1);
+        return confidence > 0 ? { type: entry.type, confidence } : null;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Record a call assignment into callAssignments for cross-file propagation.
+ * Only records cases where the callee is a simple identifier or a method call
+ * on a known-typed variable — chain expressions are skipped (handled locally).
+ */
+function recordCallAssignment(
+  callNode: TreeSitterNode,
+  varName: string,
+  typeMap: Map<string, TypeMapEntry>,
+  callAssignments: CallAssignment[],
+): void {
+  const fn = callNode.childForFieldName('function');
+  if (!fn) return;
+  if (fn.type === 'identifier') {
+    callAssignments.push({ varName, calleeName: fn.text });
+  } else if (fn.type === 'member_expression') {
+    const obj = fn.childForFieldName('object');
+    const prop = fn.childForFieldName('property');
+    if (obj?.type === 'identifier' && prop) {
+      const receiverEntry = typeMap.get(obj.text);
+      callAssignments.push({
+        varName,
+        calleeName: prop.text,
+        receiverTypeName: receiverEntry?.type,
+      });
+    }
+  }
+}
+
 /**
  * Extract variable-to-type assignments into a per-file type map.
  *
  * Values are `{ type: string, confidence: number }`:
  *   - 1.0: explicit constructor (`new Foo()`)
  *   - 0.9: type annotation (`: Foo`) or typed parameter
+ *   - 0.7–0.9: inter-procedural propagation from return-type map (Phase 8.2)
  *   - 0.7: factory method call (`Foo.create()` — uppercase-first heuristic)
  *
  * Higher-confidence entries take priority when the same variable is seen twice.
  */
-function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+function extractTypeMapWalk(
+  rootNode: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+  returnTypeMap?: Map<string, TypeMapEntry>,
+  callAssignments?: CallAssignment[],
+): void {
   function walk(node: TreeSitterNode, depth: number): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
     if (t === 'variable_declarator') {
-      handleVarDeclaratorTypeMap(node, typeMap);
+      handleVarDeclaratorTypeMap(node, typeMap, returnTypeMap, callAssignments);
     } else if (t === 'required_parameter' || t === 'optional_parameter') {
       handleParamTypeMap(node, typeMap);
     }
@@ -1144,6 +1379,8 @@ function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeM
 function handleVarDeclaratorTypeMap(
   node: TreeSitterNode,
   typeMap: Map<string, TypeMapEntry>,
+  returnTypeMap?: Map<string, TypeMapEntry>,
+  callAssignments?: CallAssignment[],
 ): void {
   const nameN = node.childForFieldName('name');
   if (!nameN || nameN.type !== 'identifier') return;
@@ -1173,15 +1410,27 @@ function handleVarDeclaratorTypeMap(
   }
 
   if (!valueN) return;
-
-  // Constructor already handled above — only factory path remains.
   if (valueN.type === 'new_expression') return;
-  // Factory method: const x = Foo.create() → confidence 0.7
-  else if (valueN.type === 'call_expression') {
+
+  if (valueN.type === 'call_expression') {
+    // Phase 8.2: inter-procedural propagation — try to resolve return type from
+    // the local returnTypeMap before falling back to factory heuristics.
+    if (returnTypeMap) {
+      const result = resolveCallExprReturnType(valueN, typeMap, returnTypeMap, 0);
+      if (result) {
+        setTypeMapEntry(typeMap, nameN.text, result.type, result.confidence);
+        return;
+      }
+    }
+    // Record for cross-file resolution in build-edges.ts (imported functions)
+    if (callAssignments) {
+      recordCallAssignment(valueN, nameN.text, typeMap, callAssignments);
+    }
+    // Factory method heuristic: const x = Foo.create() → type Foo, confidence 0.7
     const fn = valueN.childForFieldName('function');
-    if (fn && fn.type === 'member_expression') {
+    if (fn?.type === 'member_expression') {
       const obj = fn.childForFieldName('object');
-      if (obj && obj.type === 'identifier') {
+      if (obj?.type === 'identifier') {
         const objName = obj.text;
         if (
           objName[0] &&

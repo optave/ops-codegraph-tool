@@ -95,6 +95,7 @@ describe('DEFAULTS', () => {
       briefImporterDepth: 5,
       briefHighRiskCallers: 10,
       briefMediumRiskCallers: 3,
+      typePropagationDepth: 3,
     });
   });
 
