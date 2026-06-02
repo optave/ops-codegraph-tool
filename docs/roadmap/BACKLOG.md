@@ -1,6 +1,6 @@
 # Codegraph Feature Backlog
 
-**Last updated:** 2026-06-01
+**Last updated:** 2026-06-02
 **Source:** Features derived from [COMPETITIVE_ANALYSIS.md](../../generated/competitive/COMPETITIVE_ANALYSIS.md) and internal roadmap discussions.
 
 ---
@@ -224,6 +224,7 @@ Ordered by problem-fit:
 |----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|------------|
 | 3 | Token counting on responses | Add tiktoken-based token counts to CLI and MCP responses so agents know how much context budget each query consumed. Inspired by glimpse, arbor. | Developer Experience | Agents and users can budget context windows; enables smarter multi-query strategies without blowing context limits | ✗ | ✓ | 3 | No | — |
 | 8 | Optional LLM provider integration | Bring-your-own provider (OpenAI, Anthropic, Ollama, etc.) for richer embeddings and AI-powered search. Enhancement layer only — core graph never depends on it. Inspired by code-graph-rag, autodev-codebase. | Search | Semantic search quality jumps significantly with provider embeddings; users who already pay for an LLM get better results at no extra cost | ✗ | ✓ | 3 | No | — |
+| 109 | Hardware-aware embedding model auto-install | On first `codegraph embed` (or via `codegraph setup`), detect the user's available hardware (RAM via `os.totalmem()`, VRAM via platform-specific probing — `nvidia-smi`, Metal, ROCm, or shell-out to `uvx whichllm@latest`). Compare against the default embedding model's requirements. If the default doesn't fit, automatically select and install the best available model from a bundled MTEB-ranked list filtered by hardware constraints — no prompt, no suggestion, just install it. Rank list ordered by MTEB retrieval score (not parameter count or benchmark ELO), with size tiers so large-RAM machines get `nomic-embed-text-v2-moe` while low-RAM machines fall back to `all-MiniLM-L6-v2`. Store the chosen model in `.codegraphrc.json` `search.model` so subsequent runs use it directly without re-detection. The bundled MTEB rank list is a static JSON file (updated at release time) — no network call at setup time unless the chosen model needs to be downloaded from HuggingFace. | Search | Eliminates the most common semantic search setup failure: users with limited hardware silently get OOM errors or slow-to-unusable performance when the default model doesn't fit their machine. Instead of asking users to know which embedding model fits their GPU, the tool detects and installs the right one automatically — same UX as `npm install` resolving the right binary. | ✗ | ✓ | 3 | No | — |
 
 ### Tier 3 — Not foundation-aligned (needs deliberate exception)
 
