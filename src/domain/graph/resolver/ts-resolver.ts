@@ -243,7 +243,7 @@ function enrichSourceFile(
     }
 
     if (identName && nameNode) {
-      const resolved = resolveTypeName(nameNode, checker);
+      const resolved = resolveTypeName(ts, nameNode, checker);
       if (resolved) {
         const existing = nameToEntries.get(identName);
         if (existing) {
@@ -262,7 +262,11 @@ function enrichSourceFile(
   for (const [name, entries] of nameToEntries) {
     const uniqueQualified = [...new Set(entries.map((e) => e.qualifiedName))];
     if (uniqueQualified.length !== 1) continue; // ambiguous across modules — skip
-    const shortName = entries[0].shortName;
+    // entries is non-empty because we only set() on first occurrence and push() after —
+    // TypeScript's noUncheckedIndexedAccess can flag [0] access, so assert the type.
+    const first = entries[0];
+    if (!first) continue;
+    const shortName = first.shortName;
     const existing = typeMap.get(name);
     if (!existing || existing.confidence < 1.0) {
       typeMap.set(name, { type: shortName, confidence: 1.0 });
@@ -281,6 +285,7 @@ function enrichSourceFile(
  * call-edge resolver looks up in the typeMap.
  */
 function resolveTypeName(
+  ts: TsModule,
   nameNode: import('typescript').Identifier,
   checker: import('typescript').TypeChecker,
 ): { shortName: string; qualifiedName: string } | null {
