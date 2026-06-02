@@ -151,6 +151,55 @@ function makeFoo(): Foo { return new Foo(); }
     });
   });
 
+  it('backfills returnTypeMap for async functions by unwrapping Promise<T>', async () => {
+    const srcFile = 'async-service.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class Order {}
+async function fetchOrder(): Promise<Order> { return new Order(); }
+class OrderService {
+  async loadOrder(): Promise<Order> { return new Order(); }
+}
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    // Async functions must be unwrapped — Promise itself is in SKIP_TYPE_NAMES
+    expect(symbols.returnTypeMap!.get('fetchOrder')).toEqual({ type: 'Order', confidence: 1.0 });
+    expect(symbols.returnTypeMap!.get('OrderService.loadOrder')).toEqual({
+      type: 'Order',
+      confidence: 1.0,
+    });
+  });
+
+  it('does NOT capture local (method-body-scoped) helper functions in returnTypeMap', async () => {
+    const srcFile = 'nested.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+class InnerResult {}
+class MyService {
+  doWork(): void {
+    // This local helper must NOT appear in returnTypeMap under the bare name 'helper'
+    const helper = (): InnerResult => new InnerResult();
+    helper();
+  }
+}
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    // 'helper' is local to MyService.doWork — must not pollute returnTypeMap
+    expect(symbols.returnTypeMap!.has('helper')).toBe(false);
+  });
+
   it('skips non-TS files even when returnTypeMap is undefined', async () => {
     const fileSymbols = new Map<string, ExtractorOutput>();
     fileSymbols.set('index.js', {
