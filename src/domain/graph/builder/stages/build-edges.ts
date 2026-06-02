@@ -8,6 +8,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
 import { setTypeMapEntry } from '../../../../extractors/helpers.js';
+import { PROPAGATION_HOP_PENALTY } from '../../../../extractors/javascript.js';
 import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
@@ -439,7 +440,7 @@ function propagateReturnTypesAcrossFiles(
       }
 
       if (returnEntry) {
-        const propagatedConf = returnEntry.confidence - 0.1;
+        const propagatedConf = returnEntry.confidence - PROPAGATION_HOP_PENALTY;
         if (propagatedConf > 0)
           setTypeMapEntry(symbols.typeMap, ca.varName, returnEntry.type, propagatedConf);
       }
@@ -905,10 +906,6 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
     }
 
-    // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
-    // call-edge building so both native and JS paths see the enriched typeMaps.
-    propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
-
     // Skip native call-edge path for small incremental builds: napi-rs
     // marshaling overhead for allNodes exceeds Rust computation savings.
     const useNativeCallEdges =
@@ -927,6 +924,11 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       batchInsertEdges(db, allEdgeRows);
     }
   });
+  // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
+  // the transaction opens. This is pure in-memory mutation (no DB I/O) and must
+  // run outside the transaction to avoid leaving ctx.fileSymbols in a partial
+  // state if the transaction rolls back unexpectedly.
+  propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
   computeEdgesTx();
 
   // Phase 2: Native rusqlite bulk insert (outside better-sqlite3 transaction
