@@ -699,7 +699,7 @@ function patchReturnTypeMap(r: any): void {
       map.set(e.name, { type: e.typeName, confidence: conf });
     }
   }
-  r.returnTypeMap = map.size > 0 ? map : undefined;
+  r.returnTypeMap = map.size > 0 ? map : new Map();
 }
 
 /** Wrap bindingType into binding object for dataflow argFlows and mutations. */
