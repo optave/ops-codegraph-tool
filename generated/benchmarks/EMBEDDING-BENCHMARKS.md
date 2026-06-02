@@ -6,6 +6,14 @@ Hit@N = expected symbol found in top N results.
 
 | Version | Model | Symbols | Hit@1 | Hit@3 | Hit@5 | Misses | Embed Time |
 |---------|-------|--------:|------:|------:|------:|-------:|-----------:|
+| 3.11.2 | minilm | 1500 | 66.6% ↑1.2pp | 86.7% ↑1.1pp | 91.5% ~ | 66 | 148.6s |
+| 3.11.2 | jina-small | 1500 | 75.3% ↓0.9pp | 91.3% ↓1.0pp | 95.1% ~ | 35 | 297.1s |
+| 3.11.2 | jina-base | 1500 | 69.1% ↓1.4pp | 88.6% ↓1.3pp | 92.7% ↓0.5pp | 62 | 1536.6s |
+| 3.11.2 | jina-code | 1500 | 68.0% ↑1.4pp | 85.9% ~ | 91.1% ~ | 70 | 1318.3s |
+| 3.11.2 | nomic | 1500 | 80.7% ↑1.7pp | 95.2% ~ | 97.4% ~ | 10 | 1535.8s |
+| 3.11.2 | nomic-v1.5 | 1500 | 79.3% ↑2.4pp | 94.0% ↑0.9pp | 96.9% ↑0.9pp | 17 | 1534.3s |
+| 3.11.2 | mxbai-xsmall | 1500 | 50.0% ~ | 68.8% ↓1.9pp | 75.1% ↓1.8pp | 252 | 213.0s |
+| 3.11.2 | modernbert | 1500 | 74.9% ↑0.9pp | 91.1% ↓0.5pp | 94.3% ~ | 43 | 1425.5s |
 | 3.11.1 | minilm | 1500 | 65.4% ~ | 85.7% ↓0.6pp | 91.1% ↓0.7pp | 72 | 149.6s |
 | 3.11.1 | jina-small | 1500 | 76.2% ↓0.9pp | 92.3% ~ | 94.9% ↓0.9pp | 35 | 296.2s |
 | 3.11.1 | jina-base | 1500 | 70.5% ↓0.9pp | 89.9% ↓1.5pp | 93.3% ↓2.1pp | 49 | 1525.9s |
@@ -27,21 +35,125 @@ Hit@N = expected symbol found in top N results.
 
 ### Latest results
 
-**Version:** 3.11.1 | **Strategy:** structured | **Symbols:** 1500 | **Date:** 2026-05-31
+**Version:** 3.11.2 | **Strategy:** structured | **Symbols:** 1500 | **Date:** 2026-06-02
 
 | Model | Dim | Context | Hit@1 | Hit@3 | Hit@5 | Hit@10 | Misses | Embed | Search |
 |-------|----:|--------:|------:|------:|------:|-------:|-------:|------:|-------:|
-| minilm | 384 | 256 | 65.4% | 85.7% | 91.1% | 95.2% | 72 | 149.6s | 153.1s |
-| jina-small | 512 | 8192 | 76.2% | 92.3% | 94.9% | 97.7% | 35 | 296.2s | 180.7s |
-| jina-base | 768 | 8192 | 70.5% | 89.9% | 93.3% | 96.7% | 49 | 1525.9s | 232.8s |
-| jina-code | 768 | 8192 | 66.6% | 85.7% | 90.8% | 95.5% | 68 | 1310.7s | 231.2s |
-| nomic | 768 | 8192 | 79.0% | 95.0% | 97.2% | 99.0% | 15 | 1536.3s | 231.7s |
-| nomic-v1.5 | 768 | 8192 | 76.9% | 93.1% | 95.9% | 98.6% | 21 | 1522.4s | 230.0s |
-| mxbai-xsmall | 384 | 4096 | 49.9% | 70.7% | 76.9% | 83.9% | 242 | 213.9s | 153.1s |
-| modernbert | 768 | 8192 | 74.0% | 91.6% | 94.7% | 97.3% | 40 | 1415.6s | 231.2s |
+| minilm | 384 | 256 | 66.6% | 86.7% | 91.5% | 95.6% | 66 | 148.6s | 147.0s |
+| jina-small | 512 | 8192 | 75.3% | 91.3% | 95.1% | 97.7% | 35 | 297.1s | 181.6s |
+| jina-base | 768 | 8192 | 69.1% | 88.6% | 92.7% | 95.9% | 62 | 1536.6s | 229.0s |
+| jina-code | 768 | 8192 | 68.0% | 85.9% | 91.1% | 95.3% | 70 | 1318.3s | 231.7s |
+| nomic | 768 | 8192 | 80.7% | 95.2% | 97.4% | 99.3% | 10 | 1535.8s | 230.4s |
+| nomic-v1.5 | 768 | 8192 | 79.3% | 94.0% | 96.9% | 98.9% | 17 | 1534.3s | 227.1s |
+| mxbai-xsmall | 384 | 4096 | 50.0% | 68.8% | 75.1% | 83.2% | 252 | 213.0s | 162.9s |
+| modernbert | 768 | 8192 | 74.9% | 91.1% | 94.3% | 97.1% | 43 | 1425.5s | 232.5s |
 
 <!-- EMBEDDING_BENCHMARK_DATA
 [
+  {
+    "version": "3.11.2",
+    "date": "2026-06-02",
+    "strategy": "structured",
+    "symbols": 1500,
+    "models": {
+      "minilm": {
+        "dim": 384,
+        "contextWindow": 256,
+        "hits1": 999,
+        "hits3": 1301,
+        "hits5": 1373,
+        "hits10": 1434,
+        "misses": 66,
+        "total": 1500,
+        "embedTimeMs": 148614,
+        "searchTimeMs": 147007
+      },
+      "jina-small": {
+        "dim": 512,
+        "contextWindow": 8192,
+        "hits1": 1130,
+        "hits3": 1370,
+        "hits5": 1426,
+        "hits10": 1465,
+        "misses": 35,
+        "total": 1500,
+        "embedTimeMs": 297143,
+        "searchTimeMs": 181596
+      },
+      "jina-base": {
+        "dim": 768,
+        "contextWindow": 8192,
+        "hits1": 1036,
+        "hits3": 1329,
+        "hits5": 1391,
+        "hits10": 1438,
+        "misses": 62,
+        "total": 1500,
+        "embedTimeMs": 1536553,
+        "searchTimeMs": 228959
+      },
+      "jina-code": {
+        "dim": 768,
+        "contextWindow": 8192,
+        "hits1": 1020,
+        "hits3": 1288,
+        "hits5": 1366,
+        "hits10": 1430,
+        "misses": 70,
+        "total": 1500,
+        "embedTimeMs": 1318324,
+        "searchTimeMs": 231657
+      },
+      "nomic": {
+        "dim": 768,
+        "contextWindow": 8192,
+        "hits1": 1211,
+        "hits3": 1428,
+        "hits5": 1461,
+        "hits10": 1490,
+        "misses": 10,
+        "total": 1500,
+        "embedTimeMs": 1535841,
+        "searchTimeMs": 230421
+      },
+      "nomic-v1.5": {
+        "dim": 768,
+        "contextWindow": 8192,
+        "hits1": 1189,
+        "hits3": 1410,
+        "hits5": 1453,
+        "hits10": 1483,
+        "misses": 17,
+        "total": 1500,
+        "embedTimeMs": 1534325,
+        "searchTimeMs": 227132
+      },
+      "mxbai-xsmall": {
+        "dim": 384,
+        "contextWindow": 4096,
+        "hits1": 750,
+        "hits3": 1032,
+        "hits5": 1127,
+        "hits10": 1248,
+        "misses": 252,
+        "total": 1500,
+        "embedTimeMs": 213025,
+        "searchTimeMs": 162908
+      },
+      "modernbert": {
+        "dim": 768,
+        "contextWindow": 8192,
+        "hits1": 1124,
+        "hits3": 1366,
+        "hits5": 1414,
+        "hits10": 1457,
+        "misses": 43,
+        "total": 1500,
+        "embedTimeMs": 1425497,
+        "searchTimeMs": 232502
+      }
+    }
+  },
   {
     "version": "3.11.1",
     "date": "2026-05-31",
