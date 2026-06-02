@@ -684,6 +684,24 @@ function patchTypeMap(r: any): void {
   }
 }
 
+/** Normalize native returnTypeMap array to a Map instance, keeping highest-confidence entry per key. */
+function patchReturnTypeMap(r: any): void {
+  if (!r.returnTypeMap || r.returnTypeMap instanceof Map) return;
+  const map = new Map<string, TypeMapEntry>();
+  for (const e of r.returnTypeMap as Array<{
+    name: string;
+    typeName: string;
+    confidence?: number;
+  }>) {
+    const conf = e.confidence ?? 1.0;
+    const existing = map.get(e.name);
+    if (!existing || conf > existing.confidence) {
+      map.set(e.name, { type: e.typeName, confidence: conf });
+    }
+  }
+  r.returnTypeMap = map.size > 0 ? map : undefined;
+}
+
 /** Wrap bindingType into binding object for dataflow argFlows and mutations. */
 function patchDataflow(dataflow: any): void {
   if (dataflow.argFlows) {
@@ -706,6 +724,7 @@ function patchNativeResult(r: any): ExtractorOutput {
   if (r.definitions) patchDefinitions(r.definitions);
   if (r.imports) patchImports(r.imports);
   patchTypeMap(r);
+  patchReturnTypeMap(r);
   if (r.dataflow) patchDataflow(r.dataflow);
 
   return r;

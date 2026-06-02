@@ -297,6 +297,17 @@ pub struct TypeMapEntry {
 
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NativeCallAssignment {
+    #[napi(js_name = "varName")]
+    pub var_name: String,
+    #[napi(js_name = "calleeName")]
+    pub callee_name: String,
+    #[napi(js_name = "receiverTypeName")]
+    pub receiver_type_name: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSymbols {
     pub file: String,
     pub definitions: Vec<Definition>,
@@ -311,6 +322,10 @@ pub struct FileSymbols {
     pub line_count: Option<u32>,
     #[napi(js_name = "typeMap")]
     pub type_map: Vec<TypeMapEntry>,
+    #[napi(js_name = "returnTypeMap")]
+    pub return_type_map: Vec<TypeMapEntry>,
+    #[napi(js_name = "callAssignments")]
+    pub call_assignments: Vec<NativeCallAssignment>,
 }
 
 impl FileSymbols {
@@ -326,6 +341,8 @@ impl FileSymbols {
             dataflow: None,
             line_count: None,
             type_map: Vec::new(),
+            return_type_map: Vec::new(),
+            call_assignments: Vec::new(),
         }
     }
 }
