@@ -416,6 +416,7 @@ const result = svc.getData();
     await enrichTypeMapWithTsc(tmpDir, fileSymbols);
 
     const symbols = fileSymbols.get(srcFile)!;
+    expect(symbols.callAssignments).toBeDefined();
     const ca = symbols.callAssignments!.find((c) => c.varName === 'result');
     expect(ca).toBeDefined();
     expect(ca!.calleeName).toBe('getData');
@@ -438,6 +439,7 @@ const config = createConfig();
     await enrichTypeMapWithTsc(tmpDir, fileSymbols);
 
     const symbols = fileSymbols.get(srcFile)!;
+    expect(symbols.callAssignments).toBeDefined();
     expect(symbols.callAssignments!.find((c) => c.varName === 'config')).toBeUndefined();
   });
 
@@ -458,6 +460,7 @@ const svc = createService();
     const symbols = fileSymbols.get(srcFile)!;
     // enrichSourceFile resolves svc → MyService; enrichCallAssignments must skip it
     expect(symbols.typeMap.get('svc')).toEqual({ type: 'MyService', confidence: 1.0 });
+    expect(symbols.callAssignments).toBeDefined();
     expect(symbols.callAssignments!.find((c) => c.varName === 'svc')).toBeUndefined();
   });
 });
@@ -467,6 +470,13 @@ describe('enrichTypeMapWithTsc edge cases', () => {
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
+    // Write a default tsconfig so future tests don't silently skip if they
+    // forget to write one. Tests that need a different include pattern
+    // (e.g. .tsx) overwrite this file.
+    fs.writeFileSync(
+      path.join(tmpDir, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.ts'] }),
+    );
   });
 
   afterEach(() => {
@@ -474,6 +484,7 @@ describe('enrichTypeMapWithTsc edge cases', () => {
   });
 
   it('processes .tsx files and backfills returnTypeMap', async () => {
+    // Override the default .ts tsconfig with one that includes .tsx files.
     fs.writeFileSync(
       path.join(tmpDir, 'tsconfig.json'),
       JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.tsx'] }),
@@ -499,10 +510,6 @@ function getInitialState(): ComponentState { return new ComponentState(); }
   });
 
   it('enriches returnTypeMap for regular function expressions (not just arrow functions)', async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, 'tsconfig.json'),
-      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.ts'] }),
-    );
     const srcFile = 'func-expr.ts';
     fs.writeFileSync(
       path.join(tmpDir, srcFile),
@@ -520,10 +527,6 @@ const makeWidget = function(): Widget { return new Widget(); };
   });
 
   it('excludes returnTypeMap entries for functions returning primitive types', async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, 'tsconfig.json'),
-      JSON.stringify({ compilerOptions: { strict: false }, include: ['./**/*.ts'] }),
-    );
     const srcFile = 'primitives-return.ts';
     fs.writeFileSync(
       path.join(tmpDir, srcFile),
