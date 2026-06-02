@@ -22,6 +22,7 @@ import type {
   TypeMapEntry,
 } from '../../../../types.js';
 import { computeConfidence } from '../../resolve.js';
+import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
   type CallNodeLookup,
   findCaller,
@@ -30,7 +31,6 @@ import {
 } from '../call-resolver.js';
 import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
-
 import { getResolved, isBarrelFile, resolveBarrelExport } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -863,6 +863,14 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   addLazyFallback(ctx, scopedLoad);
 
   const t0 = performance.now();
+
+  // Enrich typeMap for .ts/.tsx files using the TypeScript compiler API.
+  // Runs before call-edge construction so the accurate types are available
+  // for method-call resolution. Gated on config so users can opt out.
+  if (ctx.config.build.typescriptResolver) {
+    await enrichTypeMapWithTsc(ctx.rootDir, ctx.fileSymbols);
+  }
+
   const native = engineName === 'native' ? loadNative() : null;
 
   // Phase 1: Compute edges inside a better-sqlite3 transaction.
