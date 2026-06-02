@@ -128,6 +128,46 @@ const repo = getRepo();
     expect(ca!.calleeName).toBe('getRepo');
   });
 
+  it('excludes ambiguous callAssignments where same varName maps to different callees', async () => {
+    const srcFile = 'ambiguous.ts';
+    fs.writeFileSync(
+      path.join(tmpDir, srcFile),
+      `
+declare function getA(): any;
+declare function getB(): any;
+declare function getUnique(): any;
+
+class MyService {
+  methodOne() {
+    const result = getA();
+    return result;
+  }
+  methodTwo() {
+    // Same varName 'result' but different callee — should be excluded as ambiguous
+    const result = getB();
+    return result;
+  }
+}
+
+// Unambiguous: only one binding across the file
+const unique = getUnique();
+`,
+    );
+
+    const fileSymbols = makeFileSymbols(srcFile);
+    await enrichTypeMapWithTsc(tmpDir, fileSymbols);
+
+    const symbols = fileSymbols.get(srcFile)!;
+    expect(symbols.callAssignments).toBeDefined();
+    // 'result' is ambiguous (getA in one method, getB in another) — must be excluded
+    const resultEntries = symbols.callAssignments!.filter((c) => c.varName === 'result');
+    expect(resultEntries).toHaveLength(0);
+    // 'unique' is unambiguous — must be included
+    const uniqueEntry = symbols.callAssignments!.find((c) => c.varName === 'unique');
+    expect(uniqueEntry).toBeDefined();
+    expect(uniqueEntry!.calleeName).toBe('getUnique');
+  });
+
   it('does NOT overwrite returnTypeMap when already set (JS/WASM engine path)', async () => {
     const srcFile = 'existing.ts';
     fs.writeFileSync(

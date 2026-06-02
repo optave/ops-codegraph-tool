@@ -400,6 +400,14 @@ function enrichReturnTypeMap(
  * Walk a SourceFile and push call assignments (`const x = fn()`) whose variable
  * is not yet in typeMap into callAssignments for cross-file propagation.
  * Phase 8.1 already resolved the common case into typeMap; this captures the rest.
+ *
+ * Uses the same two-pass "unambiguous names only" strategy as `enrichSourceFile`:
+ * collect all candidates first, then only push entries where a given `varName`
+ * maps to exactly one distinct `calleeName`. This prevents multiple methods in the
+ * same file that each bind a different imported function to a common local name
+ * (e.g., `const result = getA()` in one method, `const result = getB()` in
+ * another) from both landing in `callAssignments`, which would cause
+ * `propagateReturnTypesAcrossFiles` to silently resolve one arbitrarily.
  */
 function enrichCallAssignments(
   ts: TsModule,
@@ -407,6 +415,9 @@ function enrichCallAssignments(
   typeMap: Map<string, TypeMapEntry>,
   callAssignments: CallAssignment[],
 ): void {
+  // First pass: collect all candidates keyed by varName.
+  const candidates = new Map<string, CallAssignment[]>();
+
   function visit(node: import('typescript').Node): void {
     if (
       ts.isVariableDeclaration(node) &&
@@ -431,7 +442,15 @@ function enrichCallAssignments(
           }
         }
 
-        if (calleeName) callAssignments.push({ varName, calleeName, receiverTypeName });
+        if (calleeName) {
+          const ca: CallAssignment = { varName, calleeName, receiverTypeName };
+          const existing = candidates.get(varName);
+          if (existing) {
+            existing.push(ca);
+          } else {
+            candidates.set(varName, [ca]);
+          }
+        }
       }
     }
 
@@ -439,6 +458,16 @@ function enrichCallAssignments(
   }
 
   ts.forEachChild(sourceFile, visit);
+
+  // Second pass: only push entries where varName maps to exactly one distinct
+  // calleeName. Ambiguous varNames (same name, different callees across scopes)
+  // are excluded to avoid silently resolving the wrong type cross-file.
+  for (const entries of candidates.values()) {
+    const uniqueCallees = new Set(entries.map((e) => e.calleeName));
+    if (uniqueCallees.size === 1) {
+      callAssignments.push(entries[0] as CallAssignment);
+    }
+  }
 }
 
 /**
