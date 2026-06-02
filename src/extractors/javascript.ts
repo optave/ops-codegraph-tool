@@ -82,7 +82,7 @@ const BUILTIN_GLOBALS: Set<string> = new Set([
 /** Maximum chain depth for inter-procedural return-type propagation (Phase 8.2). */
 const MAX_PROPAGATION_DEPTH = 3;
 /** Confidence penalty applied per propagation hop (1.0 → 0.9 → 0.8 → 0.7). */
-const PROPAGATION_HOP_PENALTY = 0.1;
+export const PROPAGATION_HOP_PENALTY = 0.1;
 
 /**
  * Extract symbols from a JS/TS parsed AST.
@@ -1171,11 +1171,23 @@ function extractReturnTypeMapWalk(
         const fnName = currentClass ? `${currentClass}.${nameNode.text}` : nameNode.text;
         storeReturnType(node, fnName, returnTypeMap);
       }
+      // Recurse into the function body with null currentClass so nested
+      // function declarations are not stored under the enclosing class name.
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
     } else if (t === 'method_definition') {
       const nameNode = node.childForFieldName('name');
       if (nameNode && currentClass && nameNode.text !== 'constructor') {
         storeReturnType(node, `${currentClass}.${nameNode.text}`, returnTypeMap);
       }
+      // Recurse into the method body with null currentClass so nested
+      // function declarations are not stored under the enclosing class name.
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
     } else if (t === 'variable_declarator') {
       // const foo = (): ReturnType => …  or  const foo = function(): ReturnType { … }
       const nameN = node.childForFieldName('name');
@@ -1207,7 +1219,7 @@ function storeReturnType(
     const typeName = extractSimpleTypeName(returnTypeNode);
     if (typeName) {
       const existing = returnTypeMap.get(fnName);
-      if (!existing || 1.0 > existing.confidence)
+      if (!existing || existing.confidence < 1.0)
         returnTypeMap.set(fnName, { type: typeName, confidence: 1.0 });
       return;
     }
