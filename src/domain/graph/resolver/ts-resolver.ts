@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { debug } from '../../../infrastructure/logger.js';
-import type { ExtractorOutput, TypeMapEntry } from '../../../types.js';
+import type { CallAssignment, ExtractorOutput, TypeMapEntry } from '../../../types.js';
 
 // typescript is not a hard dependency — lazy-load it so JS-only projects
 // and environments without typescript installed work without error.
@@ -105,6 +105,7 @@ export async function enrichTypeMapWithTsc(
   const checker = program.getTypeChecker();
   let enrichedFiles = 0;
   let enrichedEntries = 0;
+  let backfilledFiles = 0;
 
   for (const relPath of tsRelPaths) {
     const symbols = fileSymbols.get(relPath)!;
@@ -121,10 +122,32 @@ export async function enrichTypeMapWithTsc(
       enrichedEntries += gained;
       enrichedFiles++;
     }
+
+    // Phase 8.2 parity: backfill returnTypeMap and callAssignments for engines
+    // (native Rust) that don't populate them during extraction. The JS extractor
+    // sets these fields; native leaves them undefined.
+    // Guards are intentionally independent so a future extractor that sets one
+    // but not the other is handled correctly without silently skipping either.
+    let didBackfill = false;
+    if (symbols.returnTypeMap === undefined) {
+      symbols.returnTypeMap = new Map();
+      enrichReturnTypeMap(ts, sourceFile, checker, symbols.returnTypeMap);
+      if (symbols.returnTypeMap.size > 0) didBackfill = true;
+    }
+    if (symbols.callAssignments === undefined) {
+      symbols.callAssignments = [];
+      enrichCallAssignments(ts, sourceFile, symbols.typeMap, symbols.callAssignments);
+      if (symbols.callAssignments.length > 0) didBackfill = true;
+    }
+    if (didBackfill) backfilledFiles++;
   }
 
   debug(
-    `ts-resolver: enriched ${enrichedEntries} typeMap entries across ${enrichedFiles} files in ${Date.now() - t0}ms`,
+    `ts-resolver: enriched ${enrichedEntries} typeMap entries across ${enrichedFiles} files` +
+      (backfilledFiles > 0
+        ? `, backfilled returnTypeMap/callAssignments in ${backfilledFiles} files`
+        : '') +
+      ` in ${Date.now() - t0}ms`,
   );
 }
 
@@ -270,6 +293,187 @@ function enrichSourceFile(
     const existing = typeMap.get(name);
     if (!existing || existing.confidence < 1.0) {
       typeMap.set(name, { type: shortName, confidence: 1.0 });
+    }
+  }
+}
+
+/**
+ * Walk a SourceFile and populate returnTypeMap with compiler-verified return types.
+ * Handles function declarations, method declarations, and arrow/function-expression
+ * variable initialisers at module scope. Methods are stored as `ClassName.methodName`.
+ *
+ * Only captures declarations at module scope or directly inside a class body —
+ * local functions nested inside method bodies are excluded to avoid spurious
+ * cross-file type matches (same guard as enrichSourceFile's "unambiguous names only"
+ * heuristic). Recursion stops at function/method body boundaries.
+ *
+ * Async functions returning Promise<T> are unwrapped: the inner type argument T is
+ * used so that async methods receive a returnTypeMap entry just like sync ones.
+ */
+function enrichReturnTypeMap(
+  ts: TsModule,
+  sourceFile: import('typescript').SourceFile,
+  checker: import('typescript').TypeChecker,
+  returnTypeMap: Map<string, TypeMapEntry>,
+): void {
+  let currentClass: string | null = null;
+
+  /**
+   * Resolve the concrete return type name for a signature, unwrapping
+   * Promise<T> so async functions contribute their inner type.
+   */
+  function resolveReturnTypeName(sig: import('typescript').Signature | undefined): string | null {
+    if (!sig) return null;
+    try {
+      let retType = checker.getReturnTypeOfSignature(sig);
+
+      // Unwrap Promise<T> → T so async functions get a useful returnTypeMap entry.
+      const outerSym = retType.getSymbol() ?? retType.aliasSymbol;
+      if (outerSym?.getName() === 'Promise') {
+        const args = checker.getTypeArguments(retType as import('typescript').TypeReference);
+        if (args.length > 0) retType = args[0]!;
+      }
+
+      const sym = retType.getSymbol() ?? retType.aliasSymbol;
+      if (!sym) return null;
+      const name = sym.getName();
+      if (!name || name === '__type' || name === '__object' || SKIP_TYPE_NAMES.has(name))
+        return null;
+      return name;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeEntry(fnName: string, sigNode: import('typescript').SignatureDeclaration): void {
+    const typeName = resolveReturnTypeName(checker.getSignatureFromDeclaration(sigNode));
+    if (typeName) {
+      const existing = returnTypeMap.get(fnName);
+      if (!existing || existing.confidence < 1.0)
+        returnTypeMap.set(fnName, { type: typeName, confidence: 1.0 });
+    }
+  }
+
+  /**
+   * Visit nodes at the current lexical scope (module level or class body).
+   * Does NOT recurse into function/method bodies to avoid capturing local
+   * helper functions under bare names.
+   */
+  function visit(node: import('typescript').Node): void {
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      // Enter class scope: visit direct children (method/property declarations).
+      const saved = currentClass;
+      currentClass =
+        (node as import('typescript').ClassDeclaration | import('typescript').ClassExpression).name
+          ?.text ?? null;
+      ts.forEachChild(node, visit);
+      currentClass = saved;
+      return; // class body fully handled — stop here
+    }
+
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      // Module-level function declaration: record and stop (no body descent).
+      writeEntry(node.name.text, node);
+      return;
+    }
+
+    if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
+      // Class method: record as ClassName.methodName and stop.
+      const fnName = currentClass ? `${currentClass}.${node.name.text}` : node.name.text;
+      writeEntry(fnName, node);
+      return;
+    }
+
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      // Arrow/function-expression assigned to a variable at the current scope.
+      // Because we never recurse into function bodies, any VariableDeclaration
+      // we see here is guaranteed to be at module scope or inside a class body
+      // (not inside a method body), making the bare name safe for cross-file use.
+      const init = node.initializer;
+      if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+        writeEntry(node.name.text, init);
+      }
+      return; // variable declaration fully handled — stop here
+    }
+
+    // For all other node kinds (VariableStatement, VariableDeclarationList,
+    // ExportDeclaration, etc.) recurse to reach nested function/class/var nodes.
+    ts.forEachChild(node, visit);
+  }
+
+  ts.forEachChild(sourceFile, visit);
+}
+
+/**
+ * Walk a SourceFile and push call assignments (`const x = fn()`) whose variable
+ * is not yet in typeMap into callAssignments for cross-file propagation.
+ * Phase 8.1 already resolved the common case into typeMap; this captures the rest.
+ *
+ * Uses the same two-pass "unambiguous names only" strategy as `enrichSourceFile`:
+ * collect all candidates first, then only push entries where a given `varName`
+ * maps to exactly one distinct `calleeName`. This prevents multiple methods in the
+ * same file that each bind a different imported function to a common local name
+ * (e.g., `const result = getA()` in one method, `const result = getB()` in
+ * another) from both landing in `callAssignments`, which would cause
+ * `propagateReturnTypesAcrossFiles` to silently resolve one arbitrarily.
+ */
+function enrichCallAssignments(
+  ts: TsModule,
+  sourceFile: import('typescript').SourceFile,
+  typeMap: Map<string, TypeMapEntry>,
+  callAssignments: CallAssignment[],
+): void {
+  // First pass: collect all candidates keyed by varName.
+  const candidates = new Map<string, CallAssignment[]>();
+
+  function visit(node: import('typescript').Node): void {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer)
+    ) {
+      const varName = node.name.text;
+      if (!typeMap.has(varName)) {
+        const call = node.initializer;
+        let calleeName: string | null = null;
+        let receiverTypeName: string | undefined;
+
+        if (ts.isIdentifier(call.expression)) {
+          calleeName = call.expression.text;
+        } else if (ts.isPropertyAccessExpression(call.expression)) {
+          calleeName = call.expression.name.text;
+          const obj = call.expression.expression;
+          if (ts.isIdentifier(obj)) {
+            const entry = typeMap.get(obj.text);
+            if (entry && typeof entry === 'object') receiverTypeName = entry.type;
+          }
+        }
+
+        if (calleeName) {
+          const ca: CallAssignment = { varName, calleeName, receiverTypeName };
+          const existing = candidates.get(varName);
+          if (existing) {
+            existing.push(ca);
+          } else {
+            candidates.set(varName, [ca]);
+          }
+        }
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  ts.forEachChild(sourceFile, visit);
+
+  // Second pass: only push entries where varName maps to exactly one distinct
+  // calleeName. Ambiguous varNames (same name, different callees across scopes)
+  // are excluded to avoid silently resolving the wrong type cross-file.
+  for (const entries of candidates.values()) {
+    const uniqueCallees = new Set(entries.map((e) => e.calleeName));
+    if (uniqueCallees.size === 1) {
+      callAssignments.push(entries[0] as CallAssignment);
     }
   }
 }
