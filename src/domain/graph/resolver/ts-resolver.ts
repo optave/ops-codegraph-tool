@@ -28,6 +28,8 @@ let _ts: TsModule | null | undefined; // undefined = not yet tried; null = unava
 async function loadTs(): Promise<TsModule | null> {
   if (_ts !== undefined) return _ts;
   try {
+    // TypeScript 6+ ships dual CJS/ESM exports; `.default` is the CJS interop
+    // namespace and is present and non-null in both TS 5.x and TS 6.x.
     _ts = (await import('typescript')).default as TsModule;
   } catch {
     _ts = null;
@@ -39,7 +41,9 @@ async function loadTs(): Promise<TsModule | null> {
 const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts']);
 
 function isTsFile(relPath: string): boolean {
-  return TS_EXTENSIONS.has(path.extname(relPath));
+  // Exclude .d.ts declaration files — path.extname('.d.ts') returns '.ts',
+  // so we must check the full suffix explicitly.
+  return TS_EXTENSIONS.has(path.extname(relPath)) && !relPath.endsWith('.d.ts');
 }
 
 // Primitive and built-in type names that don't help call resolution.
@@ -258,7 +262,7 @@ function enrichSourceFile(
   for (const [name, entries] of nameToEntries) {
     const uniqueQualified = [...new Set(entries.map((e) => e.qualifiedName))];
     if (uniqueQualified.length !== 1) continue; // ambiguous across modules — skip
-    const shortName = (entries[0] as { shortName: string }).shortName;
+    const shortName = entries[0].shortName;
     const existing = typeMap.get(name);
     if (!existing || existing.confidence < 1.0) {
       typeMap.set(name, { type: shortName, confidence: 1.0 });
@@ -289,7 +293,11 @@ function resolveTypeName(
       !shortName ||
       shortName === '__type' ||
       shortName === '__object' ||
-      SKIP_TYPE_NAMES.has(shortName)
+      SKIP_TYPE_NAMES.has(shortName) ||
+      // Skip generic type-parameter symbols (T, E, K, etc.) — they do not
+      // correspond to any real class and would overwrite useful lower-confidence
+      // heuristic entries, causing call edges to be silently dropped.
+      !!(symbol.flags & (ts.SymbolFlags.TypeParameter | ts.SymbolFlags.TypeAlias))
     )
       return null;
     // getFullyQualifiedName returns e.g. `"./path/to/module".ClassName` for
