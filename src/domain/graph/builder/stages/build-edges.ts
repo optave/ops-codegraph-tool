@@ -689,7 +689,7 @@ function buildFileCallEdges(
         // aliased function by name, not dispatching a method call).
         const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
           lookup,
-          { name: alias, dynamic: false },
+          { name: alias },
           relPath,
           importedNames,
           typeMap as Map<string, unknown>,
