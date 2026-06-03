@@ -445,6 +445,25 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 cfg: None,
                 children: None,
             });
+        } else if name_n.kind() == "identifier" && value_n.kind() == "identifier" {
+            // Phase 8.3: `const alias = handler` — record for pts analysis.
+            symbols.fn_ref_bindings.push(FnRefBinding {
+                lhs: node_text(&name_n, source).to_string(),
+                rhs: node_text(&value_n, source).to_string(),
+                rhs_receiver: None,
+            });
+        } else if name_n.kind() == "identifier" && value_n.kind() == "member_expression" {
+            // Phase 8.3: `const alias = obj.method` — record for pts analysis.
+            if let (Some(obj), Some(prop)) = (
+                value_n.child_by_field_name("object"),
+                value_n.child_by_field_name("property"),
+            ) {
+                symbols.fn_ref_bindings.push(FnRefBinding {
+                    lhs: node_text(&name_n, source).to_string(),
+                    rhs: node_text(&prop, source).to_string(),
+                    rhs_receiver: Some(node_text(&obj, source).to_string()),
+                });
+            }
         }
     }
 }

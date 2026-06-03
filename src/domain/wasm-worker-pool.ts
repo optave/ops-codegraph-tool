@@ -106,6 +106,7 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
   // {line, kind, name, text?, receiver?} shape — see engine.ts:822 where the
   // visitor output is cast the same way.
   if (ser.astNodes !== undefined) out.astNodes = ser.astNodes as unknown as ASTNodeRow[];
+  if (ser.fnRefBindings?.length) out.fnRefBindings = ser.fnRefBindings;
   return out;
 }
 

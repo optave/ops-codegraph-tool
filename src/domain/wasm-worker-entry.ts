@@ -801,6 +801,7 @@ function serializeExtractorOutput(
     _lineCount: code.split('\n').length,
     dataflow: symbols.dataflow,
     astNodes,
+    ...(symbols.fnRefBindings?.length ? { fnRefBindings: symbols.fnRefBindings } : {}),
   };
 }
 
