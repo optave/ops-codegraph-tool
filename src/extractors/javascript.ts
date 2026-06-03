@@ -8,6 +8,7 @@ import type {
   ExtractorOutput,
   FnRefBinding,
   Import,
+  ParamBinding,
   SubDeclaration,
   TreeSitterNode,
   TreeSitterQuery,
@@ -320,6 +321,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const returnTypeMap: Map<string, TypeMapEntry> = new Map();
   const callAssignments: CallAssignment[] = [];
   const fnRefBindings: FnRefBinding[] = [];
+  const paramBindings: ParamBinding[] = [];
 
   const matches = query.matches(tree.rootNode);
 
@@ -342,6 +344,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract typeMap with intra-file return-type propagation
   extractTypeMapWalk(tree.rootNode, typeMap, returnTypeMap, callAssignments, fnRefBindings);
 
+  // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
+  extractParamBindingsWalk(tree.rootNode, paramBindings);
+
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
@@ -355,6 +360,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     returnTypeMap,
     callAssignments,
     fnRefBindings,
+    paramBindings,
   };
 }
 
@@ -586,6 +592,7 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     returnTypeMap: new Map(),
     callAssignments: [],
     fnRefBindings: [],
+    paramBindings: [],
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
@@ -599,6 +606,8 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     ctx.callAssignments,
     ctx.fnRefBindings,
   );
+  // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
+  extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
   return ctx;
 }
 
@@ -1526,6 +1535,44 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
   if (BUILTIN_GLOBALS.has(objName)) return;
 
   setTypeMapEntry(typeMap, `${objName}.${prop.text}`, rhsN.text, 0.85);
+}
+
+/**
+ * Phase 8.3c: record argument-to-parameter bindings at call sites.
+ *
+ * For each `f(x, y)` where the callee is a simple identifier and an argument
+ * is a simple identifier, emits a ParamBinding so the pts solver can add
+ * constraint: pts(param_i_of_f) ⊇ pts(arg_i). The solver uses the
+ * definitionParams map to resolve the actual parameter names.
+ *
+ * Scope: intra-module only (the solver only materialises constraints for
+ * locally-defined callees, so cross-module calls produce no spurious flow).
+ */
+function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: ParamBinding[]): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'call_expression') {
+      const fn = node.childForFieldName('function');
+      const args = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
+      if (fn?.type === 'identifier' && !BUILTIN_GLOBALS.has(fn.text) && args) {
+        let argIdx = 0;
+        for (let i = 0; i < args.childCount; i++) {
+          const child = args.child(i);
+          if (!child) continue;
+          const ct = child.type;
+          if (ct === ',' || ct === '(' || ct === ')') continue;
+          if (ct === 'identifier' && !BUILTIN_GLOBALS.has(child.text)) {
+            paramBindings.push({ callee: fn.text, argIndex: argIdx, argName: child.text });
+          }
+          argIdx++;
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
 }
 
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
