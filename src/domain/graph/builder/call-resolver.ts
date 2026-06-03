@@ -36,8 +36,9 @@ export function findCaller(
   }>,
   relPath: string,
   fileNodeRow: { id: number },
-): { id: number } {
+): { id: number; callerName: string | null } {
   let caller: { id: number } | null = null;
+  let callerName: string | null = null;
   let callerSpan = Infinity;
   for (const def of definitions) {
     if (def.line <= call.line) {
@@ -48,13 +49,14 @@ export function findCaller(
           const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
           if (row) {
             caller = row;
+            callerName = def.name;
             callerSpan = span;
           }
         }
       }
     }
   }
-  return caller ?? fileNodeRow;
+  return { ...(caller ?? fileNodeRow), callerName };
 }
 
 export function resolveByMethodOrGlobal(

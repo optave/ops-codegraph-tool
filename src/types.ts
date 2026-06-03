@@ -550,6 +550,20 @@ export interface FnRefBinding {
   rhsReceiver?: string;
 }
 
+/**
+ * An argument-to-parameter binding at a call site, recorded for parameter-flow
+ * points-to analysis (Phase 8.3c). Captures `f(x)` where `x` is an identifier
+ * that may carry a function reference into `f`'s parameter.
+ */
+export interface ParamBinding {
+  /** The function being called at the call site. */
+  callee: string;
+  /** Zero-based index of the argument. */
+  argIndex: number;
+  /** Identifier name of the argument being passed. */
+  argName: string;
+}
+
 /** The normalized output shape returned by every language extractor. */
 export interface ExtractorOutput {
   definitions: Definition[];
@@ -575,6 +589,12 @@ export interface ExtractorOutput {
    * edge builder can follow aliases when a call target has no direct definition.
    */
   fnRefBindings?: FnRefBinding[];
+  /**
+   * Argument-to-parameter bindings for parameter-flow points-to analysis (Phase 8.3c).
+   * Records `f(x)` call sites where `x` is an identifier, enabling the pts solver
+   * to propagate function references through function parameters.
+   */
+  paramBindings?: ParamBinding[];
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */
