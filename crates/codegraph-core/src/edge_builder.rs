@@ -130,6 +130,12 @@ impl<'a> EdgeContext<'a> {
 
 // ── Phase 8.3: points-to analysis ─────────────────────────────────────────
 
+/// Maximum fixed-point iterations for the pts solver.
+/// Mirrors `MAX_SOLVER_ITERATIONS` in `src/domain/graph/resolver/points-to.ts`.
+/// TODO: wire through `CodegraphConfig.analysis.pointsToMaxIterations` once
+/// config plumbing is in place (same pattern as `typePropagationDepth`).
+const MAX_SOLVER_ITERATIONS: usize = 50;
+
 /// Build a per-file points-to map.  Mirrors `buildPointsToMap` in
 /// `src/domain/graph/resolver/points-to.ts`.
 ///
@@ -158,7 +164,7 @@ fn build_points_to_map(
         };
         (b.lhs.clone(), rhs_key)
     }).collect();
-    for _ in 0..50 {
+    for _ in 0..MAX_SOLVER_ITERATIONS {
         let mut changed = false;
         for (lhs, rhs_key) in &constraints {
             let rhs_pts: Option<Vec<String>> = pts.get(rhs_key.as_str())
@@ -1170,6 +1176,7 @@ mod call_edge_tests {
             imported_names: vec![],
             classes,
             type_map,
+            fn_ref_bindings: None,
         }
     }
 

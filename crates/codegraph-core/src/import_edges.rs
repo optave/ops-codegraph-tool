@@ -565,6 +565,7 @@ mod tests {
             ast_nodes: vec![],
             dataflow: None,
             line_count: None,
+            fn_ref_bindings: vec![],
         }
     }
 
