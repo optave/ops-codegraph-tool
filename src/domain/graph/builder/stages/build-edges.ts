@@ -654,6 +654,13 @@ function buildFileCallEdges(
   typeMap: Map<string, TypeMapEntry | string>,
   ptsMap?: PointsToMap | null,
 ): void {
+  // Tracks edges that were inserted by the pts fallback (edgeKey → allEdgeRows index).
+  // Kept separate from seenCallEdges so that a subsequent direct-call edge for the same
+  // caller→target pair can upgrade the confidence in-place rather than being silently
+  // dropped by the dedup guard. Once upgraded, the key moves to seenCallEdges and is
+  // no longer tracked here.
+  const ptsEdgeRows = new Map<string, number>();
+
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
@@ -669,10 +676,21 @@ function buildFileCallEdges(
 
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
-      if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
-        seenCallEdges.add(edgeKey);
+      if (t.id !== caller.id) {
         const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
-        allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic]);
+        if (seenCallEdges.has(edgeKey)) continue;
+        const ptsIdx = ptsEdgeRows.get(edgeKey);
+        if (ptsIdx !== undefined) {
+          // A pts-resolved edge already exists for this caller→target pair with a
+          // penalised confidence. Upgrade it to the direct-call confidence in-place,
+          // then promote to seenCallEdges so no further processing is needed.
+          allEdgeRows[ptsIdx][3] = confidence;
+          ptsEdgeRows.delete(edgeKey);
+          seenCallEdges.add(edgeKey);
+        } else {
+          seenCallEdges.add(edgeKey);
+          allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic]);
+        }
       }
     }
 
@@ -682,6 +700,10 @@ function buildFileCallEdges(
     // check whether the call name is an alias in the pts map and retry resolution
     // with each concrete target. Confidence is penalised by one hop to reflect the
     // extra indirection.
+    //
+    // Note: pts edges are added to ptsEdgeRows (not seenCallEdges) so that a later
+    // direct call to the same target in the same function body can upgrade confidence
+    // rather than being silently dropped by the dedup guard.
     if (targets.length === 0 && call.dynamic && !call.receiver && ptsMap) {
       for (const alias of resolveViaPointsTo(call.name, ptsMap)) {
         // Resolve the concrete alias target. Only `name` is needed here — receiver
@@ -696,11 +718,13 @@ function buildFileCallEdges(
         );
         for (const t of aliasTargets) {
           const edgeKey = `${caller.id}|${t.id}`;
-          if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
-            seenCallEdges.add(edgeKey);
+          if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
             const conf =
               computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
-            if (conf > 0) allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic]);
+            if (conf > 0) {
+              ptsEdgeRows.set(edgeKey, allEdgeRows.length);
+              allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic]);
+            }
           }
         }
       }
