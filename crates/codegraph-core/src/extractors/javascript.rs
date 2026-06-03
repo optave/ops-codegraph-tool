@@ -130,13 +130,29 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
 }
 
 /// Returns true for JS built-in global objects whose property writes should not be tracked.
+/// Mirrors the TypeScript `BUILTIN_GLOBALS` set in `src/extractors/javascript.ts`.
 fn is_js_builtin_global(name: &str) -> bool {
     matches!(
         name,
         "Math" | "JSON" | "Promise" | "Array" | "Object" | "Date" | "Error"
         | "Symbol" | "Map" | "Set" | "RegExp" | "Number" | "String" | "Boolean"
         | "WeakMap" | "WeakSet" | "WeakRef" | "Proxy" | "Reflect" | "Intl"
+        // Binary/typed data
+        | "ArrayBuffer" | "SharedArrayBuffer" | "DataView" | "Atomics" | "BigInt"
+        | "Float32Array" | "Float64Array"
+        | "Int8Array" | "Int16Array" | "Int32Array"
+        | "Uint8Array" | "Uint16Array" | "Uint32Array" | "Uint8ClampedArray"
+        // Web platform globals
+        | "URL" | "URLSearchParams"
+        | "TextEncoder" | "TextDecoder"
+        | "AbortController" | "AbortSignal"
+        | "Headers" | "Request" | "Response"
+        | "FormData" | "Blob" | "File"
+        | "ReadableStream" | "WritableStream" | "TransformStream"
+        // Browser/runtime globals
         | "console" | "process" | "window" | "document" | "globalThis"
+        // Node.js built-ins
+        | "Buffer" | "EventEmitter" | "Stream"
     )
 }
 
