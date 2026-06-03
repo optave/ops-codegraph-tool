@@ -7,6 +7,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createParsers, extractSymbols } from '../../src/domain/parser.js';
+import { setTypeMapEntry } from '../../src/extractors/helpers.js';
 
 describe('JavaScript parser', () => {
   let parsers: any;
@@ -256,6 +257,73 @@ describe('JavaScript parser', () => {
       expect(() => extractSymbols(fakeTree, 'test.js')).not.toThrow();
       const symbols = extractSymbols(fakeTree, 'test.js');
       expect(symbols.typeMap.has('x')).toBe(false);
+    });
+  });
+
+  describe('Phase 8.3d: property write pts tracking', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('seeds typeMap with composite key for obj.prop = identifier', () => {
+      const symbols = parseJS(`
+        const handlers = {};
+        handlers.auth = authMiddleware;
+      `);
+      expect(symbols.typeMap.get('handlers.auth')).toEqual({
+        type: 'authMiddleware',
+        confidence: 0.85,
+      });
+    });
+
+    it('ignores chained writes (a.b.c = x)', () => {
+      const symbols = parseJS(`a.b.c = handler;`);
+      expect(symbols.typeMap.has('a.b.c')).toBe(false);
+      expect(symbols.typeMap.has('b.c')).toBe(false);
+    });
+
+    it('ignores non-identifier RHS (a.prop = obj.method)', () => {
+      const symbols = parseJS(`router.use = obj.method;`);
+      expect(symbols.typeMap.has('router.use')).toBe(false);
+    });
+
+    it('ignores BUILTIN_GLOBALS as object names', () => {
+      const symbols = parseJS(`
+        console.warn = customWarn;
+        Object.assign = myAssign;
+        process.on = myHandler;
+        window.onload = myHandler;
+        document.ready = myHandler;
+        globalThis.fetch = myFetch;
+      `);
+      expect(symbols.typeMap.has('console.warn')).toBe(false);
+      expect(symbols.typeMap.has('Object.assign')).toBe(false);
+      expect(symbols.typeMap.has('process.on')).toBe(false);
+      expect(symbols.typeMap.has('window.onload')).toBe(false);
+      expect(symbols.typeMap.has('document.ready')).toBe(false);
+      expect(symbols.typeMap.has('globalThis.fetch')).toBe(false);
+    });
+
+    it('first-write wins when same key appears twice at equal confidence', () => {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(`
+        handlers.auth = firstMiddleware;
+        handlers.auth = secondMiddleware;
+      `);
+      const symbols = extractSymbols(tree, 'test.ts');
+      // Both writes are at 0.85; first-write wins (equal confidence does not promote)
+      expect(symbols.typeMap.get('handlers.auth')?.type).toBe('firstMiddleware');
+    });
+
+    it('higher-confidence entry promotes over lower-confidence entry (setTypeMapEntry)', () => {
+      const typeMap = new Map<string, { type: string; confidence: number }>();
+      // Seed with a low-confidence write (property-write confidence: 0.85)
+      setTypeMapEntry(typeMap, 'handlers.auth', 'firstMiddleware', 0.85);
+      // A higher-confidence annotation (0.9) should overwrite
+      setTypeMapEntry(typeMap, 'handlers.auth', 'AnnotatedHandler', 0.9);
+      expect(typeMap.get('handlers.auth')).toEqual({ type: 'AnnotatedHandler', confidence: 0.9 });
     });
   });
 

@@ -115,8 +115,60 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                 }
             }
         }
+        // Phase 8.3d: property-write pts tracking — `obj.prop = fn` seeds composite key.
+        "assignment_expression" => {
+            let lhs = node.child_by_field_name("left");
+            let rhs = node.child_by_field_name("right");
+            if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
+                if lhs.kind() == "member_expression" && rhs.kind() == "identifier" {
+                    let obj = lhs.child_by_field_name("object");
+                    let prop = lhs.child_by_field_name("property");
+                    if let (Some(obj), Some(prop)) = (obj, prop) {
+                        if obj.kind() == "identifier" {
+                            let obj_name = node_text(&obj, source);
+                            if !is_js_builtin_global(obj_name) {
+                                let key = format!("{}.{}", obj_name, node_text(&prop, source));
+                                let rhs_name = node_text(&rhs, source).to_string();
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: key,
+                                    type_name: rhs_name,
+                                    confidence: 0.85,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
     }
+}
+
+/// Returns true for JS built-in global objects whose property writes should not be tracked.
+/// Mirrors the TypeScript `BUILTIN_GLOBALS` set in `src/extractors/javascript.ts`.
+fn is_js_builtin_global(name: &str) -> bool {
+    matches!(
+        name,
+        "Math" | "JSON" | "Promise" | "Array" | "Object" | "Date" | "Error"
+        | "Symbol" | "Map" | "Set" | "RegExp" | "Number" | "String" | "Boolean"
+        | "WeakMap" | "WeakSet" | "WeakRef" | "Proxy" | "Reflect" | "Intl"
+        // Binary/typed data
+        | "ArrayBuffer" | "SharedArrayBuffer" | "DataView" | "Atomics" | "BigInt"
+        | "Float32Array" | "Float64Array"
+        | "Int8Array" | "Int16Array" | "Int32Array"
+        | "Uint8Array" | "Uint16Array" | "Uint32Array" | "Uint8ClampedArray"
+        // Web platform globals
+        | "URL" | "URLSearchParams"
+        | "TextEncoder" | "TextDecoder"
+        | "AbortController" | "AbortSignal"
+        | "Headers" | "Request" | "Response"
+        | "FormData" | "Blob" | "File"
+        | "ReadableStream" | "WritableStream" | "TransformStream"
+        // Browser/runtime globals
+        | "console" | "process" | "window" | "document" | "globalThis"
+        // Node.js built-ins
+        | "Buffer" | "EventEmitter" | "Stream"
+    )
 }
 
 // ── Return-type map extraction (Phase 8.2 parity) ───────────────────────────

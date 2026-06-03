@@ -396,6 +396,17 @@ fn resolve_call_targets<'a>(
                 .unwrap_or_default();
             if !typed.is_empty() { return typed; }
         }
+        // 4.5. Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop']
+        let composite_key = format!("{}.{}", receiver, call.name);
+        if let Some(&(pts_target, _)) = type_map.get(composite_key.as_str()) {
+            let resolved: Vec<&NodeInfo> = ctx.nodes_by_name
+                .get(pts_target)
+                .map(|v| v.iter()
+                    .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                    .copied().collect())
+                .unwrap_or_default();
+            if !resolved.is_empty() { return resolved; }
+        }
     }
 
     // 5. Scoped fallback (this/self/super or no receiver)
