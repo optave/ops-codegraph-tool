@@ -268,6 +268,12 @@ fn process_file<'a>(
         });
 
     let mut seen_edges: HashSet<u64> = HashSet::new();
+    // Phase 8.3: tracks pts-resolved edges separately from seen_edges so that a
+    // subsequent direct call to the same caller→target pair can upgrade confidence
+    // in-place rather than being silently dropped by the dedup guard.
+    // Mirrors `ptsEdgeRows` in `src/domain/graph/builder/stages/build-edges.ts`.
+    // Key: edge_key (same as seen_edges). Value: index into `edges` vec.
+    let mut pts_edge_map: HashMap<u64, usize> = HashMap::new();
 
     for call in &file_input.calls {
         if let Some(ref receiver) = call.receiver {
@@ -280,12 +286,16 @@ fn process_file<'a>(
 
         let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map);
         sort_targets_by_confidence(&mut targets, rel_path, imported_from);
-        emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, edges);
+        emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
 
         // Phase 8.3: pts fallback for unresolved dynamic identifier calls.
         // When primary resolution finds nothing and the call is dynamic with no receiver,
         // look up the call name in the pts map and retry resolution for each alias target.
         // Confidence is penalised by one hop to reflect the extra indirection.
+        //
+        // Pts edges go into pts_edge_map (not seen_edges) so a later direct call to the
+        // same target in the same function body can upgrade confidence in-place — mirroring
+        // the ptsEdgeRows mechanism on the JS/WASM path.
         if targets.is_empty() && call.dynamic.unwrap_or(false) && call.receiver.is_none() {
             if let Some(ref pts) = pts_map {
                 for alias in resolve_via_points_to(call.name.as_str(), pts) {
@@ -302,12 +312,12 @@ fn process_file<'a>(
                     sort_targets_by_confidence(&mut alias_targets, rel_path, alias_imported_from);
                     for t in &alias_targets {
                         let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
-                        if t.id != caller_id && !seen_edges.contains(&edge_key) {
-                            seen_edges.insert(edge_key);
+                        if t.id != caller_id && !seen_edges.contains(&edge_key) && !pts_edge_map.contains_key(&edge_key) {
                             let conf = import_resolution::compute_confidence(
                                 rel_path, &t.file, alias_imported_from,
                             ) - PROPAGATION_HOP_PENALTY;
                             if conf > 0.0 {
+                                pts_edge_map.insert(edge_key, edges.len());
                                 edges.push(ComputedEdge {
                                     source_id: caller_id,
                                     target_id: t.id,
@@ -420,17 +430,30 @@ fn sort_targets_by_confidence(targets: &mut Vec<&NodeInfo>, rel_path: &str, impo
 fn emit_call_edges(
     targets: &[&NodeInfo], caller_id: u32, is_dynamic: u32,
     rel_path: &str, imported_from: Option<&str>,
-    seen_edges: &mut HashSet<u64>, edges: &mut Vec<ComputedEdge>,
+    seen_edges: &mut HashSet<u64>, pts_edge_map: &mut HashMap<u64, usize>, edges: &mut Vec<ComputedEdge>,
 ) {
     for t in targets {
         let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
         if t.id != caller_id && !seen_edges.contains(&edge_key) {
-            seen_edges.insert(edge_key);
             let confidence = import_resolution::compute_confidence(rel_path, &t.file, imported_from);
-            edges.push(ComputedEdge {
-                source_id: caller_id, target_id: t.id,
-                kind: "calls".to_string(), confidence, dynamic: is_dynamic,
-            });
+            if let Some(&pts_idx) = pts_edge_map.get(&edge_key) {
+                // A pts-resolved edge already exists for this caller→target pair with a
+                // penalised confidence. Upgrade it to the direct-call confidence in-place,
+                // then promote to seen_edges so no further processing is needed.
+                // Mirrors the ptsEdgeRows upgrade path in build-edges.ts.
+                if let Some(pts_row) = edges.get_mut(pts_idx) {
+                    pts_row.confidence = confidence;
+                    pts_row.dynamic = is_dynamic; // direct call overrides alias dynamic flag
+                }
+                pts_edge_map.remove(&edge_key);
+                seen_edges.insert(edge_key);
+            } else {
+                seen_edges.insert(edge_key);
+                edges.push(ComputedEdge {
+                    source_id: caller_id, target_id: t.id,
+                    kind: "calls".to_string(), confidence, dynamic: is_dynamic,
+                });
+            }
         }
     }
 }

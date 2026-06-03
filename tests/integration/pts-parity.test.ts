@@ -38,12 +38,50 @@ export function processItems(items) {
 }
 `.trimStart();
 
+// Fixture for the confidence-upgrade scenario: the caller both aliases and
+// directly calls the same target in the same function body.  The pts-resolved
+// edge (lower confidence) must be upgraded to direct-call confidence when the
+// direct call is encountered — mirroring the ptsEdgeRows upgrade on the JS path.
+const CONSUMER_UPGRADE_JS = `
+import { handler } from './handler.js';
+
+export function processItemsDirect(items) {
+  const alias = handler;
+  items.map(alias);  // pts-resolved edge (penalised confidence)
+  handler(items[0]); // direct call — must upgrade confidence in-place
+}
+`.trimStart();
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function writeFixture(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'handler.js'), HANDLER_JS);
   fs.writeFileSync(path.join(dir, 'consumer.js'), CONSUMER_JS);
+}
+
+function writeUpgradeFixture(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'handler.js'), HANDLER_JS);
+  fs.writeFileSync(path.join(dir, 'consumer.js'), CONSUMER_UPGRADE_JS);
+}
+
+function readCallEdgesWithConfidence(
+  dbPath: string,
+): Array<{ source: string; target: string; confidence: number }> {
+  const db = new Database(dbPath, { readonly: true });
+  const rows = db
+    .prepare(`
+      SELECT n1.name AS source, n2.name AS target, e.confidence
+      FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id
+      JOIN nodes n2 ON e.target_id = n2.id
+      WHERE e.kind = 'calls'
+      ORDER BY n1.name, n2.name
+    `)
+    .all() as Array<{ source: string; target: string; confidence: number }>;
+  db.close();
+  return rows;
 }
 
 function readCallEdges(dbPath: string): Array<{ source: string; target: string }> {
@@ -91,6 +129,102 @@ describe('Phase 8.3 WASM pts: fnRefBindings serialization fix', () => {
     expect(edges).toContainEqual({ source: 'processItems', target: 'handler' });
   });
 });
+
+// ── Confidence upgrade test (WASM always runs) ────────────────────────────
+//
+// Guards the ptsEdgeRows / pts_edge_map confidence-upgrade path: when a file
+// contains both an alias call (pts-resolved, penalised confidence) and a
+// subsequent direct call to the same target in the same function body, the edge
+// confidence must be upgraded to the direct-call value — not left at the
+// penalised pts confidence.  Both engines must agree.
+
+describe('Phase 8.3 pts: confidence upgrade when alias + direct call coexist (WASM)', () => {
+  let upgradeWasmDir: string;
+
+  beforeAll(async () => {
+    const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pts-upgrade-wasm-'));
+    upgradeWasmDir = path.join(tmpBase, 'wasm');
+    writeUpgradeFixture(upgradeWasmDir);
+    await buildGraph(upgradeWasmDir, { engine: 'wasm', incremental: false, skipRegistry: true });
+  }, 60_000);
+
+  afterAll(() => {
+    try {
+      if (upgradeWasmDir) fs.rmSync(path.dirname(upgradeWasmDir), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it('WASM engine emits processItemsDirect → handler with direct-call confidence (not pts-penalised)', () => {
+    const edges = readCallEdgesWithConfidence(path.join(upgradeWasmDir, '.codegraph', 'graph.db'));
+    const edge = edges.find((e) => e.source === 'processItemsDirect' && e.target === 'handler');
+    expect(edge).toBeDefined();
+    // Direct-call confidence (>= 0.9 for same-dir imports) must be higher than
+    // a pts-penalised confidence (direct - 0.1).  Assert it is at least 0.9 to
+    // confirm the upgrade happened and the penalised value was not kept.
+    expect(edge!.confidence).toBeGreaterThanOrEqual(0.9);
+  });
+});
+
+describeOrSkip(
+  'Phase 8.3 pts: confidence upgrade when alias + direct call coexist (parity)',
+  () => {
+    let upgradeWasmDir: string;
+    let upgradeNativeDir: string;
+
+    beforeAll(async () => {
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pts-upgrade-'));
+      upgradeWasmDir = path.join(tmpBase, 'wasm');
+      upgradeNativeDir = path.join(tmpBase, 'native');
+      writeUpgradeFixture(upgradeWasmDir);
+      writeUpgradeFixture(upgradeNativeDir);
+
+      await buildGraph(upgradeWasmDir, { engine: 'wasm', incremental: false, skipRegistry: true });
+      await buildGraph(upgradeNativeDir, {
+        engine: 'native',
+        incremental: false,
+        skipRegistry: true,
+      });
+    }, 60_000);
+
+    afterAll(() => {
+      try {
+        if (upgradeWasmDir)
+          fs.rmSync(path.dirname(upgradeWasmDir), { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    it('native engine emits processItemsDirect → handler with direct-call confidence (not pts-penalised)', () => {
+      const edges = readCallEdgesWithConfidence(
+        path.join(upgradeNativeDir, '.codegraph', 'graph.db'),
+      );
+      const edge = edges.find((e) => e.source === 'processItemsDirect' && e.target === 'handler');
+      expect(edge).toBeDefined();
+      expect(edge!.confidence).toBeGreaterThanOrEqual(0.9);
+    });
+
+    it('both engines emit identical confidence for the processItemsDirect → handler edge', () => {
+      const wasmEdges = readCallEdgesWithConfidence(
+        path.join(upgradeWasmDir, '.codegraph', 'graph.db'),
+      );
+      const nativeEdges = readCallEdgesWithConfidence(
+        path.join(upgradeNativeDir, '.codegraph', 'graph.db'),
+      );
+      const wasmEdge = wasmEdges.find(
+        (e) => e.source === 'processItemsDirect' && e.target === 'handler',
+      );
+      const nativeEdge = nativeEdges.find(
+        (e) => e.source === 'processItemsDirect' && e.target === 'handler',
+      );
+      expect(nativeEdge).toBeDefined();
+      expect(wasmEdge).toBeDefined();
+      expect(nativeEdge!.confidence).toBeCloseTo(wasmEdge!.confidence, 5);
+    });
+  },
+);
 
 // ── Test ──────────────────────────────────────────────────────────────────
 
