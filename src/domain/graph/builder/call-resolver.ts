@@ -85,9 +85,10 @@ export function resolveByMethodOrGlobal(
         : (compositeEntry as { type?: string }).type
       : null;
     if (ptsTarget) {
-      return lookup
+      const resolved = lookup
         .byName(ptsTarget)
         .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+      if (resolved.length > 0) return resolved;
     }
   }
   if (
