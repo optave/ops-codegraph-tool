@@ -62,6 +62,36 @@ function readCallEdges(dbPath: string): Array<{ source: string; target: string }
   return rows;
 }
 
+// ── WASM-only test (always runs, guards the serialization fix) ────────────
+//
+// The bug fixed in Phase 8.3 was that `fnRefBindings` was silently dropped at
+// the WASM worker boundary.  This suite does NOT require native — it always
+// runs and validates that the WASM engine alone resolves alias call edges.
+
+describe('Phase 8.3 WASM pts: fnRefBindings serialization fix', () => {
+  let wasmOnlyDir: string;
+
+  beforeAll(async () => {
+    const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pts-wasm-'));
+    wasmOnlyDir = path.join(tmpBase, 'wasm');
+    writeFixture(wasmOnlyDir);
+    await buildGraph(wasmOnlyDir, { engine: 'wasm', incremental: false, skipRegistry: true });
+  }, 60_000);
+
+  afterAll(() => {
+    try {
+      if (wasmOnlyDir) fs.rmSync(path.dirname(wasmOnlyDir), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it('WASM engine records fnRefBindings and resolves processItems → handler via pts alias', () => {
+    const edges = readCallEdges(path.join(wasmOnlyDir, '.codegraph', 'graph.db'));
+    expect(edges).toContainEqual({ source: 'processItems', target: 'handler' });
+  });
+});
+
 // ── Test ──────────────────────────────────────────────────────────────────
 
 describeOrSkip('Phase 8.3 pts parity: native vs WASM', () => {
