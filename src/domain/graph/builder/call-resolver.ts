@@ -74,6 +74,19 @@ export function resolveByMethodOrGlobal(
       const typed = lookup.byName(`${typeName}.${call.name}`).filter((n) => n.kind === 'method');
       if (typed.length > 0) return typed;
     }
+    // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
+    // When a call site references `obj.prop` as a callback, resolve directly to the target fn.
+    const compositeEntry = typeMap.get(`${call.receiver}.${call.name}`);
+    const ptsTarget = compositeEntry
+      ? typeof compositeEntry === 'string'
+        ? compositeEntry
+        : (compositeEntry as { type?: string }).type
+      : null;
+    if (ptsTarget) {
+      return lookup
+        .byName(ptsTarget)
+        .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+    }
   }
   if (
     !call.receiver ||

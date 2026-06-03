@@ -259,6 +259,57 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('Phase 8.3d: property write pts tracking', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('seeds typeMap with composite key for obj.prop = identifier', () => {
+      const symbols = parseJS(`
+        const handlers = {};
+        handlers.auth = authMiddleware;
+      `);
+      expect(symbols.typeMap.get('handlers.auth')).toEqual({
+        type: 'authMiddleware',
+        confidence: 0.85,
+      });
+    });
+
+    it('ignores chained writes (a.b.c = x)', () => {
+      const symbols = parseJS(`a.b.c = handler;`);
+      expect(symbols.typeMap.has('a.b.c')).toBe(false);
+      expect(symbols.typeMap.has('b.c')).toBe(false);
+    });
+
+    it('ignores non-identifier RHS (a.prop = obj.method)', () => {
+      const symbols = parseJS(`router.use = obj.method;`);
+      expect(symbols.typeMap.has('router.use')).toBe(false);
+    });
+
+    it('ignores BUILTIN_GLOBALS as object names', () => {
+      const symbols = parseJS(`
+        console.warn = customWarn;
+        Object.assign = myAssign;
+      `);
+      expect(symbols.typeMap.has('console.warn')).toBe(false);
+      expect(symbols.typeMap.has('Object.assign')).toBe(false);
+    });
+
+    it('higher-confidence entry wins when same key appears twice', () => {
+      // First write seeds at 0.85; a later type annotation on handlers.auth should win
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(`
+        handlers.auth = firstMiddleware;
+        handlers.auth = secondMiddleware;
+      `);
+      const symbols = extractSymbols(tree, 'test.ts');
+      // Second write at same confidence (0.85) does not overwrite the first
+      expect(symbols.typeMap.get('handlers.auth')?.type).toBe('firstMiddleware');
+    });
+  });
+
   describe('Phase 8.2: inter-procedural return-type propagation', () => {
     function parseTS(code) {
       const parser = parsers.get('typescript');

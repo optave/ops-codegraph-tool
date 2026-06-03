@@ -430,7 +430,7 @@ function extractDestructuredBindingsWalk(node: TreeSitterNode, definitions: Defi
     ) {
       for (let j = 0; j < declNode.childCount; j++) {
         const declarator = declNode.child(j);
-        if (!declarator || declarator.type !== 'variable_declarator') continue;
+        if (declarator?.type !== 'variable_declarator') continue;
         const nameN = declarator.childForFieldName('name');
         if (nameN && nameN.type === 'object_pattern') {
           extractDestructuredBindings(
@@ -457,7 +457,7 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
 
   for (let j = 0; j < declNode.childCount; j++) {
     const declarator = declNode.child(j);
-    if (!declarator || declarator.type !== 'variable_declarator') continue;
+    if (declarator?.type !== 'variable_declarator') continue;
     const nameN = declarator.childForFieldName('name');
     const valueN = declarator.childForFieldName('value');
     if (!nameN || nameN.type !== 'identifier' || !valueN) continue;
@@ -1359,6 +1359,7 @@ function recordCallAssignment(
  * Values are `{ type: string, confidence: number }`:
  *   - 1.0: explicit constructor (`new Foo()`)
  *   - 0.9: type annotation (`: Foo`) or typed parameter
+ *   - 0.85: property write (`obj.prop = fn` — Phase 8.3d pts tracking)
  *   - 0.7–0.9: inter-procedural propagation from return-type map (Phase 8.2)
  *   - 0.7: factory method call (`Foo.create()` — uppercase-first heuristic)
  *
@@ -1378,6 +1379,8 @@ function extractTypeMapWalk(
       handleVarDeclaratorTypeMap(node, typeMap, returnTypeMap, callAssignments, fnRefBindings);
     } else if (t === 'required_parameter' || t === 'optional_parameter') {
       handleParamTypeMap(node, typeMap);
+    } else if (t === 'assignment_expression') {
+      handlePropWriteTypeMap(node, typeMap);
     }
     for (let i = 0; i < node.childCount; i++) {
       walk(node.child(i)!, depth + 1);
@@ -1490,6 +1493,32 @@ function handleParamTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEn
     const typeName = extractSimpleTypeName(typeAnno);
     if (typeName) setTypeMapEntry(typeMap, nameNode.text, typeName, 0.9);
   }
+}
+
+/**
+ * Phase 8.3d: seed the pts map from object property writes.
+ *
+ * `handlers.auth = authMiddleware` → typeMap.set('handlers.auth', { type: 'authMiddleware', confidence: 0.85 })
+ *
+ * Only simple `obj.prop = identifier` writes are tracked (not chained `a.b.c = x`).
+ * BUILTIN_GLOBALS are skipped (e.g. `console.log = fn` is noise).
+ */
+function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+  const lhsN = node.childForFieldName('left');
+  const rhsN = node.childForFieldName('right');
+  if (!lhsN || !rhsN) return;
+  if (lhsN.type !== 'member_expression') return;
+  if (rhsN.type !== 'identifier') return;
+
+  const obj = lhsN.childForFieldName('object');
+  const prop = lhsN.childForFieldName('property');
+  if (!obj || !prop) return;
+  if (obj.type !== 'identifier') return; // skip chained: a.b.c = x
+
+  const objName = obj.text;
+  if (BUILTIN_GLOBALS.has(objName)) return;
+
+  setTypeMapEntry(typeMap, `${objName}.${prop.text}`, rhsN.text, 0.85);
 }
 
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
