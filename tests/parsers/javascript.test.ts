@@ -7,6 +7,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createParsers, extractSymbols } from '../../src/domain/parser.js';
+import { setTypeMapEntry } from '../../src/extractors/helpers.js';
 
 describe('JavaScript parser', () => {
   let parsers: any;
@@ -292,21 +293,37 @@ describe('JavaScript parser', () => {
       const symbols = parseJS(`
         console.warn = customWarn;
         Object.assign = myAssign;
+        process.on = myHandler;
+        window.onload = myHandler;
+        document.ready = myHandler;
+        globalThis.fetch = myFetch;
       `);
       expect(symbols.typeMap.has('console.warn')).toBe(false);
       expect(symbols.typeMap.has('Object.assign')).toBe(false);
+      expect(symbols.typeMap.has('process.on')).toBe(false);
+      expect(symbols.typeMap.has('window.onload')).toBe(false);
+      expect(symbols.typeMap.has('document.ready')).toBe(false);
+      expect(symbols.typeMap.has('globalThis.fetch')).toBe(false);
     });
 
-    it('higher-confidence entry wins when same key appears twice', () => {
-      // First write seeds at 0.85; a later type annotation on handlers.auth should win
+    it('first-write wins when same key appears twice at equal confidence', () => {
       const parser = parsers.get('typescript');
       const tree = parser.parse(`
         handlers.auth = firstMiddleware;
         handlers.auth = secondMiddleware;
       `);
       const symbols = extractSymbols(tree, 'test.ts');
-      // Second write at same confidence (0.85) does not overwrite the first
+      // Both writes are at 0.85; first-write wins (equal confidence does not promote)
       expect(symbols.typeMap.get('handlers.auth')?.type).toBe('firstMiddleware');
+    });
+
+    it('higher-confidence entry promotes over lower-confidence entry (setTypeMapEntry)', () => {
+      const typeMap = new Map<string, { type: string; confidence: number }>();
+      // Seed with a low-confidence write (property-write confidence: 0.85)
+      setTypeMapEntry(typeMap, 'handlers.auth', 'firstMiddleware', 0.85);
+      // A higher-confidence annotation (0.9) should overwrite
+      setTypeMapEntry(typeMap, 'handlers.auth', 'AnnotatedHandler', 0.9);
+      expect(typeMap.get('handlers.auth')).toEqual({ type: 'AnnotatedHandler', confidence: 0.9 });
     });
   });
 
