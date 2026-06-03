@@ -684,7 +684,11 @@ function buildFileCallEdges(
           // A pts-resolved edge already exists for this caller→target pair with a
           // penalised confidence. Upgrade it to the direct-call confidence in-place,
           // then promote to seenCallEdges so no further processing is needed.
-          allEdgeRows[ptsIdx][3] = confidence;
+          const ptsRow = allEdgeRows[ptsIdx];
+          if (ptsRow) {
+            ptsRow[3] = confidence;
+            ptsRow[4] = isDynamic; // upgrade is_dynamic: direct call overrides the pts-alias dynamic flag
+          }
           ptsEdgeRows.delete(edgeKey);
           seenCallEdges.add(edgeKey);
         } else {
