@@ -78,6 +78,10 @@ const BUILTIN_GLOBALS: Set<string> = new Set([
   'Buffer',
   'EventEmitter',
   'Stream',
+  'process',
+  'window',
+  'document',
+  'globalThis',
 ]);
 
 /** Maximum chain depth for inter-procedural return-type propagation (Phase 8.2). */
@@ -1514,6 +1518,9 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
   const prop = lhsN.childForFieldName('property');
   if (!obj || !prop) return;
   if (obj.type !== 'identifier') return; // skip chained: a.b.c = x
+  // Guard: only static property access (property_identifier or identifier), not
+  // computed subscript expressions — consistent with the adjacent fnRefBindings block.
+  if (prop.type !== 'property_identifier' && prop.type !== 'identifier') return;
 
   const objName = obj.text;
   if (BUILTIN_GLOBALS.has(objName)) return;
