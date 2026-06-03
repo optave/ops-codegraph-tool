@@ -15,6 +15,7 @@ import type {
   BetterSqlite3Database,
   Call,
   ClassRelation,
+  Definition,
   ExtractorOutput,
   Import,
   NativeAddon,
@@ -634,13 +635,33 @@ function buildPointsToMapForFile(
   symbols: ExtractorOutput,
   importedNames: Map<string, string>,
 ): PointsToMap | null {
-  if (!symbols.fnRefBindings?.length) return null;
+  if (!symbols.fnRefBindings?.length && !symbols.paramBindings?.length) return null;
   const defNames = new Set(
     symbols.definitions
       .filter((d) => d.kind === 'function' || d.kind === 'method')
       .map((d) => d.name),
   );
-  return buildPointsToMap(symbols.fnRefBindings, defNames, importedNames);
+  const definitionParams = buildDefinitionParamsMap(symbols.definitions);
+  return buildPointsToMap(
+    symbols.fnRefBindings ?? [],
+    defNames,
+    importedNames,
+    symbols.paramBindings,
+    definitionParams,
+  );
+}
+
+function buildDefinitionParamsMap(
+  definitions: readonly Definition[],
+): Map<string, readonly string[]> {
+  const map = new Map<string, readonly string[]>();
+  for (const def of definitions) {
+    if ((def.kind === 'function' || def.kind === 'method') && def.children) {
+      const params = def.children.filter((c) => c.kind === 'parameter').map((c) => c.name);
+      if (params.length > 0) map.set(def.name, params);
+    }
+  }
+  return map;
 }
 
 function buildFileCallEdges(
@@ -698,17 +719,22 @@ function buildFileCallEdges(
       }
     }
 
-    // Phase 8.3: points-to fallback for unresolved dynamic identifier calls.
-    // When primary resolution finds nothing and the call is flagged dynamic (i.e.
-    // it was emitted by extractCallbackReferenceCalls as a named function reference),
-    // check whether the call name is an alias in the pts map and retry resolution
-    // with each concrete target. Confidence is penalised by one hop to reflect the
-    // extra indirection.
+    // Phase 8.3 / 8.3c: points-to fallback for unresolved calls.
+    // Fires for two cases:
+    //   (a) dynamic=true: alias calls emitted by extractCallbackReferenceCalls
+    //   (b) non-dynamic: parameter variable calls (fn() where fn is a param)
+    //       — only when the name has a pts entry to avoid spurious lookups.
+    // Confidence is penalised by one hop to reflect the extra indirection.
     //
     // Note: pts edges are added to ptsEdgeRows (not seenCallEdges) so that a later
     // direct call to the same target in the same function body can upgrade confidence
     // rather than being silently dropped by the dedup guard.
-    if (targets.length === 0 && call.dynamic && !call.receiver && ptsMap) {
+    if (
+      targets.length === 0 &&
+      !call.receiver &&
+      ptsMap &&
+      (call.dynamic || ptsMap.has(call.name))
+    ) {
       for (const alias of resolveViaPointsTo(call.name, ptsMap)) {
         // Resolve the concrete alias target. Only `name` is needed here — receiver
         // and line are not relevant for alias resolution (we are looking up the
