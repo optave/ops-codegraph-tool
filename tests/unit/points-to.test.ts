@@ -40,11 +40,14 @@ describe('buildPointsToMap — parameter-flow constraints (Phase 8.3c)', () => {
     // function runWith(fn) { fn(); }
     // function myHandler() {}
     // runWith(myHandler);
+    // pts key is scoped: "runWith::fn" → {myHandler}
     const defNames = new Set(['runWith', 'myHandler']);
     const defParams = new Map([['runWith', ['fn']]]);
     const paramBindings = [{ callee: 'runWith', argIndex: 0, argName: 'myHandler' }];
     const pts = buildPointsToMap([], defNames, NO_IMPORTS, paramBindings, defParams);
-    expect(resolveViaPointsTo('fn', pts)).toEqual(['myHandler']);
+    expect(resolveViaPointsTo('runWith::fn', pts)).toEqual(['myHandler']);
+    // bare name has no entry (scoping prevents cross-function collision)
+    expect(resolveViaPointsTo('fn', pts)).toEqual([]);
   });
 
   it('does not add constraint for out-of-range argIndex', () => {
@@ -52,7 +55,7 @@ describe('buildPointsToMap — parameter-flow constraints (Phase 8.3c)', () => {
     const defParams = new Map([['f', ['a']]]); // only 1 param
     const paramBindings = [{ callee: 'f', argIndex: 1, argName: 'handler' }]; // index 1 out of range
     const pts = buildPointsToMap([], defNames, NO_IMPORTS, paramBindings, defParams);
-    expect(resolveViaPointsTo('a', pts)).toEqual([]);
+    expect(resolveViaPointsTo('f::a', pts)).toEqual([]);
   });
 
   it('ignores call when callee is not in definitionParams (cross-module or untracked)', () => {
@@ -60,7 +63,7 @@ describe('buildPointsToMap — parameter-flow constraints (Phase 8.3c)', () => {
     const defParams = NO_DEF_PARAMS; // empty — callee 'externalFn' not local
     const paramBindings = [{ callee: 'externalFn', argIndex: 0, argName: 'handler' }];
     const pts = buildPointsToMap([], defNames, NO_IMPORTS, paramBindings, defParams);
-    // No 'p0' or any new pts entry from the constraint
+    // No scoped entry is added for externalFn::p0 or similar
     expect([...pts.keys()]).toEqual(['handler']);
   });
 
@@ -74,8 +77,8 @@ describe('buildPointsToMap — parameter-flow constraints (Phase 8.3c)', () => {
       { callee: 'withBoth', argIndex: 1, argName: 'onSuccess' },
     ];
     const pts = buildPointsToMap([], defNames, NO_IMPORTS, paramBindings, defParams);
-    expect(resolveViaPointsTo('errFn', pts)).toEqual(['onError']);
-    expect(resolveViaPointsTo('successFn', pts)).toEqual(['onSuccess']);
+    expect(resolveViaPointsTo('withBoth::errFn', pts)).toEqual(['onError']);
+    expect(resolveViaPointsTo('withBoth::successFn', pts)).toEqual(['onSuccess']);
   });
 
   it('propagates through alias + parameter chain (two-hop)', () => {
@@ -87,8 +90,8 @@ describe('buildPointsToMap — parameter-flow constraints (Phase 8.3c)', () => {
     const defParams = new Map([['run', ['fn']]]);
     const paramBindings = [{ callee: 'run', argIndex: 0, argName: 'h' }];
     const pts = buildPointsToMap(fnRefs, defNames, NO_IMPORTS, paramBindings, defParams);
-    // fn → h → realHandler
-    expect(resolveViaPointsTo('fn', pts)).toContain('realHandler');
+    // run::fn → h → realHandler
+    expect(resolveViaPointsTo('run::fn', pts)).toContain('realHandler');
   });
 
   it('produces no constraint when paramBindings is absent', () => {
@@ -104,8 +107,35 @@ describe('buildPointsToMap — parameter-flow constraints (Phase 8.3c)', () => {
     const defParams = new Map([['run', ['fn']]]);
     const paramBindings = [{ callee: 'run', argIndex: 0, argName: 'fn' }];
     const pts = buildPointsToMap([], defNames, NO_IMPORTS, paramBindings, defParams);
-    // pts('fn') seeds to {'fn'} from definitionNames; param constraint adds pts('fn') ⊇ pts('fn')
-    // which is a no-op. resolveViaPointsTo filters self-reference, so returns [].
+    // run::fn has a constraint pts(run::fn) ⊇ pts(fn); pts(fn) = {fn} (seeded).
+    // run::fn resolves to ['fn'] but self-reference filter in resolveViaPointsTo
+    // only filters exact matches of the lookup key — 'run::fn' !== 'fn', so 'fn'
+    // is returned. The caller (buildFileCallEdges) then resolves 'fn' as a concrete
+    // locally-defined function, which is the correct behavior.
+    expect(resolveViaPointsTo('run::fn', pts)).toContain('fn');
+    // bare 'fn' is seeded but not modified by parameter constraints
+    expect(resolveViaPointsTo('fn', pts)).toEqual([]);
+  });
+
+  it('scoped keys prevent same-named parameter collision across functions', () => {
+    // function runA(fn) { fn(); }  called as runA(handlerA)
+    // function runB(fn) { fn(); }  called as runB(handlerB)
+    // Without scoping, pts('fn') = {handlerA, handlerB}, causing spurious edges.
+    // With scoping: pts('runA::fn') = {handlerA}, pts('runB::fn') = {handlerB}.
+    const defNames = new Set(['runA', 'runB', 'handlerA', 'handlerB']);
+    const defParams = new Map([
+      ['runA', ['fn']],
+      ['runB', ['fn']],
+    ]);
+    const paramBindings = [
+      { callee: 'runA', argIndex: 0, argName: 'handlerA' },
+      { callee: 'runB', argIndex: 0, argName: 'handlerB' },
+    ];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, paramBindings, defParams);
+    // Each function's parameter resolves only to its own call-site argument.
+    expect(resolveViaPointsTo('runA::fn', pts)).toEqual(['handlerA']);
+    expect(resolveViaPointsTo('runB::fn', pts)).toEqual(['handlerB']);
+    // Bare 'fn' has no pts entry (it was never added as a key).
     expect(resolveViaPointsTo('fn', pts)).toEqual([]);
   });
 });

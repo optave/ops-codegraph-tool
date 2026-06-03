@@ -79,16 +79,24 @@ export function buildPointsToMap(
 
   // Phase 8.3c: parameter-flow constraints.
   // For each call f(x) at argIndex i where f is locally defined, add
-  // constraint: pts(paramName_i) ⊇ pts(x). This makes the pts solver
+  // constraint: pts(f::paramName_i) ⊇ pts(x). This makes the pts solver
   // inter-procedural within the module so that `fn()` inside `f` resolves
   // to the concrete function passed at each call site.
+  //
+  // Keys are scoped as "callee::paramName" to prevent name collisions: bare
+  // parameter names like `fn`, `cb`, and `callback` appear in many functions
+  // within the same file. Without scoping, pts(fn) from runA and runB would
+  // merge into a single set, producing spurious call edges. The scoped key is
+  // resolved in buildFileCallEdges by combining the enclosing caller's name
+  // with the call's name (see callerName::call.name lookup there).
+  //
   // Scope: intra-module only (definitionParams contains local defs only).
   if (paramBindings && definitionParams) {
     for (const { callee, argIndex, argName } of paramBindings) {
       const params = definitionParams.get(callee);
       if (!params || argIndex >= params.length) continue;
       const paramName = params[argIndex];
-      if (paramName) constraints.push({ lhs: paramName, rhsKey: argName });
+      if (paramName) constraints.push({ lhs: `${callee}::${paramName}`, rhsKey: argName });
     }
   }
 
