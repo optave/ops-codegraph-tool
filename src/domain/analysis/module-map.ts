@@ -231,6 +231,7 @@ function computeQualityMetrics(
     score,
     callerCoverage: {
       ratio: callerCoverage,
+      percentage: Math.round(callerCoverage * 100),
       covered: callableWithCallers,
       total: totalCallable,
       byTechnique: Object.keys(byTechnique).length > 0 ? byTechnique : undefined,
@@ -457,6 +458,7 @@ function buildStatsFromNative(
       score,
       callerCoverage: {
         ratio: callerCoverage,
+        percentage: Math.round(callerCoverage * 100),
         covered: s.quality.callableWithCallers,
         total: s.quality.callableTotal,
         byTechnique: Object.keys(byTechnique).length > 0 ? byTechnique : undefined,
