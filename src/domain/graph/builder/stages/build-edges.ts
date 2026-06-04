@@ -34,7 +34,7 @@ import {
 } from '../call-resolver.js';
 import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
-import { getResolved, isBarrelFile, resolveBarrelExport } from './resolve-imports.js';
+import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ function emitTypeOnlySymbolEdges(
     const cleanName = name.replace(/^\*\s+as\s+/, '');
     let targetFile = resolvedPath;
     if (isBarrelFile(ctx, resolvedPath)) {
-      const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
+      const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
       if (actual) targetFile = actual;
     }
     const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
@@ -197,7 +197,7 @@ function buildBarrelEdges(
   const resolvedSources = new Set<string>();
   for (const name of imp.names) {
     const cleanName = name.replace(/^\*\s+as\s+/, '');
-    const actualSource = resolveBarrelExport(ctx, resolvedPath, cleanName);
+    const actualSource = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
     if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
       resolvedSources.add(actualSource);
       const actualRow = getNodeIdStmt.get(actualSource, 'file', actualSource, 0);
@@ -620,7 +620,7 @@ function buildImportedNamesForNative(
       const cleanName = name.replace(/^\*\s+as\s+/, '');
       let targetFile = resolvedPath;
       if (isBarrelFile(ctx, resolvedPath)) {
-        const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
+        const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
         if (actual) targetFile = actual;
       }
       importedNames.push({ name: cleanName, file: targetFile });
@@ -681,11 +681,21 @@ function buildImportedNamesMap(
   // (higher priority). Static imports represent direct bindings while dynamic
   // imports often use aliased destructuring (`{ foo: bar } = await import(…)`).
   // When both contribute the same name, the static binding is authoritative.
+  //
+  // Phase 8.4: trace through barrel files so that symbol names map to their
+  // actual definition file, not the re-exporting barrel. Mirrors the tracing
+  // already done in buildImportedNamesForNative (the native path).
+  const traceBarrel = (resolvedPath: string, cleanName: string): string => {
+    if (!isBarrelFile(ctx, resolvedPath)) return resolvedPath;
+    const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
+    return actual ?? resolvedPath;
+  };
   for (const imp of symbols.imports) {
     if (!imp.dynamicImport) continue;
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
-      importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      importedNames.set(cleanName, traceBarrel(resolvedPath, cleanName));
     }
   }
   for (const imp of symbols.imports) {
@@ -693,7 +703,7 @@ function buildImportedNamesMap(
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
       const cleanName = name.replace(/^\*\s+as\s+/, '');
-      importedNames.set(cleanName, resolvedPath);
+      importedNames.set(cleanName, traceBarrel(resolvedPath, cleanName));
     }
   }
   return importedNames;
@@ -704,7 +714,8 @@ function makeContextLookup(ctx: PipelineContext, getNodeIdStmt: NodeIdStmt): Cal
     byNameAndFile: (name, file) => ctx.nodesByNameAndFile.get(`${name}|${file}`) ?? [],
     byName: (name) => ctx.nodesByName.get(name) ?? [],
     isBarrel: (file) => isBarrelFile(ctx, file),
-    resolveBarrel: (barrelFile, symbolName) => resolveBarrelExport(ctx, barrelFile, symbolName),
+    resolveBarrel: (barrelFile, symbolName) =>
+      resolveBarrelExportCached(ctx, barrelFile, symbolName),
     nodeId: (name, kind, file, line) => getNodeIdStmt.get(name, kind, file, line),
   };
 }
