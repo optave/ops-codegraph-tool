@@ -934,6 +934,7 @@ mod tests {
             ast_nodes: vec![],
             dataflow: None,
             line_count: Some(42),
+            fn_ref_bindings: vec![],
         };
         file_symbols.insert("src/a.ts".to_string(), sym.clone());
 

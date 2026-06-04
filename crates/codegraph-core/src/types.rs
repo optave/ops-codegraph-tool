@@ -306,6 +306,18 @@ pub struct NativeCallAssignment {
     pub receiver_type_name: Option<String>,
 }
 
+/// Function-reference binding for Phase 8.3 points-to analysis.
+/// Records `const alias = fn` and `const alias = obj.method` patterns.
+/// Mirrors the `FnRefBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FnRefBinding {
+    pub lhs: String,
+    pub rhs: String,
+    #[napi(js_name = "rhsReceiver")]
+    pub rhs_receiver: Option<String>,
+}
+
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSymbols {
@@ -326,6 +338,9 @@ pub struct FileSymbols {
     pub return_type_map: Vec<TypeMapEntry>,
     #[napi(js_name = "callAssignments")]
     pub call_assignments: Vec<NativeCallAssignment>,
+    /// Phase 8.3: function-reference bindings for points-to analysis.
+    #[napi(js_name = "fnRefBindings")]
+    pub fn_ref_bindings: Vec<FnRefBinding>,
 }
 
 impl FileSymbols {
@@ -343,6 +358,7 @@ impl FileSymbols {
             type_map: Vec::new(),
             return_type_map: Vec::new(),
             call_assignments: Vec::new(),
+            fn_ref_bindings: Vec::new(),
         }
     }
 }

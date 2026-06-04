@@ -62,6 +62,8 @@ interface NativeFileEntry {
   importedNames: Array<{ name: string; file: string }>;
   classes: ClassRelation[];
   typeMap: Array<{ name: string; typeName: string; confidence: number }>;
+  /** Phase 8.3: function-reference bindings for pts analysis. */
+  fnRefBindings?: Array<{ lhs: string; rhs: string; rhsReceiver?: string }>;
 }
 
 /** Shape returned by native buildCallEdges. */
@@ -505,6 +507,7 @@ function buildCallEdgesNative(
       importedNames,
       classes: symbols.classes,
       typeMap,
+      fnRefBindings: symbols.fnRefBindings?.length ? symbols.fnRefBindings : undefined,
     });
   }
 
