@@ -175,7 +175,8 @@ export function resolveBarrelExportCached(
   symbolName: string,
 ): string | null {
   const cacheKey = `${barrelPath}|${symbolName}`;
-  if (ctx.barrelExportCache.has(cacheKey)) return ctx.barrelExportCache.get(cacheKey) ?? null;
+  if (ctx.barrelExportCache.has(cacheKey))
+    return ctx.barrelExportCache.get(cacheKey) as string | null;
   const result = resolveBarrelExport(ctx, barrelPath, symbolName);
   ctx.barrelExportCache.set(cacheKey, result);
   return result;
