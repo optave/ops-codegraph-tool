@@ -218,6 +218,22 @@ function edgeKey(
   return `${sourceName}@${normalizeFile(sourceFile)} -> ${targetName}@${normalizeFile(targetFile)}`;
 }
 
+/** Aggregates per-mode metrics into technique buckets via TECHNIQUE_MAP. */
+function rollupByTechnique(byMode: Record<string, ModeMetrics>): Record<string, TechniqueMetrics> {
+  const byTechnique: Record<string, TechniqueMetrics> = {};
+  for (const [mode, data] of Object.entries(byMode)) {
+    const tech = TECHNIQUE_MAP[mode] ?? 'other';
+    if (!byTechnique[tech]) byTechnique[tech] = { expected: 0, resolved: 0 };
+    byTechnique[tech].expected += data.expected;
+    byTechnique[tech].resolved += data.resolved;
+  }
+  for (const tech of Object.keys(byTechnique)) {
+    const t = byTechnique[tech];
+    t.recall = t.expected > 0 ? t.resolved / t.expected : 0;
+  }
+  return byTechnique;
+}
+
 function computeMetrics(
   resolvedEdges: ResolvedEdge[],
   expectedEdges: ExpectedEdge[],
@@ -252,17 +268,7 @@ function computeMetrics(
   }
 
   // Aggregate per-mode data into technique buckets using TECHNIQUE_MAP
-  const byTechnique: Record<string, TechniqueMetrics> = {};
-  for (const [mode, data] of Object.entries(byMode)) {
-    const tech = TECHNIQUE_MAP[mode] ?? 'other';
-    if (!byTechnique[tech]) byTechnique[tech] = { expected: 0, resolved: 0 };
-    byTechnique[tech].expected += data.expected;
-    byTechnique[tech].resolved += data.resolved;
-  }
-  for (const tech of Object.keys(byTechnique)) {
-    const t = byTechnique[tech];
-    t.recall = t.expected > 0 ? t.resolved / t.expected : 0;
-  }
+  const byTechnique = rollupByTechnique(byMode);
 
   return {
     precision,
@@ -386,20 +392,7 @@ function metricsFromArtifact(lang: string, raw: ArtifactLangResult): BenchmarkMe
     );
   }
   // Derive byTechnique from byMode when absent (older artifacts)
-  let byTechnique = raw.byTechnique;
-  if (!byTechnique) {
-    byTechnique = {};
-    for (const [mode, data] of Object.entries(raw.byMode)) {
-      const tech = TECHNIQUE_MAP[mode] ?? 'other';
-      if (!byTechnique[tech]) byTechnique[tech] = { expected: 0, resolved: 0 };
-      byTechnique[tech].expected += data.expected;
-      byTechnique[tech].resolved += data.resolved;
-    }
-    for (const tech of Object.keys(byTechnique)) {
-      const t = byTechnique[tech];
-      t.recall = t.expected > 0 ? t.resolved / t.expected : 0;
-    }
-  }
+  const byTechnique = raw.byTechnique ?? rollupByTechnique(raw.byMode);
 
   return {
     precision: raw.precision,
@@ -577,6 +570,15 @@ describe('Call Resolution Precision/Recall', () => {
    */
   test('aggregate recall meets coverage baseline', () => {
     const COVERAGE_BASELINE = 0.29;
+    // Guard: if a language's beforeAll threw, allResults won't have an entry for it.
+    // The smaller denominator would inflate the apparent recall, making the gate
+    // meaningless. Fail explicitly so the partial failure is visible.
+    expect(
+      Object.keys(allResults).length,
+      `Only ${Object.keys(allResults).length}/${languages.length} languages populated results — ` +
+        `one or more beforeAll hooks may have thrown. Expected: [${languages.join(', ')}], ` +
+        `Got: [${Object.keys(allResults).join(', ')}]`,
+    ).toBe(languages.length);
     const totalExpected = Object.values(allResults).reduce((s, m) => s + m.totalExpected, 0);
     // Guard: if fixtures are absent the gate would trivially pass and mask regressions.
     // Fail explicitly so a misconfigured CI environment is visible rather than silently green.
