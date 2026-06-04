@@ -564,7 +564,6 @@ function buildParamFlowPtsPostPass(
 
     for (const call of symbols.calls) {
       if (call.receiver || call.dynamic) continue; // pts post-pass handles only param-flow (non-dynamic)
-      if (BUILTIN_RECEIVERS.has(call.receiver ?? '')) continue;
 
       const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
       const scopedKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;

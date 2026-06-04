@@ -578,7 +578,12 @@ describe('Call Resolution Precision/Recall', () => {
   test('aggregate recall meets coverage baseline', () => {
     const COVERAGE_BASELINE = 0.29;
     const totalExpected = Object.values(allResults).reduce((s, m) => s + m.totalExpected, 0);
-    if (totalExpected === 0) return; // no fixture data — skip gate rather than false-fail
+    // Guard: if fixtures are absent the gate would trivially pass and mask regressions.
+    // Fail explicitly so a misconfigured CI environment is visible rather than silently green.
+    expect(
+      totalExpected,
+      'No fixture data found — fixtures directory may be empty or missing',
+    ).toBeGreaterThan(0);
     const totalTruePositives = Object.values(allResults).reduce((s, m) => s + m.truePositives, 0);
     const aggregateRecall = totalTruePositives / totalExpected;
     expect(

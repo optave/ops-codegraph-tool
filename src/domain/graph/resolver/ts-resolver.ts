@@ -506,7 +506,7 @@ function resolveTypeName(
       // Skip generic type-parameter symbols (T, E, K, etc.) — they do not
       // correspond to any real class and would overwrite useful lower-confidence
       // heuristic entries, causing call edges to be silently dropped.
-      symbol.flags & (ts.SymbolFlags.TypeParameter | ts.SymbolFlags.TypeAlias)
+      (symbol.flags & (ts.SymbolFlags.TypeParameter | ts.SymbolFlags.TypeAlias)) !== 0
     )
       return null;
     // getFullyQualifiedName returns e.g. `"./path/to/module".ClassName` for
