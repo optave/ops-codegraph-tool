@@ -431,8 +431,10 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
   if (implementors.size === 0) return new Set();
 
   // RTA: collect class names that are actually instantiated via `new X()`.
-  // A `calls` edge to a class node means the class constructor was called.
-  const rtaRows = db
+  // Primary query targets `class`-kind nodes (the canonical schema).
+  // Fallback also matches `constructor`/`function`-kind nodes because some native
+  // engine versions record constructor calls against those kinds instead of `class`.
+  let rtaRows = db
     .prepare(`
       SELECT DISTINCT tgt.name
       FROM edges e
@@ -440,14 +442,26 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
       WHERE e.kind = 'calls' AND tgt.kind = 'class'
     `)
     .all() as Array<{ name: string }>;
+  if (rtaRows.length === 0) {
+    // Fallback: try constructor/function-kind nodes for older native engine schemas
+    rtaRows = db
+      .prepare(`
+        SELECT DISTINCT tgt.name
+        FROM edges e
+        JOIN nodes tgt ON e.target_id = tgt.id
+        WHERE e.kind = 'calls' AND tgt.kind IN ('constructor', 'function')
+        AND INSTR(tgt.name, '.') = 0
+      `)
+      .all() as Array<{ name: string }>;
+  }
   const instantiated = new Set(rtaRows.map((r) => r.name));
-  if (instantiated.size === 0) {
-    // No class-kind nodes with incoming `calls` edges found.  If the native engine
-    // records constructor calls against `function`- or `constructor`-kind nodes
-    // instead of `class`-kind nodes, this will always be empty — log to make the
-    // condition visible during development.
-    debug('runPostNativeCha: no instantiated class-kind nodes via calls edges — CHA skipped');
-    return new Set();
+  // noRtaEvidence: true when no constructor-call evidence exists in the DB (e.g. graph
+  // built by an older native engine that doesn't emit constructor call edges at all).
+  // In that case we skip RTA filtering so interface dispatch still produces edges —
+  // all instantiated implementors are admitted rather than silently dropping everything.
+  const noRtaEvidence = instantiated.size === 0;
+  if (noRtaEvidence) {
+    debug('runPostNativeCha: no constructor-call evidence found — proceeding without RTA filter');
   }
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork')
@@ -484,7 +498,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     if (!implementorList?.length) continue;
 
     for (const cls of implementorList) {
-      if (!instantiated.has(cls)) continue; // RTA filter
+      if (!noRtaEvidence && !instantiated.has(cls)) continue; // RTA filter (skip when no evidence)
       const qualifiedName = `${cls}.${methodSuffix}`;
       const methodNode = findMethodStmt.get(qualifiedName) as { id: number } | undefined;
       if (!methodNode) continue;
