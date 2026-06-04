@@ -441,7 +441,14 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     `)
     .all() as Array<{ name: string }>;
   const instantiated = new Set(rtaRows.map((r) => r.name));
-  if (instantiated.size === 0) return new Set();
+  if (instantiated.size === 0) {
+    // No class-kind nodes with incoming `calls` edges found.  If the native engine
+    // records constructor calls against `function`- or `constructor`-kind nodes
+    // instead of `class`-kind nodes, this will always be empty — log to make the
+    // condition visible during development.
+    debug('runPostNativeCha: no instantiated class-kind nodes via calls edges — CHA skipped');
+    return new Set();
+  }
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork')
   const callToMethods = db
@@ -490,7 +497,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
   }
 
   if (newEdges.length > 0) {
-    batchInsertEdges(db, newEdges);
+    db.transaction(() => batchInsertEdges(db, newEdges))();
   }
   return newTargetIds;
 }
