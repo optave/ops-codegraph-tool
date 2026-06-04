@@ -54,7 +54,7 @@ interface EmbeddingsInfo {
 
 interface QualityInfo {
   score: number;
-  callerCoverage: { ratio: number; covered: number; total: number };
+  callerCoverage: { ratio: number; percentage: number; covered: number; total: number };
   callConfidence: { ratio: number; highConf: number; total: number };
   falsePositiveWarnings: { name: string; callerCount: number; file: string; line: number }[];
 }
@@ -187,7 +187,7 @@ function printQuality(data: StatsData): void {
     const cf = q.callConfidence;
     console.log(`\nGraph Quality: ${q.score}/100`);
     console.log(
-      `  Caller coverage:  ${(cc.ratio * 100).toFixed(1)}% (${cc.covered}/${cc.total} functions have >=1 caller)`,
+      `  Caller coverage:  ${cc.percentage}% (${cc.covered}/${cc.total} functions have >=1 caller)`,
     );
     console.log(
       `  Call confidence:  ${(cf.ratio * 100).toFixed(1)}% (${cf.highConf}/${cf.total} call edges are high-confidence)`,

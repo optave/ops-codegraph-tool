@@ -46,6 +46,12 @@ interface ModeMetrics {
   recall?: number;
 }
 
+interface TechniqueMetrics {
+  expected: number;
+  resolved: number;
+  recall?: number;
+}
+
 interface BenchmarkMetrics {
   precision: number;
   recall: number;
@@ -55,9 +61,35 @@ interface BenchmarkMetrics {
   totalResolved: number;
   totalExpected: number;
   byMode: Record<string, ModeMetrics>;
+  byTechnique: Record<string, TechniqueMetrics>;
   falsePositiveEdges: string[];
   falseNegativeEdges: string[];
 }
+
+/**
+ * Maps resolution modes from expected-edges.json to high-level technique categories:
+ *   ts-native       — direct static calls, constructors, same-file calls
+ *   type-propagation — receiver-typed via return-type or annotation inference
+ *   cha-rta         — class hierarchy / interface dispatch
+ *   barrel          — resolution through barrel re-export chains
+ *   points-to       — dataflow-based (callbacks, closures, higher-order functions)
+ */
+const TECHNIQUE_MAP: Record<string, string> = {
+  static: 'ts-native',
+  'same-file': 'ts-native',
+  constructor: 'ts-native',
+  'module-function': 'ts-native',
+  'package-function': 'ts-native',
+  'receiver-typed': 'type-propagation',
+  'interface-dispatched': 'cha-rta',
+  'class-inheritance': 'cha-rta',
+  'trait-dispatch': 'cha-rta',
+  're-export': 'barrel',
+  closure: 'points-to',
+  'higher-order': 'points-to',
+  callback: 'points-to',
+  dynamic: 'points-to',
+};
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -186,6 +218,22 @@ function edgeKey(
   return `${sourceName}@${normalizeFile(sourceFile)} -> ${targetName}@${normalizeFile(targetFile)}`;
 }
 
+/** Aggregates per-mode metrics into technique buckets via TECHNIQUE_MAP. */
+function rollupByTechnique(byMode: Record<string, ModeMetrics>): Record<string, TechniqueMetrics> {
+  const byTechnique: Record<string, TechniqueMetrics> = {};
+  for (const [mode, data] of Object.entries(byMode)) {
+    const tech = TECHNIQUE_MAP[mode] ?? 'other';
+    if (!byTechnique[tech]) byTechnique[tech] = { expected: 0, resolved: 0 };
+    byTechnique[tech].expected += data.expected;
+    byTechnique[tech].resolved += data.resolved;
+  }
+  for (const tech of Object.keys(byTechnique)) {
+    const t = byTechnique[tech];
+    t.recall = t.expected > 0 ? t.resolved / t.expected : 0;
+  }
+  return byTechnique;
+}
+
 function computeMetrics(
   resolvedEdges: ResolvedEdge[],
   expectedEdges: ExpectedEdge[],
@@ -219,6 +267,9 @@ function computeMetrics(
     m.recall = m.expected > 0 ? m.resolved / m.expected : 0;
   }
 
+  // Aggregate per-mode data into technique buckets using TECHNIQUE_MAP
+  const byTechnique = rollupByTechnique(byMode);
+
   return {
     precision,
     recall,
@@ -228,6 +279,7 @@ function computeMetrics(
     totalResolved: resolvedSet.size,
     totalExpected: expectedSet.size,
     byMode,
+    byTechnique,
     falsePositiveEdges: [...falsePositives],
     falseNegativeEdges: [...falseNegatives],
   };
@@ -246,6 +298,17 @@ function formatReport(lang: string, metrics: BenchmarkMetrics): string {
     lines.push(
       `    ${mode}: ${data.resolved}/${data.expected} (${((data.recall ?? 0) * 100).toFixed(1)}% recall)`,
     );
+  }
+
+  if (Object.keys(metrics.byTechnique).length > 0) {
+    lines.push('', '  By technique (edges contributed):');
+    for (const [tech, data] of Object.entries(metrics.byTechnique).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    )) {
+      lines.push(
+        `    ${tech.padEnd(18)}: ${String(data.resolved).padStart(3)} resolved / ${String(data.expected).padStart(3)} expected  (${((data.recall ?? 0) * 100).toFixed(1)}% recall)`,
+      );
+    }
   }
 
   if (metrics.falseNegativeEdges.length > 0) {
@@ -281,6 +344,7 @@ interface ArtifactLangResult {
   totalResolved: number;
   totalExpected: number;
   byMode: Record<string, ModeMetrics>;
+  byTechnique?: Record<string, TechniqueMetrics>;
   falsePositiveEdges?: string[];
   falseNegativeEdges?: string[];
 }
@@ -327,6 +391,9 @@ function metricsFromArtifact(lang: string, raw: ArtifactLangResult): BenchmarkMe
       `Resolution artifact for ${lang} is missing falsePositiveEdges/falseNegativeEdges — regenerate with the current resolution-benchmark.ts.`,
     );
   }
+  // Derive byTechnique from byMode when absent (older artifacts)
+  const byTechnique = raw.byTechnique ?? rollupByTechnique(raw.byMode);
+
   return {
     precision: raw.precision,
     recall: raw.recall,
@@ -336,6 +403,7 @@ function metricsFromArtifact(lang: string, raw: ArtifactLangResult): BenchmarkMe
     totalResolved: raw.totalResolved,
     totalExpected: raw.totalExpected,
     byMode: raw.byMode,
+    byTechnique,
     falsePositiveEdges: raw.falsePositiveEdges,
     falseNegativeEdges: raw.falseNegativeEdges,
   };
@@ -385,6 +453,37 @@ describe('Call Resolution Precision/Recall', () => {
         `  ${lang.padEnd(12)} | ${(m.precision * 100).toFixed(1).padStart(7)}%  | ${(m.recall * 100).toFixed(1).padStart(5)}%  | ${String(m.truePositives).padStart(3)} | ${String(m.falsePositives).padStart(3)} | ${String(m.falseNegatives).padStart(3)}`,
       );
     }
+
+    // Print aggregate technique totals across all languages
+    const aggregateTechnique: Record<string, TechniqueMetrics> = {};
+    for (const m of Object.values(allResults)) {
+      for (const [tech, data] of Object.entries(m.byTechnique)) {
+        if (!aggregateTechnique[tech]) aggregateTechnique[tech] = { expected: 0, resolved: 0 };
+        aggregateTechnique[tech].expected += data.expected;
+        aggregateTechnique[tech].resolved += data.resolved;
+      }
+    }
+    for (const t of Object.values(aggregateTechnique)) {
+      t.recall = t.expected > 0 ? t.resolved / t.expected : 0;
+    }
+
+    summaryLines.push('\n  ── Technique Coverage (all languages) ──');
+    summaryLines.push('  Technique          | Resolved | Expected | Recall');
+    summaryLines.push('  -------------------|----------|----------|-------');
+    for (const [tech, data] of Object.entries(aggregateTechnique).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    )) {
+      summaryLines.push(
+        `  ${tech.padEnd(19)}| ${String(data.resolved).padStart(8)} | ${String(data.expected).padStart(8)} | ${((data.recall ?? 0) * 100).toFixed(1).padStart(5)}%`,
+      );
+    }
+
+    const totalExpected = Object.values(allResults).reduce((s, m) => s + m.totalExpected, 0);
+    const totalTruePositives = Object.values(allResults).reduce((s, m) => s + m.truePositives, 0);
+    const aggregateRecall = totalExpected > 0 ? totalTruePositives / totalExpected : 0;
+    summaryLines.push(
+      `\n  Aggregate recall: ${(aggregateRecall * 100).toFixed(1)}% (${totalTruePositives}/${totalExpected} edges)`,
+    );
 
     summaryLines.push('');
     console.log(summaryLines.join('\n'));
@@ -460,4 +559,40 @@ describe('Call Resolution Precision/Recall', () => {
       });
     });
   }
+
+  /**
+   * CI gate: aggregate recall across all fixture languages must not drop below
+   * the 29% baseline documented in the roadmap. This threshold ratchets upward
+   * as each resolution sub-phase ships.
+   *
+   * Declared after the per-language loop so Vitest registers it last and runs
+   * it after all language beforeAll hooks have populated allResults.
+   */
+  test('aggregate recall meets coverage baseline', () => {
+    const COVERAGE_BASELINE = 0.29;
+    // Guard: if a language's beforeAll threw, allResults won't have an entry for it.
+    // The smaller denominator would inflate the apparent recall, making the gate
+    // meaningless. Fail explicitly so the partial failure is visible.
+    expect(
+      Object.keys(allResults).length,
+      `Only ${Object.keys(allResults).length}/${languages.length} languages populated results — ` +
+        `one or more beforeAll hooks may have thrown. Expected: [${languages.join(', ')}], ` +
+        `Got: [${Object.keys(allResults).join(', ')}]`,
+    ).toBe(languages.length);
+    const totalExpected = Object.values(allResults).reduce((s, m) => s + m.totalExpected, 0);
+    // Guard: if fixtures are absent the gate would trivially pass and mask regressions.
+    // Fail explicitly so a misconfigured CI environment is visible rather than silently green.
+    expect(
+      totalExpected,
+      'No fixture data found — fixtures directory may be empty or missing',
+    ).toBeGreaterThan(0);
+    const totalTruePositives = Object.values(allResults).reduce((s, m) => s + m.truePositives, 0);
+    const aggregateRecall = totalTruePositives / totalExpected;
+    expect(
+      aggregateRecall,
+      `Aggregate resolution recall ${(aggregateRecall * 100).toFixed(1)}% is below the ` +
+        `${(COVERAGE_BASELINE * 100).toFixed(0)}% coverage baseline. ` +
+        `Resolved ${totalTruePositives}/${totalExpected} expected edges across all fixture languages.`,
+    ).toBeGreaterThanOrEqual(COVERAGE_BASELINE);
+  });
 });

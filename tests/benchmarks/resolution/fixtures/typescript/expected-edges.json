@@ -142,6 +142,118 @@
       "kind": "calls",
       "mode": "constructor",
       "notes": "new UserService(repo, serializer) — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "Shape.describe", "file": "hierarchy.ts" },
+      "target": { "name": "Shape.area", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "this.area() — base class method call, same-file virtual dispatch"
+    },
+    {
+      "source": { "name": "Shape.describe", "file": "hierarchy.ts" },
+      "target": { "name": "Circle.area", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "this.area() dispatched to Circle.area via CHA when receiver is Circle"
+    },
+    {
+      "source": { "name": "Shape.describe", "file": "hierarchy.ts" },
+      "target": { "name": "Rectangle.area", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "this.area() dispatched to Rectangle.area via CHA when receiver is Rectangle"
+    },
+    {
+      "source": { "name": "printShape", "file": "hierarchy.ts" },
+      "target": { "name": "Shape.describe", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "shape.describe() — shape typed as Shape"
+    },
+    {
+      "source": { "name": "makeCircle", "file": "hierarchy.ts" },
+      "target": { "name": "Circle", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new Circle(r) — class instantiation"
+    },
+    {
+      "source": { "name": "makeRectangle", "file": "hierarchy.ts" },
+      "target": { "name": "Rectangle", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new Rectangle(w, h) — class instantiation"
+    },
+    {
+      "source": { "name": "runCallbackDemo", "file": "callbacks.ts" },
+      "target": { "name": "processEach", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Direct same-file call to processEach"
+    },
+    {
+      "source": { "name": "runCallbackDemo", "file": "callbacks.ts" },
+      "target": { "name": "filterThen", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Direct same-file call to filterThen"
+    },
+    {
+      "source": { "name": "runCallbackDemo", "file": "callbacks.ts" },
+      "target": { "name": "logUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "logUser passed as fn to processEach and as fn to filterThen"
+    },
+    {
+      "source": { "name": "runCallbackDemo", "file": "callbacks.ts" },
+      "target": { "name": "upperUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "upperUser passed as fn to processEach"
+    },
+    {
+      "source": { "name": "runCallbackDemo", "file": "callbacks.ts" },
+      "target": { "name": "hasEmail", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "hasEmail passed as pred to filterThen"
+    },
+    {
+      "source": { "name": "initFromBarrel", "file": "barrel-consumer.ts" },
+      "target": { "name": "createService", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "re-export",
+      "notes": "createService imported via barrel.ts, which re-exports it from service.ts"
+    },
+    {
+      "source": { "name": "initFromBarrel", "file": "barrel-consumer.ts" },
+      "target": { "name": "createRepository", "file": "repository.ts" },
+      "kind": "calls",
+      "mode": "re-export",
+      "notes": "createRepository imported via barrel.ts, which re-exports it from repository.ts"
+    },
+    {
+      "source": { "name": "initFromBarrel", "file": "barrel-consumer.ts" },
+      "target": { "name": "UserService.addUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.addUser() — svc typed as UserService via createService() return"
+    },
+    {
+      "source": { "name": "initFromBarrel", "file": "barrel-consumer.ts" },
+      "target": { "name": "UserService.getUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.getUser() — svc typed as UserService via createService() return"
+    },
+    {
+      "source": { "name": "initFromBarrel", "file": "barrel-consumer.ts" },
+      "target": { "name": "UserService.removeUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.removeUser() — svc typed as UserService via createService() return"
     }
   ]
 }
