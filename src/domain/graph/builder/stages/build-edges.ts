@@ -436,6 +436,11 @@ function propagateReturnTypesAcrossFiles(
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols.callAssignments?.length) continue;
+    // Phase 8.4 side-effect: buildImportedNamesMap now traces through barrel
+    // files (traceBarrel), so `importedFrom` resolves to the leaf definition
+    // file rather than the barrel. This means returnTypeIndex.get(importedFrom)
+    // now finds entries it previously missed, improving cross-file return-type
+    // propagation through re-export chains (Phase 8.2 improvement).
     const importedNamesMap = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
 
     for (const ca of symbols.callAssignments) {
