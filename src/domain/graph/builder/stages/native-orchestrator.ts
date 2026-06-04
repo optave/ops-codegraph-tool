@@ -753,7 +753,13 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
   isFullBuild: boolean,
   changedFiles: string[] | undefined,
 ): void {
-  if (isFullBuild || !changedFiles || changedFiles.length === 0) {
+  // Quiet incremental: no files changed → no new edges inserted, nothing to tag.
+  // Running the global UPDATE here would mis-tag pre-migration NULL-technique edges
+  // from unchanged files as 'ts-native'.
+  if (!isFullBuild && changedFiles && changedFiles.length === 0) {
+    return;
+  }
+  if (isFullBuild || !changedFiles) {
     db.prepare(
       "UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL",
     ).run();
