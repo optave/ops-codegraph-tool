@@ -350,6 +350,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  const newExpressions: string[] = [];
+  extractNewExpressionsWalk(tree.rootNode, newExpressions);
+
   return {
     definitions,
     calls,
@@ -361,6 +365,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     callAssignments,
     fnRefBindings,
     paramBindings,
+    newExpressions,
   };
 }
 
@@ -608,6 +613,10 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   );
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
+  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  const newExpressions: string[] = [];
+  extractNewExpressionsWalk(tree.rootNode, newExpressions);
+  ctx.newExpressions = newExpressions;
   return ctx;
 }
 
@@ -1367,6 +1376,25 @@ function recordCallAssignment(
 }
 
 /**
+ * Phase 8.5 (RTA): collect all constructor names from `new X()` expressions
+ * in the file. Captures both assigned (`const x = new Foo()`) and unassigned
+ * (`doSomething(new Foo())`) usages that the typeMap-based approach would miss.
+ */
+function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: string[]): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'new_expression') {
+      const name = extractNewExprTypeName(node);
+      if (name) newExpressions.push(name);
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
  * Extract variable-to-type assignments into a per-file type map.
  *
  * Values are `{ type: string, confidence: number }`:
@@ -1917,7 +1945,7 @@ function extractCallbackDefinition(
   // Express: app.get('/path', callback)
   if (EXPRESS_METHODS.has(method)) {
     const strArg = findFirstStringArg(args);
-    if (!strArg || !strArg.startsWith('/')) return null;
+    if (!strArg?.startsWith('/')) return null;
     const cb = findAnonymousCallback(args);
     if (!cb) return null;
     return {

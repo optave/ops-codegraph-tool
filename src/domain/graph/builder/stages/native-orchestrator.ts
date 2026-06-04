@@ -43,6 +43,7 @@ import {
 } from '../../../parser.js';
 import type { PipelineContext } from '../context.js';
 import {
+  batchInsertEdges,
   batchInsertNodes,
   collectFiles as collectFilesUtil,
   fileHash,
@@ -380,6 +381,111 @@ async function runPostNativeAnalysis(
   }
 
   return timing;
+}
+
+/**
+ * Phase 8.5: CHA expansion post-pass for the native orchestrator path.
+ *
+ * The Rust build pipeline resolves typed receiver calls (e.g. `worker.doWork()`
+ * where `worker: IWorker`) to the interface method declaration only.  This
+ * post-pass reads the class hierarchy (via `implements`/`extends` edges) and
+ * instantiated types (via `calls` edges to class nodes) from the DB and expands
+ * each call to an interface/abstract method to ALL RTA-filtered concrete
+ * implementations.
+ *
+ * Note: `this`/`super` dispatch requires the raw unresolved call sites which are
+ * not persisted to the DB by the Rust pipeline. That case is handled by the WASM
+ * path (`buildFileCallEdges`) and is a known gap for the native orchestrator.
+ */
+function runPostNativeCha(db: BetterSqlite3Database): void {
+  // Fast guard: no hierarchy edges → no CHA work
+  const hasHierarchy = db
+    .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
+    .get();
+  if (!hasHierarchy) return;
+
+  // Build implementors map: parent/interface name → [child/implementing class names]
+  const hierarchyRows = db
+    .prepare(`
+      SELECT src.name AS child_name, tgt.name AS parent_name
+      FROM edges e
+      JOIN nodes src ON e.source_id = src.id
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind IN ('extends', 'implements')
+    `)
+    .all() as Array<{ child_name: string; parent_name: string }>;
+
+  const implementors = new Map<string, string[]>();
+  for (const row of hierarchyRows) {
+    let list = implementors.get(row.parent_name);
+    if (!list) {
+      list = [];
+      implementors.set(row.parent_name, list);
+    }
+    if (!list.includes(row.child_name)) list.push(row.child_name);
+  }
+  if (implementors.size === 0) return;
+
+  // RTA: collect class names that are actually instantiated via `new X()`.
+  // A `calls` edge to a class node means the class constructor was called.
+  const rtaRows = db
+    .prepare(`
+      SELECT DISTINCT tgt.name
+      FROM edges e
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind = 'calls' AND tgt.kind = 'class'
+    `)
+    .all() as Array<{ name: string }>;
+  const instantiated = new Set(rtaRows.map((r) => r.name));
+  if (instantiated.size === 0) return;
+
+  // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork')
+  const callToMethods = db
+    .prepare(`
+      SELECT e.source_id, tgt.name AS method_name
+      FROM edges e
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind = 'calls' AND tgt.kind = 'method'
+      AND INSTR(tgt.name, '.') > 0
+    `)
+    .all() as Array<{ source_id: number; method_name: string }>;
+
+  // Seed seen-pairs from existing call edges to avoid duplicates
+  const seen = new Set<string>();
+  const existingPairs = db
+    .prepare(`SELECT source_id, target_id FROM edges WHERE kind = 'calls'`)
+    .all() as Array<{ source_id: number; target_id: number }>;
+  for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+
+  const findMethodStmt = db.prepare(
+    `SELECT id FROM nodes WHERE name = ? AND kind = 'method' LIMIT 1`,
+  );
+  const newEdges: Array<[number, number, string, number, number]> = [];
+
+  for (const { source_id, method_name } of callToMethods) {
+    const dotIdx = method_name.indexOf('.');
+    if (dotIdx === -1) continue;
+    const typeName = method_name.slice(0, dotIdx);
+    const methodSuffix = method_name.slice(dotIdx + 1);
+
+    const implementorList = implementors.get(typeName);
+    if (!implementorList?.length) continue;
+
+    for (const cls of implementorList) {
+      if (!instantiated.has(cls)) continue; // RTA filter
+      const qualifiedName = `${cls}.${methodSuffix}`;
+      const methodNode = findMethodStmt.get(qualifiedName) as { id: number } | undefined;
+      if (!methodNode) continue;
+      const key = `${source_id}|${methodNode.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0]);
+    }
+  }
+
+  if (newEdges.length > 0) {
+    batchInsertEdges(db, newEdges);
+  }
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -936,6 +1042,9 @@ export async function tryNativeOrchestrator(
   ) {
     await backfillNativeDroppedFiles(ctx, gap);
   }
+
+  // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations)
+  runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
