@@ -396,13 +396,17 @@ async function runPostNativeAnalysis(
  * Note: `this`/`super` dispatch requires the raw unresolved call sites which are
  * not persisted to the DB by the Rust pipeline. That case is handled by the WASM
  * path (`buildFileCallEdges`) and is a known gap for the native orchestrator.
+ *
+ * Returns the set of target node IDs for newly inserted CHA edges so the caller
+ * can re-classify roles for the affected implementation files.  An empty set
+ * means no edges were added and role re-classification is unnecessary.
  */
-function runPostNativeCha(db: BetterSqlite3Database): void {
+function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
   // Fast guard: no hierarchy edges → no CHA work
   const hasHierarchy = db
     .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
     .get();
-  if (!hasHierarchy) return;
+  if (!hasHierarchy) return new Set();
 
   // Build implementors map: parent/interface name → [child/implementing class names]
   const hierarchyRows = db
@@ -424,7 +428,7 @@ function runPostNativeCha(db: BetterSqlite3Database): void {
     }
     if (!list.includes(row.child_name)) list.push(row.child_name);
   }
-  if (implementors.size === 0) return;
+  if (implementors.size === 0) return new Set();
 
   // RTA: collect class names that are actually instantiated via `new X()`.
   // A `calls` edge to a class node means the class constructor was called.
@@ -437,7 +441,7 @@ function runPostNativeCha(db: BetterSqlite3Database): void {
     `)
     .all() as Array<{ name: string }>;
   const instantiated = new Set(rtaRows.map((r) => r.name));
-  if (instantiated.size === 0) return;
+  if (instantiated.size === 0) return new Set();
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork')
   const callToMethods = db
@@ -461,6 +465,7 @@ function runPostNativeCha(db: BetterSqlite3Database): void {
     `SELECT id FROM nodes WHERE name = ? AND kind = 'method' LIMIT 1`,
   );
   const newEdges: Array<[number, number, string, number, number]> = [];
+  const newTargetIds = new Set<number>();
 
   for (const { source_id, method_name } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
@@ -480,12 +485,14 @@ function runPostNativeCha(db: BetterSqlite3Database): void {
       if (seen.has(key)) continue;
       seen.add(key);
       newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0]);
+      newTargetIds.add(methodNode.id);
     }
   }
 
   if (newEdges.length > 0) {
     batchInsertEdges(db, newEdges);
   }
+  return newTargetIds;
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -1043,8 +1050,42 @@ export async function tryNativeOrchestrator(
     await backfillNativeDroppedFiles(ctx, gap);
   }
 
-  // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations)
-  runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
+  // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
+  // `runPostNativeCha` returns the target node IDs of newly inserted edges so we
+  // can re-classify roles for the implementation files.  The Rust orchestrator ran
+  // role classification BEFORE this post-pass, so without a re-run the newly-called
+  // implementor methods stay classified as `dead-ffi` (no incoming edges at Rust time).
+  const chaTargetIds = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
+  if (chaTargetIds.size > 0) {
+    try {
+      const db = ctx.db as unknown as BetterSqlite3Database;
+      const placeholders = Array.from(chaTargetIds)
+        .map(() => '?')
+        .join(',');
+      const affectedFiles = db
+        .prepare(
+          `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
+        )
+        .all(...chaTargetIds) as Array<{ file: string }>;
+      if (affectedFiles.length > 0) {
+        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+          classifyNodeRoles: (
+            db: BetterSqlite3Database,
+            changedFiles?: string[] | null,
+          ) => Record<string, number>;
+        };
+        classifyNodeRoles(
+          db,
+          affectedFiles.map((r) => r.file),
+        );
+        debug(
+          `CHA post-pass: re-classified roles for ${affectedFiles.length} implementation file(s)`,
+        );
+      }
+    } catch (err) {
+      debug(`CHA post-pass role re-classification failed: ${toErrorMessage(err)}`);
+    }
+  }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
