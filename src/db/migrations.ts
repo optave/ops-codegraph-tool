@@ -256,6 +256,13 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_edges_kind_source ON edges(kind, source_id);
     `,
   },
+  {
+    version: 17,
+    up: `
+      ALTER TABLE edges ADD COLUMN technique TEXT;
+      CREATE INDEX IF NOT EXISTS idx_edges_technique ON edges(technique);
+    `,
+  },
 ];
 
 interface PragmaColumnInfo {

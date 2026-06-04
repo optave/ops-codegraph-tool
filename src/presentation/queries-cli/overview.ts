@@ -54,7 +54,13 @@ interface EmbeddingsInfo {
 
 interface QualityInfo {
   score: number;
-  callerCoverage: { ratio: number; percentage: number; covered: number; total: number };
+  callerCoverage: {
+    ratio: number;
+    percentage: number;
+    covered: number;
+    total: number;
+    byTechnique?: Record<string, number>;
+  };
   callConfidence: { ratio: number; highConf: number; total: number };
   falsePositiveWarnings: { name: string; callerCount: number; file: string; line: number }[];
 }
@@ -189,6 +195,14 @@ function printQuality(data: StatsData): void {
     console.log(
       `  Caller coverage:  ${cc.percentage}% (${cc.covered}/${cc.total} functions have >=1 caller)`,
     );
+    if (cc.byTechnique && Object.keys(cc.byTechnique).length > 0) {
+      const entries = Object.entries(cc.byTechnique).sort((a, b) => b[1] - a[1]) as [
+        string,
+        number,
+      ][];
+      const parts = entries.map(([k, v]) => `${k} ${v}`).join('  ');
+      console.log(`    by technique:  ${parts}`);
+    }
     console.log(
       `  Call confidence:  ${(cf.ratio * 100).toFixed(1)}% (${cf.highConf}/${cf.total} call edges are high-confidence)`,
     );
