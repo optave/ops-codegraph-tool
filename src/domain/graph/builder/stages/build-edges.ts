@@ -940,13 +940,23 @@ function buildClassHierarchyEdges(
  * apply technique values from the in-memory row array back to the DB.
  *
  * Rows with an explicit technique get a targeted UPDATE by (source_id, target_id).
- * All remaining NULL calls edges are tagged 'ts-native' as the baseline.
+ * The catch-all 'ts-native' tag is scoped to only the source_ids present in this
+ * batch — this prevents mis-tagging pre-migration NULL-technique edges from
+ * unchanged files that were never purged and re-inserted.
  */
 function applyEdgeTechniquesAfterNativeInsert(
   db: BetterSqlite3Database,
   rows: EdgeRowTuple[],
 ): void {
-  const taggedRows = rows.filter((r) => r[2] === 'calls' && r[5] != null);
+  const callRows = rows.filter((r) => r[2] === 'calls');
+  if (callRows.length === 0) return;
+
+  const taggedRows = callRows.filter((r) => r[5] != null);
+  // Collect distinct source IDs for this batch so the catch-all UPDATE is scoped
+  // to edges inserted in the current run, not the entire table.
+  const sourceIds = [...new Set(callRows.map((r) => r[0]))];
+  const placeholders = sourceIds.map(() => '?').join(',');
+
   const tx = db.transaction(() => {
     if (taggedRows.length > 0) {
       const stmt = db.prepare(
@@ -955,8 +965,8 @@ function applyEdgeTechniquesAfterNativeInsert(
       for (const r of taggedRows) stmt.run(r[5], r[0], r[1]);
     }
     db.prepare(
-      "UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL",
-    ).run();
+      `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
+    ).run(...sourceIds);
   });
   tx();
 }

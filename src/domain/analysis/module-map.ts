@@ -163,10 +163,19 @@ function getEmbeddingsInfo(db: BetterSqlite3Database) {
   return null;
 }
 
-function countCallEdgesByTechnique(db: BetterSqlite3Database): Record<string, number> {
+function countCallEdgesByTechnique(
+  db: BetterSqlite3Database,
+  testFilter: string,
+): Record<string, number> {
+  // testFilter uses n.file — join source node to apply the same file-scope as
+  // the rest of computeQualityMetrics so --no-tests is consistent.
   const rows = db
     .prepare(
-      "SELECT technique, COUNT(*) as c FROM edges WHERE kind = 'calls' AND technique IS NOT NULL GROUP BY technique",
+      `SELECT e.technique, COUNT(*) as c
+       FROM edges e
+       JOIN nodes n ON e.source_id = n.id
+       WHERE e.kind = 'calls' AND e.technique IS NOT NULL ${testFilter}
+       GROUP BY e.technique`,
     )
     .all() as Array<{ technique: string; c: number }>;
   const byTechnique: Record<string, number> = {};
@@ -216,7 +225,7 @@ function computeQualityMetrics(
   const falsePositiveRatio = totalCallEdges > 0 ? fpEdgeCount / totalCallEdges : 0;
 
   const score = computeQualityScore(callerCoverage, callConfidence, falsePositiveRatio);
-  const byTechnique = countCallEdgesByTechnique(db);
+  const byTechnique = countCallEdgesByTechnique(db, testFilter);
 
   return {
     score,
@@ -401,6 +410,7 @@ function buildStatsFromNative(
   db: BetterSqlite3Database,
   nativeStats: NativeGraphStats,
   config: any,
+  noTests: boolean,
   jsSections: {
     files: ReturnType<typeof countFilesByLanguage>;
     fileCycles: unknown[];
@@ -426,7 +436,8 @@ function buildStatsFromNative(
   for (const fp of falsePositiveWarnings) fpEdgeCount += fp.callerCount;
   const falsePositiveRatio = s.quality.callEdges > 0 ? fpEdgeCount / s.quality.callEdges : 0;
   const score = computeQualityScore(callerCoverage, callConfidence, falsePositiveRatio);
-  const byTechnique = countCallEdgesByTechnique(db);
+  const testFilter = testFilterSQL('n.file', noTests);
+  const byTechnique = countCallEdgesByTechnique(db, testFilter);
 
   return {
     nodes: { total: s.totalNodes, byKind: nodesByKind },
@@ -523,7 +534,7 @@ export function statsData(customDbPath: string, opts: { noTests?: boolean; confi
 
     const nativeStats = nativeDb?.getGraphStats?.(noTests);
     return nativeStats
-      ? buildStatsFromNative(db, nativeStats, config, jsSections)
+      ? buildStatsFromNative(db, nativeStats, config, noTests, jsSections)
       : buildStatsFromJs(db, noTests, config, jsSections);
   } finally {
     close();
