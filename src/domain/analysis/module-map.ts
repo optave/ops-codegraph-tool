@@ -163,6 +163,17 @@ function getEmbeddingsInfo(db: BetterSqlite3Database) {
   return null;
 }
 
+function countCallEdgesByTechnique(db: BetterSqlite3Database): Record<string, number> {
+  const rows = db
+    .prepare(
+      "SELECT technique, COUNT(*) as c FROM edges WHERE kind = 'calls' AND technique IS NOT NULL GROUP BY technique",
+    )
+    .all() as Array<{ technique: string; c: number }>;
+  const byTechnique: Record<string, number> = {};
+  for (const r of rows) byTechnique[r.technique] = r.c;
+  return byTechnique;
+}
+
 function computeQualityMetrics(
   db: BetterSqlite3Database,
   testFilter: string,
@@ -205,6 +216,7 @@ function computeQualityMetrics(
   const falsePositiveRatio = totalCallEdges > 0 ? fpEdgeCount / totalCallEdges : 0;
 
   const score = computeQualityScore(callerCoverage, callConfidence, falsePositiveRatio);
+  const byTechnique = countCallEdgesByTechnique(db);
 
   return {
     score,
@@ -212,6 +224,7 @@ function computeQualityMetrics(
       ratio: callerCoverage,
       covered: callableWithCallers,
       total: totalCallable,
+      byTechnique: Object.keys(byTechnique).length > 0 ? byTechnique : undefined,
     },
     callConfidence: {
       ratio: callConfidence,
@@ -413,6 +426,7 @@ function buildStatsFromNative(
   for (const fp of falsePositiveWarnings) fpEdgeCount += fp.callerCount;
   const falsePositiveRatio = s.quality.callEdges > 0 ? fpEdgeCount / s.quality.callEdges : 0;
   const score = computeQualityScore(callerCoverage, callConfidence, falsePositiveRatio);
+  const byTechnique = countCallEdgesByTechnique(db);
 
   return {
     nodes: { total: s.totalNodes, byKind: nodesByKind },
@@ -434,6 +448,7 @@ function buildStatsFromNative(
         ratio: callerCoverage,
         covered: s.quality.callableWithCallers,
         total: s.quality.callableTotal,
+        byTechnique: Object.keys(byTechnique).length > 0 ? byTechnique : undefined,
       },
       callConfidence: {
         ratio: callConfidence,
