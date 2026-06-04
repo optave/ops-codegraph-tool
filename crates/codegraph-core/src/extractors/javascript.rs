@@ -5,6 +5,21 @@ use crate::complexity::compute_all_metrics;
 use crate::types::*;
 use tree_sitter::{Node, Tree};
 
+/// Well-known JS globals that must not be recorded as pts targets.
+/// Mirrors the `BUILTIN_GLOBALS` set in `src/extractors/javascript.ts`.
+const JS_BUILTIN_GLOBALS: &[&str] = &[
+    "Math", "JSON", "Promise", "Array", "Object", "Date", "Error",
+    "Symbol", "Map", "Set", "RegExp", "Number", "String", "Boolean",
+    "WeakMap", "WeakSet", "WeakRef", "Proxy", "Reflect", "Intl",
+    "ArrayBuffer", "SharedArrayBuffer", "DataView", "Atomics", "BigInt",
+    "Float32Array", "Float64Array", "Int8Array", "Int16Array", "Int32Array",
+    "Uint8Array", "Uint16Array", "Uint32Array", "Uint8ClampedArray",
+    "URL", "URLSearchParams", "TextEncoder", "TextDecoder",
+    "AbortController", "AbortSignal", "Headers", "Request", "Response",
+    "FormData", "Blob", "File", "ReadableStream", "WritableStream",
+    "TransformStream", "console", "Buffer", "EventEmitter", "Stream",
+];
+
 pub struct JsExtractor;
 
 impl SymbolExtractor for JsExtractor {
@@ -497,6 +512,35 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 cfg: None,
                 children: None,
             });
+        } else if name_n.kind() == "identifier" && value_n.kind() == "identifier" {
+            // Phase 8.3: `const alias = handler` — record for pts analysis.
+            // Mirror the JS BUILTIN_GLOBALS guard: skip well-known JS globals so
+            // they are never seeded as pts targets (e.g. `const a = Array`).
+            let rhs_text = node_text(&value_n, source);
+            if !JS_BUILTIN_GLOBALS.contains(&rhs_text) {
+                symbols.fn_ref_bindings.push(FnRefBinding {
+                    lhs: node_text(&name_n, source).to_string(),
+                    rhs: rhs_text.to_string(),
+                    rhs_receiver: None,
+                });
+            }
+        } else if name_n.kind() == "identifier" && value_n.kind() == "member_expression" {
+            // Phase 8.3: `const alias = obj.method` — record for pts analysis.
+            // Mirror the JS BUILTIN_GLOBALS guard: skip bindings where the
+            // receiver object is a well-known JS global (e.g. `const fn = Math.random`).
+            if let (Some(obj), Some(prop)) = (
+                value_n.child_by_field_name("object"),
+                value_n.child_by_field_name("property"),
+            ) {
+                let obj_text = node_text(&obj, source);
+                if !JS_BUILTIN_GLOBALS.contains(&obj_text) {
+                    symbols.fn_ref_bindings.push(FnRefBinding {
+                        lhs: node_text(&name_n, source).to_string(),
+                        rhs: node_text(&prop, source).to_string(),
+                        rhs_receiver: Some(obj_text.to_string()),
+                    });
+                }
+            }
         }
     }
 }

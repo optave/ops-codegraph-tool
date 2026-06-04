@@ -169,9 +169,23 @@ async function reparseBarrelFiles(
   return added;
 }
 
+export function resolveBarrelExportCached(
+  ctx: PipelineContext,
+  barrelPath: string,
+  symbolName: string,
+): string | null {
+  const cacheKey = `${barrelPath}|${symbolName}`;
+  if (ctx.barrelExportCache.has(cacheKey))
+    return ctx.barrelExportCache.get(cacheKey) as string | null;
+  const result = resolveBarrelExport(ctx, barrelPath, symbolName);
+  ctx.barrelExportCache.set(cacheKey, result);
+  return result;
+}
+
 export async function resolveImports(ctx: PipelineContext): Promise<void> {
   const { fileSymbols, rootDir, aliases, allFiles, isFullBuild } = ctx;
   const t0 = performance.now();
+  ctx.barrelExportCache = new Map();
 
   const batchInputs: Array<{ fromFile: string; importSource: string }> = [];
   for (const [relPath, symbols] of fileSymbols) {

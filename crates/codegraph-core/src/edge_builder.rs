@@ -4,6 +4,7 @@ use napi_derive::napi;
 
 use crate::barrel_resolution::{self, BarrelContext, ReexportRef};
 use crate::import_resolution;
+use crate::types::FnRefBinding;
 
 /// Kind sets for hierarchy edge resolution -- mirrors the JS constants in
 /// `build-edges.js` (`HIERARCHY_SOURCE_KINDS`, `EXTENDS_TARGET_KINDS`,
@@ -12,6 +13,10 @@ use crate::import_resolution;
 const HIERARCHY_SOURCE_KINDS: &[&str] = &["class", "struct", "record", "enum"];
 const EXTENDS_TARGET_KINDS: &[&str] = &["class", "struct", "trait", "record"];
 const IMPLEMENTS_TARGET_KINDS: &[&str] = &["interface", "trait", "class"];
+
+/// Confidence penalty per alias hop — mirrors `PROPAGATION_HOP_PENALTY` in
+/// `src/extractors/javascript.ts`.
+const PROPAGATION_HOP_PENALTY: f64 = 0.1;
 
 #[napi(object)]
 pub struct NodeInfo {
@@ -73,6 +78,9 @@ pub struct FileEdgeInput {
     pub classes: Vec<ClassInfo>,
     #[napi(js_name = "typeMap")]
     pub type_map: Vec<TypeMapInput>,
+    /// Function-reference bindings for Phase 8.3 pts analysis (optional).
+    #[napi(js_name = "fnRefBindings")]
+    pub fn_ref_bindings: Option<Vec<FnRefBinding>>,
 }
 
 #[napi(object)]
@@ -117,6 +125,74 @@ impl<'a> EdgeContext<'a> {
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
         Self { nodes_by_name, nodes_by_name_and_file, builtin_set, receiver_kinds }
+    }
+}
+
+// ── Phase 8.3: points-to analysis ─────────────────────────────────────────
+
+/// Maximum fixed-point iterations for the pts solver.
+/// Mirrors `MAX_SOLVER_ITERATIONS` in `src/domain/graph/resolver/points-to.ts`.
+/// TODO: wire through `CodegraphConfig.analysis.pointsToMaxIterations` once
+/// config plumbing is in place (same pattern as `typePropagationDepth`).
+const MAX_SOLVER_ITERATIONS: usize = 50;
+
+/// Build a per-file points-to map.  Mirrors `buildPointsToMap` in
+/// `src/domain/graph/resolver/points-to.ts`.
+///
+/// Seeds every locally-defined callable and every imported name as
+/// pointing to itself, then propagates assignments (`pts(lhs) ⊇ pts(rhs)`)
+/// via fixed-point iteration.
+fn build_points_to_map(
+    fn_ref_bindings: &[FnRefBinding],
+    def_names: &HashSet<&str>,
+    imported_names: &HashMap<&str, &str>,
+) -> HashMap<String, HashSet<String>> {
+    let mut pts: HashMap<String, HashSet<String>> = HashMap::new();
+    for name in def_names {
+        pts.entry(name.to_string()).or_default().insert(name.to_string());
+    }
+    for name in imported_names.keys() {
+        pts.entry(name.to_string()).or_default().insert(name.to_string());
+    }
+    if fn_ref_bindings.is_empty() {
+        return pts;
+    }
+    let constraints: Vec<(String, String)> = fn_ref_bindings.iter().map(|b| {
+        let rhs_key = match &b.rhs_receiver {
+            Some(recv) => format!("{}.{}", recv, b.rhs),
+            None => b.rhs.clone(),
+        };
+        (b.lhs.clone(), rhs_key)
+    }).collect();
+    for _ in 0..MAX_SOLVER_ITERATIONS {
+        let mut changed = false;
+        for (lhs, rhs_key) in &constraints {
+            let rhs_pts: Option<Vec<String>> = pts.get(rhs_key.as_str())
+                .map(|s| s.iter().cloned().collect());
+            if let Some(targets) = rhs_pts {
+                let entry = pts.entry(lhs.clone()).or_default();
+                for t in targets {
+                    if entry.insert(t) { changed = true; }
+                }
+            }
+        }
+        if !changed { break; }
+    }
+    pts
+}
+
+/// Return the concrete targets `call_name` flows to, excluding self-references.
+/// Mirrors `resolveViaPointsTo` in `src/domain/graph/resolver/points-to.ts`.
+fn resolve_via_points_to<'a>(
+    call_name: &str,
+    pts: &'a HashMap<String, HashSet<String>>,
+) -> Vec<&'a str> {
+    match pts.get(call_name) {
+        None => vec![],
+        Some(targets) => targets.iter()
+            .filter(|t| t.as_str() != call_name)
+            .map(|t| t.as_str())
+            .collect(),
     }
 }
 
@@ -180,7 +256,24 @@ fn process_file<'a>(
         DefWithId { _name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
 
+    // Phase 8.3: build pts map for alias resolution.
+    // Only callable (function/method) defs are seeded — mirrors JS buildPointsToMapForFile.
+    let pts_map: Option<HashMap<String, HashSet<String>>> =
+        file_input.fn_ref_bindings.as_deref().filter(|b| !b.is_empty()).map(|bindings| {
+            let def_names: HashSet<&str> = file_input.definitions.iter()
+                .filter(|d| d.kind == "function" || d.kind == "method")
+                .map(|d| d.name.as_str())
+                .collect();
+            build_points_to_map(bindings, &def_names, &imported_names)
+        });
+
     let mut seen_edges: HashSet<u64> = HashSet::new();
+    // Phase 8.3: tracks pts-resolved edges separately from seen_edges so that a
+    // subsequent direct call to the same caller→target pair can upgrade confidence
+    // in-place rather than being silently dropped by the dedup guard.
+    // Mirrors `ptsEdgeRows` in `src/domain/graph/builder/stages/build-edges.ts`.
+    // Key: edge_key (same as seen_edges). Value: index into `edges` vec.
+    let mut pts_edge_map: HashMap<u64, usize> = HashMap::new();
 
     for call in &file_input.calls {
         if let Some(ref receiver) = call.receiver {
@@ -193,7 +286,52 @@ fn process_file<'a>(
 
         let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map);
         sort_targets_by_confidence(&mut targets, rel_path, imported_from);
-        emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, edges);
+        emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
+
+        // Phase 8.3: pts fallback for unresolved dynamic identifier calls.
+        // When primary resolution finds nothing and the call is dynamic with no receiver,
+        // look up the call name in the pts map and retry resolution for each alias target.
+        // Confidence is penalised by one hop to reflect the extra indirection.
+        //
+        // Pts edges go into pts_edge_map (not seen_edges) so a later direct call to the
+        // same target in the same function body can upgrade confidence in-place — mirroring
+        // the ptsEdgeRows mechanism on the JS/WASM path.
+        if targets.is_empty() && call.dynamic.unwrap_or(false) && call.receiver.is_none() {
+            if let Some(ref pts) = pts_map {
+                for alias in resolve_via_points_to(call.name.as_str(), pts) {
+                    let alias_imported_from = imported_names.get(alias).copied();
+                    let alias_call = CallInfo {
+                        name: alias.to_string(),
+                        line: call.line,
+                        dynamic: Some(true),
+                        receiver: None,
+                    };
+                    let mut alias_targets = resolve_call_targets(
+                        ctx, &alias_call, rel_path, alias_imported_from, &type_map,
+                    );
+                    sort_targets_by_confidence(&mut alias_targets, rel_path, alias_imported_from);
+                    for t in &alias_targets {
+                        let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
+                        if t.id != caller_id && !seen_edges.contains(&edge_key) && !pts_edge_map.contains_key(&edge_key) {
+                            let conf = import_resolution::compute_confidence(
+                                rel_path, &t.file, alias_imported_from,
+                            ) - PROPAGATION_HOP_PENALTY;
+                            if conf > 0.0 {
+                                pts_edge_map.insert(edge_key, edges.len());
+                                edges.push(ComputedEdge {
+                                    source_id: caller_id,
+                                    target_id: t.id,
+                                    kind: "calls".to_string(),
+                                    confidence: conf,
+                                    dynamic: is_dynamic,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &mut seen_edges, edges);
     }
 
@@ -303,17 +441,30 @@ fn sort_targets_by_confidence(targets: &mut Vec<&NodeInfo>, rel_path: &str, impo
 fn emit_call_edges(
     targets: &[&NodeInfo], caller_id: u32, is_dynamic: u32,
     rel_path: &str, imported_from: Option<&str>,
-    seen_edges: &mut HashSet<u64>, edges: &mut Vec<ComputedEdge>,
+    seen_edges: &mut HashSet<u64>, pts_edge_map: &mut HashMap<u64, usize>, edges: &mut Vec<ComputedEdge>,
 ) {
     for t in targets {
         let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
         if t.id != caller_id && !seen_edges.contains(&edge_key) {
-            seen_edges.insert(edge_key);
             let confidence = import_resolution::compute_confidence(rel_path, &t.file, imported_from);
-            edges.push(ComputedEdge {
-                source_id: caller_id, target_id: t.id,
-                kind: "calls".to_string(), confidence, dynamic: is_dynamic,
-            });
+            if let Some(&pts_idx) = pts_edge_map.get(&edge_key) {
+                // A pts-resolved edge already exists for this caller→target pair with a
+                // penalised confidence. Upgrade it to the direct-call confidence in-place,
+                // then promote to seen_edges so no further processing is needed.
+                // Mirrors the ptsEdgeRows upgrade path in build-edges.ts.
+                if let Some(pts_row) = edges.get_mut(pts_idx) {
+                    pts_row.confidence = confidence;
+                    pts_row.dynamic = is_dynamic; // direct call overrides alias dynamic flag
+                }
+                pts_edge_map.remove(&edge_key);
+                seen_edges.insert(edge_key);
+            } else {
+                seen_edges.insert(edge_key);
+                edges.push(ComputedEdge {
+                    source_id: caller_id, target_id: t.id,
+                    kind: "calls".to_string(), confidence, dynamic: is_dynamic,
+                });
+            }
         }
     }
 }
@@ -1059,6 +1210,7 @@ mod call_edge_tests {
             imported_names: vec![],
             classes,
             type_map,
+            fn_ref_bindings: None,
         }
     }
 

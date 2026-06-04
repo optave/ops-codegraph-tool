@@ -68,6 +68,8 @@ export class PipelineContext {
   batchResolved!: Map<string, string> | null;
   reexportMap!: Map<string, unknown[]>;
   barrelOnlyFiles!: Set<string>;
+  /** Phase 8.4: cache for resolveBarrelExport results keyed as "barrelPath|symbolName". */
+  barrelExportCache: Map<string, string | null> = new Map();
 
   // ── Node lookup (set by insertNodes / buildEdges stages) ───────────
   nodesByName!: Map<string, NodeRow[]>;
