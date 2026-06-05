@@ -688,7 +688,7 @@ function buildChaPostPass(
           const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenByPair.add(edgeKey);
-            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0]);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
           }
         }
       }
@@ -1021,7 +1021,7 @@ function buildFileCallEdges(
           const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenCallEdges.add(edgeKey);
-            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0]);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
           }
         }
       }
