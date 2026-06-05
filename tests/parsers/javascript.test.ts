@@ -36,6 +36,35 @@ describe('JavaScript parser', () => {
     );
   });
 
+  it('extracts generator function declarations', () => {
+    const symbols = parseJS(`function* gen() { yield 1; }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'gen', kind: 'function' }),
+    );
+  });
+
+  it('extracts variable-declared generator functions', () => {
+    const symbols = parseJS(`const gen = function*() { yield 1; };`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'gen', kind: 'function' }),
+    );
+  });
+
+  it('attributes calls inside generator body to the generator', () => {
+    const symbols = parseJS(`
+      function* gen9() { yield* gen8(); }
+      function* gen8() { yield 1; }
+    `);
+    expect(symbols.definitions).toContainEqual(expect.objectContaining({ name: 'gen9' }));
+    expect(symbols.definitions).toContainEqual(expect.objectContaining({ name: 'gen8' }));
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'gen8' }));
+  });
+
+  it('captures calls inside yield* expressions', () => {
+    const symbols = parseJS(`function* delegator() { yield* inner(); }`);
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'inner' }));
+  });
+
   it('extracts class declarations', () => {
     const symbols = parseJS(`class Foo { bar() {} }`);
     expect(symbols.definitions).toContainEqual(
