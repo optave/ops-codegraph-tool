@@ -32,6 +32,8 @@ import {
   resolveCallTargets,
   resolveReceiverEdge,
 } from '../call-resolver.js';
+import type { ChaContext } from '../cha.js';
+import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
@@ -74,6 +76,9 @@ interface NativeEdge {
   confidence: number;
   dynamic: number;
 }
+
+/** Phase 8.5: confidence penalty applied to CHA-dispatch edges. */
+const CHA_DISPATCH_PENALTY = 0.1;
 
 // ── Node lookup setup ───────────────────────────────────────────────────
 
@@ -431,6 +436,11 @@ function propagateReturnTypesAcrossFiles(
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols.callAssignments?.length) continue;
+    // Phase 8.4 side-effect: buildImportedNamesMap now traces through barrel
+    // files (traceBarrel), so `importedFrom` resolves to the leaf definition
+    // file rather than the barrel. This means returnTypeIndex.get(importedFrom)
+    // now finds entries it previously missed, improving cross-file return-type
+    // propagation through re-export chains (Phase 8.2 improvement).
     const importedNamesMap = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
 
     for (const ca of symbols.callAssignments) {
@@ -610,6 +620,84 @@ function buildParamFlowPtsPostPass(
   }
 }
 
+/**
+ * Phase 8.5: CHA + RTA post-pass for the native call-edge path.
+ *
+ * The native Rust engine has no knowledge of the CHA context, so `this.method()`
+ * calls and interface method dispatches are not expanded to their concrete
+ * implementations.  This JS post-pass runs after the native edges (and the pts
+ * post-pass) and adds only the CHA-resolved edges that the native engine missed.
+ *
+ * Like buildParamFlowPtsPostPass, it seeds seenByPair from the current allEdgeRows
+ * snapshot to avoid duplicating edges the native engine already produced.
+ */
+function buildChaPostPass(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  chaCtx: ChaContext,
+): void {
+  // Fast-exit when the CHA context is empty (no class hierarchy in the project)
+  if (chaCtx.implementors.size === 0 && chaCtx.parents.size === 0) return;
+
+  // Seed only from 'calls' edges — import/extends/implements edges share (src,tgt) pairs
+  // with real call edges at the file-node level and would cause false dedup if included.
+  const seenByPair = new Set<string>();
+  for (const row of allEdgeRows) {
+    if (row[2] === 'calls') seenByPair.add(`${row[0]}|${row[1]}`);
+  }
+
+  const { fileSymbols, barrelOnlyFiles } = ctx;
+  const lookup = makeContextLookup(ctx, getNodeIdStmt);
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (barrelOnlyFiles.has(relPath)) continue;
+    const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+
+    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+
+    for (const call of symbols.calls) {
+      if (!call.receiver) continue;
+      if (BUILTIN_RECEIVERS.has(call.receiver)) continue;
+
+      const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
+      let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+
+      if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
+        chaTargets = resolveThisDispatch(
+          call.name,
+          caller.callerName,
+          call.receiver,
+          chaCtx,
+          lookup,
+        );
+      } else {
+        const typeEntry = typeMap.get(call.receiver);
+        const typeName = typeEntry
+          ? typeof typeEntry === 'string'
+            ? typeEntry
+            : (typeEntry as { type?: string }).type
+          : null;
+        if (typeName) {
+          chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+        }
+      }
+
+      for (const t of chaTargets) {
+        const edgeKey = `${caller.id}|${t.id}`;
+        if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
+          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          if (conf > 0) {
+            seenByPair.add(edgeKey);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+          }
+        }
+      }
+    }
+  }
+}
+
 function buildImportedNamesForNative(
   ctx: PipelineContext,
   relPath: string,
@@ -647,6 +735,7 @@ function buildCallEdgesJS(
   ctx: PipelineContext,
   getNodeIdStmt: NodeIdStmt,
   allEdgeRows: EdgeRowTuple[],
+  chaCtx?: ChaContext,
 ): void {
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
   const lookup = makeContextLookup(ctx, getNodeIdStmt);
@@ -671,6 +760,7 @@ function buildCallEdgesJS(
       allEdgeRows,
       typeMap,
       ptsMap,
+      chaCtx,
     );
     buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows);
   }
@@ -790,6 +880,7 @@ function buildFileCallEdges(
   allEdgeRows: EdgeRowTuple[],
   typeMap: Map<string, TypeMapEntry | string>,
   ptsMap?: PointsToMap | null,
+  chaCtx?: ChaContext,
 ): void {
   // Tracks edges that were inserted by the pts fallback (edgeKey → allEdgeRows index).
   // Kept separate from seenCallEdges so that a subsequent direct-call edge for the same
@@ -900,6 +991,43 @@ function buildFileCallEdges(
         allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0, null]);
       }
     }
+
+    // Phase 8.5: CHA + RTA dispatch expansion.
+    // For `this`/`self`/`super` calls: resolve through the class hierarchy instead
+    // of relying solely on global name matching.
+    // For typed receiver calls: expand to all instantiated concrete implementations.
+    if (chaCtx && call.receiver) {
+      let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+      if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
+        chaTargets = resolveThisDispatch(
+          call.name,
+          caller.callerName,
+          call.receiver,
+          chaCtx,
+          lookup,
+        );
+      } else if (!BUILTIN_RECEIVERS.has(call.receiver)) {
+        const typeEntry = typeMap.get(call.receiver);
+        const typeName = typeEntry
+          ? typeof typeEntry === 'string'
+            ? typeEntry
+            : (typeEntry as { type?: string }).type
+          : null;
+        if (typeName) {
+          chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+        }
+      }
+      for (const t of chaTargets) {
+        const edgeKey = `${caller.id}|${t.id}`;
+        if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          if (conf > 0) {
+            seenCallEdges.add(edgeKey);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+          }
+        }
+      }
+    }
   }
 }
 
@@ -968,7 +1096,8 @@ function applyEdgeTechniquesAfterNativeInsert(
   // Collect distinct source IDs for this batch so the catch-all UPDATE is scoped
   // to edges inserted in the current run, not the entire table.
   const sourceIds = [...new Set(callRows.map((r) => r[0]))];
-  const placeholders = sourceIds.map(() => '?').join(',');
+  // Chunk to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
+  const CHUNK_SIZE = 500;
 
   const tx = db.transaction(() => {
     if (taggedRows.length > 0) {
@@ -977,9 +1106,13 @@ function applyEdgeTechniquesAfterNativeInsert(
       );
       for (const r of taggedRows) stmt.run(r[5], r[0], r[1]);
     }
-    db.prepare(
-      `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
-    ).run(...sourceIds);
+    for (let i = 0; i < sourceIds.length; i += CHUNK_SIZE) {
+      const chunk = sourceIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
+      ).run(...chunk);
+    }
   });
   tx();
 }
@@ -1147,6 +1280,15 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
 
   const native = engineName === 'native' ? loadNative() : null;
 
+  // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
+  // the transaction opens. This is pure in-memory mutation (no DB I/O) and must
+  // run outside the transaction to avoid leaving ctx.fileSymbols in a partial
+  // state if the transaction rolls back unexpectedly.
+  propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
+  // Phase 8.5: Build CHA context after propagation so typeMap confidence values
+  // (used for RTA seeding) reflect any cross-file propagated types.
+  const chaCtx = buildChaContext(ctx.fileSymbols);
+
   // Phase 1: Compute edges inside a better-sqlite3 transaction.
   // Barrel-edge deletion lives here so that the JS path (which also inserts
   // edges in this transaction) keeps deletion + insertion atomic.
@@ -1201,8 +1343,12 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       // runs on top of the native edges and adds only the pts-resolved edges that
       // the native engine could not produce.
       buildParamFlowPtsPostPass(ctx, getNodeIdStmt, allEdgeRows);
+      // Phase 8.5 post-pass: augment native call edges with CHA-resolved dispatch.
+      // The native Rust engine has no knowledge of the CHA context, so this/self
+      // calls and interface dispatch are not expanded to concrete implementations.
+      buildChaPostPass(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
     } else {
-      buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows);
+      buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
     }
 
     // When using native edge insert, skip JS insert here — do it after tx commits.
@@ -1212,11 +1358,6 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       batchInsertEdges(db, allEdgeRows);
     }
   });
-  // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
-  // the transaction opens. This is pure in-memory mutation (no DB I/O) and must
-  // run outside the transaction to avoid leaving ctx.fileSymbols in a partial
-  // state if the transaction rolls back unexpectedly.
-  propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
   computeEdgesTx();
 
   // Phase 2: Native rusqlite bulk insert (outside better-sqlite3 transaction

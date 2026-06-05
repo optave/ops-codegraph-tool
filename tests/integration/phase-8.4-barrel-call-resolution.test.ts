@@ -75,6 +75,7 @@ describe.each(ENGINES)('Phase 8.4 barrel call resolution (%s)', (engine) => {
     const barrelCallEdge = callEdges.find(
       (e) =>
         e.caller_name === 'render' &&
+        e.caller_file === 'App.ts' &&
         e.callee_name === 'Button' &&
         e.callee_file === 'components/Button.ts',
     );
