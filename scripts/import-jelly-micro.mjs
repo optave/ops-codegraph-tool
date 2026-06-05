@@ -233,8 +233,8 @@ function convertJellyGraph(jellyJson, jsSrc, jsFilename) {
     const startCol = Number(parts[2]);
     const file = path.basename(files[fileIdx] || jsFilename);
 
-    // Try name map (keyed by "line:1" — we normalize col to 1 for lookup)
-    const name = nameMap.get(`${startLine}:1`) || nameMap.get(`${startLine}:${startCol}`);
+    // Try name map (keyed by "line:1" — col is always normalised to 1 on insert)
+    const name = nameMap.get(`${startLine}:1`);
     if (name) return { name, file };
 
     // Module root: Jelly always puts it at the very start (line 1 or similar)
@@ -257,7 +257,8 @@ function convertJellyGraph(jellyJson, jsSrc, jsFilename) {
     const isNamed =
       !caller.name.startsWith('<anon') &&
       !callee.name.startsWith('<anon') &&
-      caller.name !== '<root>';
+      caller.name !== '<root>' &&
+      callee.name !== '<root>';
 
     if (isNamed) namedEdges++;
     else anonEdges++;
