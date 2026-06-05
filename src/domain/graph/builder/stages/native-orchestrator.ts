@@ -41,14 +41,15 @@ import {
   NATIVE_SUPPORTED_EXTENSIONS,
   parseFilesWasmForBackfill,
 } from '../../../parser.js';
+import { computeConfidence } from '../../resolve.js';
 import type { PipelineContext } from '../context.js';
 import {
+  batchInsertEdges,
   batchInsertNodes,
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
   readFileSafe,
-  runChaPostPass,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
 import { closeNativeDb } from './native-db-lifecycle.js';
@@ -381,6 +382,178 @@ async function runPostNativeAnalysis(
   }
 
   return timing;
+}
+
+/**
+ * Phase 8.5: CHA expansion post-pass for the native orchestrator path.
+ *
+ * The Rust build pipeline resolves typed receiver calls (e.g. `worker.doWork()`
+ * where `worker: IWorker`) to the interface method declaration only.  This
+ * post-pass reads the class hierarchy (via `implements`/`extends` edges) and
+ * instantiated types (via `calls` edges to class nodes) from the DB and expands
+ * each call to an interface/abstract method to ALL RTA-filtered concrete
+ * implementations.
+ *
+ * Note: `this`/`super` dispatch requires the raw unresolved call sites which are
+ * not persisted to the DB by the Rust pipeline. That case is handled by the WASM
+ * path (`buildFileCallEdges`) and is a known gap for the native orchestrator.
+ *
+ * Returns the set of target node IDs for newly inserted CHA edges so the caller
+ * can re-classify roles for the affected implementation files.  An empty set
+ * means no edges were added and role re-classification is unnecessary.
+ */
+function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
+  // Fast guard: no hierarchy edges → no CHA work
+  const hasHierarchy = db
+    .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
+    .get();
+  if (!hasHierarchy) return new Set();
+
+  // Build implementors map: parent/interface name → [child/implementing class names]
+  const hierarchyRows = db
+    .prepare(`
+      SELECT src.name AS child_name, tgt.name AS parent_name
+      FROM edges e
+      JOIN nodes src ON e.source_id = src.id
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind IN ('extends', 'implements')
+    `)
+    .all() as Array<{ child_name: string; parent_name: string }>;
+
+  const implementors = new Map<string, string[]>();
+  for (const row of hierarchyRows) {
+    let list = implementors.get(row.parent_name);
+    if (!list) {
+      list = [];
+      implementors.set(row.parent_name, list);
+    }
+    if (!list.includes(row.child_name)) list.push(row.child_name);
+  }
+  if (implementors.size === 0) return new Set();
+
+  // RTA: collect class names that are actually instantiated via `new X()`.
+  // Primary query targets `class`-kind nodes (the canonical schema).
+  // Fallback also matches `constructor`/`function`-kind nodes because some native
+  // engine versions record constructor calls against those kinds instead of `class`.
+  let rtaRows = db
+    .prepare(`
+      SELECT DISTINCT tgt.name
+      FROM edges e
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind = 'calls' AND tgt.kind = 'class'
+    `)
+    .all() as Array<{ name: string }>;
+  if (rtaRows.length === 0) {
+    // Fallback: try constructor/function-kind nodes for older native engine schemas
+    rtaRows = db
+      .prepare(`
+        SELECT DISTINCT tgt.name
+        FROM edges e
+        JOIN nodes tgt ON e.target_id = tgt.id
+        WHERE e.kind = 'calls' AND tgt.kind IN ('constructor', 'function')
+        AND INSTR(tgt.name, '.') = 0
+      `)
+      .all() as Array<{ name: string }>;
+  }
+  const instantiated = new Set(rtaRows.map((r) => r.name));
+  // noRtaEvidence: true when no constructor-call evidence exists in the DB (e.g. graph
+  // built by an older native engine that doesn't emit constructor call edges at all).
+  // In that case we skip RTA filtering so interface dispatch still produces edges —
+  // all instantiated implementors are admitted rather than silently dropping everything.
+  const noRtaEvidence = instantiated.size === 0;
+  if (noRtaEvidence) {
+    debug('runPostNativeCha: no constructor-call evidence found — proceeding without RTA filter');
+  }
+
+  // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
+  // Include the caller node's file so confidence can be computed file-pair-aware,
+  // matching the WASM path's computeConfidence(callerFile, targetFile, null) - 0.1 formula.
+  const callToMethods = db
+    .prepare(`
+      SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+      FROM edges e
+      JOIN nodes tgt ON e.target_id = tgt.id
+      JOIN nodes src ON e.source_id = src.id
+      WHERE e.kind = 'calls' AND tgt.kind = 'method'
+      AND INSTR(tgt.name, '.') > 0
+    `)
+    .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+
+  // Seed seen-pairs only from the source_ids we'll be expanding — avoids loading every
+  // call edge in the DB (which would be O(all edges)) for large codebases.
+  const seen = new Set<string>();
+  if (callToMethods.length > 0) {
+    const sourceIds = [...new Set(callToMethods.map((r) => r.source_id))];
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < sourceIds.length; i += CHUNK_SIZE) {
+      const chunk = sourceIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      const existingPairs = db
+        .prepare(
+          `SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND source_id IN (${placeholders})`,
+        )
+        .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+      for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+    }
+  }
+
+  // No LIMIT: multiple files can define the same qualified name in a monorepo.
+  const findMethodStmt = db.prepare(
+    `SELECT id, file AS method_file FROM nodes WHERE name = ? AND kind = 'method'`,
+  );
+  const newEdges: Array<[number, number, string, number, number, string]> = [];
+  const newTargetIds = new Set<number>();
+
+  for (const { source_id, method_name, caller_file } of callToMethods) {
+    const dotIdx = method_name.indexOf('.');
+    if (dotIdx === -1) continue;
+    const typeName = method_name.slice(0, dotIdx);
+    const methodSuffix = method_name.slice(dotIdx + 1);
+
+    // BFS over the implementors map — handles multi-level hierarchies where
+    // abstract/non-instantiated classes sit between the call-site type and
+    // the concrete leaf implementations (issue #1311).
+    const bfsQueue: string[] = [typeName];
+    const bfsVisited = new Set<string>([typeName]);
+    while (bfsQueue.length > 0) {
+      const current = bfsQueue.shift()!;
+      const children = implementors.get(current);
+      if (!children?.length) continue;
+
+      for (const cls of children) {
+        if (bfsVisited.has(cls)) continue;
+        bfsVisited.add(cls);
+
+        if (noRtaEvidence || instantiated.has(cls)) {
+          const qualifiedName = `${cls}.${methodSuffix}`;
+          const methodNodes = findMethodStmt.all(qualifiedName) as Array<{
+            id: number;
+            method_file: string | null;
+          }>;
+          for (const methodNode of methodNodes) {
+            const key = `${source_id}|${methodNode.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - 0.1 penalty)
+            // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
+            const conf =
+              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) - 0.1;
+            if (conf <= 0) continue;
+            newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
+            newTargetIds.add(methodNode.id);
+          }
+        }
+
+        // Always traverse children — non-instantiated classes may have instantiated subclasses.
+        bfsQueue.push(cls);
+      }
+    }
+  }
+
+  if (newEdges.length > 0) {
+    db.transaction(() => batchInsertEdges(db, newEdges))();
+  }
+  return newTargetIds;
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -767,15 +940,22 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
     return;
   }
   // Incremental: scope to source nodes whose file is one of the changed files.
-  // Use a subquery to avoid loading all node IDs into JS.
-  const placeholders = changedFiles.map(() => '?').join(',');
-  db.prepare(
-    `UPDATE edges SET technique = 'ts-native'
-     WHERE kind = 'calls' AND technique IS NULL
-     AND source_id IN (
-       SELECT id FROM nodes WHERE file IN (${placeholders})
-     )`,
-  ).run(...changedFiles);
+  // Chunk to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
+  const CHUNK_SIZE = 500;
+  const tx = db.transaction(() => {
+    for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
+      const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE edges SET technique = 'ts-native'
+         WHERE kind = 'calls' AND technique IS NULL
+         AND source_id IN (
+           SELECT id FROM nodes WHERE file IN (${placeholders})
+         )`,
+      ).run(...chunk);
+    }
+  });
+  tx();
 }
 
 /**
@@ -965,61 +1145,51 @@ export async function tryNativeOrchestrator(
     await backfillNativeDroppedFiles(ctx, gap);
   }
 
-  // CHA post-pass: expand virtual-dispatch edges (interface + class-hierarchy).
-  // Only run when the build produced new edges to keep no-op builds fast.
-  //
-  // The Rust pipeline classifies node roles internally before any JS post-pass
-  // runs. When CHA inserts new edges the JS role classifier must re-run so that
-  // nodes reachable only via virtual dispatch (e.g. interface implementors) are
-  // not incorrectly classified as dead. This re-run uses the full JS path since
-  // the native db connection is closed by the proxy→JS handoff above.
-  if (result.isFullBuild || changedCount > 0 || removedCount > 0) {
-    // Ensure a proper better-sqlite3 connection is open (it may still be a
-    // NativeDbProxy when neither structure nor analysis fallback was needed).
-    if (ctx.nativeFirstProxy) {
-      closeNativeDb(ctx, 'pre-cha');
-      ctx.db = openDb(ctx.dbPath);
-      ctx.nativeFirstProxy = false;
-    }
-    const chaT0 = performance.now();
-    const chaEdgesInserted = runChaPostPass(ctx.db);
-    debug(`CHA post-pass completed in ${(performance.now() - chaT0).toFixed(1)}ms`);
-
-    if (chaEdgesInserted > 0) {
-      // Reclassify roles after CHA added new edges so virtual-dispatch targets
-      // are not marked dead. Import features/structure.js lazily to avoid
-      // adding a static dependency to the native-orchestrator module.
-      try {
+  // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
+  // `runPostNativeCha` returns the target node IDs of newly inserted edges so we
+  // can re-classify roles for the implementation files.  The Rust orchestrator ran
+  // role classification BEFORE this post-pass, so without a re-run the newly-called
+  // implementor methods stay classified as `dead-ffi` (no incoming edges at Rust time).
+  const chaTargetIds = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
+  if (chaTargetIds.size > 0) {
+    try {
+      const db = ctx.db as unknown as BetterSqlite3Database;
+      const idArray = Array.from(chaTargetIds);
+      const CHUNK_SIZE = 500;
+      const seenFiles = new Set<string>();
+      const affectedFiles: Array<{ file: string }> = [];
+      for (let i = 0; i < idArray.length; i += CHUNK_SIZE) {
+        const chunk = idArray.slice(i, i + CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(',');
+        const rows = db
+          .prepare(
+            `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
+          )
+          .all(...chunk) as Array<{ file: string }>;
+        for (const row of rows) {
+          if (!seenFiles.has(row.file)) {
+            seenFiles.add(row.file);
+            affectedFiles.push(row);
+          }
+        }
+      }
+      if (affectedFiles.length > 0) {
         const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
           classifyNodeRoles: (
-            db: typeof ctx.db,
+            db: BetterSqlite3Database,
             changedFiles?: string[] | null,
           ) => Record<string, number>;
         };
-        classifyNodeRoles(ctx.db, null);
-        debug('CHA post-pass: role re-classification completed');
-      } catch (err) {
-        debug(`CHA post-pass: role re-classification failed: ${toErrorMessage(err)}`);
+        classifyNodeRoles(
+          db,
+          affectedFiles.map((r) => r.file),
+        );
+        debug(
+          `CHA post-pass: re-classified roles for ${affectedFiles.length} implementation file(s)`,
+        );
       }
-    }
-  }
-
-  // ── Structure + analysis (now sees all edges including CHA) ───────────────
-
-  if (needsStructure || needsAnalysisFallback) {
-    const fileSymbols = reconstructFileSymbolsFromDb(ctx);
-
-    if (needsStructure) {
-      structurePatchMs = await runPostNativeStructure(
-        ctx,
-        fileSymbols,
-        !!result.isFullBuild,
-        result.changedFiles,
-      );
-    }
-
-    if (needsAnalysisFallback) {
-      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
+    } catch (err) {
+      debug(`CHA post-pass role re-classification failed: ${toErrorMessage(err)}`);
     }
   }
 

@@ -140,29 +140,29 @@
       "source": { "name": "UserService.GetUser", "file": "Service.cs" },
       "target": { "name": "UserRepository.FindById", "file": "Repository.cs" },
       "kind": "calls",
-      "mode": "class-inheritance",
-      "notes": "_repo.FindById() — CHA expands IRepository dispatch to concrete UserRepository implementation"
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.FindById() via IRepository → UserRepository (instantiated)"
     },
     {
       "source": { "name": "UserService.AddUser", "file": "Service.cs" },
       "target": { "name": "UserRepository.Save", "file": "Repository.cs" },
       "kind": "calls",
-      "mode": "class-inheritance",
-      "notes": "_repo.Save() — CHA expands IRepository dispatch to concrete UserRepository implementation"
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.Save() via IRepository → UserRepository (instantiated)"
     },
     {
       "source": { "name": "UserService.RemoveUser", "file": "Service.cs" },
       "target": { "name": "UserRepository.FindById", "file": "Repository.cs" },
       "kind": "calls",
-      "mode": "class-inheritance",
-      "notes": "_repo.FindById() — CHA expands IRepository dispatch to concrete UserRepository implementation"
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.FindById() via IRepository → UserRepository (instantiated)"
     },
     {
       "source": { "name": "UserService.RemoveUser", "file": "Service.cs" },
       "target": { "name": "UserRepository.Delete", "file": "Repository.cs" },
       "kind": "calls",
-      "mode": "class-inheritance",
-      "notes": "_repo.Delete() — CHA expands IRepository dispatch to concrete UserRepository implementation"
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.Delete() via IRepository → UserRepository (instantiated)"
     }
   ]
 }

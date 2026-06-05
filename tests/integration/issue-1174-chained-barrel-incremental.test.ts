@@ -2,6 +2,9 @@
  * Regression for #1174: incremental rebuild silently drops imports edges
  * when an unrelated file in a barrel chain is touched.
  *
+ * Also guards #1297: barrel-through import edges were not emitted on WASM
+ * full builds. The "full build" assertion below covers both engines.
+ *
  * Fixture shape (mirrors the dogfooded reproduction):
  *
  *   app.js
