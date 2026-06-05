@@ -170,8 +170,10 @@ const COMMON_QUERY_PATTERNS: string[] = [
 const JS_CLASS_PATTERN: string = '(class_declaration name: (identifier) @cls_name) @cls_node';
 
 // TS/TSX: class name is (type_identifier), plus interface and type alias
+// abstract_class_declaration is a separate node type in tree-sitter-typescript
 const TS_EXTRA_PATTERNS: string[] = [
   '(class_declaration name: (type_identifier) @cls_name) @cls_node',
+  '(abstract_class_declaration name: (type_identifier) @cls_name) @cls_node',
   '(interface_declaration name: (type_identifier) @iface_name) @iface_node',
   '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
 ];

@@ -595,6 +595,12 @@ export interface ExtractorOutput {
    * to propagate function references through function parameters.
    */
   paramBindings?: ParamBinding[];
+  /**
+   * Phase 8.5 (RTA): constructor names from all `new X()` expressions in the file,
+   * including unassigned ones (e.g. `doSomething(new Foo())`). Used to build the
+   * project-wide instantiated-types set for Rapid Type Analysis filtering.
+   */
+  newExpressions?: readonly string[];
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */
