@@ -184,20 +184,22 @@ function jellyEdgesToSet(cg, fixtureDir, lang) {
   const files = cg.files;
   const functions = cg.functions;
 
-  function fnName(id) {
+  function fnEntry(id) {
     const spec = functions[String(id)];
     if (!spec) return null;
     const parts = spec.split(':');
     const file = path.basename(files[Number(parts[0])]);
     const line = Number(parts[1]);
-    return nameMap.get(`${file}:${line}`) || null;
+    const name = nameMap.get(`${file}:${line}`);
+    return name ? { name, file } : null;
   }
 
   const edges = new Set();
   for (const [callerId, calleeId] of cg.fun2fun || []) {
-    const caller = fnName(callerId);
-    const callee = fnName(calleeId);
-    if (caller && callee && caller !== callee) edges.add(`${caller}→${callee}`);
+    const caller = fnEntry(callerId);
+    const callee = fnEntry(calleeId);
+    if (caller && callee && `${caller.name}@${caller.file}` !== `${callee.name}@${callee.file}`)
+      edges.add(`${caller.name}@${caller.file}→${callee.name}@${callee.file}`);
   }
   return edges;
 }
@@ -364,7 +366,8 @@ function acgOutputToSet(stdout, fixtureDir, lang) {
     if (!callerCandidates || !calleeCandidates) continue;
     for (const callerName of callerCandidates) {
       for (const calleeName of calleeCandidates) {
-        if (callerName !== calleeName) edges.add(`${callerName}→${calleeName}`);
+        if (`${callerName}@${callerBase}` !== `${calleeName}@${calleeBase}`)
+          edges.add(`${callerName}@${callerBase}→${calleeName}@${calleeBase}`);
       }
     }
   }
@@ -375,7 +378,12 @@ function acgOutputToSet(stdout, fixtureDir, lang) {
 
 function expectedEdgesToSet(fixtureDir) {
   const manifest = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'expected-edges.json'), 'utf8'));
-  return new Set(manifest.edges.map((e) => `${e.source.name}→${e.target.name}`));
+  return new Set(
+    manifest.edges.map(
+      (e) =>
+        `${e.source.name}@${path.basename(e.source.file)}→${e.target.name}@${path.basename(e.target.file)}`,
+    ),
+  );
 }
 
 function computeMetrics(predicted, groundTruth) {
