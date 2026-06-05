@@ -128,6 +128,27 @@
       "kind": "calls",
       "mode": "constructor",
       "notes": "new UserService() — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "Dog.speak", "file": "inheritance.js" },
+      "target": { "name": "Animal.speak", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "super.speak() in Dog.speak resolves to Animal.speak via CHA parents map"
+    },
+    {
+      "source": { "name": "Puppy.speak", "file": "inheritance.js" },
+      "target": { "name": "Dog.speak", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "super.speak() in Puppy.speak resolves to Dog.speak (nearest parent), not Animal.speak"
+    },
+    {
+      "source": { "name": "DoubleCounter.count", "file": "inheritance.js" },
+      "target": { "name": "Counter.count", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "static super.count() in DoubleCounter.count resolves to Counter.count via CHA parents map"
     }
   ]
 }
