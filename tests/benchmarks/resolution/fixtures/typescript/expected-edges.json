@@ -317,6 +317,20 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "svc.removeUser() — svc typed as UserService via createService() return"
+    },
+    {
+      "source": { "name": "TimestampLogger.log", "file": "super-dispatch.ts" },
+      "target": { "name": "Logger.log", "file": "super-dispatch.ts" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "super.log() in TimestampLogger.log resolves to Logger.log via CHA parents map"
+    },
+    {
+      "source": { "name": "PrefixLogger.log", "file": "super-dispatch.ts" },
+      "target": { "name": "TimestampLogger.log", "file": "super-dispatch.ts" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "super.log() in PrefixLogger.log resolves to TimestampLogger.log (nearest parent)"
     }
   ]
 }

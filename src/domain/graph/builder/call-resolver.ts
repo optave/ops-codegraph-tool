@@ -73,42 +73,40 @@ export function resolveByMethodOrGlobal(
       ? call.receiver.slice('this.'.length)
       : call.receiver;
     const typeEntry = typeMap.get(effectiveReceiver) ?? typeMap.get(call.receiver);
-    const typeName = typeEntry
+    let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
         : (typeEntry as { type?: string }).type
       : null;
+
+    // Handle inline new-expression receivers: `(new Foo).bar()` or `(new Foo()).bar()`.
+    // extractReceiverName returns the raw node text for non-identifier nodes, so `(new A).t()`
+    // produces receiver='(new A)'. Extract the constructor name directly.
+    if (!typeName && call.receiver) {
+      const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
+      if (m?.[1]) typeName = m[1];
+    }
+
     if (typeName) {
       const typed = lookup.byName(`${typeName}.${call.name}`).filter((n) => n.kind === 'method');
       if (typed.length > 0) return typed;
-      // Prototype alias: `Foo.prototype.bar = fn` seeds typeMap['Foo.bar'] = { type: 'fn' }
-      const protoAlias = (typeMap.get(`${typeName}.${call.name}`) as { type?: string } | undefined)
-        ?.type;
-      if (protoAlias) {
+
+      // Prototype alias: `Foo.prototype.bar = identifier` seeds typeMap['Foo.bar'] = { type: identifier }.
+      // Checked after the symbol-DB lookup so an actual method definition always wins.
+      const protoEntry = typeMap.get(`${typeName}.${call.name}`);
+      const protoTarget = protoEntry
+        ? typeof protoEntry === 'string'
+          ? protoEntry
+          : (protoEntry as { type?: string }).type
+        : null;
+      if (protoTarget) {
         const resolved = lookup
-          .byName(protoAlias)
+          .byName(protoTarget)
           .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
         if (resolved.length > 0) return resolved;
       }
     }
-    // Inline new-expression receiver: `(new Foo).bar()` — extract class name for type lookup
-    if (!typeName && call.receiver) {
-      const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
-      if (m?.[1]) {
-        const inlineType = m[1];
-        const typed = lookup.byName(`${inlineType}.${call.name}`).filter((n) => n.kind === 'method');
-        if (typed.length > 0) return typed;
-        const protoAlias = (
-          typeMap.get(`${inlineType}.${call.name}`) as { type?: string } | undefined
-        )?.type;
-        if (protoAlias) {
-          const resolved = lookup
-            .byName(protoAlias)
-            .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
-          if (resolved.length > 0) return resolved;
-        }
-      }
-    }
+
     // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
     // When a call site references `obj.prop` as a callback, resolve directly to the target fn.
     const compositeEntry = typeMap.get(`${call.receiver}.${call.name}`);
