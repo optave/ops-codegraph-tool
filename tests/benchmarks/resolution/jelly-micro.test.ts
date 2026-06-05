@@ -49,10 +49,7 @@ function discoverTests(): string[] {
     .readdirSync(FIXTURES_DIR)
     .filter((d) => {
       const dir = path.join(FIXTURES_DIR, d);
-      return (
-        fs.statSync(dir).isDirectory() &&
-        fs.existsSync(path.join(dir, 'expected-edges.json'))
-      );
+      return fs.statSync(dir).isDirectory() && fs.existsSync(path.join(dir, 'expected-edges.json'));
     })
     .sort();
 }
@@ -65,7 +62,10 @@ const allResults: Record<
   { tp: number; fp: number; fn: number; total: number; named: number }
 > = {};
 
-describe('Jelly Micro-Test Benchmark', () => {
+// Skip the entire suite when fixtures aren't present (e.g. in CI where the
+// jelly-micro directory is gitignored). Without this guard, vitest errors with
+// "No test found in suite" when the for-loop generates no test() calls.
+describe.skipIf(tests.length === 0)('Jelly Micro-Test Benchmark', () => {
   afterAll(() => {
     const rows = Object.entries(allResults).sort((a, b) => a[0].localeCompare(b[0]));
     const totNamed = rows.reduce((s, [, r]) => s + r.named, 0);
@@ -157,10 +157,14 @@ describe('Jelly Micro-Test Benchmark', () => {
         }
 
         const resolvedSet = new Set(
-          resolvedEdges.map((e) => edgeKey(e.source_name, e.source_file, e.target_name, e.target_file)),
+          resolvedEdges.map((e) =>
+            edgeKey(e.source_name, e.source_file, e.target_name, e.target_file),
+          ),
         );
         const expectedSet = new Set(
-          namedExpected.map((e) => edgeKey(e.source.name, e.source.file, e.target.name, e.target.file)),
+          namedExpected.map((e) =>
+            edgeKey(e.source.name, e.source.file, e.target.name, e.target.file),
+          ),
         );
 
         let tp = 0;
