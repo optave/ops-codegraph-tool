@@ -44,7 +44,11 @@ const FIXTURE_DIR = path.join(ROOT, 'tests/benchmarks/resolution/fixtures/java')
 const args = process.argv.slice(2);
 const jsonFlag = args.includes('--json');
 const jarArgIdx = args.indexOf('--jar');
-const jarArgPath = jarArgIdx !== -1 ? args[jarArgIdx + 1] : null;
+const jarArgPath = jarArgIdx !== -1 ? (args[jarArgIdx + 1] ?? null) : null;
+if (jarArgIdx !== -1 && !jarArgPath) {
+  console.error('Error: --jar requires a path argument');
+  process.exit(1);
+}
 
 // ── Tool discovery ───────────────────────────────────────────────────────────
 
