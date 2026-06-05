@@ -313,9 +313,9 @@ function getEdgeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatem
   }
   let stmt = cache.get(chunkSize);
   if (!stmt) {
-    const ph = '(?,?,?,?,?)';
+    const ph = '(?,?,?,?,?,?)';
     stmt = db.prepare(
-      'INSERT INTO edges (source_id,target_id,kind,confidence,dynamic) VALUES ' +
+      'INSERT INTO edges (source_id,target_id,kind,confidence,dynamic,technique) VALUES ' +
         Array.from({ length: chunkSize }, () => ph).join(','),
     );
     cache.set(chunkSize, stmt);
@@ -344,7 +344,7 @@ export function batchInsertNodes(db: BetterSqlite3Database, rows: unknown[][]): 
 
 /**
  * Batch-insert edge rows via multi-value INSERT statements.
- * Each row: [source_id, target_id, kind, confidence, dynamic]
+ * Each row: [source_id, target_id, kind, confidence, dynamic, technique]
  */
 export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): void {
   if (!rows.length) return;
@@ -355,7 +355,7 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
     const vals: unknown[] = [];
     for (let j = i; j < end; j++) {
       const r = rows[j] as unknown[];
-      vals.push(r[0], r[1], r[2], r[3], r[4]);
+      vals.push(r[0], r[1], r[2], r[3], r[4], r[5] ?? null);
     }
     stmt.run(...vals);
   }

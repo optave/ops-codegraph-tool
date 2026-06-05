@@ -90,6 +90,7 @@ export class PipelineContext {
     edgeKind: string;
     confidence: number;
     dynamic: number;
+    technique: string | null;
   }> = [];
 
   // ── Misc state ─────────────────────────────────────────────────────

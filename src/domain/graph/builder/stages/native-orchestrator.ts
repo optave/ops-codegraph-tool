@@ -742,6 +742,43 @@ async function backfillNativeDroppedFiles(
 }
 
 /**
+ * Backfill the `technique` column on `calls` edges written by the native Rust
+ * orchestrator, which does not write the column itself.
+ *
+ * For full builds, all `calls` edges in the DB are new so a global UPDATE is
+ * correct.  For incremental builds, only changed-file source nodes are updated
+ * to avoid overwriting previously-set technique values on unchanged edges.
+ */
+function backfillEdgeTechniquesAfterNativeOrchestrator(
+  db: BetterSqlite3Database,
+  isFullBuild: boolean,
+  changedFiles: string[] | undefined,
+): void {
+  // Quiet incremental: no files changed → no new edges inserted, nothing to tag.
+  // Running the global UPDATE here would mis-tag pre-migration NULL-technique edges
+  // from unchanged files as 'ts-native'.
+  if (!isFullBuild && changedFiles && changedFiles.length === 0) {
+    return;
+  }
+  if (isFullBuild || !changedFiles) {
+    db.prepare(
+      "UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL",
+    ).run();
+    return;
+  }
+  // Incremental: scope to source nodes whose file is one of the changed files.
+  // Use a subquery to avoid loading all node IDs into JS.
+  const placeholders = changedFiles.map(() => '?').join(',');
+  db.prepare(
+    `UPDATE edges SET technique = 'ts-native'
+     WHERE kind = 'calls' AND technique IS NULL
+     AND source_id IN (
+       SELECT id FROM nodes WHERE file IN (${placeholders})
+     )`,
+  ).run(...changedFiles);
+}
+
+/**
  * Try the native build orchestrator.
  *
  * Returns:
@@ -952,6 +989,12 @@ export async function tryNativeOrchestrator(
     runChaPostPass(ctx.db);
     debug(`CHA post-pass completed in ${(performance.now() - chaT0).toFixed(1)}ms`);
   }
+
+  // Backfill the `technique` column on `calls` edges written by the Rust
+  // orchestrator, which does not write the column. Runs after all edge-writing
+  // phases (including the WASM dropped-language backfill and CHA post-pass) so
+  // every new edge in this build cycle gets a technique label.
+  backfillEdgeTechniquesAfterNativeOrchestrator(ctx.db, !!result.isFullBuild, result.changedFiles);
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);

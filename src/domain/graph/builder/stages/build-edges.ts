@@ -38,7 +38,7 @@ import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-
 
 // ── Local types ──────────────────────────────────────────────────────────
 
-type EdgeRowTuple = [number, number, string, number, number];
+type EdgeRowTuple = [number, number, string, number, number, string | null];
 
 interface NodeIdStmt {
   get(name: string, kind: string, file: string, line: number): { id: number } | undefined;
@@ -131,7 +131,7 @@ function emitTypeOnlySymbolEdges(
     }
     const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
     if (candidates && candidates.length > 0) {
-      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0]);
+      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0, null]);
     }
   }
 }
@@ -153,7 +153,7 @@ function emitEdgesForImport(
   if (!targetRow) return;
 
   const edgeKind = importEdgeKind(imp);
-  allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0]);
+  allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0, null]);
 
   if (imp.typeOnly) {
     emitTypeOnlySymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows);
@@ -208,7 +208,7 @@ function buildBarrelEdges(
             : edgeKind === 'dynamic-imports'
               ? 'dynamic-imports'
               : 'imports';
-        edgeRows.push([fileNodeId, actualRow.id, kind, 0.9, 0]);
+        edgeRows.push([fileNodeId, actualRow.id, kind, 0.9, 0, null]);
       }
     }
   }
@@ -391,7 +391,7 @@ function buildImportEdgesNative(
   ) as NativeEdge[];
 
   for (const e of nativeEdges) {
-    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic, null]);
   }
 }
 
@@ -515,7 +515,14 @@ function buildCallEdgesNative(
     ...BUILTIN_RECEIVERS,
   ]) as NativeEdge[];
   for (const e of nativeEdges) {
-    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+    allEdgeRows.push([
+      e.sourceId,
+      e.targetId,
+      e.kind,
+      e.confidence,
+      e.dynamic,
+      e.kind === 'calls' ? 'ts-native' : null,
+    ]);
   }
 }
 
@@ -594,7 +601,7 @@ function buildParamFlowPtsPostPass(
               computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
             if (conf > 0) {
               seenByPair.add(edgeKey);
-              allEdgeRows.push([caller.id, t.id, 'calls', conf, 0]);
+              allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'points-to']);
             }
           }
         }
@@ -819,12 +826,13 @@ function buildFileCallEdges(
           if (ptsRow) {
             ptsRow[3] = confidence;
             ptsRow[4] = isDynamic; // upgrade is_dynamic: direct call overrides the pts-alias dynamic flag
+            ptsRow[5] = 'ts-native'; // promoted from pts to direct-call resolution
           }
           ptsEdgeRows.delete(edgeKey);
           seenCallEdges.add(edgeKey);
         } else {
           seenCallEdges.add(edgeKey);
-          allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic]);
+          allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native']);
         }
       }
     }
@@ -867,7 +875,7 @@ function buildFileCallEdges(
               computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
             if (conf > 0) {
               ptsEdgeRows.set(edgeKey, allEdgeRows.length);
-              allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic]);
+              allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
             }
           }
         }
@@ -890,7 +898,7 @@ function buildFileCallEdges(
         seenCallEdges,
       );
       if (recv) {
-        allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0]);
+        allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0, null]);
       }
     }
   }
@@ -918,7 +926,7 @@ function buildClassHierarchyEdges(
       );
       if (sourceRow) {
         for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0]);
+          allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null]);
         }
       }
     }
@@ -932,11 +940,49 @@ function buildClassHierarchyEdges(
       );
       if (sourceRow) {
         for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0]);
+          allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null]);
         }
       }
     }
   }
+}
+
+// ── Native bulk-insert technique back-fill ──────────────────────────────
+
+/**
+ * After native bulkInsertEdges (which does not write the technique column),
+ * apply technique values from the in-memory row array back to the DB.
+ *
+ * Rows with an explicit technique get a targeted UPDATE by (source_id, target_id).
+ * The catch-all 'ts-native' tag is scoped to only the source_ids present in this
+ * batch — this prevents mis-tagging pre-migration NULL-technique edges from
+ * unchanged files that were never purged and re-inserted.
+ */
+function applyEdgeTechniquesAfterNativeInsert(
+  db: BetterSqlite3Database,
+  rows: EdgeRowTuple[],
+): void {
+  const callRows = rows.filter((r) => r[2] === 'calls');
+  if (callRows.length === 0) return;
+
+  const taggedRows = callRows.filter((r) => r[5] != null);
+  // Collect distinct source IDs for this batch so the catch-all UPDATE is scoped
+  // to edges inserted in the current run, not the entire table.
+  const sourceIds = [...new Set(callRows.map((r) => r[0]))];
+  const placeholders = sourceIds.map(() => '?').join(',');
+
+  const tx = db.transaction(() => {
+    if (taggedRows.length > 0) {
+      const stmt = db.prepare(
+        "UPDATE edges SET technique = ? WHERE kind = 'calls' AND source_id = ? AND target_id = ? AND technique IS NULL",
+      );
+      for (const r of taggedRows) stmt.run(r[5], r[0], r[1]);
+    }
+    db.prepare(
+      `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
+    ).run(...sourceIds);
+  });
+  tx();
 }
 
 // ── Reverse-dep edge reconnection (#932, #933) ─────────────────────────
@@ -971,6 +1017,7 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
         saved.edgeKind,
         saved.confidence,
         saved.dynamic,
+        saved.technique,
       ]);
     } else {
       // Target was removed or renamed in the changed file — edge is stale
@@ -990,6 +1037,8 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
       const ok = ctx.nativeDb.bulkInsertEdges(nativeEdges);
       if (!ok) {
         batchInsertEdges(db, reconnectedRows);
+      } else {
+        applyEdgeTechniquesAfterNativeInsert(db, reconnectedRows);
       }
     } else {
       batchInsertEdges(db, reconnectedRows);
@@ -1186,6 +1235,8 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     if (!ok) {
       debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
       batchInsertEdges(ctx.db, allEdgeRows);
+    } else {
+      applyEdgeTechniquesAfterNativeInsert(ctx.db, allEdgeRows);
     }
   }
 

@@ -51,14 +51,32 @@ function readCallEdges(dbPath: string) {
   try {
     return db
       .prepare(
-        `SELECT n1.name AS src, n2.name AS tgt, e.kind, e.dynamic
+        `SELECT n1.name AS src, n2.name AS tgt, e.kind, e.dynamic, e.technique
          FROM edges e
          JOIN nodes n1 ON e.source_id = n1.id
          JOIN nodes n2 ON e.target_id = n2.id
          WHERE e.kind = 'calls'
          ORDER BY n1.name, n2.name`,
       )
-      .all() as Array<{ src: string; tgt: string; kind: string; dynamic: number }>;
+      .all() as Array<{
+      src: string;
+      tgt: string;
+      kind: string;
+      dynamic: number;
+      technique: string | null;
+    }>;
+  } finally {
+    db.close();
+  }
+}
+
+function readEngine(dbPath: string): string | null {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db.prepare("SELECT value FROM build_meta WHERE key = 'engine'").get() as
+      | { value: string }
+      | undefined;
+    return row?.value ?? null;
   } finally {
     db.close();
   }
@@ -71,6 +89,12 @@ describe('Issue #1292: property write pts tracking (same-file)', () => {
     const edge = edges.find((e) => e.src === 'setupRoutes' && e.tgt === 'authMiddleware');
     expect(edge).toBeDefined();
     expect(edge!.dynamic).toBe(1);
+    // The native orchestrator resolves pts edges via the typeMap (which includes the
+    // property-write seed) but labels them 'ts-native' since Rust doesn't distinguish
+    // resolution strategy. The JS path labels them 'points-to'. Both are correct.
+    const engine = readEngine(dbPath);
+    const expectedTechnique = engine === 'native' ? 'ts-native' : 'points-to';
+    expect(edge!.technique).toBe(expectedTechnique);
   });
 
   it('emits a calls edge from setupRoutes to logRequest via handlers.log', () => {
@@ -79,5 +103,8 @@ describe('Issue #1292: property write pts tracking (same-file)', () => {
     const edge = edges.find((e) => e.src === 'setupRoutes' && e.tgt === 'logRequest');
     expect(edge).toBeDefined();
     expect(edge!.dynamic).toBe(1);
+    const engine = readEngine(dbPath);
+    const expectedTechnique = engine === 'native' ? 'ts-native' : 'points-to';
+    expect(edge!.technique).toBe(expectedTechnique);
   });
 });
