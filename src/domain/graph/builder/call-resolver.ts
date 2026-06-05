@@ -116,7 +116,9 @@ export function resolveByMethodOrGlobal(
       if (dotIdx > -1) {
         const callerClass = callerName.slice(0, dotIdx);
         const qualifiedName = `${callerClass}.${call.name}`;
-        const sameClass = lookup.byName(qualifiedName).filter((t) => t.kind === 'method');
+        const sameClass = lookup
+          .byName(qualifiedName)
+          .filter((t) => t.kind === 'method' && computeConfidence(relPath, t.file, null) >= 0.5);
         if (sameClass.length > 0) return sameClass;
       }
     }
