@@ -734,4 +734,72 @@ describe('JavaScript parser', () => {
       expect(def.endLine).toBe(4);
     });
   });
+
+  describe('prototype method extraction', () => {
+    it('extracts Foo.prototype.bar = function() {} as a method definition', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype.foo = function() {}
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.foo', kind: 'method' }),
+      );
+    });
+
+    it('extracts Foo.prototype.bar = arrow as a method definition', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype.greet = () => 'hello';
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.greet', kind: 'method' }),
+      );
+    });
+
+    it('seeds typeMap for Foo.prototype.bar = identifier with confidence 0.9', () => {
+      const symbols = parseJS(`
+        const f = () => {};
+        class A {}
+        A.prototype.t = f;
+      `);
+      expect(symbols.typeMap.get('A.t')).toEqual({ type: 'f', confidence: 0.9 });
+    });
+
+    it('extracts methods from Foo.prototype = { bar: fn } object literal', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = {
+          foo: function() {},
+          baz: function() {},
+        };
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.foo', kind: 'method' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.baz', kind: 'method' }),
+      );
+    });
+
+    it('seeds typeMap for identifier values in object literal prototype assignment', () => {
+      const symbols = parseJS(`
+        function helper() {}
+        function C() {}
+        C.prototype = { run: helper };
+      `);
+      expect(symbols.typeMap.get('C.run')).toEqual({ type: 'helper', confidence: 0.9 });
+    });
+
+    it('does not extract prototype assignments on built-in globals', () => {
+      const symbols = parseJS(`Array.prototype.last = function() { return this[this.length - 1]; };`);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'Array.last' }),
+      );
+    });
+
+    it('does not seed typeMap for prototype identifier assignment from built-in globals', () => {
+      const symbols = parseJS(`Object.prototype.clone = myClone;`);
+      expect(symbols.typeMap.has('Object.clone')).toBe(false);
+    });
+  });
 });

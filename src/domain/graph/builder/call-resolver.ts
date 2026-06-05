@@ -81,6 +81,33 @@ export function resolveByMethodOrGlobal(
     if (typeName) {
       const typed = lookup.byName(`${typeName}.${call.name}`).filter((n) => n.kind === 'method');
       if (typed.length > 0) return typed;
+      // Prototype alias: `Foo.prototype.bar = fn` seeds typeMap['Foo.bar'] = { type: 'fn' }
+      const protoAlias = (typeMap.get(`${typeName}.${call.name}`) as { type?: string } | undefined)
+        ?.type;
+      if (protoAlias) {
+        const resolved = lookup
+          .byName(protoAlias)
+          .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+        if (resolved.length > 0) return resolved;
+      }
+    }
+    // Inline new-expression receiver: `(new Foo).bar()` — extract class name for type lookup
+    if (!typeName && call.receiver) {
+      const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
+      if (m?.[1]) {
+        const inlineType = m[1];
+        const typed = lookup.byName(`${inlineType}.${call.name}`).filter((n) => n.kind === 'method');
+        if (typed.length > 0) return typed;
+        const protoAlias = (
+          typeMap.get(`${inlineType}.${call.name}`) as { type?: string } | undefined
+        )?.type;
+        if (protoAlias) {
+          const resolved = lookup
+            .byName(protoAlias)
+            .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+          if (resolved.length > 0) return resolved;
+        }
+      }
     }
     // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
     // When a call site references `obj.prop` as a callback, resolve directly to the target fn.

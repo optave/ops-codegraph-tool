@@ -351,6 +351,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
+  extractPrototypeMethodsWalk(tree.rootNode, definitions, typeMap);
+
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -614,6 +617,8 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   );
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
+  // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
+  extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -1395,6 +1400,124 @@ function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: str
     }
   }
   walk(rootNode, 0);
+}
+
+/** AST node types that represent a function body (used by prototype extraction). */
+const PROTO_FN_TYPES = new Set([
+  'function_expression',
+  'arrow_function',
+  'generator_function',
+]);
+
+/**
+ * Walk the AST collecting pre-ES6 prototype assignments:
+ *   Foo.prototype.bar = function() {}   → definition Foo.bar (kind: method)
+ *   Foo.prototype.bar = f               → typeMap['Foo.bar'] = { type: 'f', confidence: 0.9 }
+ *   Foo.prototype = { bar: fn, baz: f } → same rules per property
+ */
+function extractPrototypeMethodsWalk(
+  rootNode: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'expression_statement') {
+      const expr = node.child(0);
+      if (expr?.type === 'assignment_expression') handlePrototypeAssignment(expr, definitions, typeMap);
+      // Don't recurse inside expression_statement — no nested prototype assignments expected
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+function handlePrototypeAssignment(
+  assignNode: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  const lhs = assignNode.childForFieldName('left');
+  const rhs = assignNode.childForFieldName('right');
+  if (!lhs || !rhs || lhs.type !== 'member_expression') return;
+
+  const lhsProp = lhs.childForFieldName('property');
+  const lhsObj = lhs.childForFieldName('object');
+  if (!lhsProp || !lhsObj) return;
+
+  // Pattern 1: Foo.prototype.bar = rhs
+  if (lhsObj.type === 'member_expression') {
+    const innerProp = lhsObj.childForFieldName('property');
+    const innerObj = lhsObj.childForFieldName('object');
+    if (
+      innerProp?.text === 'prototype' &&
+      innerObj?.type === 'identifier' &&
+      !BUILTIN_GLOBALS.has(innerObj.text)
+    ) {
+      emitPrototypeMethod(innerObj.text, lhsProp.text, rhs, definitions, typeMap);
+    }
+    return;
+  }
+
+  // Pattern 2: Foo.prototype = { ... }
+  if (
+    lhsProp.text === 'prototype' &&
+    lhsObj.type === 'identifier' &&
+    !BUILTIN_GLOBALS.has(lhsObj.text) &&
+    (rhs.type === 'object' || rhs.type === 'object_expression')
+  ) {
+    extractPrototypeObjectLiteral(lhsObj.text, rhs, definitions, typeMap);
+  }
+}
+
+function emitPrototypeMethod(
+  className: string,
+  methodName: string,
+  rhs: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  const qualifiedName = `${className}.${methodName}`;
+  if (PROTO_FN_TYPES.has(rhs.type)) {
+    definitions.push({
+      name: qualifiedName,
+      kind: 'method',
+      line: nodeStartLine(rhs),
+      endLine: nodeEndLine(rhs),
+    });
+  } else if (rhs.type === 'identifier' && !BUILTIN_GLOBALS.has(rhs.text)) {
+    setTypeMapEntry(typeMap, qualifiedName, rhs.text, 0.9);
+  }
+}
+
+function extractPrototypeObjectLiteral(
+  className: string,
+  objNode: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  for (let i = 0; i < objNode.childCount; i++) {
+    const child = objNode.child(i);
+    if (!child) continue;
+    if (child.type === 'pair') {
+      const key = child.childForFieldName('key');
+      const value = child.childForFieldName('value');
+      if (key && value) emitPrototypeMethod(className, key.text, value, definitions, typeMap);
+    } else if (child.type === 'method_definition') {
+      const nameNode = child.childForFieldName('name');
+      if (nameNode) {
+        definitions.push({
+          name: `${className}.${nameNode.text}`,
+          kind: 'method',
+          line: nodeStartLine(child),
+          endLine: nodeEndLine(child),
+        });
+      }
+    }
+  }
 }
 
 /**
