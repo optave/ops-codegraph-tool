@@ -183,12 +183,12 @@ describe.skipIf(tests.length === 0)('Jelly Micro-Test Benchmark', () => {
           fp,
           fn: fn.length,
           total: expectedEdges.length,
-          named: namedExpected.length,
+          named: expectedSet.size,
         };
 
-        const recall = tp / namedExpected.length;
+        const recall = expectedSet.size > 0 ? tp / expectedSet.size : 0;
         console.log(
-          `  [${testName}] recall=${(recall * 100).toFixed(0)}% TP=${tp} FN=${fn.length} FP=${fp} (named=${namedExpected.length})`,
+          `  [${testName}] recall=${(recall * 100).toFixed(0)}% TP=${tp} FN=${fn.length} FP=${fp} (named=${expectedSet.size})`,
         );
         if (fn.length > 0 && fn.length <= 5) {
           for (const e of fn) console.log(`    FN: ${e}`);

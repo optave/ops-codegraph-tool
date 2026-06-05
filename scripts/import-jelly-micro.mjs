@@ -42,12 +42,16 @@ const dryRun = args.includes('--dry-run');
 
 // ── Fetch helpers ────────────────────────────────────────────────────────────
 
-function fetchText(url) {
+function fetchText(url, redirectsLeft = 10) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('http:') ? http : https;
     client.get(url, { headers: { 'User-Agent': 'codegraph-benchmark' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        resolve(fetchText(res.headers.location));
+        if (redirectsLeft === 0) {
+          reject(new Error(`Too many redirects: ${url}`));
+          return;
+        }
+        resolve(fetchText(res.headers.location, redirectsLeft - 1));
         return;
       }
       let body = '';
