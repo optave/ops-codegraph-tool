@@ -376,11 +376,11 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
  *
  * Used by both the native orchestrator post-pass and the WASM build-edges pass.
  */
-export function runChaPostPass(db: BetterSqlite3Database): void {
+export function runChaPostPass(db: BetterSqlite3Database): number {
   const hasHierarchy = db
     .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
     .get();
-  if (!hasHierarchy) return;
+  if (!hasHierarchy) return 0;
 
   const hierarchyRows = db
     .prepare(
@@ -401,7 +401,7 @@ export function runChaPostPass(db: BetterSqlite3Database): void {
     }
     if (!list.includes(row.child_name)) list.push(row.child_name);
   }
-  if (implementors.size === 0) return;
+  if (implementors.size === 0) return 0;
 
   // RTA: collect class names instantiated via constructor calls (`new X()`).
   let rtaRows = db
@@ -475,4 +475,5 @@ export function runChaPostPass(db: BetterSqlite3Database): void {
     db.transaction(() => batchInsertEdges(db, newEdges))();
     debug(`runChaPostPass: inserted ${newEdges.length} CHA dispatch edge(s)`);
   }
+  return newEdges.length;
 }

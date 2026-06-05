@@ -919,10 +919,13 @@ export async function tryNativeOrchestrator(
       ctx.opts.cfg !== false ||
       ctx.opts.dataflow !== false);
 
+  // ── DB handoff ────────────────────────────────────────────────────────────
+  // Ensure a proper better-sqlite3 connection is open before any post-pass that
+  // writes edges (dropped-language backfill, CHA) and before structure/analysis.
+  // When analysis fallback is needed the handoff already happened above; when
+  // neither structure nor analysis is needed the proxy conversion is deferred to
+  // here so CHA and technique-backfill can still write rows.
   if (needsStructure || needsAnalysisFallback) {
-    // When analysis fallback is needed, handoff to better-sqlite3 — the
-    // analysis engine uses the suspend/resume WAL pattern that requires a
-    // real better-sqlite3 connection, not the NativeDbProxy.
     if (needsAnalysisFallback && ctx.nativeFirstProxy) {
       closeNativeDb(ctx, 'pre-analysis-fallback');
       ctx.db = openDb(ctx.dbPath);
@@ -931,22 +934,9 @@ export async function tryNativeOrchestrator(
       // DB reopen failed — return partial result
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
-
-    const fileSymbols = reconstructFileSymbolsFromDb(ctx);
-
-    if (needsStructure) {
-      structurePatchMs = await runPostNativeStructure(
-        ctx,
-        fileSymbols,
-        !!result.isFullBuild,
-        result.changedFiles,
-      );
-    }
-
-    if (needsAnalysisFallback) {
-      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
-    }
   }
+
+  // ── Edge-writing post-passes (run before structure so roles see full graph) ──
 
   // Engine parity: the native orchestrator silently drops files whose
   // Rust extractor/grammar is missing or fails (e.g. HCL, Scala, Swift on
@@ -977,6 +967,12 @@ export async function tryNativeOrchestrator(
 
   // CHA post-pass: expand virtual-dispatch edges (interface + class-hierarchy).
   // Only run when the build produced new edges to keep no-op builds fast.
+  //
+  // The Rust pipeline classifies node roles internally before any JS post-pass
+  // runs. When CHA inserts new edges the JS role classifier must re-run so that
+  // nodes reachable only via virtual dispatch (e.g. interface implementors) are
+  // not incorrectly classified as dead. This re-run uses the full JS path since
+  // the native db connection is closed by the proxy→JS handoff above.
   if (result.isFullBuild || changedCount > 0 || removedCount > 0) {
     // Ensure a proper better-sqlite3 connection is open (it may still be a
     // NativeDbProxy when neither structure nor analysis fallback was needed).
@@ -986,8 +982,45 @@ export async function tryNativeOrchestrator(
       ctx.nativeFirstProxy = false;
     }
     const chaT0 = performance.now();
-    runChaPostPass(ctx.db);
+    const chaEdgesInserted = runChaPostPass(ctx.db);
     debug(`CHA post-pass completed in ${(performance.now() - chaT0).toFixed(1)}ms`);
+
+    if (chaEdgesInserted > 0) {
+      // Reclassify roles after CHA added new edges so virtual-dispatch targets
+      // are not marked dead. Import features/structure.js lazily to avoid
+      // adding a static dependency to the native-orchestrator module.
+      try {
+        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+          classifyNodeRoles: (
+            db: typeof ctx.db,
+            changedFiles?: string[] | null,
+          ) => Record<string, number>;
+        };
+        classifyNodeRoles(ctx.db, null);
+        debug('CHA post-pass: role re-classification completed');
+      } catch (err) {
+        debug(`CHA post-pass: role re-classification failed: ${toErrorMessage(err)}`);
+      }
+    }
+  }
+
+  // ── Structure + analysis (now sees all edges including CHA) ───────────────
+
+  if (needsStructure || needsAnalysisFallback) {
+    const fileSymbols = reconstructFileSymbolsFromDb(ctx);
+
+    if (needsStructure) {
+      structurePatchMs = await runPostNativeStructure(
+        ctx,
+        fileSymbols,
+        !!result.isFullBuild,
+        result.changedFiles,
+      );
+    }
+
+    if (needsAnalysisFallback) {
+      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
+    }
   }
 
   // Backfill the `technique` column on `calls` edges written by the Rust
