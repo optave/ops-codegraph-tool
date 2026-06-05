@@ -78,7 +78,7 @@ interface NativeEdge {
 }
 
 /** Phase 8.5: confidence penalty applied to CHA-dispatch edges. */
-const CHA_DISPATCH_PENALTY = 0.1;
+export const CHA_DISPATCH_PENALTY = 0.1;
 
 // ── Node lookup setup ───────────────────────────────────────────────────
 
