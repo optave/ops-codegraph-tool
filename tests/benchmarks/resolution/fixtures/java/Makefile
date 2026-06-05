@@ -6,6 +6,7 @@ JAR  = fixture.jar
 all: $(JAR)
 
 $(JAR): $(SRCS)
+	rm -rf benchmark/
 	javac -d . $(SRCS)
 	jar cf $(JAR) benchmark/
 
