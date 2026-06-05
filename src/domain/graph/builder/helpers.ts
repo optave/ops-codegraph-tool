@@ -392,16 +392,18 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     )
     .all() as Array<{ child_name: string; parent_name: string }>;
 
-  const implementors = new Map<string, string[]>();
+  const implementorSets = new Map<string, Set<string>>();
   for (const row of hierarchyRows) {
-    let list = implementors.get(row.parent_name);
-    if (!list) {
-      list = [];
-      implementors.set(row.parent_name, list);
+    let set = implementorSets.get(row.parent_name);
+    if (!set) {
+      set = new Set<string>();
+      implementorSets.set(row.parent_name, set);
     }
-    if (!list.includes(row.child_name)) list.push(row.child_name);
+    set.add(row.child_name);
   }
-  if (implementors.size === 0) return 0;
+  if (implementorSets.size === 0) return 0;
+  // Convert to arrays for iteration compatibility with the rest of the function
+  const implementors = new Map([...implementorSets.entries()].map(([k, v]) => [k, [...v]]));
 
   // RTA: collect class names instantiated via constructor calls (`new X()`).
   let rtaRows = db

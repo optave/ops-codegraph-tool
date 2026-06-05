@@ -193,7 +193,7 @@ function printQuality(data: StatsData): void {
     const cf = q.callConfidence;
     console.log(`\nGraph Quality: ${q.score}/100`);
     console.log(
-      `  Caller coverage:  ${cc.percentage}% (${cc.covered}/${cc.total} functions have >=1 caller)`,
+      `  Caller coverage:  ${(cc.ratio * 100).toFixed(1)}% (${cc.covered}/${cc.total} functions have >=1 caller)`,
     );
     if (cc.byTechnique && Object.keys(cc.byTechnique).length > 0) {
       const entries = Object.entries(cc.byTechnique).sort((a, b) => b[1] - a[1]) as [
