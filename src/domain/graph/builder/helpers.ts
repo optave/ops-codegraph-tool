@@ -421,16 +421,22 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     // unrelated function calls like `logger()` as class-instantiation evidence.
     const knownClassNames = [...implementorSets.keys()];
     if (knownClassNames.length > 0) {
-      const placeholders = knownClassNames.map(() => '?').join(',');
-      rtaRows = db
-        .prepare(
-          `SELECT DISTINCT tgt.name
-           FROM edges e
-           JOIN nodes tgt ON e.target_id = tgt.id
-           WHERE e.kind = 'calls' AND tgt.kind IN ('constructor', 'function')
-           AND tgt.name IN (${placeholders})`,
-        )
-        .all(...knownClassNames) as Array<{ name: string }>;
+      // Chunk to stay within SQLite SQLITE_MAX_VARIABLE_NUMBER (999 in many builds).
+      const CHUNK = 999;
+      for (let i = 0; i < knownClassNames.length; i += CHUNK) {
+        const chunk = knownClassNames.slice(i, i + CHUNK);
+        const placeholders = chunk.map(() => '?').join(',');
+        const chunkRows = db
+          .prepare(
+            `SELECT DISTINCT tgt.name
+             FROM edges e
+             JOIN nodes tgt ON e.target_id = tgt.id
+             WHERE e.kind = 'calls' AND tgt.kind IN ('constructor', 'function')
+             AND tgt.name IN (${placeholders})`,
+          )
+          .all(...chunk) as Array<{ name: string }>;
+        rtaRows = rtaRows.concat(chunkRows);
+      }
     }
   }
   const instantiated = new Set(rtaRows.map((r) => r.name));
@@ -456,13 +462,18 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
   // check existing edges for those specific callers.
   const callerIds = [...new Set(callToMethods.map((r) => r.source_id))];
   if (callerIds.length > 0) {
-    const placeholders = callerIds.map(() => '?').join(',');
-    const existingPairs = db
-      .prepare(
-        `SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND source_id IN (${placeholders})`,
-      )
-      .all(...callerIds) as Array<{ source_id: number; target_id: number }>;
-    for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+    // Chunk to stay within SQLite SQLITE_MAX_VARIABLE_NUMBER (999 in many builds).
+    const CHUNK = 999;
+    for (let i = 0; i < callerIds.length; i += CHUNK) {
+      const chunk = callerIds.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const existingPairs = db
+        .prepare(
+          `SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND source_id IN (${placeholders})`,
+        )
+        .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+      for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+    }
   }
 
   const findMethodStmt = db.prepare(
