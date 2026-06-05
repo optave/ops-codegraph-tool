@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { flushDeferredClose } from '../../src/db/connection.js';
 
 // Detect whether transformers is available (optional dep)
 let hasTransformers = false;
@@ -81,6 +82,10 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
   }, 240_000);
 
   afterAll(() => {
+    // Flush any deferred DB close handles before removing the temp dir.
+    // On Windows, SQLite WAL files are held open by the setImmediate-deferred
+    // close path, causing EBUSY when fs.rmSync tries to unlink graph.db.
+    flushDeferredClose();
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
