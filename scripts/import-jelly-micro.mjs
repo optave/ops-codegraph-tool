@@ -50,7 +50,13 @@ function fetchText(url) {
       }
       let body = '';
       res.on('data', (d) => (body += d));
-      res.on('end', () => resolve(body));
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`HTTP ${res.statusCode}: ${body.slice(0, 200)}`));
+        } else {
+          resolve(body);
+        }
+      });
       res.on('error', reject);
     }).on('error', reject);
   });
@@ -80,9 +86,6 @@ function buildNameMap(src, filename) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineNo = i + 1;
-
-    // Track brace depth before processing this line
-    const prevDepth = braceDepth;
 
     // Class declaration
     const classMatch = line.match(/^\s*(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/);

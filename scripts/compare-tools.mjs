@@ -457,7 +457,7 @@ for (const lang of languages) {
 if (jsonFlag) {
   console.log(JSON.stringify(results, null, 2));
 } else {
-  console.log('\n## Jelly + ACG vs Codegraph Comparison\n');
+  console.log('\n## Jelly + ACG vs expected-edges.json Ground Truth\n');
   console.log('| Language | Ground Truth | Tool | Edges | Precision | Recall | TP/FP/FN |');
   console.log('|----------|-------------|------|-------|:---------:|:------:|----------|');
   for (const r of results) {

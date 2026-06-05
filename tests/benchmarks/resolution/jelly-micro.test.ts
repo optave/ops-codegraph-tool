@@ -134,17 +134,20 @@ describe.skipIf(tests.length === 0)('Jelly Micro-Test Benchmark', () => {
             ast: false,
           });
           const db = openReadonlyOrFail(path.join(tmpDir, '.codegraph', 'graph.db'));
-          resolvedEdges = db
-            .prepare(
-              `SELECT src.name AS source_name, src.file AS source_file,
-                      tgt.name AS target_name, tgt.file AS target_file
-               FROM edges e
-               JOIN nodes src ON e.source_id = src.id
-               JOIN nodes tgt ON e.target_id = tgt.id
-               WHERE e.kind = 'calls' AND src.kind IN ('function','method')`,
-            )
-            .all() as Edge[];
-          db.close();
+          try {
+            resolvedEdges = db
+              .prepare(
+                `SELECT src.name AS source_name, src.file AS source_file,
+                        tgt.name AS target_name, tgt.file AS target_file
+                 FROM edges e
+                 JOIN nodes src ON e.source_id = src.id
+                 JOIN nodes tgt ON e.target_id = tgt.id
+                 WHERE e.kind = 'calls' AND src.kind IN ('function','method')`,
+              )
+              .all() as Edge[];
+          } finally {
+            db.close();
+          }
         } finally {
           fs.rmSync(tmpDir, { recursive: true, force: true });
         }
