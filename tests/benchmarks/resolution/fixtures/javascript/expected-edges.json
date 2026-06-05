@@ -149,6 +149,34 @@
       "kind": "calls",
       "mode": "class-inheritance",
       "notes": "static super.count() in DoubleCounter.count resolves to Counter.count via CHA parents map"
+    },
+    {
+      "source": { "name": "runPrototypes", "file": "prototypes.js" },
+      "target": { "name": "C", "file": "prototypes.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new C() — constructor call to function-based constructor"
+    },
+    {
+      "source": { "name": "runPrototypes", "file": "prototypes.js" },
+      "target": { "name": "C.foo", "file": "prototypes.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "v.foo() — v typed as C via new C(), C.foo defined via C.prototype = { foo: fn }"
+    },
+    {
+      "source": { "name": "testPrototypeAlias", "file": "prototypes2.js" },
+      "target": { "name": "A", "file": "prototypes2.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new A() — inline constructor call in new A().t()"
+    },
+    {
+      "source": { "name": "testPrototypeAlias", "file": "prototypes2.js" },
+      "target": { "name": "f", "file": "prototypes2.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "new A().t() — A.prototype.t = f alias; inline new receiver resolved to type A, typeMap['A.t'] = f"
     }
   ]
 }
