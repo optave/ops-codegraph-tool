@@ -950,26 +950,35 @@ function buildFileCallEdges(
       }
     }
 
-    // Phase 8.3 / 8.3c: points-to fallback for unresolved calls.
-    // Fires for two cases:
+    // Phase 8.3 / 8.3c / bind: points-to fallback for unresolved calls.
+    // Fires for three cases:
     //   (a) dynamic=true: alias calls emitted by extractCallbackReferenceCalls.
     //       Looks up `call.name` directly (alias entries are flat-keyed).
     //   (b) non-dynamic: parameter variable calls (fn() where fn is a param).
     //       Looks up the scoped key `callerName::call.name` to avoid spurious
     //       edges from same-named parameters across different functions.
+    //   (c) non-dynamic: module-level alias bindings — `f = fn.bind(ctx)` or
+    //       `const f = handler` — where pts('f') was seeded by fnRefBindings.
+    //       The flat unscoped key is safe here because resolveViaPointsTo
+    //       filters self-references, so self-seeded definitions never produce edges.
     // Confidence is penalised by one hop to reflect the extra indirection.
     //
     // Note: pts edges are added to ptsEdgeRows (not seenCallEdges) so that a later
     // direct call to the same target in the same function body can upgrade confidence
     // rather than being silently dropped by the dedup guard.
     const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+    const flatPtsKey = !call.dynamic && ptsMap?.has(call.name) ? call.name : null;
     if (
       targets.length === 0 &&
       !call.receiver &&
       ptsMap &&
-      (call.dynamic || (scopedPtsKey != null && ptsMap.has(scopedPtsKey)))
+      (call.dynamic || (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) || flatPtsKey != null)
     ) {
-      const ptsLookupName = call.dynamic ? call.name : (scopedPtsKey ?? call.name);
+      const ptsLookupName = call.dynamic
+        ? call.name
+        : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
+          ? scopedPtsKey
+          : (flatPtsKey ?? call.name);
       for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
         // Resolve the concrete alias target. Only `name` is needed here — receiver
         // and line are not relevant for alias resolution (we are looking up the
