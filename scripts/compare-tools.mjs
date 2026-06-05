@@ -260,16 +260,28 @@ function runAcg(lang, fixtureDir) {
 }
 
 /**
- * Build a lookup from (basename, unqualifiedName) → qualifiedName.
+ * Build a lookup from (basename, unqualifiedName) → Set<qualifiedName>.
  *
  * ACG provides function names directly (e.g. "createUser") but not class
  * prefixes. This map lets us resolve "createUser in service.js" →
  * "UserService.createUser" using the same source scan as buildNameMap.
+ *
+ * The value is a Set to handle the case where multiple classes in the same
+ * file share a method name (e.g. Shape.area + Circle.area + Rectangle.area
+ * all in hierarchy.ts). Callers should try all candidates rather than
+ * assuming a 1:1 mapping.
  */
 function buildAcgNameLookup(fixtureDir, lang) {
   const exts = EXTENSIONS[lang] || ['.js'];
-  // Map: "basename:unqualifiedName" → "qualifiedName"
+  // Map: "basename:unqualifiedName" → Set<"qualifiedName">
   const lookup = new Map();
+
+  /** Add a (key → value) entry, accumulating into the existing Set if any. */
+  function add(key, value) {
+    const existing = lookup.get(key);
+    if (existing) existing.add(value);
+    else lookup.set(key, new Set([value]));
+  }
 
   for (const filename of fs.readdirSync(fixtureDir)) {
     if (!exts.some((e) => filename.endsWith(e))) continue;
@@ -285,7 +297,7 @@ function buildAcgNameLookup(fixtureDir, lang) {
         currentClass = classMatch[1];
         classDepth = braceDepth;
         // "ClassName" as an unqualified name refers to the class itself (constructor call sites)
-        lookup.set(`${filename}:${classMatch[1]}`, classMatch[1]);
+        add(`${filename}:${classMatch[1]}`, classMatch[1]);
       }
       for (const ch of line) {
         if (ch === '{') braceDepth++;
@@ -297,18 +309,18 @@ function buildAcgNameLookup(fixtureDir, lang) {
       if (classMatch) continue;
 
       const funcMatch = line.match(/^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*[(<]/);
-      if (funcMatch) { lookup.set(`${filename}:${funcMatch[1]}`, funcMatch[1]); continue; }
+      if (funcMatch) { add(`${filename}:${funcMatch[1]}`, funcMatch[1]); continue; }
 
       if (currentClass) {
         // constructor → ClassName (ACG labels constructors as "constructor" in the source)
         if (/^\s+constructor\s*\(/.test(line)) {
-          lookup.set(`${filename}:constructor`, currentClass); continue;
+          add(`${filename}:constructor`, currentClass); continue;
         }
         const methodMatch = line.match(/^\s+(?:async\s+|static\s+|(?:get|set)\s+)*(\w+)\s*\(/);
         if (methodMatch) {
           const mname = methodMatch[1];
           if (!['if', 'for', 'while', 'switch', 'catch'].includes(mname))
-            lookup.set(`${filename}:${mname}`, `${currentClass}.${mname}`);
+            add(`${filename}:${mname}`, `${currentClass}.${mname}`);
         }
       }
     }
@@ -346,11 +358,15 @@ function acgOutputToSet(stdout, fixtureDir, lang) {
     const callerBase = path.basename(callerFile);
     const calleeBase = path.basename(calleeFile);
 
-    const callerName = lookup.get(`${callerBase}:${callerFunc}`);
-    const calleeName = lookup.get(`${calleeBase}:${calleeFunc}`);
+    const callerCandidates = lookup.get(`${callerBase}:${callerFunc}`);
+    const calleeCandidates = lookup.get(`${calleeBase}:${calleeFunc}`);
 
-    if (callerName && calleeName && callerName !== calleeName)
-      edges.add(`${callerName}→${calleeName}`);
+    if (!callerCandidates || !calleeCandidates) continue;
+    for (const callerName of callerCandidates) {
+      for (const calleeName of calleeCandidates) {
+        if (callerName !== calleeName) edges.add(`${callerName}→${calleeName}`);
+      }
+    }
   }
   return edges;
 }
