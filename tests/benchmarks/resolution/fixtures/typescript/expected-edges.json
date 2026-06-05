@@ -180,6 +180,13 @@
     },
     {
       "source": { "name": "Shape.describe", "file": "hierarchy.ts" },
+      "target": { "name": "Ellipse.area", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "this.area() dispatched to Ellipse.area via transitive CHA (Shape→Circle→Ellipse, issue #1313)"
+    },
+    {
+      "source": { "name": "Shape.describe", "file": "hierarchy.ts" },
       "target": { "name": "Rectangle.area", "file": "hierarchy.ts" },
       "kind": "calls",
       "mode": "class-inheritance",
@@ -198,6 +205,13 @@
       "kind": "calls",
       "mode": "constructor",
       "notes": "new Circle(r) — class instantiation"
+    },
+    {
+      "source": { "name": "makeEllipse", "file": "hierarchy.ts" },
+      "target": { "name": "Ellipse", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new Ellipse(rx, ry) — class instantiation providing RTA evidence for transitive CHA"
     },
     {
       "source": { "name": "makeRectangle", "file": "hierarchy.ts" },
