@@ -640,9 +640,11 @@ function buildChaPostPass(
   // Fast-exit when the CHA context is empty (no class hierarchy in the project)
   if (chaCtx.implementors.size === 0 && chaCtx.parents.size === 0) return;
 
+  // Seed only from 'calls' edges — import/extends/implements edges share (src,tgt) pairs
+  // with real call edges at the file-node level and would cause false dedup if included.
   const seenByPair = new Set<string>();
-  for (const [srcId, tgtId] of allEdgeRows) {
-    seenByPair.add(`${srcId}|${tgtId}`);
+  for (const row of allEdgeRows) {
+    if (row[2] === 'calls') seenByPair.add(`${row[0]}|${row[1]}`);
   }
 
   const { fileSymbols, barrelOnlyFiles } = ctx;
