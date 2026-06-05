@@ -92,7 +92,7 @@ lines. Correctness was verified manually for both JS and TS fixtures.
 |------|:---------:|:-----:|:---:|
 | `static` (4 edges) | 4/4 (100%) | 4/4 (100%) | 0/4 (0%)† |
 | `receiver-typed` (5 edges) | 2/5 (40%) | 5/5 (100%) | 4/5 (80%)† |
-| `same-file` (5 edges) | 5/5 (100%) | 4/5 (80%) | 4/5 (80%)† |
+| `same-file` (5 edges) | 5/5 (100%) | 5/5 (100%) | 4/5 (80%)† |
 | `constructor` (4 edges) | 4/4 (100%) | 3/4 (75%) | 3/4 (75%) |
 
 † ACG could not parse `validators.js` (spread syntax unsupported by esprima),
