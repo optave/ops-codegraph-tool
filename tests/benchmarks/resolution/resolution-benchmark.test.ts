@@ -89,6 +89,8 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'higher-order': 'points-to',
   callback: 'points-to',
   dynamic: 'points-to',
+  'pts-define-property': 'points-to',
+  'pts-create-prototype': 'points-to',
 };
 
 // ── Configuration ────────────────────────────────────────────────────────
@@ -104,8 +106,8 @@ const FIXTURES_DIR = path.join(import.meta.dirname, 'fixtures');
  */
 const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // Mature — high bars (100% precision, high recall)
-  // JS 0.9: constructor-assigned property types (Phase 8.3e) resolve this._write()
-  //   same-class calls, lifting recall from 83.3% to 100%.
+  // JS 0.9: Phase 8.3e adds Object.defineProperty/defineProperties/create composite pts keys
+  //   (5 new edges in define-property.js), lifting total expected from 18 to 23.
   javascript: { precision: 1.0, recall: 0.9 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
