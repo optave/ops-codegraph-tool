@@ -19,6 +19,13 @@
     },
     {
       "source": { "name": "UserService.getUser", "file": "service.ts" },
+      "target": { "name": "Repository.findById", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.repo.findById() — typed as Repository<User>, resolved to the interface method declaration"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "service.ts" },
       "target": { "name": "UserRepository.findById", "file": "repository.ts" },
       "kind": "calls",
       "mode": "interface-dispatched",
@@ -40,10 +47,24 @@
     },
     {
       "source": { "name": "UserService.addUser", "file": "service.ts" },
+      "target": { "name": "Repository.save", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.repo.save() — typed as Repository<User>, resolved to the interface method declaration"
+    },
+    {
+      "source": { "name": "UserService.addUser", "file": "service.ts" },
       "target": { "name": "UserRepository.save", "file": "repository.ts" },
       "kind": "calls",
       "mode": "interface-dispatched",
       "notes": "this.repo.save() — typed as Repository<User>"
+    },
+    {
+      "source": { "name": "UserService.removeUser", "file": "service.ts" },
+      "target": { "name": "Repository.delete", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.repo.delete() — typed as Repository<User>, resolved to the interface method declaration"
     },
     {
       "source": { "name": "UserService.removeUser", "file": "service.ts" },
@@ -219,6 +240,34 @@
       "kind": "calls",
       "mode": "callback",
       "notes": "hasEmail passed as pred to filterThen"
+    },
+    {
+      "source": { "name": "processEach", "file": "callbacks.ts" },
+      "target": { "name": "logUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "fn(user) inside processEach — pts resolves fn param to logUser (passed by runCallbackDemo)"
+    },
+    {
+      "source": { "name": "processEach", "file": "callbacks.ts" },
+      "target": { "name": "upperUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "fn(user) inside processEach — pts resolves fn param to upperUser (passed by runCallbackDemo)"
+    },
+    {
+      "source": { "name": "filterThen", "file": "callbacks.ts" },
+      "target": { "name": "logUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "fn(user) inside filterThen — pts resolves fn param to logUser (passed by runCallbackDemo)"
+    },
+    {
+      "source": { "name": "filterThen", "file": "callbacks.ts" },
+      "target": { "name": "hasEmail", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "pred(user) inside filterThen — pts resolves pred param to hasEmail (passed by runCallbackDemo)"
     },
     {
       "source": { "name": "initFromBarrel", "file": "barrel-consumer.ts" },

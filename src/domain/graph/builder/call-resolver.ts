@@ -64,9 +64,15 @@ export function resolveByMethodOrGlobal(
   call: { name: string; receiver?: string | null },
   relPath: string,
   typeMap: Map<string, unknown>,
+  callerName?: string | null,
 ): ReadonlyArray<{ id: number; file: string }> {
   if (call.receiver) {
-    const typeEntry = typeMap.get(call.receiver);
+    // Strip "this." so `this.repo.method()` resolves via typeMap["repo"]
+    // (or the "this.repo" key seeded directly by the TSC property-declaration enricher).
+    const effectiveReceiver = call.receiver.startsWith('this.')
+      ? call.receiver.slice('this.'.length)
+      : call.receiver;
+    const typeEntry = typeMap.get(effectiveReceiver) ?? typeMap.get(call.receiver);
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
@@ -122,7 +128,26 @@ export function resolveByMethodOrGlobal(
     call.receiver === 'self' ||
     call.receiver === 'super'
   ) {
-    return lookup.byName(call.name).filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+    const exact = lookup
+      .byName(call.name)
+      .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+    if (exact.length > 0) return exact;
+
+    // For this/self/super receiver: try same-class method lookup via callerName.
+    // e.g. `this.area()` inside `Shape.describe` → try `Shape.area`.
+    // This seeds the initial edge that runChaPostPass later expands to subclass overrides.
+    if (call.receiver && callerName) {
+      const dotIdx = callerName.lastIndexOf('.');
+      if (dotIdx > -1) {
+        const callerClass = callerName.slice(0, dotIdx);
+        const qualifiedName = `${callerClass}.${call.name}`;
+        const sameClass = lookup
+          .byName(qualifiedName)
+          .filter((t) => t.kind === 'method' && computeConfidence(relPath, t.file, null) >= 0.5);
+        if (sameClass.length > 0) return sameClass;
+      }
+    }
+    return exact; // empty
   }
   return [];
 }
@@ -133,6 +158,7 @@ export function resolveCallTargets(
   relPath: string,
   importedNames: Map<string, string>,
   typeMap: Map<string, unknown>,
+  callerName?: string | null,
 ): { targets: Array<{ id: number; file: string }>; importedFrom: string | undefined } {
   const importedFrom = importedNames.get(call.name);
   let targets: ReadonlyArray<{ id: number; file: string }> | undefined;
@@ -150,7 +176,7 @@ export function resolveCallTargets(
   if (!targets || targets.length === 0) {
     targets = lookup.byNameAndFile(call.name, relPath);
     if (targets.length === 0) {
-      targets = resolveByMethodOrGlobal(lookup, call, relPath, typeMap);
+      targets = resolveByMethodOrGlobal(lookup, call, relPath, typeMap, callerName);
     }
   }
 

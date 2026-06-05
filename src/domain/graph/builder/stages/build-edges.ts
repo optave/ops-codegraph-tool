@@ -35,7 +35,7 @@ import {
 import type { ChaContext } from '../cha.js';
 import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
-import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
+import { BUILTIN_RECEIVERS, batchInsertEdges, runChaPostPass } from '../helpers.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -900,6 +900,7 @@ function buildFileCallEdges(
       relPath,
       importedNames,
       typeMap as Map<string, unknown>,
+      caller.callerName,
     );
 
     // Same-class `this.method()` fallback: when the call receiver is `this` and
@@ -1410,6 +1411,13 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   if (ctx.savedReverseDepEdges.length > 0) {
     reconnectReverseDepEdges(ctx);
   }
+
+  // Phase 4: CHA post-pass — expand virtual-dispatch edges for class hierarchies
+  // and interface implementations. Runs after all call + hierarchy edges are
+  // committed so the DB is consistent.
+  // Note: the native orchestrator success path runs this independently in
+  // tryNativeOrchestrator; this phase covers the WASM and native-fallback paths.
+  runChaPostPass(db);
 
   ctx.timing.edgesMs = performance.now() - t0;
 }

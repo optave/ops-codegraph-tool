@@ -140,6 +140,29 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                 }
             }
         }
+        // TypeScript class field declarations: `private repo: Repository<User>`
+        // Seeds both "repo" and "this.repo" so that `this.repo.method()` calls
+        // can be resolved to the interface/class type via the type map.
+        "public_field_definition" | "field_definition" => {
+            let name_node = node.child_by_field_name("name")
+                .or_else(|| node.child_by_field_name("property"))
+                .or_else(|| find_child(node, "property_identifier"));
+            if let Some(name_node) = name_node {
+                let kind = name_node.kind();
+                if kind == "property_identifier" || kind == "identifier"
+                    || kind == "private_property_identifier"
+                {
+                    let field_name = node_text(&name_node, source).to_string();
+                    if let Some(type_anno) = find_child(node, "type_annotation") {
+                        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
+                            push_type_map_entry(symbols, field_name.clone(), type_name.to_string());
+                            // "this.fieldName" key resolves `this.repo.method()` calls.
+                            push_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }

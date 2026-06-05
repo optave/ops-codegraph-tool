@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
-import { warn } from '../../../infrastructure/logger.js';
+import { debug, warn } from '../../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../../shared/constants.js';
 import { compileGlobs, matchesAny } from '../../../shared/globs.js';
 import type {
@@ -359,4 +359,174 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
     }
     stmt.run(...vals);
   }
+}
+
+/**
+ * CHA (Class Hierarchy Analysis) post-pass.
+ *
+ * Expands virtual-dispatch call edges for class hierarchies and interface
+ * implementations already present in the DB:
+ *
+ *  1. Build implementors map: parent/interface → [child/implementing class] from
+ *     `extends` and `implements` edges.
+ *  2. Collect RTA evidence: class nodes that appear as `calls` targets (new X()).
+ *  3. Find all `calls` edges to qualified method nodes (name contains '.').
+ *  4. For each such call, expand to concrete overrides via the implementors map,
+ *     filtered by RTA when evidence exists.
+ *
+ * Used by both the native orchestrator post-pass and the WASM build-edges pass.
+ */
+export function runChaPostPass(db: BetterSqlite3Database): number {
+  const hasHierarchy = db
+    .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
+    .get();
+  if (!hasHierarchy) return 0;
+
+  const hierarchyRows = db
+    .prepare(
+      `SELECT src.name AS child_name, tgt.name AS parent_name
+       FROM edges e
+       JOIN nodes src ON e.source_id = src.id
+       JOIN nodes tgt ON e.target_id = tgt.id
+       WHERE e.kind IN ('extends', 'implements')`,
+    )
+    .all() as Array<{ child_name: string; parent_name: string }>;
+
+  const implementorSets = new Map<string, Set<string>>();
+  for (const row of hierarchyRows) {
+    let set = implementorSets.get(row.parent_name);
+    if (!set) {
+      set = new Set<string>();
+      implementorSets.set(row.parent_name, set);
+    }
+    set.add(row.child_name);
+  }
+  if (implementorSets.size === 0) return 0;
+  // Convert to arrays for iteration compatibility with the rest of the function
+  const implementors = new Map([...implementorSets.entries()].map(([k, v]) => [k, [...v]]));
+
+  // RTA: collect class names instantiated via constructor calls (`new X()`).
+  let rtaRows = db
+    .prepare(
+      `SELECT DISTINCT tgt.name
+       FROM edges e
+       JOIN nodes tgt ON e.target_id = tgt.id
+       WHERE e.kind = 'calls' AND tgt.kind = 'class'`,
+    )
+    .all() as Array<{ name: string }>;
+  if (rtaRows.length === 0) {
+    // Fallback: some languages (e.g. TypeScript via WASM) record constructor calls as
+    // 'function' or 'constructor' kind rather than 'class'. Restrict to names that are
+    // actually known class names to avoid treating unrelated function calls like `logger()`
+    // as class-instantiation evidence.
+    // Include both parent/interface names AND implementor (child) names so that
+    // `new UserRepository()` (a child class) is correctly detected as RTA evidence.
+    const knownClassNames = [
+      ...new Set([
+        ...implementorSets.keys(),
+        ...[...implementorSets.values()].flatMap((s) => [...s]),
+      ]),
+    ];
+    if (knownClassNames.length > 0) {
+      // Chunk to stay within SQLite SQLITE_MAX_VARIABLE_NUMBER (999 in many builds).
+      const CHUNK = 999;
+      for (let i = 0; i < knownClassNames.length; i += CHUNK) {
+        const chunk = knownClassNames.slice(i, i + CHUNK);
+        const placeholders = chunk.map(() => '?').join(',');
+        const chunkRows = db
+          .prepare(
+            `SELECT DISTINCT tgt.name
+             FROM edges e
+             JOIN nodes tgt ON e.target_id = tgt.id
+             WHERE e.kind = 'calls' AND tgt.kind IN ('constructor', 'function')
+             AND tgt.name IN (${placeholders})`,
+          )
+          .all(...chunk) as Array<{ name: string }>;
+        rtaRows = rtaRows.concat(chunkRows);
+      }
+    }
+  }
+  const instantiated = new Set(rtaRows.map((r) => r.name));
+  const noRtaEvidence = instantiated.size === 0;
+  if (noRtaEvidence) {
+    debug('runChaPostPass: no constructor-call evidence — proceeding without RTA filter');
+  }
+
+  const callToMethods = db
+    .prepare(
+      `SELECT e.source_id, tgt.name AS method_name
+       FROM edges e
+       JOIN nodes tgt ON e.target_id = tgt.id
+       WHERE e.kind = 'calls' AND tgt.kind = 'method'
+       AND INSTR(tgt.name, '.') > 0`,
+    )
+    .all() as Array<{ source_id: number; method_name: string }>;
+
+  const seen = new Set<string>();
+  // Scope deduplication to only the source_ids we are about to expand, avoiding
+  // a full-table scan. CHA only inserts edges FROM callers that already call a
+  // qualified method (the source_ids in callToMethods), so we only need to
+  // check existing edges for those specific callers.
+  const callerIds = [...new Set(callToMethods.map((r) => r.source_id))];
+  if (callerIds.length > 0) {
+    // Chunk to stay within SQLite SQLITE_MAX_VARIABLE_NUMBER (999 in many builds).
+    const CHUNK = 999;
+    for (let i = 0; i < callerIds.length; i += CHUNK) {
+      const chunk = callerIds.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const existingPairs = db
+        .prepare(
+          `SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND source_id IN (${placeholders})`,
+        )
+        .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+      for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+    }
+  }
+
+  // No LIMIT: multiple files can define the same qualified name in a monorepo.
+  const findMethodStmt = db.prepare(`SELECT id FROM nodes WHERE name = ? AND kind = 'method'`);
+  const newEdges: Array<[number, number, string, number, number, string]> = [];
+
+  for (const { source_id, method_name } of callToMethods) {
+    const dotIdx = method_name.indexOf('.');
+    if (dotIdx === -1) continue;
+    const typeName = method_name.slice(0, dotIdx);
+    const methodSuffix = method_name.slice(dotIdx + 1);
+
+    // BFS over the implementors map — handles multi-level hierarchies where
+    // abstract/non-instantiated classes sit between the call-site type and
+    // the concrete leaf implementations (matches runPostNativeCha, issue #1311).
+    const bfsQueue: string[] = [typeName];
+    const bfsVisited = new Set<string>([typeName]);
+    while (bfsQueue.length > 0) {
+      const current = bfsQueue.shift()!;
+      const children = implementors.get(current);
+      if (!children?.length) continue;
+
+      for (const cls of children) {
+        if (bfsVisited.has(cls)) continue;
+        bfsVisited.add(cls);
+
+        if (noRtaEvidence || instantiated.has(cls)) {
+          const qualifiedName = `${cls}.${methodSuffix}`;
+          const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
+          for (const methodNode of methodNodes) {
+            const key = `${source_id}|${methodNode.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0, 'cha']);
+          }
+        }
+
+        // Always traverse children — non-instantiated classes may have instantiated subclasses.
+        bfsQueue.push(cls);
+      }
+    }
+  }
+
+  if (newEdges.length > 0) {
+    db.transaction(() => batchInsertEdges(db, newEdges))();
+    debug(`runChaPostPass: inserted ${newEdges.length} CHA dispatch edge(s)`);
+  }
+  return newEdges.length;
 }
