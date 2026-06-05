@@ -221,6 +221,34 @@
       "notes": "hasEmail passed as pred to filterThen"
     },
     {
+      "source": { "name": "processEach", "file": "callbacks.ts" },
+      "target": { "name": "logUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "fn(user) inside processEach — pts resolves fn param to logUser (passed by runCallbackDemo)"
+    },
+    {
+      "source": { "name": "processEach", "file": "callbacks.ts" },
+      "target": { "name": "upperUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "fn(user) inside processEach — pts resolves fn param to upperUser (passed by runCallbackDemo)"
+    },
+    {
+      "source": { "name": "filterThen", "file": "callbacks.ts" },
+      "target": { "name": "logUser", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "fn(user) inside filterThen — pts resolves fn param to logUser (passed by runCallbackDemo)"
+    },
+    {
+      "source": { "name": "filterThen", "file": "callbacks.ts" },
+      "target": { "name": "hasEmail", "file": "callbacks.ts" },
+      "kind": "calls",
+      "mode": "callback",
+      "notes": "pred(user) inside filterThen — pts resolves pred param to hasEmail (passed by runCallbackDemo)"
+    },
+    {
       "source": { "name": "initFromBarrel", "file": "barrel-consumer.ts" },
       "target": { "name": "createService", "file": "service.ts" },
       "kind": "calls",
