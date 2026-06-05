@@ -816,11 +816,10 @@ function buildFileCallEdges(
     // caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
     // qualified method name `Logger._write`. This mirrors what the native Rust
     // engine does implicitly via its class-scoped symbol table.
-    if (
-      targets.length === 0 &&
-      (call.receiver === 'this' || call.receiver === 'super') &&
-      caller.callerName != null
-    ) {
+    // NOTE: restricted to `this` only — `super.method()` targets a parent class,
+    // not the enclosing class, so qualifying with the child class name would
+    // produce a false edge when the child also defines a same-named method.
+    if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
       const dotIdx = caller.callerName.indexOf('.');
       if (dotIdx > 0) {
         const className = caller.callerName.slice(0, dotIdx);
