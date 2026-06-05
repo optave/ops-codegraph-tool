@@ -41,6 +41,7 @@ import {
   NATIVE_SUPPORTED_EXTENSIONS,
   parseFilesWasmForBackfill,
 } from '../../../parser.js';
+import { computeConfidence } from '../../resolve.js';
 import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
@@ -464,31 +465,46 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     debug('runPostNativeCha: no constructor-call evidence found — proceeding without RTA filter');
   }
 
-  // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork')
+  // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
+  // Include the caller node's file so confidence can be computed file-pair-aware,
+  // matching the WASM path's computeConfidence(callerFile, targetFile, null) - 0.1 formula.
   const callToMethods = db
     .prepare(`
-      SELECT e.source_id, tgt.name AS method_name
+      SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
       FROM edges e
       JOIN nodes tgt ON e.target_id = tgt.id
+      JOIN nodes src ON e.source_id = src.id
       WHERE e.kind = 'calls' AND tgt.kind = 'method'
       AND INSTR(tgt.name, '.') > 0
     `)
-    .all() as Array<{ source_id: number; method_name: string }>;
+    .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
 
-  // Seed seen-pairs from existing call edges to avoid duplicates
+  // Seed seen-pairs only from the source_ids we'll be expanding — avoids loading every
+  // call edge in the DB (which would be O(all edges)) for large codebases.
   const seen = new Set<string>();
-  const existingPairs = db
-    .prepare(`SELECT source_id, target_id FROM edges WHERE kind = 'calls'`)
-    .all() as Array<{ source_id: number; target_id: number }>;
-  for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+  if (callToMethods.length > 0) {
+    const sourceIds = [...new Set(callToMethods.map((r) => r.source_id))];
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < sourceIds.length; i += CHUNK_SIZE) {
+      const chunk = sourceIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      const existingPairs = db
+        .prepare(
+          `SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND source_id IN (${placeholders})`,
+        )
+        .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+      for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+    }
+  }
 
+  // No LIMIT: multiple files can define the same qualified name in a monorepo.
   const findMethodStmt = db.prepare(
-    `SELECT id FROM nodes WHERE name = ? AND kind = 'method' LIMIT 1`,
+    `SELECT id, file AS method_file FROM nodes WHERE name = ? AND kind = 'method'`,
   );
   const newEdges: Array<[number, number, string, number, number]> = [];
   const newTargetIds = new Set<number>();
 
-  for (const { source_id, method_name } of callToMethods) {
+  for (const { source_id, method_name, caller_file } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
     if (dotIdx === -1) continue;
     const typeName = method_name.slice(0, dotIdx);
@@ -500,13 +516,22 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     for (const cls of implementorList) {
       if (!noRtaEvidence && !instantiated.has(cls)) continue; // RTA filter (skip when no evidence)
       const qualifiedName = `${cls}.${methodSuffix}`;
-      const methodNode = findMethodStmt.get(qualifiedName) as { id: number } | undefined;
-      if (!methodNode) continue;
-      const key = `${source_id}|${methodNode.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0]);
-      newTargetIds.add(methodNode.id);
+      const methodNodes = findMethodStmt.all(qualifiedName) as Array<{
+        id: number;
+        method_file: string | null;
+      }>;
+      for (const methodNode of methodNodes) {
+        const key = `${source_id}|${methodNode.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - 0.1 penalty)
+        // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
+        const conf =
+          computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) - 0.1;
+        if (conf <= 0) continue;
+        newEdges.push([source_id, methodNode.id, 'calls', conf, 0]);
+        newTargetIds.add(methodNode.id);
+      }
     }
   }
 
