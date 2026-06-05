@@ -252,6 +252,8 @@ function enrichSourceFile(
   // symbol.getName() returns the declared name — not the local alias — so
   // deduplication on short names alone would incorrectly collapse them.
   const nameToEntries = new Map<string, { shortName: string; qualifiedName: string }[]>();
+  // Track class property declaration names so we can also seed "this.X" entries.
+  const propertyDeclNames = new Set<string>();
 
   function visit(node: import('typescript').Node): void {
     let identName: string | null = null;
@@ -263,6 +265,12 @@ function enrichSourceFile(
     } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
       identName = node.name.text;
       nameNode = node.name;
+    } else if (ts.isPropertyDeclaration(node) && ts.isIdentifier(node.name)) {
+      // TypeScript class field: `private repo: Repository<User>`
+      // Seeds typeMap so `this.repo.method()` can be resolved via receiver type.
+      identName = node.name.text;
+      nameNode = node.name;
+      propertyDeclNames.add(node.name.text);
     }
 
     if (identName && nameNode) {
@@ -293,6 +301,15 @@ function enrichSourceFile(
     const existing = typeMap.get(name);
     if (!existing || existing.confidence < 1.0) {
       typeMap.set(name, { type: shortName, confidence: 1.0 });
+    }
+    // For class property declarations, also seed "this.fieldName" so that
+    // `this.repo.findById()` call sites resolve to the interface/class type.
+    if (propertyDeclNames.has(name)) {
+      const thisKey = `this.${name}`;
+      const existingThis = typeMap.get(thisKey);
+      if (!existingThis || existingThis.confidence < 1.0) {
+        typeMap.set(thisKey, { type: shortName, confidence: 1.0 });
+      }
     }
   }
 }

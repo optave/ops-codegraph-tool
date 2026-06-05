@@ -106,6 +106,8 @@ struct DefWithId<'a> {
 struct EdgeContext<'a> {
     nodes_by_name: HashMap<&'a str, Vec<&'a NodeInfo>>,
     nodes_by_name_and_file: HashMap<(&'a str, &'a str), Vec<&'a NodeInfo>>,
+    /// All nodes grouped by file — used for same-file method resolution (CHA this-dispatch).
+    nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
     receiver_kinds: HashSet<&'a str>,
 }
@@ -114,17 +116,19 @@ impl<'a> EdgeContext<'a> {
     fn new(all_nodes: &'a [NodeInfo], builtin_receivers: &'a [String]) -> Self {
         let mut nodes_by_name: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         let mut nodes_by_name_and_file: HashMap<(&str, &str), Vec<&NodeInfo>> = HashMap::new();
+        let mut nodes_by_file: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         for node in all_nodes {
             nodes_by_name.entry(&node.name).or_default().push(node);
             nodes_by_name_and_file
                 .entry((&node.name, &node.file))
                 .or_default()
                 .push(node);
+            nodes_by_file.entry(&node.file).or_default().push(node);
         }
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        Self { nodes_by_name, nodes_by_name_and_file, builtin_set, receiver_kinds }
+        Self { nodes_by_name, nodes_by_name_and_file, nodes_by_file, builtin_set, receiver_kinds }
     }
 }
 
@@ -386,9 +390,18 @@ fn resolve_call_targets<'a>(
         .unwrap_or_default();
     if !method_candidates.is_empty() { return method_candidates; }
 
-    // 4. Type-aware resolution via receiver → type map
+    // 4. Type-aware resolution via receiver → type map.
+    // Strips "this." prefix so `this.repo.method()` resolves via typeMap["repo"]
+    // or typeMap["this.repo"] (both seeded by the class-field extractor).
     if let Some(ref receiver) = call.receiver {
-        if let Some(&(type_name, _conf)) = type_map.get(receiver.as_str()) {
+        let effective_receiver = if receiver.starts_with("this.") {
+            &receiver["this.".len()..]
+        } else {
+            receiver.as_str()
+        };
+        let type_lookup = type_map.get(effective_receiver)
+            .or_else(|| type_map.get(receiver.as_str()));
+        if let Some(&(type_name, _conf)) = type_lookup {
             let qualified = format!("{}.{}", type_name, call.name);
             let typed: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
@@ -415,12 +428,29 @@ fn resolve_call_targets<'a>(
         || call.receiver.as_deref() == Some("self")
         || call.receiver.as_deref() == Some("super")
     {
-        return ctx.nodes_by_name
+        // First try exact name match (e.g. an unqualified function named "area").
+        let exact: Vec<&NodeInfo> = ctx.nodes_by_name
             .get(call.name.as_str())
             .map(|v| v.iter()
                 .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
                 .copied().collect())
             .unwrap_or_default();
+        if !exact.is_empty() { return exact; }
+
+        // For this/self/super: search same-file methods by suffix (CHA class-hierarchy dispatch).
+        // e.g. `this.area()` in Shape.describe → Shape.area, Circle.area, Rectangle.area.
+        // Scoped to the same file to avoid cross-project false positives.
+        if call.receiver.is_some() {
+            let suffix = format!(".{}", call.name);
+            if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
+                let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
+                    .filter(|n| n.kind == "method" && n.name.ends_with(&suffix))
+                    .copied()
+                    .collect();
+                if !same_file_methods.is_empty() { return same_file_methods; }
+            }
+        }
+        return exact; // empty
     }
 
     Vec::new()

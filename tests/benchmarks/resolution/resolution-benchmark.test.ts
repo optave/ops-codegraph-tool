@@ -105,7 +105,7 @@ const FIXTURES_DIR = path.join(import.meta.dirname, 'fixtures');
 const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // Mature — high bars (100% precision, high recall)
   javascript: { precision: 0.85, recall: 0.5 },
-  typescript: { precision: 0.85, recall: 0.5 },
+  typescript: { precision: 0.85, recall: 0.72 },
   tsx: { precision: 0.85, recall: 0.8 },
   // TODO: raise thresholds once bash call resolution is implemented
   bash: { precision: 0.0, recall: 0.0 },

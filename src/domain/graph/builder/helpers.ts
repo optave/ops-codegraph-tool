@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
-import { warn } from '../../../infrastructure/logger.js';
+import { debug, warn } from '../../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../../shared/constants.js';
 import { compileGlobs, matchesAny } from '../../../shared/globs.js';
 import type {
@@ -358,5 +358,121 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
       vals.push(r[0], r[1], r[2], r[3], r[4]);
     }
     stmt.run(...vals);
+  }
+}
+
+/**
+ * CHA (Class Hierarchy Analysis) post-pass.
+ *
+ * Expands virtual-dispatch call edges for class hierarchies and interface
+ * implementations already present in the DB:
+ *
+ *  1. Build implementors map: parent/interface → [child/implementing class] from
+ *     `extends` and `implements` edges.
+ *  2. Collect RTA evidence: class nodes that appear as `calls` targets (new X()).
+ *  3. Find all `calls` edges to qualified method nodes (name contains '.').
+ *  4. For each such call, expand to concrete overrides via the implementors map,
+ *     filtered by RTA when evidence exists.
+ *
+ * Used by both the native orchestrator post-pass and the WASM build-edges pass.
+ */
+export function runChaPostPass(db: BetterSqlite3Database): void {
+  const hasHierarchy = db
+    .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
+    .get();
+  if (!hasHierarchy) return;
+
+  const hierarchyRows = db
+    .prepare(
+      `SELECT src.name AS child_name, tgt.name AS parent_name
+       FROM edges e
+       JOIN nodes src ON e.source_id = src.id
+       JOIN nodes tgt ON e.target_id = tgt.id
+       WHERE e.kind IN ('extends', 'implements')`,
+    )
+    .all() as Array<{ child_name: string; parent_name: string }>;
+
+  const implementors = new Map<string, string[]>();
+  for (const row of hierarchyRows) {
+    let list = implementors.get(row.parent_name);
+    if (!list) {
+      list = [];
+      implementors.set(row.parent_name, list);
+    }
+    if (!list.includes(row.child_name)) list.push(row.child_name);
+  }
+  if (implementors.size === 0) return;
+
+  // RTA: collect class names instantiated via constructor calls (`new X()`).
+  let rtaRows = db
+    .prepare(
+      `SELECT DISTINCT tgt.name
+       FROM edges e
+       JOIN nodes tgt ON e.target_id = tgt.id
+       WHERE e.kind = 'calls' AND tgt.kind = 'class'`,
+    )
+    .all() as Array<{ name: string }>;
+  if (rtaRows.length === 0) {
+    rtaRows = db
+      .prepare(
+        `SELECT DISTINCT tgt.name
+         FROM edges e
+         JOIN nodes tgt ON e.target_id = tgt.id
+         WHERE e.kind = 'calls' AND tgt.kind IN ('constructor', 'function')
+         AND INSTR(tgt.name, '.') = 0`,
+      )
+      .all() as Array<{ name: string }>;
+  }
+  const instantiated = new Set(rtaRows.map((r) => r.name));
+  const noRtaEvidence = instantiated.size === 0;
+  if (noRtaEvidence) {
+    debug('runChaPostPass: no constructor-call evidence — proceeding without RTA filter');
+  }
+
+  const callToMethods = db
+    .prepare(
+      `SELECT e.source_id, tgt.name AS method_name
+       FROM edges e
+       JOIN nodes tgt ON e.target_id = tgt.id
+       WHERE e.kind = 'calls' AND tgt.kind = 'method'
+       AND INSTR(tgt.name, '.') > 0`,
+    )
+    .all() as Array<{ source_id: number; method_name: string }>;
+
+  const seen = new Set<string>();
+  const existingPairs = db
+    .prepare(`SELECT source_id, target_id FROM edges WHERE kind = 'calls'`)
+    .all() as Array<{ source_id: number; target_id: number }>;
+  for (const e of existingPairs) seen.add(`${e.source_id}|${e.target_id}`);
+
+  const findMethodStmt = db.prepare(
+    `SELECT id FROM nodes WHERE name = ? AND kind = 'method' LIMIT 1`,
+  );
+  const newEdges: Array<[number, number, string, number, number]> = [];
+
+  for (const { source_id, method_name } of callToMethods) {
+    const dotIdx = method_name.indexOf('.');
+    if (dotIdx === -1) continue;
+    const typeName = method_name.slice(0, dotIdx);
+    const methodSuffix = method_name.slice(dotIdx + 1);
+
+    const implementorList = implementors.get(typeName);
+    if (!implementorList?.length) continue;
+
+    for (const cls of implementorList) {
+      if (!noRtaEvidence && !instantiated.has(cls)) continue;
+      const qualifiedName = `${cls}.${methodSuffix}`;
+      const methodNode = findMethodStmt.get(qualifiedName) as { id: number } | undefined;
+      if (!methodNode) continue;
+      const key = `${source_id}|${methodNode.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0]);
+    }
+  }
+
+  if (newEdges.length > 0) {
+    db.transaction(() => batchInsertEdges(db, newEdges))();
+    debug(`runChaPostPass: inserted ${newEdges.length} CHA dispatch edge(s)`);
   }
 }

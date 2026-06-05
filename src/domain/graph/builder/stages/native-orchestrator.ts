@@ -48,6 +48,7 @@ import {
   fileHash,
   fileStat,
   readFileSafe,
+  runChaPostPass,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
 import { closeNativeDb } from './native-db-lifecycle.js';
@@ -935,6 +936,21 @@ export async function tryNativeOrchestrator(
     gap.staleRel.length > 0
   ) {
     await backfillNativeDroppedFiles(ctx, gap);
+  }
+
+  // CHA post-pass: expand virtual-dispatch edges (interface + class-hierarchy).
+  // Only run when the build produced new edges to keep no-op builds fast.
+  if (result.isFullBuild || changedCount > 0 || removedCount > 0) {
+    // Ensure a proper better-sqlite3 connection is open (it may still be a
+    // NativeDbProxy when neither structure nor analysis fallback was needed).
+    if (ctx.nativeFirstProxy) {
+      closeNativeDb(ctx, 'pre-cha');
+      ctx.db = openDb(ctx.dbPath);
+      ctx.nativeFirstProxy = false;
+    }
+    const chaT0 = performance.now();
+    runChaPostPass(ctx.db);
+    debug(`CHA post-pass completed in ${(performance.now() - chaT0).toFixed(1)}ms`);
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
