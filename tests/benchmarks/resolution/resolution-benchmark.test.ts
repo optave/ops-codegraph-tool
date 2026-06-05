@@ -104,7 +104,12 @@ const FIXTURES_DIR = path.join(import.meta.dirname, 'fixtures');
  */
 const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // Mature — high bars (100% precision, high recall)
+  // JS 0.9: constructor-assigned property types (Phase 8.3e) resolve this._write()
+  //   same-class calls, lifting recall from 83.3% to 100%.
   javascript: { precision: 1.0, recall: 0.9 },
+  // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
+  //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
+  //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
   typescript: { precision: 0.85, recall: 0.72 },
   tsx: { precision: 0.85, recall: 0.8 },
   // TODO: raise thresholds once bash call resolution is implemented
