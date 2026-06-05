@@ -552,6 +552,7 @@ function buildParamFlowPtsPostPass(
   ctx: PipelineContext,
   getNodeIdStmt: NodeIdStmt,
   allEdgeRows: EdgeRowTuple[],
+  sharedLookup?: CallNodeLookup,
 ): void {
   // Only process files that actually have paramBindings (avoid useless work).
   const filesWithParams = [...ctx.fileSymbols].filter(
@@ -567,7 +568,7 @@ function buildParamFlowPtsPostPass(
   }
 
   const { barrelOnlyFiles, rootDir } = ctx;
-  const lookup = makeContextLookup(ctx, getNodeIdStmt);
+  const lookup = sharedLookup ?? makeContextLookup(ctx, getNodeIdStmt);
 
   for (const [relPath, symbols] of filesWithParams) {
     if (barrelOnlyFiles.has(relPath)) continue;
@@ -636,6 +637,7 @@ function buildFnRefBindingsPtsPostPass(
   ctx: PipelineContext,
   getNodeIdStmt: NodeIdStmt,
   allEdgeRows: EdgeRowTuple[],
+  sharedLookup?: CallNodeLookup,
 ): void {
   // Only process files that actually have fnRefBindings.
   const filesWithBindings = [...ctx.fileSymbols].filter(
@@ -650,7 +652,7 @@ function buildFnRefBindingsPtsPostPass(
   }
 
   const { barrelOnlyFiles, rootDir } = ctx;
-  const lookup = makeContextLookup(ctx, getNodeIdStmt);
+  const lookup = sharedLookup ?? makeContextLookup(ctx, getNodeIdStmt);
 
   for (const [relPath, symbols] of filesWithBindings) {
     if (barrelOnlyFiles.has(relPath)) continue;
@@ -1466,17 +1468,20 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
     if (useNativeCallEdges) {
       buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native!);
+      // Build the shared lookup once — both pts post-passes use it, avoiding
+      // redundant construction of the same context closure.
+      const sharedLookup = makeContextLookup(ctx, getNodeIdStmt);
       // Phase 8.3c post-pass: augment native call edges with parameter-flow pts
       // edges. The native Rust engine has no knowledge of paramBindings, so any
       // `fn()` call inside a higher-order function would be missed. This JS pass
       // runs on top of the native edges and adds only the pts-resolved edges that
       // the native engine could not produce.
-      buildParamFlowPtsPostPass(ctx, getNodeIdStmt, allEdgeRows);
+      buildParamFlowPtsPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
       // bind/alias post-pass: augment native call edges with fnRefBindings-seeded
       // pts edges. The native Rust engine has no knowledge of JS fnRefBindings
       // (e.g. `const f = fn.bind(ctx)`), so calls to bind-created aliases are
       // not resolved to their original function on the native path.
-      buildFnRefBindingsPtsPostPass(ctx, getNodeIdStmt, allEdgeRows);
+      buildFnRefBindingsPtsPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
       // Phase 8.5 post-pass: augment native call edges with CHA-resolved dispatch.
       // The native Rust engine has no knowledge of the CHA context, so this/self
       // calls and interface dispatch are not expanded to concrete implementations.

@@ -1470,6 +1470,8 @@ function handleVarDeclaratorTypeMap(
     } else if (valueN.type === 'call_expression') {
       // `const f = fn.bind(ctx)` — bind returns a bound copy of fn; track f → fn so
       // pts(f) ⊇ pts(fn) and subsequent `f(args)` calls resolve to fn.
+      // Note: only flat-identifier binds (fn.bind) are tracked here; method-receiver
+      // binds like `obj.method.bind(ctx)` are not captured (boundFn must be an identifier).
       const callFn = valueN.childForFieldName('function');
       if (callFn?.type === 'member_expression') {
         const bindProp = callFn.childForFieldName('property');
