@@ -20,6 +20,7 @@
 
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,7 +44,8 @@ const dryRun = args.includes('--dry-run');
 
 function fetchText(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'codegraph-benchmark' } }, (res) => {
+    const client = url.startsWith('http:') ? http : https;
+    client.get(url, { headers: { 'User-Agent': 'codegraph-benchmark' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         resolve(fetchText(res.headers.location));
         return;
@@ -115,7 +117,6 @@ function buildNameMap(src, filename) {
     // Top-level named function declaration
     const funcDecl = line.match(/^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s+(\w+)\s*[\(<]/);
     if (funcDecl) {
-      const col = line.indexOf('function') + 1;
       nameMap.set(`${lineNo}:1`, funcDecl[1]);
       continue;
     }
