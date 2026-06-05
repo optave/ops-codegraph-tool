@@ -119,32 +119,23 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
   });
 
   // ── this-dispatch ──────────────────────────────────────────────────────
-  // The WASM path resolves `this.prepare()` through the class hierarchy via
-  // the inline CHA dispatch in buildFileCallEdges.  The native orchestrator
-  // path does not persist raw call sites to the DB, so this-dispatch is a
-  // known gap for native — tested only for wasm.
 
-  it.skipIf(engine === 'native')(
-    'this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare',
-    () => {
-      const edge = callEdges.find(
-        (e) =>
-          e.caller_name === 'ConcreteWorker.doWork' &&
-          e.callee_name === 'ConcreteWorker.prepare' &&
-          e.callee_file === 'ConcreteWorker.ts',
-      );
-      expect(
-        edge,
-        `Expected ConcreteWorker.doWork → ConcreteWorker.prepare edge (this-dispatch).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
-      ).toBeDefined();
-    },
-  );
+  it('this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare', () => {
+    const edge = callEdges.find(
+      (e) =>
+        e.caller_name === 'ConcreteWorker.doWork' &&
+        e.callee_name === 'ConcreteWorker.prepare' &&
+        e.callee_file === 'ConcreteWorker.ts',
+    );
+    expect(
+      edge,
+      `Expected ConcreteWorker.doWork → ConcreteWorker.prepare edge (this-dispatch).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeDefined();
+  });
 
   // ── super-dispatch ─────────────────────────────────────────────────────
-  // Same gap as this-dispatch: super.speak() cannot be resolved from DB edges
-  // alone in the native orchestrator path.
 
-  it.skipIf(engine === 'native')('super-dispatch: emits Lion.speak → Animal.speak', () => {
+  it('super-dispatch: emits Lion.speak → Animal.speak', () => {
     const edge = callEdges.find(
       (e) =>
         e.caller_name === 'Lion.speak' &&
