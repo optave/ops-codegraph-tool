@@ -19,6 +19,13 @@
     },
     {
       "source": { "name": "UserService.getUser", "file": "service.ts" },
+      "target": { "name": "Repository.findById", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.repo.findById() — typed as Repository<User>, resolved to the interface method declaration"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "service.ts" },
       "target": { "name": "UserRepository.findById", "file": "repository.ts" },
       "kind": "calls",
       "mode": "interface-dispatched",
@@ -40,10 +47,24 @@
     },
     {
       "source": { "name": "UserService.addUser", "file": "service.ts" },
+      "target": { "name": "Repository.save", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.repo.save() — typed as Repository<User>, resolved to the interface method declaration"
+    },
+    {
+      "source": { "name": "UserService.addUser", "file": "service.ts" },
       "target": { "name": "UserRepository.save", "file": "repository.ts" },
       "kind": "calls",
       "mode": "interface-dispatched",
       "notes": "this.repo.save() — typed as Repository<User>"
+    },
+    {
+      "source": { "name": "UserService.removeUser", "file": "service.ts" },
+      "target": { "name": "Repository.delete", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.repo.delete() — typed as Repository<User>, resolved to the interface method declaration"
     },
     {
       "source": { "name": "UserService.removeUser", "file": "service.ts" },
