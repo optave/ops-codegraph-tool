@@ -791,7 +791,9 @@ describe('JavaScript parser', () => {
     });
 
     it('does not extract prototype assignments on built-in globals', () => {
-      const symbols = parseJS(`Array.prototype.last = function() { return this[this.length - 1]; };`);
+      const symbols = parseJS(
+        `Array.prototype.last = function() { return this[this.length - 1]; };`,
+      );
       expect(symbols.definitions).not.toContainEqual(
         expect.objectContaining({ name: 'Array.last' }),
       );
