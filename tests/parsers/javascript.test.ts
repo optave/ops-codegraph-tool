@@ -284,6 +284,26 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.has('b.c')).toBe(false);
     });
 
+    it('seeds typeMap for this.prop = new ClassName() with confidence 1.0', () => {
+      const symbols = parseJS(`
+        class UserService {
+          constructor() {
+            this.logger = new Logger('UserService');
+          }
+        }
+      `);
+      expect(symbols.typeMap.get('this.logger')).toEqual({ type: 'Logger', confidence: 1.0 });
+    });
+
+    it('does not seed typeMap for this.prop = identifier (only new expressions)', () => {
+      const symbols = parseJS(`
+        class Foo {
+          init(logger) { this.logger = logger; }
+        }
+      `);
+      expect(symbols.typeMap.has('this.logger')).toBe(false);
+    });
+
     it('ignores non-identifier RHS (a.prop = obj.method)', () => {
       const symbols = parseJS(`router.use = obj.method;`);
       expect(symbols.typeMap.has('router.use')).toBe(false);
