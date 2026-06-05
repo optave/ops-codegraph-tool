@@ -35,7 +35,7 @@ import {
 import type { ChaContext } from '../cha.js';
 import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
-import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
+import { BUILTIN_RECEIVERS, batchInsertEdges, runChaPostPass } from '../helpers.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -894,13 +894,36 @@ function buildFileCallEdges(
 
     const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
     const isDynamic: number = call.dynamic ? 1 : 0;
-    const { targets, importedFrom } = resolveCallTargets(
+    let { targets, importedFrom } = resolveCallTargets(
       lookup,
       call,
       relPath,
       importedNames,
       typeMap as Map<string, unknown>,
+      caller.callerName,
     );
+
+    // Same-class `this.method()` fallback: when the call receiver is `this` and
+    // resolveCallTargets found nothing, derive the enclosing class name from the
+    // caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
+    // qualified method name `Logger._write`. This mirrors what the native Rust
+    // engine does implicitly via its class-scoped symbol table.
+    // NOTE: restricted to `this` only — `super.method()` targets a parent class,
+    // not the enclosing class, so qualifying with the child class name would
+    // produce a false edge when the child also defines a same-named method.
+    if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
+      const dotIdx = caller.callerName.indexOf('.');
+      if (dotIdx > 0) {
+        const className = caller.callerName.slice(0, dotIdx);
+        const qualifiedName = `${className}.${call.name}`;
+        const qualified = lookup
+          .byNameAndFile(qualifiedName, relPath)
+          .filter((n) => n.kind === 'method');
+        if (qualified.length > 0) {
+          targets = qualified;
+        }
+      }
+    }
 
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
@@ -1388,6 +1411,13 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   if (ctx.savedReverseDepEdges.length > 0) {
     reconnectReverseDepEdges(ctx);
   }
+
+  // Phase 4: CHA post-pass — expand virtual-dispatch edges for class hierarchies
+  // and interface implementations. Runs after all call + hierarchy edges are
+  // committed so the DB is consistent.
+  // Note: the native orchestrator success path runs this independently in
+  // tryNativeOrchestrator; this phase covers the WASM and native-fallback paths.
+  runChaPostPass(db);
 
   ctx.timing.edgesMs = performance.now() - t0;
 }

@@ -1099,10 +1099,13 @@ export async function tryNativeOrchestrator(
       ctx.opts.cfg !== false ||
       ctx.opts.dataflow !== false);
 
+  // ── DB handoff ────────────────────────────────────────────────────────────
+  // Ensure a proper better-sqlite3 connection is open before any post-pass that
+  // writes edges (dropped-language backfill, CHA) and before structure/analysis.
+  // When analysis fallback is needed the handoff already happened above; when
+  // neither structure nor analysis is needed the proxy conversion is deferred to
+  // here so CHA and technique-backfill can still write rows.
   if (needsStructure || needsAnalysisFallback) {
-    // When analysis fallback is needed, handoff to better-sqlite3 — the
-    // analysis engine uses the suspend/resume WAL pattern that requires a
-    // real better-sqlite3 connection, not the NativeDbProxy.
     if (needsAnalysisFallback && ctx.nativeFirstProxy) {
       closeNativeDb(ctx, 'pre-analysis-fallback');
       ctx.db = openDb(ctx.dbPath);
@@ -1111,22 +1114,9 @@ export async function tryNativeOrchestrator(
       // DB reopen failed — return partial result
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
-
-    const fileSymbols = reconstructFileSymbolsFromDb(ctx);
-
-    if (needsStructure) {
-      structurePatchMs = await runPostNativeStructure(
-        ctx,
-        fileSymbols,
-        !!result.isFullBuild,
-        result.changedFiles,
-      );
-    }
-
-    if (needsAnalysisFallback) {
-      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
-    }
   }
+
+  // ── Edge-writing post-passes (run before structure so roles see full graph) ──
 
   // Engine parity: the native orchestrator silently drops files whose
   // Rust extractor/grammar is missing or fails (e.g. HCL, Scala, Swift on
@@ -1208,6 +1198,27 @@ export async function tryNativeOrchestrator(
   // phases (including the WASM dropped-language backfill and CHA post-pass) so
   // every new edge in this build cycle gets a technique label.
   backfillEdgeTechniquesAfterNativeOrchestrator(ctx.db, !!result.isFullBuild, result.changedFiles);
+
+  // ── Structure and analysis fallback (run after edge-writing so roles see full graph) ──
+  // Reconstruct fileSymbols once for both structure and analysis to avoid two
+  // expensive DB scans. The DB handoff above already ensured ctx.db is a proper
+  // better-sqlite3 connection when either flag is set.
+  if (needsStructure || needsAnalysisFallback) {
+    const fileSymbols = reconstructFileSymbolsFromDb(ctx);
+
+    if (needsStructure) {
+      structurePatchMs = await runPostNativeStructure(
+        ctx,
+        fileSymbols,
+        !!result.isFullBuild,
+        result.changedFiles,
+      );
+    }
+
+    if (needsAnalysisFallback) {
+      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
+    }
+  }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);

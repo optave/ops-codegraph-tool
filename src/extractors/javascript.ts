@@ -1543,28 +1543,36 @@ function handleParamTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEn
  * Phase 8.3d: seed the pts map from object property writes.
  *
  * `handlers.auth = authMiddleware` → typeMap.set('handlers.auth', { type: 'authMiddleware', confidence: 0.85 })
+ * `this.logger = new Logger(...)` → typeMap.set('this.logger', { type: 'Logger', confidence: 1.0 })
  *
- * Only simple `obj.prop = identifier` writes are tracked (not chained `a.b.c = x`).
- * BUILTIN_GLOBALS are skipped (e.g. `console.log = fn` is noise).
+ * Only simple `obj.prop = identifier` and `this.prop = new Ctor()` writes are tracked
+ * (not chained `a.b.c = x`). BUILTIN_GLOBALS are skipped (e.g. `console.log = fn`).
  */
 function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
   const lhsN = node.childForFieldName('left');
   const rhsN = node.childForFieldName('right');
   if (!lhsN || !rhsN) return;
   if (lhsN.type !== 'member_expression') return;
-  if (rhsN.type !== 'identifier') return;
 
   const obj = lhsN.childForFieldName('object');
   const prop = lhsN.childForFieldName('property');
   if (!obj || !prop) return;
-  if (obj.type !== 'identifier') return; // skip chained: a.b.c = x
   // Guard: only static property access (property_identifier or identifier), not
   // computed subscript expressions — consistent with the adjacent fnRefBindings block.
   if (prop.type !== 'property_identifier' && prop.type !== 'identifier') return;
 
+  // this.prop = new ClassName(...) — constructor-assigned property type
+  if (obj.type === 'this' && rhsN.type === 'new_expression') {
+    const ctorType = extractNewExprTypeName(rhsN);
+    if (ctorType) setTypeMapEntry(typeMap, `this.${prop.text}`, ctorType, 1.0);
+    return;
+  }
+
+  // obj.prop = identifier — existing behaviour (skip chained a.b.c = x and builtins)
+  if (rhsN.type !== 'identifier') return;
+  if (obj.type !== 'identifier') return;
   const objName = obj.text;
   if (BUILTIN_GLOBALS.has(objName)) return;
-
   setTypeMapEntry(typeMap, `${objName}.${prop.text}`, rhsN.text, 0.85);
 }
 
