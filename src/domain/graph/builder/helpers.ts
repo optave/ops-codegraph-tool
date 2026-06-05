@@ -493,18 +493,33 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
 
-    const implementorList = implementors.get(typeName);
-    if (!implementorList?.length) continue;
+    // BFS over the implementors map — handles multi-level hierarchies where
+    // abstract/non-instantiated classes sit between the call-site type and
+    // the concrete leaf implementations (matches runPostNativeCha, issue #1311).
+    const bfsQueue: string[] = [typeName];
+    const bfsVisited = new Set<string>([typeName]);
+    while (bfsQueue.length > 0) {
+      const current = bfsQueue.shift()!;
+      const children = implementors.get(current);
+      if (!children?.length) continue;
 
-    for (const cls of implementorList) {
-      if (!noRtaEvidence && !instantiated.has(cls)) continue;
-      const qualifiedName = `${cls}.${methodSuffix}`;
-      const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
-      for (const methodNode of methodNodes) {
-        const key = `${source_id}|${methodNode.id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0, 'cha']);
+      for (const cls of children) {
+        if (bfsVisited.has(cls)) continue;
+        bfsVisited.add(cls);
+
+        if (noRtaEvidence || instantiated.has(cls)) {
+          const qualifiedName = `${cls}.${methodSuffix}`;
+          const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
+          for (const methodNode of methodNodes) {
+            const key = `${source_id}|${methodNode.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0, 'cha']);
+          }
+        }
+
+        // Always traverse children — non-instantiated classes may have instantiated subclasses.
+        bfsQueue.push(cls);
       }
     }
   }
