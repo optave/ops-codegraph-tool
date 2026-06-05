@@ -483,10 +483,9 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     }
   }
 
-  const findMethodStmt = db.prepare(
-    `SELECT id FROM nodes WHERE name = ? AND kind = 'method' LIMIT 1`,
-  );
-  const newEdges: Array<[number, number, string, number, number]> = [];
+  // No LIMIT: multiple files can define the same qualified name in a monorepo.
+  const findMethodStmt = db.prepare(`SELECT id FROM nodes WHERE name = ? AND kind = 'method'`);
+  const newEdges: Array<[number, number, string, number, number, string]> = [];
 
   for (const { source_id, method_name } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
@@ -500,12 +499,13 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     for (const cls of implementorList) {
       if (!noRtaEvidence && !instantiated.has(cls)) continue;
       const qualifiedName = `${cls}.${methodSuffix}`;
-      const methodNode = findMethodStmt.get(qualifiedName) as { id: number } | undefined;
-      if (!methodNode) continue;
-      const key = `${source_id}|${methodNode.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0]);
+      const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
+      for (const methodNode of methodNodes) {
+        const key = `${source_id}|${methodNode.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0, 'cha']);
+      }
     }
   }
 

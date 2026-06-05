@@ -1199,6 +1199,27 @@ export async function tryNativeOrchestrator(
   // every new edge in this build cycle gets a technique label.
   backfillEdgeTechniquesAfterNativeOrchestrator(ctx.db, !!result.isFullBuild, result.changedFiles);
 
+  // ── Structure and analysis fallback (run after edge-writing so roles see full graph) ──
+  // Reconstruct fileSymbols once for both structure and analysis to avoid two
+  // expensive DB scans. The DB handoff above already ensured ctx.db is a proper
+  // better-sqlite3 connection when either flag is set.
+  if (needsStructure || needsAnalysisFallback) {
+    const fileSymbols = reconstructFileSymbolsFromDb(ctx);
+
+    if (needsStructure) {
+      structurePatchMs = await runPostNativeStructure(
+        ctx,
+        fileSymbols,
+        !!result.isFullBuild,
+        result.changedFiles,
+      );
+    }
+
+    if (needsAnalysisFallback) {
+      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
+    }
+  }
+
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
 }
