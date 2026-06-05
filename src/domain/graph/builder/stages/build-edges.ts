@@ -1019,7 +1019,7 @@ function buildFileCallEdges(
       }
       for (const t of chaTargets) {
         const edgeKey = `${caller.id}|${t.id}`;
-        if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+        if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
           const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenCallEdges.add(edgeKey);
