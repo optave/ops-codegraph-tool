@@ -156,4 +156,44 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
       `Expected Lion.speak → Animal.speak edge (super-dispatch via class hierarchy).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
     ).toBeDefined();
   });
+
+  // ── transitive multi-level CHA (issue #1311) ───────────────────────────
+  // Hierarchy: IJob → AbstractJob (non-instantiated) → PrintJob / ScanJob
+  // resolveChaTargets must BFS through AbstractJob to reach the concrete types.
+
+  it('CHA transitive: emits runJob → PrintJob.run (3-level hierarchy)', () => {
+    const edge = callEdges.find(
+      (e) =>
+        e.caller_name === 'runJob' &&
+        e.callee_name === 'PrintJob.run' &&
+        e.callee_file === 'PrintJob.ts',
+    );
+    expect(
+      edge,
+      `Expected runJob → PrintJob.run edge (transitive CHA through AbstractJob).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeDefined();
+  });
+
+  it('CHA transitive: emits runJob → ScanJob.run (3-level hierarchy)', () => {
+    const edge = callEdges.find(
+      (e) =>
+        e.caller_name === 'runJob' &&
+        e.callee_name === 'ScanJob.run' &&
+        e.callee_file === 'ScanJob.ts',
+    );
+    expect(
+      edge,
+      `Expected runJob → ScanJob.run edge (transitive CHA through AbstractJob).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeDefined();
+  });
+
+  it('CHA transitive: does NOT emit runJob → AbstractJob.run (abstract, never instantiated)', () => {
+    const edge = callEdges.find(
+      (e) => e.caller_name === 'runJob' && e.callee_name === 'AbstractJob.run',
+    );
+    expect(
+      edge,
+      `Expected NO runJob → AbstractJob.run edge (AbstractJob is never instantiated).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeUndefined();
+  });
 });

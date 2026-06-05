@@ -510,27 +510,42 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
 
-    const implementorList = implementors.get(typeName);
-    if (!implementorList?.length) continue;
+    // BFS over the implementors map — handles multi-level hierarchies where
+    // abstract/non-instantiated classes sit between the call-site type and
+    // the concrete leaf implementations (issue #1311).
+    const bfsQueue: string[] = [typeName];
+    const bfsVisited = new Set<string>([typeName]);
+    while (bfsQueue.length > 0) {
+      const current = bfsQueue.shift()!;
+      const children = implementors.get(current);
+      if (!children?.length) continue;
 
-    for (const cls of implementorList) {
-      if (!noRtaEvidence && !instantiated.has(cls)) continue; // RTA filter (skip when no evidence)
-      const qualifiedName = `${cls}.${methodSuffix}`;
-      const methodNodes = findMethodStmt.all(qualifiedName) as Array<{
-        id: number;
-        method_file: string | null;
-      }>;
-      for (const methodNode of methodNodes) {
-        const key = `${source_id}|${methodNode.id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - 0.1 penalty)
-        // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
-        const conf =
-          computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) - 0.1;
-        if (conf <= 0) continue;
-        newEdges.push([source_id, methodNode.id, 'calls', conf, 0]);
-        newTargetIds.add(methodNode.id);
+      for (const cls of children) {
+        if (bfsVisited.has(cls)) continue;
+        bfsVisited.add(cls);
+
+        if (noRtaEvidence || instantiated.has(cls)) {
+          const qualifiedName = `${cls}.${methodSuffix}`;
+          const methodNodes = findMethodStmt.all(qualifiedName) as Array<{
+            id: number;
+            method_file: string | null;
+          }>;
+          for (const methodNode of methodNodes) {
+            const key = `${source_id}|${methodNode.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - 0.1 penalty)
+            // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
+            const conf =
+              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) - 0.1;
+            if (conf <= 0) continue;
+            newEdges.push([source_id, methodNode.id, 'calls', conf, 0]);
+            newTargetIds.add(methodNode.id);
+          }
+        }
+
+        // Always traverse children — non-instantiated classes may have instantiated subclasses.
+        bfsQueue.push(cls);
       }
     }
   }

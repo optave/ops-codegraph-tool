@@ -134,6 +134,10 @@ export function resolveThisDispatch(
  * Only returns methods on types that are actually instantiated somewhere in
  * the project (RTA filter).  Returns [] when no concrete instantiated type
  * overrides the given method.
+ *
+ * BFS over the implementors map handles multi-level hierarchies (e.g.
+ * IFoo → AbstractFoo → ConcreteFoo) so that abstract intermediate classes
+ * are transparently skipped while their concrete subclasses are still reached.
  */
 export function resolveChaTargets(
   typeName: string,
@@ -141,16 +145,31 @@ export function resolveChaTargets(
   chaCtx: ChaContext,
   lookup: CallNodeLookup,
 ): ReadonlyArray<{ id: number; file: string }> {
-  const implementorList = chaCtx.implementors.get(typeName);
-  if (!implementorList?.length) return [];
-
   const results: Array<{ id: number; file: string }> = [];
-  for (const cls of implementorList) {
-    // RTA filter: skip types never constructed with `new X()`
-    if (!chaCtx.instantiatedTypes.has(cls)) continue;
-    const qualified = `${cls}.${methodName}`;
-    const found = lookup.byName(qualified).filter((n) => n.kind === 'method');
-    results.push(...found);
+
+  const queue: string[] = [typeName];
+  const visited = new Set<string>();
+  visited.add(typeName);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const children = chaCtx.implementors.get(current);
+    if (!children?.length) continue;
+
+    for (const cls of children) {
+      if (visited.has(cls)) continue;
+      visited.add(cls);
+
+      if (chaCtx.instantiatedTypes.has(cls)) {
+        const qualified = `${cls}.${methodName}`;
+        const found = lookup.byName(qualified).filter((n) => n.kind === 'method');
+        results.push(...found);
+      }
+
+      // Traverse even non-instantiated classes — they may have instantiated subclasses.
+      queue.push(cls);
+    }
   }
+
   return results;
 }
