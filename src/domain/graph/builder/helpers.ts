@@ -417,9 +417,16 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
   if (rtaRows.length === 0) {
     // Fallback: some languages (e.g. TypeScript via WASM) record constructor calls as
     // 'function' or 'constructor' kind rather than 'class'. Restrict to names that are
-    // actually known class names (appear in the implementors map) to avoid treating
-    // unrelated function calls like `logger()` as class-instantiation evidence.
-    const knownClassNames = [...implementorSets.keys()];
+    // actually known class names to avoid treating unrelated function calls like `logger()`
+    // as class-instantiation evidence.
+    // Include both parent/interface names AND implementor (child) names so that
+    // `new UserRepository()` (a child class) is correctly detected as RTA evidence.
+    const knownClassNames = [
+      ...new Set([
+        ...implementorSets.keys(),
+        ...[...implementorSets.values()].flatMap((s) => [...s]),
+      ]),
+    ];
     if (knownClassNames.length > 0) {
       // Chunk to stay within SQLite SQLITE_MAX_VARIABLE_NUMBER (999 in many builds).
       const CHUNK = 999;

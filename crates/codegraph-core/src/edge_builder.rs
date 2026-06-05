@@ -96,7 +96,7 @@ pub struct ComputedEdge {
 
 /// Internal struct for caller resolution (def line range → node ID).
 struct DefWithId<'a> {
-    _name: &'a str,
+    name: &'a str,
     line: u32,
     end_line: u32,
     node_id: Option<u32>,
@@ -257,7 +257,7 @@ fn process_file<'a>(
         let node_id = file_nodes.iter()
             .find(|n| n.name == d.name && n.kind == d.kind && n.line == d.line)
             .map(|n| n.id);
-        DefWithId { _name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
+        DefWithId { name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
 
     // Phase 8.3: build pts map for alias resolution.
@@ -284,11 +284,11 @@ fn process_file<'a>(
             if ctx.builtin_set.contains(receiver.as_str()) { continue; }
         }
 
-        let caller_id = find_enclosing_caller(&defs_with_ids, call.line, file_node_id);
+        let (caller_id, caller_name) = find_enclosing_caller(&defs_with_ids, call.line, file_node_id);
         let is_dynamic = if call.dynamic.unwrap_or(false) { 1u32 } else { 0u32 };
         let imported_from = imported_names.get(call.name.as_str()).copied();
 
-        let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map);
+        let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map, caller_name);
         sort_targets_by_confidence(&mut targets, rel_path, imported_from);
         emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
 
@@ -311,7 +311,7 @@ fn process_file<'a>(
                         receiver: None,
                     };
                     let mut alias_targets = resolve_call_targets(
-                        ctx, &alias_call, rel_path, alias_imported_from, &type_map,
+                        ctx, &alias_call, rel_path, alias_imported_from, &type_map, caller_name,
                     );
                     sort_targets_by_confidence(&mut alias_targets, rel_path, alias_imported_from);
                     for t in &alias_targets {
@@ -343,8 +343,10 @@ fn process_file<'a>(
 }
 
 /// Find the narrowest enclosing definition for a call at the given line.
-fn find_enclosing_caller(defs: &[DefWithId], call_line: u32, file_node_id: u32) -> u32 {
+/// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call is at file scope.
+fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_id: u32) -> (u32, &'a str) {
     let mut caller_id = file_node_id;
+    let mut caller_name = "";
     let mut caller_span = u32::MAX;
     for def in defs {
         if def.line <= call_line && call_line <= def.end_line {
@@ -352,21 +354,25 @@ fn find_enclosing_caller(defs: &[DefWithId], call_line: u32, file_node_id: u32) 
             if span < caller_span {
                 if let Some(id) = def.node_id {
                     caller_id = id;
+                    caller_name = def.name;
                     caller_span = span;
                 }
             }
         }
     }
-    caller_id
+    (caller_id, caller_name)
 }
 
 /// Multi-strategy call target resolution: import-aware → same-file → method → type-aware → scoped.
+/// `caller_name` is the enclosing function/method name (e.g. `"Shape.describe"`) used to scope
+/// `this`/`self`/`super` dispatch to the caller's own class before falling back to a broader scan.
 fn resolve_call_targets<'a>(
     ctx: &EdgeContext<'a>,
     call: &CallInfo,
     rel_path: &str,
     imported_from: Option<&str>,
     type_map: &HashMap<&str, (&str, f64)>,
+    caller_name: &str,
 ) -> Vec<&'a NodeInfo> {
     // 1. Import-aware resolution
     if let Some(imp_file) = imported_from {
@@ -437,10 +443,25 @@ fn resolve_call_targets<'a>(
             .unwrap_or_default();
         if !exact.is_empty() { return exact; }
 
-        // For this/self/super: search same-file methods by suffix (CHA class-hierarchy dispatch).
-        // e.g. `this.area()` in Shape.describe → Shape.area, Circle.area, Rectangle.area.
-        // Scoped to the same file to avoid cross-project false positives.
+        // For this/self/super: prefer class-scoped exact lookup (e.g. `this.area()` in
+        // `Shape.describe` → try `Shape.area` first).  This avoids false edges to unrelated
+        // classes that happen to have a method with the same name in the same file.
+        // Fall back to the broader same-file suffix scan only when the class-scoped lookup
+        // finds nothing (e.g. when the caller is at module scope or the name is unknown).
         if call.receiver.is_some() {
+            // Extract the class prefix from the enclosing caller name (e.g. "Shape" from "Shape.describe").
+            if let Some(dot_pos) = caller_name.find('.') {
+                let class_prefix = &caller_name[..dot_pos];
+                let qualified = format!("{}.{}", class_prefix, call.name);
+                let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
+                    .get(qualified.as_str())
+                    .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
+                    .unwrap_or_default();
+                if !class_scoped.is_empty() { return class_scoped; }
+            }
+
+            // Broader fallback: same-file suffix scan to pick up CHA-expanded targets
+            // (subclasses that override the method).
             let suffix = format!(".{}", call.name);
             if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
                 let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
