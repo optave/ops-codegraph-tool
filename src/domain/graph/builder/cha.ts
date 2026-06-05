@@ -112,7 +112,7 @@ export function resolveThisDispatch(
   const startClass = receiver === 'super' ? chaCtx.parents.get(callerClass) : callerClass;
   if (!startClass) return [];
 
-  // Walk up the hierarchy (cap at 20 to guard against cycles in malformed data)
+  // Walk up the hierarchy; the visited set guards against cycles in malformed data.
   let current: string | undefined = startClass;
   const visited = new Set<string>();
   while (current && !visited.has(current)) {
