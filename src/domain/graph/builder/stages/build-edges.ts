@@ -1096,7 +1096,8 @@ function applyEdgeTechniquesAfterNativeInsert(
   // Collect distinct source IDs for this batch so the catch-all UPDATE is scoped
   // to edges inserted in the current run, not the entire table.
   const sourceIds = [...new Set(callRows.map((r) => r[0]))];
-  const placeholders = sourceIds.map(() => '?').join(',');
+  // Chunk to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
+  const CHUNK_SIZE = 500;
 
   const tx = db.transaction(() => {
     if (taggedRows.length > 0) {
@@ -1105,9 +1106,13 @@ function applyEdgeTechniquesAfterNativeInsert(
       );
       for (const r of taggedRows) stmt.run(r[5], r[0], r[1]);
     }
-    db.prepare(
-      `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
-    ).run(...sourceIds);
+    for (let i = 0; i < sourceIds.length; i += CHUNK_SIZE) {
+      const chunk = sourceIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
+      ).run(...chunk);
+    }
   });
   tx();
 }

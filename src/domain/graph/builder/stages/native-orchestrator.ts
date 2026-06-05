@@ -940,15 +940,22 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
     return;
   }
   // Incremental: scope to source nodes whose file is one of the changed files.
-  // Use a subquery to avoid loading all node IDs into JS.
-  const placeholders = changedFiles.map(() => '?').join(',');
-  db.prepare(
-    `UPDATE edges SET technique = 'ts-native'
-     WHERE kind = 'calls' AND technique IS NULL
-     AND source_id IN (
-       SELECT id FROM nodes WHERE file IN (${placeholders})
-     )`,
-  ).run(...changedFiles);
+  // Chunk to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
+  const CHUNK_SIZE = 500;
+  const tx = db.transaction(() => {
+    for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
+      const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE edges SET technique = 'ts-native'
+         WHERE kind = 'calls' AND technique IS NULL
+         AND source_id IN (
+           SELECT id FROM nodes WHERE file IN (${placeholders})
+         )`,
+      ).run(...chunk);
+    }
+  });
+  tx();
 }
 
 /**
