@@ -1634,7 +1634,8 @@ function handleDefinePropertyTypeMap(
       arg1 = args[1]!,
       arg2 = args[2]!;
     if (arg0.type !== 'identifier') return;
-    const key = arg1.text.replace(/['"]/g, '');
+    if (arg1.type !== 'string') return;
+    const key = arg1.text.replace(/^['"]|['"]$/g, '');
     if (!key) return;
     const target = findDescriptorValue(arg2);
     if (!target) return;
@@ -1652,7 +1653,7 @@ function handleDefinePropertyTypeMap(
       const keyN = pair.childForFieldName('key');
       const valN = pair.childForFieldName('value');
       if (!keyN || !valN) continue;
-      const key = keyN.text.replace(/['"]/g, '');
+      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
       const target = findDescriptorValue(valN);
       if (!target) continue;
       setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
@@ -1688,7 +1689,7 @@ function seedProtoProperties(
       const keyN = child.childForFieldName('key');
       const valN = child.childForFieldName('value');
       if (!keyN || !valN || valN.type !== 'identifier') continue;
-      const key = keyN.type === 'string' ? keyN.text.replace(/['"]/g, '') : keyN.text;
+      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
       setTypeMapEntry(typeMap, `${varName}.${key}`, valN.text, 0.85);
     }
   }
