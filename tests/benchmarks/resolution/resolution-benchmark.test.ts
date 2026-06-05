@@ -83,12 +83,14 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'receiver-typed': 'type-propagation',
   'interface-dispatched': 'cha-rta',
   'class-inheritance': 'cha-rta',
+  'class-hierarchy': 'cha-rta',
   'trait-dispatch': 'cha-rta',
   're-export': 'barrel',
   closure: 'points-to',
   'higher-order': 'points-to',
   callback: 'points-to',
   dynamic: 'points-to',
+  'points-to': 'points-to',
   'pts-define-property': 'points-to',
   'pts-create-prototype': 'points-to',
 };
@@ -106,7 +108,13 @@ const FIXTURES_DIR = path.join(import.meta.dirname, 'fixtures');
  */
 const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // Mature — high bars (100% precision, high recall)
-  // JS 0.9: Phase 8.3e adds Object.defineProperty/defineProperties/create composite pts keys
+  // javascript precision 1.0: the JS fixture is designed to have no false-positive edges —
+  // every resolved edge matches an expected edge. A precision floor of 1.0 acts as a
+  // ratchet: any future code change that introduces a spurious JS edge will fail CI
+  // immediately, which is intentional. If a new fixture addition causes a genuine FP
+  // (i.e. the code resolves an edge that is arguably correct but not in expected-edges),
+  // the correct fix is to add it to expected-edges — not to lower the threshold.
+  // JS recall 0.9: Phase 8.3e adds Object.defineProperty/defineProperties/create composite pts keys
   //   (5 new edges in define-property.js), lifting total expected from 18 to 23.
   javascript: { precision: 1.0, recall: 0.9 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),

@@ -190,6 +190,7 @@ function handleExportCapture(
     const kindMap: Record<string, string> = {
       function_declaration: 'function',
       class_declaration: 'class',
+      abstract_class_declaration: 'class',
       interface_declaration: 'interface',
       type_alias_declaration: 'type',
     };
@@ -350,6 +351,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  const newExpressions: string[] = [];
+  extractNewExpressionsWalk(tree.rootNode, newExpressions);
+
   return {
     definitions,
     calls,
@@ -361,6 +366,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     callAssignments,
     fnRefBindings,
     paramBindings,
+    newExpressions,
   };
 }
 
@@ -470,7 +476,7 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
     if (declarator?.type !== 'variable_declarator') continue;
     const nameN = declarator.childForFieldName('name');
     const valueN = declarator.childForFieldName('value');
-    if (!nameN || nameN.type !== 'identifier' || !valueN) continue;
+    if (nameN?.type !== 'identifier' || !valueN) continue;
     // Skip functions — already captured by query patterns
     const valType = valueN.type;
     if (valType === 'arrow_function' || valType === 'function_expression' || valType === 'function')
@@ -608,6 +614,10 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   );
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
+  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  const newExpressions: string[] = [];
+  extractNewExpressionsWalk(tree.rootNode, newExpressions);
+  ctx.newExpressions = newExpressions;
   return ctx;
 }
 
@@ -617,6 +627,7 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       handleFunctionDecl(node, ctx);
       break;
     case 'class_declaration':
+    case 'abstract_class_declaration':
       handleClassDecl(node, ctx);
       break;
     case 'method_definition':
@@ -926,6 +937,7 @@ function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
     const kindMap: Record<string, string> = {
       function_declaration: 'function',
       class_declaration: 'class',
+      abstract_class_declaration: 'class',
       interface_declaration: 'interface',
       type_alias_declaration: 'type',
     };
@@ -1150,7 +1162,7 @@ function extractSimpleTypeName(typeAnnotationNode: TreeSitterNode): string | nul
 }
 
 function extractNewExprTypeName(newExprNode: TreeSitterNode): string | null {
-  if (!newExprNode || newExprNode.type !== 'new_expression') return null;
+  if (newExprNode?.type !== 'new_expression') return null;
   const ctor = newExprNode.childForFieldName('constructor') || newExprNode.child(1);
   if (!ctor) return null;
   if (ctor.type === 'identifier') return ctor.text;
@@ -1179,7 +1191,7 @@ function extractReturnTypeMapWalk(
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
 
-    if (t === 'class_declaration' || t === 'class') {
+    if (t === 'class_declaration' || t === 'abstract_class_declaration' || t === 'class') {
       const nameNode = node.childForFieldName('name');
       const className = nameNode?.text ?? null;
       for (let i = 0; i < node.childCount; i++) {
@@ -1263,7 +1275,7 @@ function storeReturnType(
 function findReturnNewExprType(bodyNode: TreeSitterNode): string | null {
   for (let i = 0; i < bodyNode.childCount; i++) {
     const child = bodyNode.child(i);
-    if (!child || child.type !== 'return_statement') continue;
+    if (child?.type !== 'return_statement') continue;
     for (let j = 0; j < child.childCount; j++) {
       const expr = child.child(j);
       if (expr?.type === 'new_expression') return extractNewExprTypeName(expr);
@@ -1367,6 +1379,25 @@ function recordCallAssignment(
 }
 
 /**
+ * Phase 8.5 (RTA): collect all constructor names from `new X()` expressions
+ * in the file. Captures both assigned (`const x = new Foo()`) and unassigned
+ * (`doSomething(new Foo())`) usages that the typeMap-based approach would miss.
+ */
+function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: string[]): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'new_expression') {
+      const name = extractNewExprTypeName(node);
+      if (name) newExpressions.push(name);
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
  * Extract variable-to-type assignments into a per-file type map.
  *
  * Values are `{ type: string, confidence: number }`:
@@ -1413,7 +1444,7 @@ function handleVarDeclaratorTypeMap(
   fnRefBindings?: FnRefBinding[],
 ): void {
   const nameN = node.childForFieldName('name');
-  if (!nameN || nameN.type !== 'identifier') return;
+  if (nameN?.type !== 'identifier') return;
 
   const typeAnno = findChild(node, 'type_annotation');
   const valueN = node.childForFieldName('value');
@@ -1478,7 +1509,10 @@ function handleVarDeclaratorTypeMap(
           let proto: TreeSitterNode | null = null;
           for (let i = 0; i < createArgs.childCount; i++) {
             const n = createArgs.child(i);
-            if (n && n.type !== '(' && n.type !== ')' && n.type !== ',') { proto = n; break; }
+            if (n && n.type !== '(' && n.type !== ')' && n.type !== ',') {
+              proto = n;
+              break;
+            }
           }
           if (proto?.type === 'object') {
             seedProtoProperties(nameN.text, proto, typeMap);
@@ -1522,7 +1556,7 @@ function handleVarDeclaratorTypeMap(
 function handleParamTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
   const nameNode =
     node.childForFieldName('pattern') || node.childForFieldName('left') || node.child(0);
-  if (!nameNode || nameNode.type !== 'identifier') return;
+  if (nameNode?.type !== 'identifier') return;
   const typeAnno = findChild(node, 'type_annotation');
   if (typeAnno) {
     const typeName = extractSimpleTypeName(typeAnno);
@@ -1573,7 +1607,10 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
  * `Object.defineProperty(obj, "key", { value: fn })` → typeMap.set('obj.key', fn, 0.85)
  * `Object.defineProperties(obj, { "k1": { value: v1 } })` → typeMap.set('obj.k1', v1, 0.85)
  */
-function handleDefinePropertyTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+function handleDefinePropertyTypeMap(
+  node: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+): void {
   const fn = node.childForFieldName('function');
   if (fn?.type !== 'member_expression') return;
   const fnObj = fn.childForFieldName('object');
@@ -1593,7 +1630,9 @@ function handleDefinePropertyTypeMap(node: TreeSitterNode, typeMap: Map<string, 
 
   if (method === 'defineProperty') {
     if (args.length < 3) return;
-    const arg0 = args[0]!, arg1 = args[1]!, arg2 = args[2]!;
+    const arg0 = args[0]!,
+      arg1 = args[1]!,
+      arg2 = args[2]!;
     if (arg0.type !== 'identifier') return;
     const key = arg1.text.replace(/['"]/g, '');
     if (!key) return;
@@ -1603,12 +1642,13 @@ function handleDefinePropertyTypeMap(node: TreeSitterNode, typeMap: Map<string, 
   } else {
     // defineProperties
     if (args.length < 2) return;
-    const arg0 = args[0]!, arg1 = args[1]!;
+    const arg0 = args[0]!,
+      arg1 = args[1]!;
     if (arg0.type !== 'identifier') return;
     if (arg1.type !== 'object') return;
     for (let i = 0; i < arg1.childCount; i++) {
       const pair = arg1.child(i);
-      if (!pair || pair.type !== 'pair') continue;
+      if (pair?.type !== 'pair') continue;
       const keyN = pair.childForFieldName('key');
       const valN = pair.childForFieldName('value');
       if (!keyN || !valN) continue;
@@ -1625,7 +1665,7 @@ function findDescriptorValue(desc: TreeSitterNode): string | undefined {
   if (desc.type !== 'object') return undefined;
   for (let i = 0; i < desc.childCount; i++) {
     const pair = desc.child(i);
-    if (!pair || pair.type !== 'pair') continue;
+    if (pair?.type !== 'pair') continue;
     const key = pair.childForFieldName('key');
     const val = pair.childForFieldName('value');
     if (key?.text === 'value' && val?.type === 'identifier') return val.text;
@@ -1634,7 +1674,11 @@ function findDescriptorValue(desc: TreeSitterNode): string | undefined {
 }
 
 /** Seed composite pts keys for each property in a prototype object literal. */
-function seedProtoProperties(varName: string, proto: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+function seedProtoProperties(
+  varName: string,
+  proto: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+): void {
   for (let i = 0; i < proto.childCount; i++) {
     const child = proto.child(i);
     if (!child) continue;
@@ -1998,7 +2042,7 @@ function extractCallbackDefinition(
   fn?: TreeSitterNode | null,
 ): Definition | null {
   if (!fn) fn = callNode.childForFieldName('function');
-  if (!fn || fn.type !== 'member_expression') return null;
+  if (fn?.type !== 'member_expression') return null;
 
   const prop = fn.childForFieldName('property');
   if (!prop) return null;
@@ -2030,7 +2074,7 @@ function extractCallbackDefinition(
   // Express: app.get('/path', callback)
   if (EXPRESS_METHODS.has(method)) {
     const strArg = findFirstStringArg(args);
-    if (!strArg || !strArg.startsWith('/')) return null;
+    if (!strArg?.startsWith('/')) return null;
     const cb = findAnonymousCallback(args);
     if (!cb) return null;
     return {
@@ -2069,7 +2113,7 @@ function extractSuperclass(heritage: TreeSitterNode): string | null {
   return null;
 }
 
-const JS_CLASS_TYPES = ['class_declaration', 'class'] as const;
+const JS_CLASS_TYPES = ['class_declaration', 'abstract_class_declaration', 'class'] as const;
 function findParentClass(node: TreeSitterNode): string | null {
   return findParentNode(node, JS_CLASS_TYPES);
 }
@@ -2109,7 +2153,7 @@ function extractDynamicImportNames(callNode: TreeSitterNode): string[] {
   // Skip await_expression wrapper if present
   if (current && current.type === 'await_expression') current = current.parent;
   // We should now be at a variable_declarator (or not, if standalone import())
-  if (!current || current.type !== 'variable_declarator') return [];
+  if (current?.type !== 'variable_declarator') return [];
 
   const nameNode = current.childForFieldName('name');
   if (!nameNode) return [];

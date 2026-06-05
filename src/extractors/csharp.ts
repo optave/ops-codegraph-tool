@@ -28,6 +28,7 @@ export function extractCSharpSymbols(tree: TreeSitterTree, _filePath: string): E
     classes: [],
     exports: [],
     typeMap: new Map(),
+    newExpressions: [],
   };
 
   walkCSharpNode(tree.rootNode, ctx);
@@ -252,7 +253,12 @@ function handleCsObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): voi
     typeNode.type === 'generic_name'
       ? typeNode.childForFieldName('name')?.text || typeNode.child(0)?.text
       : typeNode.text;
-  if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
+  if (typeName) {
+    ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
+    // Phase 8.5 (RTA): record instantiated type for CHA filtering, matching
+    // the JS extractor's newExpressions extraction for cross-engine parity.
+    (ctx.newExpressions as string[]).push(typeName);
+  }
 }
 
 const CS_PARENT_TYPES = [
@@ -273,7 +279,7 @@ function extractCSharpParameters(paramListNode: TreeSitterNode | null): SubDecla
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
-    if (!param || param.type !== 'parameter') continue;
+    if (param?.type !== 'parameter') continue;
     const nameNode = param.childForFieldName('name');
     if (nameNode) {
       params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });
@@ -288,12 +294,12 @@ function extractCSharpClassFields(classNode: TreeSitterNode): SubDeclaration[] {
   if (!body) return fields;
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
-    if (!member || member.type !== 'field_declaration') continue;
+    if (member?.type !== 'field_declaration') continue;
     const varDecl = findChild(member, 'variable_declaration');
     if (!varDecl) continue;
     for (let j = 0; j < varDecl.childCount; j++) {
       const child = varDecl.child(j);
-      if (!child || child.type !== 'variable_declarator') continue;
+      if (child?.type !== 'variable_declarator') continue;
       const nameNode = child.childForFieldName('name');
       if (nameNode) {
         fields.push({
@@ -331,7 +337,7 @@ function handleCSharpVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!typeName) return;
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (!child || child.type !== 'variable_declarator') continue;
+    if (child?.type !== 'variable_declarator') continue;
     const nameNode = child.childForFieldName('name') || child.child(0);
     if (nameNode && nameNode.type === 'identifier' && ctx.typeMap) {
       setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);

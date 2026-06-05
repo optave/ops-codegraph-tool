@@ -96,7 +96,7 @@ pub struct ComputedEdge {
 
 /// Internal struct for caller resolution (def line range → node ID).
 struct DefWithId<'a> {
-    _name: &'a str,
+    name: &'a str,
     line: u32,
     end_line: u32,
     node_id: Option<u32>,
@@ -106,6 +106,8 @@ struct DefWithId<'a> {
 struct EdgeContext<'a> {
     nodes_by_name: HashMap<&'a str, Vec<&'a NodeInfo>>,
     nodes_by_name_and_file: HashMap<(&'a str, &'a str), Vec<&'a NodeInfo>>,
+    /// All nodes grouped by file — used for same-file method resolution (CHA this-dispatch).
+    nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
     receiver_kinds: HashSet<&'a str>,
 }
@@ -114,17 +116,19 @@ impl<'a> EdgeContext<'a> {
     fn new(all_nodes: &'a [NodeInfo], builtin_receivers: &'a [String]) -> Self {
         let mut nodes_by_name: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         let mut nodes_by_name_and_file: HashMap<(&str, &str), Vec<&NodeInfo>> = HashMap::new();
+        let mut nodes_by_file: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         for node in all_nodes {
             nodes_by_name.entry(&node.name).or_default().push(node);
             nodes_by_name_and_file
                 .entry((&node.name, &node.file))
                 .or_default()
                 .push(node);
+            nodes_by_file.entry(&node.file).or_default().push(node);
         }
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        Self { nodes_by_name, nodes_by_name_and_file, builtin_set, receiver_kinds }
+        Self { nodes_by_name, nodes_by_name_and_file, nodes_by_file, builtin_set, receiver_kinds }
     }
 }
 
@@ -253,7 +257,7 @@ fn process_file<'a>(
         let node_id = file_nodes.iter()
             .find(|n| n.name == d.name && n.kind == d.kind && n.line == d.line)
             .map(|n| n.id);
-        DefWithId { _name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
+        DefWithId { name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
 
     // Phase 8.3: build pts map for alias resolution.
@@ -280,11 +284,11 @@ fn process_file<'a>(
             if ctx.builtin_set.contains(receiver.as_str()) { continue; }
         }
 
-        let caller_id = find_enclosing_caller(&defs_with_ids, call.line, file_node_id);
+        let (caller_id, caller_name) = find_enclosing_caller(&defs_with_ids, call.line, file_node_id);
         let is_dynamic = if call.dynamic.unwrap_or(false) { 1u32 } else { 0u32 };
         let imported_from = imported_names.get(call.name.as_str()).copied();
 
-        let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map);
+        let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map, caller_name);
         sort_targets_by_confidence(&mut targets, rel_path, imported_from);
         emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
 
@@ -307,7 +311,7 @@ fn process_file<'a>(
                         receiver: None,
                     };
                     let mut alias_targets = resolve_call_targets(
-                        ctx, &alias_call, rel_path, alias_imported_from, &type_map,
+                        ctx, &alias_call, rel_path, alias_imported_from, &type_map, caller_name,
                     );
                     sort_targets_by_confidence(&mut alias_targets, rel_path, alias_imported_from);
                     for t in &alias_targets {
@@ -339,8 +343,10 @@ fn process_file<'a>(
 }
 
 /// Find the narrowest enclosing definition for a call at the given line.
-fn find_enclosing_caller(defs: &[DefWithId], call_line: u32, file_node_id: u32) -> u32 {
+/// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call is at file scope.
+fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_id: u32) -> (u32, &'a str) {
     let mut caller_id = file_node_id;
+    let mut caller_name = "";
     let mut caller_span = u32::MAX;
     for def in defs {
         if def.line <= call_line && call_line <= def.end_line {
@@ -348,21 +354,25 @@ fn find_enclosing_caller(defs: &[DefWithId], call_line: u32, file_node_id: u32) 
             if span < caller_span {
                 if let Some(id) = def.node_id {
                     caller_id = id;
+                    caller_name = def.name;
                     caller_span = span;
                 }
             }
         }
     }
-    caller_id
+    (caller_id, caller_name)
 }
 
 /// Multi-strategy call target resolution: import-aware → same-file → method → type-aware → scoped.
+/// `caller_name` is the enclosing function/method name (e.g. `"Shape.describe"`) used to scope
+/// `this`/`self`/`super` dispatch to the caller's own class before falling back to a broader scan.
 fn resolve_call_targets<'a>(
     ctx: &EdgeContext<'a>,
     call: &CallInfo,
     rel_path: &str,
     imported_from: Option<&str>,
     type_map: &HashMap<&str, (&str, f64)>,
+    caller_name: &str,
 ) -> Vec<&'a NodeInfo> {
     // 1. Import-aware resolution
     if let Some(imp_file) = imported_from {
@@ -386,9 +396,18 @@ fn resolve_call_targets<'a>(
         .unwrap_or_default();
     if !method_candidates.is_empty() { return method_candidates; }
 
-    // 4. Type-aware resolution via receiver → type map
+    // 4. Type-aware resolution via receiver → type map.
+    // Strips "this." prefix so `this.repo.method()` resolves via typeMap["repo"]
+    // or typeMap["this.repo"] (both seeded by the class-field extractor).
     if let Some(ref receiver) = call.receiver {
-        if let Some(&(type_name, _conf)) = type_map.get(receiver.as_str()) {
+        let effective_receiver = if receiver.starts_with("this.") {
+            &receiver["this.".len()..]
+        } else {
+            receiver.as_str()
+        };
+        let type_lookup = type_map.get(effective_receiver)
+            .or_else(|| type_map.get(receiver.as_str()));
+        if let Some(&(type_name, _conf)) = type_lookup {
             let qualified = format!("{}.{}", type_name, call.name);
             let typed: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
@@ -415,12 +434,44 @@ fn resolve_call_targets<'a>(
         || call.receiver.as_deref() == Some("self")
         || call.receiver.as_deref() == Some("super")
     {
-        return ctx.nodes_by_name
+        // First try exact name match (e.g. an unqualified function named "area").
+        let exact: Vec<&NodeInfo> = ctx.nodes_by_name
             .get(call.name.as_str())
             .map(|v| v.iter()
                 .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
                 .copied().collect())
             .unwrap_or_default();
+        if !exact.is_empty() { return exact; }
+
+        // For this/self/super: prefer class-scoped exact lookup (e.g. `this.area()` in
+        // `Shape.describe` → try `Shape.area` first).  This avoids false edges to unrelated
+        // classes that happen to have a method with the same name in the same file.
+        // Fall back to the broader same-file suffix scan only when the class-scoped lookup
+        // finds nothing (e.g. when the caller is at module scope or the name is unknown).
+        if call.receiver.is_some() {
+            // Extract the class prefix from the enclosing caller name (e.g. "Shape" from "Shape.describe").
+            if let Some(dot_pos) = caller_name.find('.') {
+                let class_prefix = &caller_name[..dot_pos];
+                let qualified = format!("{}.{}", class_prefix, call.name);
+                let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
+                    .get(qualified.as_str())
+                    .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
+                    .unwrap_or_default();
+                if !class_scoped.is_empty() { return class_scoped; }
+            }
+
+            // Broader fallback: same-file suffix scan to pick up CHA-expanded targets
+            // (subclasses that override the method).
+            let suffix = format!(".{}", call.name);
+            if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
+                let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
+                    .filter(|n| n.kind == "method" && n.name.ends_with(&suffix))
+                    .copied()
+                    .collect();
+                if !same_file_methods.is_empty() { return same_file_methods; }
+            }
+        }
+        return exact; // empty
     }
 
     Vec::new()

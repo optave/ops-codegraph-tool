@@ -148,6 +148,29 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                 }
             }
         }
+        // TypeScript class field declarations: `private repo: Repository<User>`
+        // Seeds both "repo" and "this.repo" so that `this.repo.method()` calls
+        // can be resolved to the interface/class type via the type map.
+        "public_field_definition" | "field_definition" => {
+            let name_node = node.child_by_field_name("name")
+                .or_else(|| node.child_by_field_name("property"))
+                .or_else(|| find_child(node, "property_identifier"));
+            if let Some(name_node) = name_node {
+                let kind = name_node.kind();
+                if kind == "property_identifier" || kind == "identifier"
+                    || kind == "private_property_identifier"
+                {
+                    let field_name = node_text(&name_node, source).to_string();
+                    if let Some(type_anno) = find_child(node, "type_annotation") {
+                        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
+                            push_type_map_entry(symbols, field_name.clone(), type_name.to_string());
+                            // "this.fieldName" key resolves `this.repo.method()` calls.
+                            push_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -465,7 +488,9 @@ fn match_js_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbo
 fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_declaration" => handle_function_decl(node, source, symbols),
-        "class_declaration" => handle_class_decl(node, source, symbols),
+        "class_declaration" | "abstract_class_declaration" => {
+            handle_class_decl(node, source, symbols)
+        }
         "method_definition" => handle_method_def(node, source, symbols),
         "interface_declaration" => handle_interface_decl(node, source, symbols),
         "type_alias_declaration" => handle_type_alias(node, source, symbols),
@@ -780,7 +805,7 @@ fn handle_export_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 fn handle_export_declaration(node: &Node, decl: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let (kind_str, field) = match decl.kind() {
         "function_declaration" => ("function", "name"),
-        "class_declaration" => ("class", "name"),
+        "class_declaration" | "abstract_class_declaration" => ("class", "name"),
         "interface_declaration" => ("interface", "name"),
         "type_alias_declaration" => ("type", "name"),
         _ => return,
@@ -1652,7 +1677,7 @@ fn extract_superclass(heritage: &Node, source: &[u8]) -> Option<String> {
     None
 }
 
-const JS_CLASS_KINDS: &[&str] = &["class_declaration", "class"];
+const JS_CLASS_KINDS: &[&str] = &["class_declaration", "abstract_class_declaration", "class"];
 
 fn find_parent_class(node: &Node, source: &[u8]) -> Option<String> {
     find_enclosing_type_name(node, JS_CLASS_KINDS, source)
