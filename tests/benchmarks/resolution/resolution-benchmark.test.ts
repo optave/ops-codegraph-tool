@@ -113,6 +113,9 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // (i.e. the code resolves an edge that is arguably correct but not in expected-edges),
   // the correct fix is to add it to expected-edges — not to lower the threshold.
   javascript: { precision: 1.0, recall: 0.9 },
+  // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
+  //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
+  //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
   typescript: { precision: 0.85, recall: 0.72 },
   tsx: { precision: 0.85, recall: 0.8 },
   // TODO: raise thresholds once bash call resolution is implemented
