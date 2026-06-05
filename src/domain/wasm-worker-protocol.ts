@@ -63,6 +63,7 @@ export interface SerializedExtractorOutput {
     receiver?: string;
   }>;
   fnRefBindings?: import('../types.js').FnRefBinding[];
+  newExpressions?: readonly string[];
 }
 
 export interface WorkerParseResponseOk {

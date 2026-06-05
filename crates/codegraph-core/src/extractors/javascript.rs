@@ -312,7 +312,9 @@ fn match_js_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbo
 fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_declaration" => handle_function_decl(node, source, symbols),
-        "class_declaration" => handle_class_decl(node, source, symbols),
+        "class_declaration" | "abstract_class_declaration" => {
+            handle_class_decl(node, source, symbols)
+        }
         "method_definition" => handle_method_def(node, source, symbols),
         "interface_declaration" => handle_interface_decl(node, source, symbols),
         "type_alias_declaration" => handle_type_alias(node, source, symbols),
@@ -627,7 +629,7 @@ fn handle_export_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 fn handle_export_declaration(node: &Node, decl: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let (kind_str, field) = match decl.kind() {
         "function_declaration" => ("function", "name"),
-        "class_declaration" => ("class", "name"),
+        "class_declaration" | "abstract_class_declaration" => ("class", "name"),
         "interface_declaration" => ("interface", "name"),
         "type_alias_declaration" => ("type", "name"),
         _ => return,
@@ -1499,7 +1501,7 @@ fn extract_superclass(heritage: &Node, source: &[u8]) -> Option<String> {
     None
 }
 
-const JS_CLASS_KINDS: &[&str] = &["class_declaration", "class"];
+const JS_CLASS_KINDS: &[&str] = &["class_declaration", "abstract_class_declaration", "class"];
 
 fn find_parent_class(node: &Node, source: &[u8]) -> Option<String> {
     find_enclosing_type_name(node, JS_CLASS_KINDS, source)

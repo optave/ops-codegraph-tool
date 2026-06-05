@@ -28,6 +28,7 @@ export function extractCSharpSymbols(tree: TreeSitterTree, _filePath: string): E
     classes: [],
     exports: [],
     typeMap: new Map(),
+    newExpressions: [],
   };
 
   walkCSharpNode(tree.rootNode, ctx);
@@ -252,7 +253,12 @@ function handleCsObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): voi
     typeNode.type === 'generic_name'
       ? typeNode.childForFieldName('name')?.text || typeNode.child(0)?.text
       : typeNode.text;
-  if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
+  if (typeName) {
+    ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
+    // Phase 8.5 (RTA): record instantiated type for CHA filtering, matching
+    // the JS extractor's newExpressions extraction for cross-engine parity.
+    (ctx.newExpressions as string[]).push(typeName);
+  }
 }
 
 const CS_PARENT_TYPES = [
