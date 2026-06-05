@@ -135,6 +135,34 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "service.AddUser() — typed as UserService"
+    },
+    {
+      "source": { "name": "UserService.GetUser", "file": "Service.cs" },
+      "target": { "name": "UserRepository.FindById", "file": "Repository.cs" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.FindById() via IRepository → UserRepository (instantiated)"
+    },
+    {
+      "source": { "name": "UserService.AddUser", "file": "Service.cs" },
+      "target": { "name": "UserRepository.Save", "file": "Repository.cs" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.Save() via IRepository → UserRepository (instantiated)"
+    },
+    {
+      "source": { "name": "UserService.RemoveUser", "file": "Service.cs" },
+      "target": { "name": "UserRepository.FindById", "file": "Repository.cs" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.FindById() via IRepository → UserRepository (instantiated)"
+    },
+    {
+      "source": { "name": "UserService.RemoveUser", "file": "Service.cs" },
+      "target": { "name": "UserRepository.Delete", "file": "Repository.cs" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "CHA expansion: _repo.Delete() via IRepository → UserRepository (instantiated)"
     }
   ]
 }

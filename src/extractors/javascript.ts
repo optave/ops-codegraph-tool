@@ -190,6 +190,7 @@ function handleExportCapture(
     const kindMap: Record<string, string> = {
       function_declaration: 'function',
       class_declaration: 'class',
+      abstract_class_declaration: 'class',
       interface_declaration: 'interface',
       type_alias_declaration: 'type',
     };
@@ -350,6 +351,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  const newExpressions: string[] = [];
+  extractNewExpressionsWalk(tree.rootNode, newExpressions);
+
   return {
     definitions,
     calls,
@@ -361,6 +366,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     callAssignments,
     fnRefBindings,
     paramBindings,
+    newExpressions,
   };
 }
 
@@ -608,6 +614,10 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   );
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
+  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  const newExpressions: string[] = [];
+  extractNewExpressionsWalk(tree.rootNode, newExpressions);
+  ctx.newExpressions = newExpressions;
   return ctx;
 }
 
@@ -617,6 +627,7 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       handleFunctionDecl(node, ctx);
       break;
     case 'class_declaration':
+    case 'abstract_class_declaration':
       handleClassDecl(node, ctx);
       break;
     case 'method_definition':
@@ -926,6 +937,7 @@ function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
     const kindMap: Record<string, string> = {
       function_declaration: 'function',
       class_declaration: 'class',
+      abstract_class_declaration: 'class',
       interface_declaration: 'interface',
       type_alias_declaration: 'type',
     };
@@ -1179,7 +1191,7 @@ function extractReturnTypeMapWalk(
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
 
-    if (t === 'class_declaration' || t === 'class') {
+    if (t === 'class_declaration' || t === 'abstract_class_declaration' || t === 'class') {
       const nameNode = node.childForFieldName('name');
       const className = nameNode?.text ?? null;
       for (let i = 0; i < node.childCount; i++) {
@@ -1364,6 +1376,25 @@ function recordCallAssignment(
       });
     }
   }
+}
+
+/**
+ * Phase 8.5 (RTA): collect all constructor names from `new X()` expressions
+ * in the file. Captures both assigned (`const x = new Foo()`) and unassigned
+ * (`doSomething(new Foo())`) usages that the typeMap-based approach would miss.
+ */
+function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: string[]): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'new_expression') {
+      const name = extractNewExprTypeName(node);
+      if (name) newExpressions.push(name);
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
 }
 
 /**
@@ -1925,7 +1956,7 @@ function extractCallbackDefinition(
   // Express: app.get('/path', callback)
   if (EXPRESS_METHODS.has(method)) {
     const strArg = findFirstStringArg(args);
-    if (!strArg || !strArg.startsWith('/')) return null;
+    if (!strArg?.startsWith('/')) return null;
     const cb = findAnonymousCallback(args);
     if (!cb) return null;
     return {
@@ -1964,7 +1995,7 @@ function extractSuperclass(heritage: TreeSitterNode): string | null {
   return null;
 }
 
-const JS_CLASS_TYPES = ['class_declaration', 'class'] as const;
+const JS_CLASS_TYPES = ['class_declaration', 'abstract_class_declaration', 'class'] as const;
 function findParentClass(node: TreeSitterNode): string | null {
   return findParentNode(node, JS_CLASS_TYPES);
 }
