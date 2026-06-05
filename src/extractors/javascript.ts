@@ -2225,6 +2225,14 @@ function extractPrototypeObjectLiteral(
       continue;
     }
 
+    if (child.type === 'shorthand_property_identifier') {
+      // ES6 shorthand: `Foo.prototype = { bar }` → alias typeMap['Foo.bar'] = { type: 'bar' }
+      if (!BUILTIN_GLOBALS.has(child.text)) {
+        setTypeMapEntry(typeMap, `${className}.${child.text}`, child.text, 0.9);
+      }
+      continue;
+    }
+
     if (child.type !== 'pair') continue;
 
     const keyNode = child.childForFieldName('key');

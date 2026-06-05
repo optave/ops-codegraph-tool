@@ -803,5 +803,14 @@ describe('JavaScript parser', () => {
       const symbols = parseJS(`Object.prototype.clone = myClone;`);
       expect(symbols.typeMap.has('Object.clone')).toBe(false);
     });
+
+    it('seeds typeMap for shorthand property in prototype object literal', () => {
+      const symbols = parseJS(`
+        function helper() {}
+        function C() {}
+        C.prototype = { helper };
+      `);
+      expect(symbols.typeMap.get('C.helper')).toEqual({ type: 'helper', confidence: 0.9 });
+    });
   });
 });
