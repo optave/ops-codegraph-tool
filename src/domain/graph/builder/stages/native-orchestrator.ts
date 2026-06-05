@@ -501,7 +501,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
   const findMethodStmt = db.prepare(
     `SELECT id, file AS method_file FROM nodes WHERE name = ? AND kind = 'method'`,
   );
-  const newEdges: Array<[number, number, string, number, number]> = [];
+  const newEdges: Array<[number, number, string, number, number, string]> = [];
   const newTargetIds = new Set<number>();
 
   for (const { source_id, method_name, caller_file } of callToMethods) {
@@ -539,7 +539,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
             const conf =
               computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) - 0.1;
             if (conf <= 0) continue;
-            newEdges.push([source_id, methodNode.id, 'calls', conf, 0]);
+            newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newTargetIds.add(methodNode.id);
           }
         }
