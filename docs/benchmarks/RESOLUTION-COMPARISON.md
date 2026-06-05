@@ -236,6 +236,60 @@ tools requires a `javac` compilation step (tracked in #1307).
 
 ---
 
+## Jelly Micro-Test Benchmark
+
+Jelly ships ~190 micro-test programs in `tests/micro/`, each paired with a
+ground-truth call graph JSON. 65 pairs were imported as codegraph fixtures
+(`tests/benchmarks/resolution/fixtures/jelly-micro/`), covering specific JS
+patterns: classes, prototypes, closures, generators, spread, super-calls, etc.
+
+Of the 387 Jelly edges across all 65 tests, **141 are "named"** — both caller
+and callee have a resolvable name (not an anonymous closure or module root).
+Only named edges can be matched against codegraph's `name`-indexed graph.
+
+**Codegraph on Jelly micro-tests:** `precision=87.5%  recall=9.9%  TP=14  FP=2  FN=113`
+
+| Test | Jelly edges | Named | Codegraph recall |
+|------|:-----------:|:-----:|:----------------:|
+| arguments | 8 | 1 | **100%** |
+| super3 | 4 | 3 | **100%** |
+| receiver-callee-mixup | 4 | 2 | **50%** |
+| fun | 22 | 14 | 29% |
+| classes | 35 | 32 | 9% |
+| super | 13 | 13 | 15% |
+| more1 | 20 | 17 | 0% |
+| generators | 25 | 10 | 0% |
+| defineProperty | 6 | 6 | 0% |
+| super2 | 5 | 5 | 0% |
+| classes2 | 33 | 18 | 0% |
+| spread | 10 | 4 | 0% |
+| *all others* | — | — | 0% |
+
+**What this tells us:**
+
+The 87.5% precision shows codegraph rarely makes wrong edges — it's conservative.
+The 9.9% recall tells us that across Jelly's full JS pattern inventory, codegraph
+captures only the simplest static call patterns. Key gaps:
+
+- **Classes / inheritance** — most class method calls not resolved (CHA not wired for JS)
+- **`fun`/closures** — only 4/14 named edges; Jelly exercises bind/apply/call patterns
+- **Generators, spread, defineProperty** — 0%: these patterns are not yet tracked
+- **`super` calls** — 15%: `super.method()` resolution partially working
+
+The micro-test suite (imported via `scripts/import-jelly-micro.mjs`) is the
+diagnostic corpus for tracking JS recall improvements over time.
+
+```bash
+# Run the micro-test benchmark
+npx vitest run tests/benchmarks/resolution/jelly-micro.test.ts
+
+# Re-import if Jelly's tests change
+node scripts/import-jelly-micro.mjs --src /tmp/jelly-micro-raw
+# (pre-download from: github.com/cs-au-dk/jelly/tree/master/tests/micro)
+```
+
+---
+
 ## Reproducing Results
 
 ```bash
