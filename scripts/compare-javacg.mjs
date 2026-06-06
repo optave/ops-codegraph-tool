@@ -79,9 +79,11 @@ function buildClassFileMap(fixtureDir) {
   const javaFiles = fs.readdirSync(fixtureDir).filter((f) => f.endsWith('.java'));
   for (const filename of javaFiles) {
     const src = fs.readFileSync(path.join(fixtureDir, filename), 'utf8');
-    // Match any combination of access/modifier keywords before the type keyword
+    // Match any combination of access/modifier keywords before the type keyword.
+    // Anchored to line start (^…/m) so Javadoc comments containing the word
+    // "class" before the actual declaration don't produce a false match.
     const m = src.match(
-      /(?:(?:public|protected|private|abstract|final|sealed|non-sealed|strictfp)\s+)*(?:class|interface|enum|record)\s+(\w+)/,
+      /^(?:(?:public|protected|private|abstract|final|sealed|non-sealed|strictfp)\s+)*(?:class|interface|enum|record)\s+(\w+)/m,
     );
     if (m) {
       map.set(m[1], filename);
