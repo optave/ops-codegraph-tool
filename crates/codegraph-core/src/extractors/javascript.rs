@@ -2455,6 +2455,20 @@ mod tests {
     }
 
     #[test]
+    fn prototype_arrow_function_method_emits_definition() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.foo = () => { return 1; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.foo");
+        assert!(def.is_some(), "C.foo definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        let def = def.unwrap();
+        assert_eq!(def.kind, "method");
+        assert!(def.complexity.is_some(), "C.foo (arrow) should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.foo (arrow) should have a CFG");
+    }
+
+    #[test]
     fn prototype_identifier_alias_seeds_type_map() {
         let s = parse_js(
             "let f = () => {};\n\
@@ -2483,6 +2497,10 @@ mod tests {
         assert!(foo.complexity.is_some(), "C.foo should have complexity metrics");
         assert!(foo.cfg.is_some(), "C.foo should have a CFG");
         assert!(bar.is_some(), "C.bar missing");
+        let bar = bar.unwrap();
+        assert_eq!(bar.kind, "method");
+        assert!(bar.complexity.is_some(), "C.bar should have complexity metrics");
+        assert!(bar.cfg.is_some(), "C.bar should have a CFG");
     }
 
     #[test]
