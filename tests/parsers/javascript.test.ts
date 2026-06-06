@@ -36,6 +36,51 @@ describe('JavaScript parser', () => {
     );
   });
 
+  it('extracts generator function declarations', () => {
+    const symbols = parseJS(`function* gen() { yield 1; }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'gen', kind: 'function' }),
+    );
+  });
+
+  it('extracts variable-declared generator functions', () => {
+    const symbols = parseJS(`const gen = function*() { yield 1; };`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'gen', kind: 'function' }),
+    );
+  });
+
+  it('attributes calls inside generator body to the generator', () => {
+    // Use multi-line generators so line ranges are non-overlapping and the
+    // attribution can be verified by line number containment.
+    const symbols = parseJS(
+      'function* gen9() {\n  yield* gen8();\n}\nfunction* gen8() { yield 1; }',
+    );
+    const gen9Def = symbols.definitions.find((d) => d.name === 'gen9');
+    const gen8Def = symbols.definitions.find((d) => d.name === 'gen8');
+    expect(gen9Def).toBeDefined();
+    expect(gen8Def).toBeDefined();
+
+    // The call to gen8 must exist.
+    const gen8Call = symbols.calls.find((c) => c.name === 'gen8');
+    expect(gen8Call).toBeDefined();
+
+    // The call's line must fall within gen9's range — proving it is attributed
+    // to gen9's body, not to file level or to gen8 itself.
+    expect(gen8Call!.line).toBeGreaterThanOrEqual(gen9Def!.line);
+    expect(gen8Call!.line).toBeLessThanOrEqual(gen9Def!.endLine!);
+
+    // Negative: the call must NOT fall within gen8's own range (not self-attributed).
+    const callIsInsideGen8 =
+      gen8Call!.line >= gen8Def!.line && gen8Call!.line <= (gen8Def!.endLine ?? gen8Def!.line);
+    expect(callIsInsideGen8).toBe(false);
+  });
+
+  it('captures calls inside yield* expressions', () => {
+    const symbols = parseJS(`function* delegator() { yield* inner(); }`);
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'inner' }));
+  });
+
   it('extracts class declarations', () => {
     const symbols = parseJS(`class Foo { bar() {} }`);
     expect(symbols.definitions).toContainEqual(

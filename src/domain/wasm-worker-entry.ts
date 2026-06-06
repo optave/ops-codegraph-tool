@@ -109,8 +109,10 @@ function grammarPath(name: string): string {
 
 const COMMON_QUERY_PATTERNS: string[] = [
   '(function_declaration name: (identifier) @fn_name) @fn_node',
+  '(generator_function_declaration name: (identifier) @fn_name) @fn_node',
   '(variable_declarator name: (identifier) @varfn_name value: (arrow_function) @varfn_value)',
   '(variable_declarator name: (identifier) @varfn_name value: (function_expression) @varfn_value)',
+  '(variable_declarator name: (identifier) @varfn_name value: (generator_function) @varfn_value)',
   '(method_definition name: (property_identifier) @meth_name) @meth_node',
   '(method_definition name: (private_property_identifier) @meth_name) @meth_node',
   '(import_statement source: (string) @imp_source) @imp_node',
