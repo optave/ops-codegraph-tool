@@ -580,10 +580,11 @@ async function runPostNativeThisDispatch(
   rootDir: string,
   changedFiles: string[] | undefined,
   isFullBuild: boolean,
-): Promise<void> {
+): Promise<number> {
+  const t0 = Date.now();
   // Fast guard: need at least one extends edge for this/super to have meaning
   const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
-  if (!hasExtends) return;
+  if (!hasExtends) return 0;
 
   // Build parents map: child class → direct parent class (from `extends` edges)
   const parentRows = db
@@ -600,7 +601,7 @@ async function runPostNativeThisDispatch(
   for (const row of parentRows) {
     if (!parents.has(row.child_name)) parents.set(row.child_name, row.parent_name);
   }
-  if (parents.size === 0) return;
+  if (parents.size === 0) return 0;
 
   const chaCtx: ChaContext = {
     implementors: new Map(), // not needed for this/super resolution
@@ -641,9 +642,13 @@ async function runPostNativeThisDispatch(
       .map((r) => r.file)
       .filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
   } else {
+    // NOTE: Only files explicitly listed in changedFiles are re-parsed.
+    // If a parent-class method is replaced (new node ID) but the child file is
+    // unchanged, the stale super.method() edge is not refreshed here. A full
+    // rebuild (isFullBuild=true) is required to recover in that scenario.
     relFiles = changedFiles.filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
   }
-  if (relFiles.length === 0) return;
+  if (relFiles.length === 0) return 0;
 
   // DB-backed CallNodeLookup — resolveThisDispatch only calls byName()
   const findByNameStmt = db.prepare(`SELECT id, file, kind FROM nodes WHERE name = ?`);
@@ -741,6 +746,8 @@ async function runPostNativeThisDispatch(
     (symbols as { _tree?: unknown; _langId?: unknown })._tree = undefined;
     (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
+
+  return Date.now() - t0;
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -748,6 +755,7 @@ function formatNativeTimingResult(
   p: Record<string, number>,
   structurePatchMs: number,
   analysisTiming: { astMs: number; complexityMs: number; cfgMs: number; dataflowMs: number },
+  thisDispatchMs: number,
 ): BuildResult {
   return {
     phases: {
@@ -760,6 +768,7 @@ function formatNativeTimingResult(
       edgesMs: +(p.edgesMs ?? 0).toFixed(1),
       structureMs: +((p.structureMs ?? 0) + structurePatchMs).toFixed(1),
       rolesMs: +(p.rolesMs ?? 0).toFixed(1),
+      thisDispatchMs: +thisDispatchMs.toFixed(1),
       astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
       complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
       cfgMs: +(analysisTiming.cfgMs ?? 0).toFixed(1),
@@ -1299,7 +1308,7 @@ export async function tryNativeOrchestrator(
       ctx.nativeFirstProxy = false;
     } else if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
       // DB reopen failed — return partial result
-      return formatNativeTimingResult(p, 0, analysisTiming);
+      return formatNativeTimingResult(p, 0, analysisTiming, 0);
     }
   }
 
@@ -1382,7 +1391,7 @@ export async function tryNativeOrchestrator(
 
   // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
   // whose raw receiver info the Rust pipeline does not persist to DB.
-  await runPostNativeThisDispatch(
+  const thisDispatchMs = await runPostNativeThisDispatch(
     ctx.db as unknown as BetterSqlite3Database,
     ctx.rootDir,
     result.changedFiles,
@@ -1417,5 +1426,5 @@ export async function tryNativeOrchestrator(
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-  return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
+  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, thisDispatchMs);
 }
