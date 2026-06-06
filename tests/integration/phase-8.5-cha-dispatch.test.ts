@@ -155,11 +155,14 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
   // The native path relies on the Rust extractor emitting `implements`/`extends`
   // edges for `abstract class X implements Y`.  The pre-compiled native binary
   // (v3.11.2) does not yet include the `abstract_class_declaration` fix, so
-  // transitive CHA tests are WASM-only until the native binary is updated.
+  // transitive CHA requires a binary update. Also blocked by the same raw
+  // call-site gap (issue #1326).
 
-  it.skipIf(engine === 'native')(
-    'CHA transitive: emits runJob → PrintJob.run (3-level hierarchy)',
-    () => {
+  if (engine === 'native') {
+    it.todo('CHA transitive: emits runJob → PrintJob.run (3-level hierarchy) (native gap #1326)');
+    it.todo('CHA transitive: emits runJob → ScanJob.run (3-level hierarchy) (native gap #1326)');
+  } else {
+    it('CHA transitive: emits runJob → PrintJob.run (3-level hierarchy)', () => {
       const edge = callEdges.find(
         (e) =>
           e.caller_name === 'runJob' &&
@@ -170,12 +173,9 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
         edge,
         `Expected runJob → PrintJob.run edge (transitive CHA through AbstractJob).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
       ).toBeDefined();
-    },
-  );
+    });
 
-  it.skipIf(engine === 'native')(
-    'CHA transitive: emits runJob → ScanJob.run (3-level hierarchy)',
-    () => {
+    it('CHA transitive: emits runJob → ScanJob.run (3-level hierarchy)', () => {
       const edge = callEdges.find(
         (e) =>
           e.caller_name === 'runJob' &&
@@ -186,8 +186,8 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
         edge,
         `Expected runJob → ScanJob.run edge (transitive CHA through AbstractJob).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
       ).toBeDefined();
-    },
-  );
+    });
+  }
 
   it('CHA transitive: does NOT emit runJob → AbstractJob.run (abstract, never instantiated)', () => {
     const edge = callEdges.find(
