@@ -407,13 +407,36 @@ fn resolve_call_targets<'a>(
         };
         let type_lookup = type_map.get(effective_receiver)
             .or_else(|| type_map.get(receiver.as_str()));
-        if let Some(&(type_name, _conf)) = type_lookup {
+        // Inline new-expression receiver: `(new Foo).bar()` — extract the constructor name
+        // when no typeMap entry exists for the complex receiver expression.
+        // Mirrors the regex `/^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/` in call-resolver.ts.
+        let inline_new_type = if type_lookup.is_none() {
+            extract_inline_new_type(receiver)
+        } else {
+            None
+        };
+        // Use typeMap-resolved type or inline-new-extracted type, whichever is available.
+        let resolved_type = type_lookup.map(|&(t, _)| t).or(inline_new_type.as_deref());
+        if let Some(type_name) = resolved_type {
             let qualified = format!("{}.{}", type_name, call.name);
             let typed: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
                 .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
                 .unwrap_or_default();
             if !typed.is_empty() { return typed; }
+            // Prototype alias: `Foo.prototype.bar = identifier` seeds typeMap['Foo.bar'] = identifier.
+            // After the direct method lookup misses (no definition emitted for this method),
+            // check if the typeMap holds an alias to a standalone function.
+            // Mirrors the protoAlias fallback in resolveByMethodOrGlobal in call-resolver.ts.
+            if let Some(&(proto_target, _)) = type_map.get(qualified.as_str()) {
+                let resolved: Vec<&NodeInfo> = ctx.nodes_by_name
+                    .get(proto_target)
+                    .map(|v| v.iter()
+                        .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                        .copied().collect())
+                    .unwrap_or_default();
+                if !resolved.is_empty() { return resolved; }
+            }
         }
         // 4.5. Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop']
         let composite_key = format!("{}.{}", receiver, call.name);
@@ -475,6 +498,31 @@ fn resolve_call_targets<'a>(
     }
 
     Vec::new()
+}
+
+/// Extract the constructor name from an inline `new` receiver expression.
+///
+/// Mirrors the regex `/^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/` used in call-resolver.ts.
+/// Handles `(new Foo)` and `(new Foo('arg'))` receivers that arise when the call site
+/// is `(new Foo).method()` without a named variable binding.
+///
+/// Only extracts PascalCase (uppercase-initial) names to avoid false positives on
+/// lowercase constructor calls (rare but present in legacy code).
+fn extract_inline_new_type(receiver: &str) -> Option<String> {
+    let s = receiver.trim_start_matches('(').trim_start();
+    let s = s.strip_prefix("new")?;
+    if !s.starts_with(|c: char| c.is_whitespace()) { return None; }
+    let s = s.trim_start();
+    let end = s.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+        .unwrap_or(s.len());
+    let name = &s[..end];
+    if name.is_empty() { return None; }
+    let first = name.chars().next()?;
+    if first.is_uppercase() || first == '_' || first == '$' {
+        Some(name.to_string())
+    } else {
+        None
+    }
 }
 
 /// Sort targets by confidence descending.
