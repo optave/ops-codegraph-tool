@@ -1871,12 +1871,30 @@ function extractSpreadForOfWalk(
   fnRefBindings: FnRefBinding[],
 ): void {
   const funcStack: string[] = [];
+  // Tracks the enclosing class name so that method_definition nodes push a
+  // qualified name (e.g. 'Foo.bar') matching what findCaller returns from the
+  // definitions array (where class methods are stored as 'Foo.bar').
+  const classStack: string[] = [];
 
   function walk(node: TreeSitterNode, depth: number): void {
     if (depth >= MAX_WALK_DEPTH) return;
 
     let pushedFunc = false;
-    if (node.type === 'function_declaration' || node.type === 'generator_function_declaration') {
+    let pushedClass = false;
+    if (
+      node.type === 'class_declaration' ||
+      node.type === 'abstract_class_declaration' ||
+      node.type === 'class'
+    ) {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode?.type === 'identifier') {
+        classStack.push(nameNode.text);
+        pushedClass = true;
+      }
+    } else if (
+      node.type === 'function_declaration' ||
+      node.type === 'generator_function_declaration'
+    ) {
       const nameNode = node.childForFieldName('name');
       if (nameNode?.type === 'identifier') {
         funcStack.push(nameNode.text);
@@ -1885,7 +1903,11 @@ function extractSpreadForOfWalk(
     } else if (node.type === 'method_definition') {
       const nameNode = node.childForFieldName('name');
       if (nameNode) {
-        funcStack.push(nameNode.text);
+        // Qualify with the enclosing class name so the PTS key matches
+        // callerName from findCaller (which uses def.name = 'ClassName.method').
+        const enclosingClass = classStack.length > 0 ? classStack[classStack.length - 1] : null;
+        const qualifiedName = enclosingClass ? `${enclosingClass}.${nameNode.text}` : nameNode.text;
+        funcStack.push(qualifiedName);
         pushedFunc = true;
       }
     } else if (node.type === 'variable_declarator') {
@@ -2027,6 +2049,7 @@ function extractSpreadForOfWalk(
     }
 
     if (pushedFunc) funcStack.pop();
+    if (pushedClass) classStack.pop();
   }
 
   walk(rootNode, 0);
