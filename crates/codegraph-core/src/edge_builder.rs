@@ -426,6 +426,19 @@ fn resolve_call_targets<'a>(
                 .unwrap_or_default();
             if !resolved.is_empty() { return resolved; }
         }
+
+        // 4.6. Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
+        // when the receiver is a class name with no typeMap entry. Handles static method calls
+        // like `Validators.IsValidEmail()` where the receiver IS the class.
+        // Matches both "method" and "function" kinds to cover field-initializer synthetic defs.
+        if type_lookup.is_none() {
+            let qualified = format!("{}.{}", effective_receiver, call.name);
+            let direct: Vec<&NodeInfo> = ctx.nodes_by_name
+                .get(qualified.as_str())
+                .map(|v| v.iter().filter(|n| n.kind == "method" || n.kind == "function").copied().collect())
+                .unwrap_or_default();
+            if !direct.is_empty() { return direct; }
+        }
     }
 
     // 5. Scoped fallback (this/self/super or no receiver)
