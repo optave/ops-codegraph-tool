@@ -500,8 +500,8 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
       // Phase 8.3f: extract function/arrow properties from object literals.
       // Scope guard: extractConstDeclarators is only called from extractConstantsWalk, which
       // already skips const declarations inside function scopes (line ~412). So these definitions
-      // are always top-level. Do not call extractObjectLiteralFunctions from any other context
-      // without adding a hasFunctionScopeAncestor guard first.
+      // are always top-level. Any new call site must add a hasFunctionScopeAncestor guard
+      // (the walk path at handleVariableDecl does this).
       if (valueN.type === 'object') {
         extractObjectLiteralFunctions(valueN, nameN.text, definitions);
       }
@@ -835,7 +835,12 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             endLine: nodeEndLine(valueN),
             children: varFnChildren.length > 0 ? varFnChildren : undefined,
           });
-        } else if (isConst && nameN.type === 'identifier' && isConstantValue(valueN)) {
+        } else if (
+          isConst &&
+          nameN.type === 'identifier' &&
+          isConstantValue(valueN) &&
+          !hasFunctionScopeAncestor(node)
+        ) {
           ctx.definitions.push({
             name: nameN.text,
             kind: 'constant',
@@ -844,6 +849,11 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
           });
           // Phase 8.3f: extract function/arrow properties from object literals so that
           // this.method() calls inside Object.defineProperty accessors can resolve them.
+          // Scope guard: hasFunctionScopeAncestor mirrors the Rust path's find_parent_of_types
+          // check and the sibling destructured-binding branch below — skips object literals
+          // inside function bodies to avoid polluting the global definition index with
+          // local variable properties (e.g. `localObj.fn` from `const localObj = { fn: ... }`
+          // inside a function).
           if (valueN.type === 'object') {
             extractObjectLiteralFunctions(valueN, nameN.text, ctx.definitions);
           }

@@ -5,10 +5,10 @@
   "edges": [
     {
       "source": { "name": "getter", "file": "accessors3.js" },
-      "target": { "name": "baz", "file": "accessors3.js" },
+      "target": { "name": "obj.baz", "file": "accessors3.js" },
       "kind": "calls",
       "mode": "defineProperty-accessor",
-      "notes": "this.baz() inside getter — this === obj (get accessor via Object.defineProperty); baz is the arrow function on obj"
+      "notes": "this.baz() inside getter — this === obj (get accessor via Object.defineProperty); obj.baz is the qualified node name for the arrow function property of obj"
     }
   ]
 }
