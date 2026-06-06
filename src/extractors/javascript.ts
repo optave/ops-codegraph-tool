@@ -8,6 +8,7 @@ import type {
   ExtractorOutput,
   FnRefBinding,
   Import,
+  ObjectRestParamBinding,
   ParamBinding,
   SubDeclaration,
   TreeSitterNode,
@@ -352,6 +353,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, paramBindings);
 
+  // Phase 8.3f: Extract object-destructuring rest-parameter bindings from function definitions
+  const objectRestParamBindings: ObjectRestParamBinding[] = [];
+  extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindings);
+
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
@@ -370,6 +375,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     callAssignments,
     fnRefBindings,
     paramBindings,
+    objectRestParamBindings: objectRestParamBindings.length ? objectRestParamBindings : undefined,
     newExpressions,
   };
 }
@@ -625,6 +631,10 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
+  // Phase 8.3f: Extract object-destructuring rest-parameter bindings from function definitions
+  const objectRestParamBindingsWalk: ObjectRestParamBinding[] = [];
+  extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindingsWalk);
+  if (objectRestParamBindingsWalk.length) ctx.objectRestParamBindings = objectRestParamBindingsWalk;
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -1582,6 +1592,14 @@ function handleVarDeclaratorTypeMap(
       }
     }
   }
+
+  // Phase 8.3f: seed composite pts keys for object literals — `var obj = { e4, handler }`
+  // seeds `obj.e4 → e4`, `obj.handler → handler`. Only shorthand properties and
+  // identifier-valued pairs are tracked; literal-valued properties (e.g. `{ x: 42 }`) are skipped.
+  // This enables `eerest.e4()` resolution when `eerest` is a rest binding for an argument `obj`.
+  if (valueN?.type === 'object') {
+    seedProtoProperties(nameN.text, valueN, typeMap);
+  }
 }
 
 /** Extract type info from a required_parameter or optional_parameter. */
@@ -1758,6 +1776,76 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
         }
       }
     }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
+ * Phase 8.3f: record object-destructuring rest-parameter bindings from function definitions.
+ *
+ * For each `function f({ a, ...rest })` (or arrow/function-expression equivalent),
+ * records { callee: 'f', argIndex: N, restName: 'rest' }. The edge builder uses these
+ * to seed typeMap[rest] = { type: argName } when f(obj) is called with an identifier,
+ * enabling `rest.method()` calls to resolve via the seeded object's composite keys.
+ */
+function extractObjectRestParamBindingsWalk(
+  rootNode: TreeSitterNode,
+  bindings: ObjectRestParamBinding[],
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    const t = node.type;
+    let fnName: string | null = null;
+    let paramsNode: TreeSitterNode | null = null;
+
+    if (t === 'function_declaration' || t === 'generator_function_declaration') {
+      const nameN = node.childForFieldName('name');
+      if (nameN?.type === 'identifier') fnName = nameN.text;
+      paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
+    } else if (t === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN) {
+        const vt = valueN.type;
+        if (
+          vt === 'arrow_function' ||
+          vt === 'function_expression' ||
+          vt === 'generator_function'
+        ) {
+          fnName = nameN.text;
+          paramsNode =
+            valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
+        }
+      }
+    }
+
+    if (fnName && paramsNode) {
+      let paramIdx = 0;
+      for (let i = 0; i < paramsNode.childCount; i++) {
+        const child = paramsNode.child(i);
+        if (!child) continue;
+        const ct = child.type;
+        if (ct === ',' || ct === '(' || ct === ')') continue;
+        if (ct === 'object_pattern') {
+          for (let j = 0; j < child.childCount; j++) {
+            const inner = child.child(j);
+            if (!inner) continue;
+            if (inner.type === 'rest_pattern' || inner.type === 'rest_element') {
+              // rest_pattern node: `...identifier` — the identifier is at child index 1
+              const restId = inner.child(1) ?? inner.childForFieldName('name');
+              if (restId?.type === 'identifier') {
+                bindings.push({ callee: fnName, argIndex: paramIdx, restName: restId.text });
+              }
+            }
+          }
+        }
+        paramIdx++;
+      }
+    }
+
     for (let i = 0; i < node.childCount; i++) {
       walk(node.child(i)!, depth + 1);
     }

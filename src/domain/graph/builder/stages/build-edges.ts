@@ -836,6 +836,23 @@ function buildCallEdgesJS(
 
     const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
     const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+
+    // Phase 8.3f: seed typeMap[restName] = { type: argName } for each object-destructuring
+    // rest parameter binding cross-referenced with call-site argument bindings.
+    // e.g. function f({ a, ...rest }) called as f(obj) → typeMap['rest'] = { type: 'obj' }
+    // so that `rest.method()` resolves via typeMap['obj.method'].
+    if (symbols.objectRestParamBindings?.length && symbols.paramBindings?.length) {
+      for (const orpb of symbols.objectRestParamBindings) {
+        for (const pb of symbols.paramBindings) {
+          if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
+            if (!typeMap.has(orpb.restName)) {
+              typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+            }
+          }
+        }
+      }
+    }
+
     const seenCallEdges = new Set<string>();
     const ptsMap = buildPointsToMapForFile(symbols, importedNames);
 
