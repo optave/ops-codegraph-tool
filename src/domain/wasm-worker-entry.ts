@@ -819,6 +819,11 @@ function serializeExtractorOutput(
       ? { objectPropBindings: symbols.objectPropBindings }
       : {}),
     ...(symbols.newExpressions?.length ? { newExpressions: symbols.newExpressions } : {}),
+    ...(symbols.returnTypeMap?.size
+      ? { returnTypeMap: Array.from(symbols.returnTypeMap.entries()) }
+      : {}),
+    ...(symbols.callAssignments?.length ? { callAssignments: symbols.callAssignments } : {}),
+    ...(symbols.paramBindings?.length ? { paramBindings: symbols.paramBindings } : {}),
   };
 }
 
