@@ -1658,7 +1658,7 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 - Two-pass CHA: first collect all `class C < B` and `module M; include X` declarations to build a hierarchy; then for each `obj.method` call site, resolve to all classes in the receiver's concrete type set using the hierarchy rather than global name matching. Replicates Sorbet's two-pass strategy, achievable from tree-sitter output.
 - TypeProf-style reachability: start from declared entry points and speculatively enumerate all concrete receiver types reachable at each call site via a worklist. This converts name-based dispatch into a reachability-constrained type set.
 
-**Benchmark suites:** PyCG micro-benchmark methodology (directly portable to Ruby); CLBG (Computer Language Benchmarks Game) Ruby programs used in JVM-hosted language study (Ali et al., IEEE TSE).
+**Benchmark suites:** PyCG micro-benchmark methodology (directly portable to Ruby); CLBG (Computer Language Benchmarks Game) Ruby programs (methodology reference — the Ali et al. IEEE TSE study applied these to JVM-hosted languages, not MRI Ruby; no dedicated Ruby CG precision/recall evaluation exists as of the time of writing).
 
 ---
 
@@ -1678,7 +1678,7 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 - Adopt Psalm-style flow-sensitive receiver narrowing: at `$v->method()`, use the narrowed type of `$v` from preceding `instanceof` guards or assignment context rather than the full class hierarchy.
 - Phan's two-phase design: build a global class/method index from all parsed files before resolving any call site. Replicates what codegraph's build pipeline already does for JS/TS but is not yet applied to PHP.
 
-**Benchmark suites:** TChecker evaluation corpus (CCS 2022); Artemis corpus (250 PHP web apps, OOPSLA 2025); SWC Registry PHP test cases.
+**Benchmark suites:** TChecker evaluation corpus (CCS 2022); Artemis corpus (250 PHP web apps, OOPSLA 2025).
 
 ---
 
@@ -1781,7 +1781,7 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 
 | Tool | Approach | Precision / Recall | URL |
 |------|----------|--------------------|-----|
-| Dart VM Type Flow Analysis (TFA) — dart-lang/sdk pkg/vm | Two-phase: RTA seeds allocated classes; then iterative type-flow propagation to fixed point; sound devirtualization under closed-world assumption | AOT compilation speedup −49.5% in a large Flutter app; devirtualizes only when a unique target is provable (no published academic P/R paper) | https://github.com/dart-lang/sdk/tree/master/pkg/vm/lib/transformations/type_flow |
+| Dart VM Type Flow Analysis (TFA) — dart-lang/sdk pkg/vm | Two-phase: RTA seeds allocated classes; then iterative type-flow propagation to fixed point; sound devirtualization under closed-world assumption | 49.5% reduction in AOT compilation time in a large Flutter app; devirtualizes only when a unique target is provable (no published academic P/R paper) | https://github.com/dart-lang/sdk/tree/master/pkg/vm/lib/transformations/type_flow |
 | Heinze, Møller, Strocco (Aarhus, DLS 2016) | Flow analysis using optional Dart type annotations as filters | 99.3% of all property lookup operations type-safe across benchmark Dart programs (DLS 2016) | https://cs.au.dk/~amoeller/papers/safedart/ |
 
 **Codegraph gap:** No RTA pre-pass; Dart 2+ sound type annotations are unused for dispatch filtering; all Dart virtual calls treated as fully dynamic; closure argument types untracked.
