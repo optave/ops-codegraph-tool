@@ -434,6 +434,27 @@ fn resolve_call_targets<'a>(
         || call.receiver.as_deref() == Some("self")
         || call.receiver.as_deref() == Some("super")
     {
+        // Phase 8.3f: accessor this-dispatch via Object.defineProperty.
+        // When a plain function (no class prefix in caller_name) is registered as a get/set
+        // accessor for `obj`, typeMap seeds 'callerName:this' = 'obj'. Resolve this.method()
+        // via typeMap['obj.method'] → the concrete definition. Runs before the broad exact-name
+        // lookup to avoid false positives from unrelated same-file definitions.
+        if call.receiver.as_deref() == Some("this") && !caller_name.contains('.') {
+            let accessor_key = format!("{}:this", caller_name);
+            if let Some(&(obj_name, _)) = type_map.get(accessor_key.as_str()) {
+                let obj_method_key = format!("{}.{}", obj_name, call.name);
+                if let Some(&(target_fn, _)) = type_map.get(obj_method_key.as_str()) {
+                    let accessor_resolved: Vec<&NodeInfo> = ctx.nodes_by_name
+                        .get(target_fn)
+                        .map(|v| v.iter()
+                            .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                            .copied().collect())
+                        .unwrap_or_default();
+                    if !accessor_resolved.is_empty() { return accessor_resolved; }
+                }
+            }
+        }
+
         // First try exact name match (e.g. an unqualified function named "area").
         let exact: Vec<&NodeInfo> = ctx.nodes_by_name
             .get(call.name.as_str())

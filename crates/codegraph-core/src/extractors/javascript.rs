@@ -229,17 +229,27 @@ fn seed_define_property_entries(node: &Node, source: &[u8], symbols: &mut FileSy
     }
 
     if method == "defineProperty" {
-        // Object.defineProperty(obj, "key", { value: fn })
+        // Object.defineProperty(obj, "key", { value: fn }) or { get: getter }
         if args.len() < 3 { return; }
         if args[0].kind() != "identifier" { return; }
         let obj_name = node_text(&args[0], source);
         let Some(key) = extract_string_fragment(&args[1], source) else { return };
-        let Some(target) = find_descriptor_value(&args[2], source) else { return };
-        symbols.type_map.push(TypeMapEntry {
-            name: format!("{}.{}", obj_name, key),
-            type_name: target.to_string(),
-            confidence: 0.85,
-        });
+        // Phase 8.3e: { value: fn } → obj.key pts to fn
+        if let Some(target) = find_descriptor_value(&args[2], source) {
+            symbols.type_map.push(TypeMapEntry {
+                name: format!("{}.{}", obj_name, key),
+                type_name: target.to_string(),
+                confidence: 0.85,
+            });
+        }
+        // Phase 8.3f: { get: getter } or { set: setter } → this inside getter/setter === obj
+        if let Some(accessor) = find_descriptor_accessor(&args[2], source) {
+            symbols.type_map.push(TypeMapEntry {
+                name: format!("{}:this", accessor),
+                type_name: obj_name.to_string(),
+                confidence: 0.85,
+            });
+        }
     } else {
         // Object.defineProperties(obj, { "key": { value: fn }, ... })
         if args.len() < 2 { return; }
@@ -345,6 +355,104 @@ fn find_descriptor_value<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a st
         }
     }
     None
+}
+
+/// Phase 8.3f: return the identifier text of a `get` or `set` accessor in a property descriptor.
+/// `{ get: getter }` → Some("getter"); `{ set: setter }` → Some("setter").
+fn find_descriptor_accessor<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    if node.kind() != "object" { return None; }
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() != "pair" { continue; }
+        let Some(key) = child.child_by_field_name("key") else { continue };
+        let key_text = node_text(&key, source);
+        if key_text != "get" && key_text != "set" { continue; }
+        let Some(val) = child.child_by_field_name("value") else { continue };
+        if val.kind() == "identifier" {
+            return Some(node_text(&val, source));
+        }
+    }
+    None
+}
+
+/// Phase 8.3f: extract function/arrow properties from an object literal as standalone definitions
+/// and seed composite typeMap keys so that `this.method()` inside Object.defineProperty accessors
+/// can resolve them.
+///
+/// `const obj = { baz: () => {} }` → Definition { name: "baz", kind: "function" }
+///                                  + TypeMapEntry { name: "obj.baz", type_name: "baz" }
+/// `const obj = { baz }` (shorthand) → TypeMapEntry { name: "obj.baz", type_name: "baz" }
+fn extract_object_literal_functions(
+    obj_node: &Node,
+    source: &[u8],
+    var_name: &str,
+    symbols: &mut FileSymbols,
+) {
+    for i in 0..obj_node.child_count() {
+        let Some(child) = obj_node.child(i) else { continue };
+        match child.kind() {
+            "shorthand_property_identifier" => {
+                let prop_name = node_text(&child, source);
+                symbols.type_map.push(TypeMapEntry {
+                    name: format!("{}.{}", var_name, prop_name),
+                    type_name: prop_name.to_string(),
+                    confidence: 0.85,
+                });
+            }
+            "pair" => {
+                let Some(key_n) = child.child_by_field_name("key") else { continue };
+                let Some(val_n) = child.child_by_field_name("value") else { continue };
+                let key = if key_n.kind() == "string" {
+                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
+                } else {
+                    Some(node_text(&key_n, source).to_string())
+                };
+                let Some(key) = key else { continue };
+                match val_n.kind() {
+                    "arrow_function" | "function_expression" | "function" => {
+                        symbols.definitions.push(Definition {
+                            name: key.clone(),
+                            kind: "function".to_string(),
+                            line: start_line(&child),
+                            end_line: Some(end_line(&val_n)),
+                            decorators: None,
+                            complexity: compute_all_metrics(&val_n, source, "javascript"),
+                            cfg: build_function_cfg(&val_n, "javascript", source),
+                            children: None,
+                        });
+                        symbols.type_map.push(TypeMapEntry {
+                            name: format!("{}.{}", var_name, key),
+                            type_name: key,
+                            confidence: 0.85,
+                        });
+                    }
+                    "identifier" => {
+                        let target = node_text(&val_n, source);
+                        symbols.type_map.push(TypeMapEntry {
+                            name: format!("{}.{}", var_name, key),
+                            type_name: target.to_string(),
+                            confidence: 0.85,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            "method_definition" => {
+                let Some(name_n) = child.child_by_field_name("name") else { continue };
+                symbols.definitions.push(Definition {
+                    name: node_text(&name_n, source).to_string(),
+                    kind: "function".to_string(),
+                    line: start_line(&child),
+                    end_line: Some(end_line(&child)),
+                    decorators: None,
+                    complexity: None,
+                    cfg: None,
+                    children: None,
+                });
+            }
+            _ => {}
+        }
+    }
 }
 
 // ── Return-type map extraction (Phase 8.2 parity) ───────────────────────────
@@ -690,6 +798,13 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 cfg: None,
                 children: None,
             });
+            // Phase 8.3f: extract function/arrow properties from object literals and seed
+            // typeMap composite keys so that this.method() inside Object.defineProperty
+            // accessor functions can resolve them.
+            if value_n.kind() == "object" && name_n.kind() == "identifier" {
+                let var_name = node_text(&name_n, source);
+                extract_object_literal_functions(&value_n, source, var_name, symbols);
+            }
         } else if name_n.kind() == "identifier" && value_n.kind() == "identifier" {
             // Phase 8.3: `const alias = handler` — record for pts analysis.
             // Mirror the JS BUILTIN_GLOBALS guard: skip well-known JS globals so

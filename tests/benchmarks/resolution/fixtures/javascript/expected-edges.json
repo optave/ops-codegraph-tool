@@ -233,6 +233,13 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "new A().t() — A.prototype.t = f alias; inline new receiver resolved to type A, typeMap['A.t'] = f"
+    },
+    {
+      "source": { "name": "accessorGetter", "file": "define-property-accessor.js" },
+      "target": { "name": "accessMethod", "file": "define-property-accessor.js" },
+      "kind": "calls",
+      "mode": "defineProperty-accessor",
+      "notes": "this.accessMethod() inside accessorGetter — this === accessorTarget (get accessor via Object.defineProperty); accessMethod is arrow function property of accessorTarget"
     }
   ]
 }

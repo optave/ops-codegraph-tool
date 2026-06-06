@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Hand-annotated call edges for Object.defineProperty accessor this-dispatch",
+  "edges": [
+    {
+      "source": { "name": "getter", "file": "accessors3.js" },
+      "target": { "name": "baz", "file": "accessors3.js" },
+      "kind": "calls",
+      "mode": "defineProperty-accessor",
+      "notes": "this.baz() inside getter — this === obj (get accessor via Object.defineProperty); baz is the arrow function on obj"
+    }
+  ]
+}

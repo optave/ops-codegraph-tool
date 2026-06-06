@@ -497,6 +497,10 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
         line: nodeStartLine(declNode),
         endLine: nodeEndLine(declNode),
       });
+      // Phase 8.3f: extract function/arrow properties from object literals.
+      if (valueN.type === 'object') {
+        extractObjectLiteralFunctions(valueN, definitions);
+      }
     }
   }
 }
@@ -834,6 +838,11 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             line: nodeStartLine(node),
             endLine: nodeEndLine(node),
           });
+          // Phase 8.3f: extract function/arrow properties from object literals so that
+          // this.method() calls inside Object.defineProperty accessors can resolve them.
+          if (valueN.type === 'object') {
+            extractObjectLiteralFunctions(valueN, ctx.definitions);
+          }
         } else if (isConst && nameN.type === 'object_pattern' && !hasFunctionScopeAncestor(node)) {
           // Destructured bindings: const { handleToken, checkPermissions } = initAuth(...)
           // Each destructured property becomes a function definition so it can be
@@ -849,6 +858,50 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             ctx.definitions,
           );
         }
+      }
+    }
+  }
+}
+
+/**
+ * Phase 8.3f: extract function/arrow function properties from an object literal as standalone
+ * definitions so that `this.method()` calls inside Object.defineProperty accessor functions can
+ * resolve them via the normal same-file definition lookup.
+ *
+ * `const obj = { baz: () => {} }` → emits Definition { name: 'baz', kind: 'function' }
+ */
+function extractObjectLiteralFunctions(objNode: TreeSitterNode, definitions: Definition[]): void {
+  for (let i = 0; i < objNode.childCount; i++) {
+    const child = objNode.child(i);
+    if (!child) continue;
+    if (child.type === 'pair') {
+      const keyNode = child.childForFieldName('key');
+      const valueNode = child.childForFieldName('value');
+      if (!keyNode || !valueNode) continue;
+      const keyName =
+        keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+      if (!keyName) continue;
+      if (
+        valueNode.type === 'arrow_function' ||
+        valueNode.type === 'function_expression' ||
+        valueNode.type === 'function'
+      ) {
+        definitions.push({
+          name: keyName,
+          kind: 'function',
+          line: nodeStartLine(child),
+          endLine: nodeEndLine(valueNode),
+        });
+      }
+    } else if (child.type === 'method_definition') {
+      const nameNode = child.childForFieldName('name');
+      if (nameNode) {
+        definitions.push({
+          name: nameNode.text,
+          kind: 'function',
+          line: nodeStartLine(child),
+          endLine: nodeEndLine(child),
+        });
       }
     }
   }
@@ -1582,6 +1635,37 @@ function handleVarDeclaratorTypeMap(
       }
     }
   }
+
+  // Phase 8.3f: seed composite pts keys for object literal properties.
+  // `const obj = { baz: () => {} }` → typeMap['obj.baz'] = 'baz'
+  // `const obj = { baz }` (shorthand) → typeMap['obj.baz'] = 'baz'
+  // Enables accessor this-dispatch: when typeMap['getter:this'] = 'obj',
+  // resolving this.baz() inside getter → typeMap['obj.baz'] → 'baz'.
+  if (valueN.type === 'object') {
+    for (let i = 0; i < valueN.childCount; i++) {
+      const child = valueN.child(i);
+      if (!child) continue;
+      if (child.type === 'shorthand_property_identifier') {
+        setTypeMapEntry(typeMap, `${nameN.text}.${child.text}`, child.text, 0.85);
+      } else if (child.type === 'pair') {
+        const keyNode = child.childForFieldName('key');
+        const valNode = child.childForFieldName('value');
+        if (!keyNode || !valNode) continue;
+        const keyName =
+          keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+        if (!keyName) continue;
+        if (
+          valNode.type === 'arrow_function' ||
+          valNode.type === 'function_expression' ||
+          valNode.type === 'function'
+        ) {
+          setTypeMapEntry(typeMap, `${nameN.text}.${keyName}`, keyName, 0.85);
+        } else if (valNode.type === 'identifier') {
+          setTypeMapEntry(typeMap, `${nameN.text}.${keyName}`, valNode.text, 0.85);
+        }
+      }
+    }
+  }
 }
 
 /** Extract type info from a required_parameter or optional_parameter. */
@@ -1634,10 +1718,11 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
 }
 
 /**
- * Phase 8.3e: seed composite pts keys from Object.defineProperty / defineProperties.
+ * Phase 8.3e/8.3f: seed composite pts keys from Object.defineProperty / defineProperties.
  *
  * `Object.defineProperty(obj, "key", { value: fn })` → typeMap.set('obj.key', fn, 0.85)
  * `Object.defineProperties(obj, { "k1": { value: v1 } })` → typeMap.set('obj.k1', v1, 0.85)
+ * `Object.defineProperty(obj, "key", { get: getter })` → typeMap.set('getter:this', obj, 0.85)
  */
 function handleDefinePropertyTypeMap(
   node: TreeSitterNode,
@@ -1669,9 +1754,16 @@ function handleDefinePropertyTypeMap(
     if (arg1.type !== 'string') return;
     const key = arg1.text.replace(/^['"]|['"]$/g, '');
     if (!key) return;
+    // Phase 8.3e: { value: fn } → obj.key pts to fn
     const target = findDescriptorValue(arg2);
-    if (!target) return;
-    setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
+    if (target) {
+      setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
+    }
+    // Phase 8.3f: { get: getter } or { set: setter } → this inside getter/setter is arg0 (obj)
+    const accessor = findDescriptorAccessor(arg2);
+    if (accessor) {
+      setTypeMapEntry(typeMap, `${accessor}:this`, arg0.text, 0.85);
+    }
   } else {
     // defineProperties
     if (args.length < 2) return;
@@ -1702,6 +1794,22 @@ function findDescriptorValue(desc: TreeSitterNode): string | undefined {
     const key = pair.childForFieldName('key');
     const val = pair.childForFieldName('value');
     if (key?.text === 'value' && val?.type === 'identifier') return val.text;
+  }
+  return undefined;
+}
+
+/**
+ * Phase 8.3f: return the identifier text of a `get` or `set` accessor in a property descriptor.
+ * `{ get: getter }` → 'getter'; `{ set: setter }` → 'setter'.
+ */
+function findDescriptorAccessor(desc: TreeSitterNode): string | undefined {
+  if (desc.type !== 'object') return undefined;
+  for (let i = 0; i < desc.childCount; i++) {
+    const pair = desc.child(i);
+    if (pair?.type !== 'pair') continue;
+    const key = pair.childForFieldName('key');
+    const val = pair.childForFieldName('value');
+    if ((key?.text === 'get' || key?.text === 'set') && val?.type === 'identifier') return val.text;
   }
   return undefined;
 }
