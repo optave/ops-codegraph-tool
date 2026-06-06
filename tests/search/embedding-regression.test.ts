@@ -10,8 +10,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { flushDeferredClose } from '../../src/db/connection.js';
+import { afterAll, beforeAll, describe, expect, type TestContext, test } from 'vitest';
+import { flushDeferredClose } from '../../src/db/index.js';
 
 // Detect whether transformers is available (optional dep)
 let hasTransformers = false;
@@ -82,24 +82,35 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
   }, 240_000);
 
   afterAll(() => {
-    // Flush any deferred DB close handles before removing the temp dir.
-    // On Windows, SQLite WAL files are held open by the setImmediate-deferred
-    // close path, causing EBUSY when fs.rmSync tries to unlink graph.db.
+    if (!tmpDir) return;
+    // Flush any deferred DB closes before deleting the temp directory.
+    // On Windows, SQLite WAL files can remain locked briefly after db.close(),
+    // causing intermittent EBUSY errors. Retry up to 3 times with a short delay.
     flushDeferredClose();
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    const sharedBuf = new SharedArrayBuffer(4);
+    const sharedArr = new Int32Array(sharedBuf);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        return;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EBUSY' || attempt === 2) throw err;
+        Atomics.wait(sharedArr, 0, 0, 100);
+      }
+    }
   });
 
   describe('smoke tests', () => {
-    test('stored at least 6 embeddings', () => {
-      if (rateLimited) return;
+    test('stored at least 6 embeddings', (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       const db = new Database(dbPath, { readonly: true });
       const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get().c;
       db.close();
       expect(count).toBeGreaterThanOrEqual(6);
     });
 
-    test('metadata records correct model and dimension', () => {
-      if (rateLimited) return;
+    test('metadata records correct model and dimension', (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       const db = new Database(dbPath, { readonly: true });
       const model = db.prepare("SELECT value FROM embedding_meta WHERE key = 'model'").get().value;
       const dim = db.prepare("SELECT value FROM embedding_meta WHERE key = 'dim'").get().value;
@@ -108,8 +119,8 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
       expect(Number(dim)).toBe(384);
     });
 
-    test('search returns results with positive similarity', async () => {
-      if (rateLimited) return;
+    test('search returns results with positive similarity', async (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       const data = await searchData('add numbers', dbPath, { minScore: 0.01 });
       expect(data).not.toBeNull();
       expect(data.results.length).toBeGreaterThan(0);
@@ -131,28 +142,28 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
       expect(names).toContain(expectedName);
     }
 
-    test('"add two numbers together" finds add in top 3', async () => {
-      if (rateLimited) return;
+    test('"add two numbers together" finds add in top 3', async (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       await expectInTopN('add two numbers together', 'add', 3);
     });
 
-    test('"multiply values" finds multiply in top 3', async () => {
-      if (rateLimited) return;
+    test('"multiply values" finds multiply in top 3', async (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       await expectInTopN('multiply values', 'multiply', 3);
     });
 
-    test('"compute the square of a number" finds square in top 3', async () => {
-      if (rateLimited) return;
+    test('"compute the square of a number" finds square in top 3', async (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       await expectInTopN('compute the square of a number', 'square', 3);
     });
 
-    test('"sum of squares calculation" finds sumOfSquares in top 3', async () => {
-      if (rateLimited) return;
+    test('"sum of squares calculation" finds sumOfSquares in top 3', async (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       await expectInTopN('sum of squares calculation', 'sumOfSquares', 3);
     });
 
-    test('"main entry point function" finds main in top 5', async () => {
-      if (rateLimited) return;
+    test('"main entry point function" finds main in top 5', async (ctx: TestContext) => {
+      if (rateLimited) ctx.skip();
       await expectInTopN('main entry point function', 'main', 5);
     });
   });

@@ -345,6 +345,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract typeMap with intra-file return-type propagation
   extractTypeMapWalk(tree.rootNode, typeMap, returnTypeMap, callAssignments, fnRefBindings);
 
+  // Prototype-based method definitions: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
+  extractPrototypeMethodsWalk(tree.rootNode, definitions, typeMap);
+
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, paramBindings);
 
@@ -612,6 +615,8 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     ctx.callAssignments,
     ctx.fnRefBindings,
   );
+  // Prototype-based method definitions: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
+  extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
@@ -2196,4 +2201,153 @@ function extractDynamicImportNames(callNode: TreeSitterNode): string[] {
   }
 
   return [];
+}
+
+// ── Phase 8.X: Prototype-based method extraction ────────────────────────────
+
+/**
+ * Walk the AST and extract prototype-based method definitions and aliases.
+ *
+ * Handles three patterns:
+ *   1. `Foo.prototype.bar = function(){...}` — emits Foo.bar as method definition
+ *   2. `Foo.prototype.bar = identifier`       — sets typeMap['Foo.bar'] = { type: identifier }
+ *   3. `Foo.prototype = { bar: fn, ... }`     — emits defs and typeMap entries per property
+ *
+ * Emitting definitions under the canonical `ClassName.methodName` name lets the
+ * existing typeMap-based call resolver find them when a typed receiver dispatches
+ * `instance.method()` (lookup.byName('C.foo') in resolveByMethodOrGlobal).
+ *
+ * typeMap entries for identifier aliases (`Foo.bar → { type: 'someId' }`) are
+ * consumed by the prototype-alias fallback added to resolveByMethodOrGlobal.
+ */
+function extractPrototypeMethodsWalk(
+  rootNode: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'expression_statement') {
+      const expr = node.child(0);
+      if (expr?.type === 'assignment_expression') {
+        const lhs = expr.childForFieldName('left');
+        const rhs = expr.childForFieldName('right');
+        if (lhs && rhs) handlePrototypeAssignment(lhs, rhs, definitions, typeMap);
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
+ * Handle an assignment_expression that may be a prototype assignment.
+ *
+ * Matches:
+ *   - `Foo.prototype.bar = rhs`  (lhs ends in .prototype.bar)
+ *   - `Foo.prototype = { ... }`  (lhs ends in .prototype, rhs is object literal)
+ */
+function handlePrototypeAssignment(
+  lhs: TreeSitterNode,
+  rhs: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  if (lhs.type !== 'member_expression') return;
+
+  const lhsObj = lhs.childForFieldName('object');
+  const lhsProp = lhs.childForFieldName('property');
+  if (!lhsObj || !lhsProp) return;
+
+  // Pattern 1: `Foo.prototype.bar = rhs`
+  // lhs.object is `Foo.prototype` (member_expression), lhs.property is `bar`
+  if (
+    lhsObj.type === 'member_expression' &&
+    (lhsProp.type === 'property_identifier' || lhsProp.type === 'identifier')
+  ) {
+    const protoObj = lhsObj.childForFieldName('object');
+    const protoProp = lhsObj.childForFieldName('property');
+    if (
+      protoObj?.type === 'identifier' &&
+      protoProp?.text === 'prototype' &&
+      !BUILTIN_GLOBALS.has(protoObj.text)
+    ) {
+      emitPrototypeMethod(protoObj.text, lhsProp.text, rhs, definitions, typeMap);
+    }
+    return;
+  }
+
+  // Pattern 2: `Foo.prototype = { bar: fn, ... }`
+  // lhs.object is `Foo` (identifier), lhs.property is `prototype`
+  if (
+    lhsObj.type === 'identifier' &&
+    lhsProp.text === 'prototype' &&
+    !BUILTIN_GLOBALS.has(lhsObj.text) &&
+    rhs.type === 'object'
+  ) {
+    extractPrototypeObjectLiteral(lhsObj.text, rhs, definitions, typeMap);
+  }
+}
+
+/** Emit one prototype method definition or typeMap alias for `ClassName.methodName = rhs`. */
+function emitPrototypeMethod(
+  className: string,
+  methodName: string,
+  rhs: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  const fullName = `${className}.${methodName}`;
+  if (rhs.type === 'function_expression' || rhs.type === 'arrow_function') {
+    definitions.push({
+      name: fullName,
+      kind: 'method',
+      line: nodeStartLine(rhs),
+      endLine: nodeEndLine(rhs),
+    });
+  } else if (rhs.type === 'identifier' && !BUILTIN_GLOBALS.has(rhs.text)) {
+    // Prototype alias: `A.prototype.t = f` → typeMap['A.t'] = { type: 'f' }
+    // Consumed by the prototype-alias fallback in resolveByMethodOrGlobal.
+    setTypeMapEntry(typeMap, fullName, rhs.text, 0.9);
+  }
+}
+
+/** Iterate over an object literal assigned to `Foo.prototype` and emit defs/aliases. */
+function extractPrototypeObjectLiteral(
+  className: string,
+  objNode: TreeSitterNode,
+  definitions: Definition[],
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  for (let i = 0; i < objNode.childCount; i++) {
+    const child = objNode.child(i);
+    if (!child) continue;
+
+    if (child.type === 'method_definition') {
+      // Shorthand method: `Foo.prototype = { bar() {} }`
+      const nameNode = child.childForFieldName('name');
+      if (nameNode) {
+        definitions.push({
+          name: `${className}.${nameNode.text}`,
+          kind: 'method',
+          line: nodeStartLine(child),
+          endLine: nodeEndLine(child),
+        });
+      }
+      continue;
+    }
+
+    if (child.type !== 'pair') continue;
+
+    const keyNode = child.childForFieldName('key');
+    const valueNode = child.childForFieldName('value');
+    if (!keyNode || !valueNode) continue;
+
+    const methodName = keyNode.type === 'string' ? keyNode.text.replace(/['"]/g, '') : keyNode.text;
+    if (!methodName) continue;
+
+    emitPrototypeMethod(className, methodName, valueNode, definitions, typeMap);
+  }
 }
