@@ -130,6 +130,41 @@
       "notes": "new UserService() — class instantiation tracked as consumption"
     },
     {
+      "source": { "name": "defProp", "file": "define-property.js" },
+      "target": { "name": "f1", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-define-property",
+      "notes": "obj.f() — resolved via Object.defineProperty(obj, \"f\", { value: f1 })"
+    },
+    {
+      "source": { "name": "defProps", "file": "define-property.js" },
+      "target": { "name": "f1", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-define-property",
+      "notes": "obj.f1() — resolved via Object.defineProperties(obj, { \"f1\": { value: f1 } })"
+    },
+    {
+      "source": { "name": "defProps", "file": "define-property.js" },
+      "target": { "name": "f2", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-define-property",
+      "notes": "obj.f2() — resolved via Object.defineProperties(obj, { \"f2\": { value: f2 } })"
+    },
+    {
+      "source": { "name": "create", "file": "define-property.js" },
+      "target": { "name": "f1", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-create-prototype",
+      "notes": "obj.f1() — resolved via Object.create({ f1, f2 })"
+    },
+    {
+      "source": { "name": "create", "file": "define-property.js" },
+      "target": { "name": "f2", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-create-prototype",
+      "notes": "obj.f2() — resolved via Object.create({ f1, f2 })"
+    },
+    {
       "source": { "name": "runBind", "file": "bind-call-apply.js" },
       "target": { "name": "greet", "file": "bind-call-apply.js" },
       "kind": "calls",

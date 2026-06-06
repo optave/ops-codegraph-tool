@@ -1443,6 +1443,8 @@ function extractTypeMapWalk(
       handleParamTypeMap(node, typeMap);
     } else if (t === 'assignment_expression') {
       handlePropWriteTypeMap(node, typeMap);
+    } else if (t === 'call_expression') {
+      handleDefinePropertyTypeMap(node, typeMap);
     }
     for (let i = 0; i < node.childCount; i++) {
       walk(node.child(i)!, depth + 1);
@@ -1528,6 +1530,29 @@ function handleVarDeclaratorTypeMap(
   if (valueN.type === 'new_expression') return;
 
   if (valueN.type === 'call_expression') {
+    // Phase 8.3e: Object.create({ f1, f2 }) — seed composite pts keys obj.f1 → f1, etc.
+    const createFn = valueN.childForFieldName('function');
+    if (createFn?.type === 'member_expression') {
+      const createObj = createFn.childForFieldName('object');
+      const createProp = createFn.childForFieldName('property');
+      if (createObj?.text === 'Object' && createProp?.text === 'create') {
+        const createArgs = valueN.childForFieldName('arguments') || findChild(valueN, 'arguments');
+        if (createArgs) {
+          let proto: TreeSitterNode | null = null;
+          for (let i = 0; i < createArgs.childCount; i++) {
+            const n = createArgs.child(i);
+            if (n && n.type !== '(' && n.type !== ')' && n.type !== ',') {
+              proto = n;
+              break;
+            }
+          }
+          if (proto?.type === 'object') {
+            seedProtoProperties(nameN.text, proto, typeMap);
+          }
+        }
+        return;
+      }
+    }
     // Phase 8.2: inter-procedural propagation — try to resolve return type from
     // the local returnTypeMap before falling back to factory heuristics.
     if (returnTypeMap) {
@@ -1606,6 +1631,100 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
   const objName = obj.text;
   if (BUILTIN_GLOBALS.has(objName)) return;
   setTypeMapEntry(typeMap, `${objName}.${prop.text}`, rhsN.text, 0.85);
+}
+
+/**
+ * Phase 8.3e: seed composite pts keys from Object.defineProperty / defineProperties.
+ *
+ * `Object.defineProperty(obj, "key", { value: fn })` → typeMap.set('obj.key', fn, 0.85)
+ * `Object.defineProperties(obj, { "k1": { value: v1 } })` → typeMap.set('obj.k1', v1, 0.85)
+ */
+function handleDefinePropertyTypeMap(
+  node: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  const fn = node.childForFieldName('function');
+  if (fn?.type !== 'member_expression') return;
+  const fnObj = fn.childForFieldName('object');
+  const fnProp = fn.childForFieldName('property');
+  if (fnObj?.text !== 'Object') return;
+  const method = fnProp?.text;
+  if (method !== 'defineProperty' && method !== 'defineProperties') return;
+
+  const argsNode = node.childForFieldName('arguments') || findChild(node, 'arguments');
+  if (!argsNode) return;
+
+  const args: TreeSitterNode[] = [];
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const n = argsNode.child(i);
+    if (n && n.type !== '(' && n.type !== ')' && n.type !== ',') args.push(n);
+  }
+
+  if (method === 'defineProperty') {
+    if (args.length < 3) return;
+    const arg0 = args[0]!,
+      arg1 = args[1]!,
+      arg2 = args[2]!;
+    if (arg0.type !== 'identifier') return;
+    if (arg1.type !== 'string') return;
+    const key = arg1.text.replace(/^['"]|['"]$/g, '');
+    if (!key) return;
+    const target = findDescriptorValue(arg2);
+    if (!target) return;
+    setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
+  } else {
+    // defineProperties
+    if (args.length < 2) return;
+    const arg0 = args[0]!,
+      arg1 = args[1]!;
+    if (arg0.type !== 'identifier') return;
+    if (arg1.type !== 'object') return;
+    for (let i = 0; i < arg1.childCount; i++) {
+      const pair = arg1.child(i);
+      if (pair?.type !== 'pair') continue;
+      const keyN = pair.childForFieldName('key');
+      const valN = pair.childForFieldName('value');
+      if (!keyN || !valN) continue;
+      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
+      const target = findDescriptorValue(valN);
+      if (!target) continue;
+      setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
+    }
+  }
+}
+
+/** Return the identifier text of the `value` field in a property descriptor object. */
+function findDescriptorValue(desc: TreeSitterNode): string | undefined {
+  if (desc.type !== 'object') return undefined;
+  for (let i = 0; i < desc.childCount; i++) {
+    const pair = desc.child(i);
+    if (pair?.type !== 'pair') continue;
+    const key = pair.childForFieldName('key');
+    const val = pair.childForFieldName('value');
+    if (key?.text === 'value' && val?.type === 'identifier') return val.text;
+  }
+  return undefined;
+}
+
+/** Seed composite pts keys for each property in a prototype object literal. */
+function seedProtoProperties(
+  varName: string,
+  proto: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  for (let i = 0; i < proto.childCount; i++) {
+    const child = proto.child(i);
+    if (!child) continue;
+    if (child.type === 'shorthand_property_identifier') {
+      setTypeMapEntry(typeMap, `${varName}.${child.text}`, child.text, 0.85);
+    } else if (child.type === 'pair') {
+      const keyN = child.childForFieldName('key');
+      const valN = child.childForFieldName('value');
+      if (!keyN || !valN || valN.type !== 'identifier') continue;
+      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
+      setTypeMapEntry(typeMap, `${varName}.${key}`, valN.text, 0.85);
+    }
+  }
 }
 
 /**
