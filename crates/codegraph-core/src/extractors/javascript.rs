@@ -453,7 +453,7 @@ fn extract_object_literal_functions(
                 let qualified = format!("{}.{}", var_name, node_text(&name_n, source));
                 let body = child.child_by_field_name("body");
                 symbols.definitions.push(Definition {
-                    name: qualified,
+                    name: qualified.clone(),
                     kind: "function".to_string(),
                     line: start_line(&child),
                     end_line: Some(end_line(&child)),
@@ -461,6 +461,13 @@ fn extract_object_literal_functions(
                     complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
                     cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
                     children: None,
+                });
+                // Seed typeMap so the two-step accessor dispatch can find the qualified def.
+                // `const obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
+                symbols.type_map.push(TypeMapEntry {
+                    name: qualified.clone(),
+                    type_name: qualified,
+                    confidence: 0.85,
                 });
             }
             _ => {}

@@ -1693,6 +1693,14 @@ function handleVarDeclaratorTypeMap(
         } else if (valNode.type === 'identifier') {
           setTypeMapEntry(typeMap, qualifiedKey, valNode.text, 0.85);
         }
+      } else if (child.type === 'method_definition') {
+        // Method shorthand: `const obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
+        // extractObjectLiteralFunctions registers a definition under the qualified name;
+        // seed the matching typeMap entry so the two-step accessor dispatch finds it.
+        const nameNode = child.childForFieldName('name');
+        if (!nameNode) continue;
+        const qualifiedKey = `${nameN.text}.${nameNode.text}`;
+        setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85);
       }
     }
   }
