@@ -1132,7 +1132,7 @@ function buildFileCallEdges(
           : null;
         if (typeName) {
           const qualifiedName = `${typeName}.${call.name}`;
-          const qualified = lookup.byNameAndFile(qualifiedName, relPath).filter(() => true);
+          const qualified = lookup.byNameAndFile(qualifiedName, relPath);
           if (qualified.length > 0) {
             targets = qualified;
           }
@@ -1140,8 +1140,11 @@ function buildFileCallEdges(
         // If still no targets, search for any definition named `call.name` in
         // the same file — handles plain object literals where the method isn't
         // qualified (e.g. `const obj = { baz() {} }` defines `baz` directly).
+        // Note: this is intentionally broad — it matches any same-file definition
+        // with the called name, not just members of the receiver object. This is
+        // the same behaviour used by the native post-pass path (buildDefinePropertyPostPass).
         if (targets.length === 0) {
-          const sameFile = lookup.byNameAndFile(call.name, relPath).filter(() => true);
+          const sameFile = lookup.byNameAndFile(call.name, relPath);
           if (sameFile.length > 0) {
             targets = sameFile;
           }

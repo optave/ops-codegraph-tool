@@ -1461,6 +1461,12 @@ function extractDefinePropertyReceiversWalk(
                     val?.type === 'identifier' &&
                     !BUILTIN_GLOBALS.has(val.text)
                   ) {
+                    // Known limitation: if the same function is registered as an
+                    // accessor on multiple objects, last-write-wins — only the
+                    // last target object is retained. This is an unusual pattern
+                    // (sharing one function across multiple defineProperty calls)
+                    // and covering it would require Map<string, string[]> which
+                    // changes the consumer API. Tracked as a known edge case.
                     out.set(val.text, targetName);
                   }
                 }
@@ -1471,7 +1477,8 @@ function extractDefinePropertyReceiversWalk(
       }
     }
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
+      const child = node.child(i);
+      if (child) walk(child, depth + 1);
     }
   }
   walk(rootNode, 0);
