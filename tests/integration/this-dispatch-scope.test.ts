@@ -2,9 +2,13 @@
  * this-dispatch scope: same-file fallback must not emit false-positive edges
  * to methods in unrelated classes.
  *
- * Fixture: shapes.ts — three unrelated classes (Shape, Calculator, Formatter)
- * all defining area().  this.area() inside Shape.describe must resolve only to
- * Shape.area.  Edges to Calculator.area and Formatter.area must not appear.
+ * Fixtures:
+ *  - shapes.ts — three unrelated classes (Shape, Calculator, Formatter) all
+ *    defining area().  this.area() inside Shape.describe must resolve only to
+ *    Shape.area (multi-match disambiguation path).
+ *  - single-sibling.ts — two classes: Caller (no area()) and Sibling (area()).
+ *    this.area() inside Caller.run must NOT resolve to Sibling.area even though
+ *    it is the only method with that suffix in the file (single-match path).
  *
  * Covers the Rust edge_builder fix in issue #1324.
  */
@@ -45,7 +49,7 @@ const ENGINES: EngineMode[] = ['wasm', 'native'];
 
 describe.each(ENGINES)('this-dispatch scope (%s)', (engine) => {
   let tmpDir: string;
-  let callEdges: CallEdgeRow[];
+  let callEdges: CallEdgeRow[] = [];
 
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `codegraph-this-scope-${engine}-`));
@@ -74,6 +78,9 @@ describe.each(ENGINES)('this-dispatch scope (%s)', (engine) => {
   if (engine === 'native') {
     it.todo('does NOT emit Shape.describe → Calculator.area (native binary gap #1324)');
     it.todo('does NOT emit Shape.describe → Formatter.area (native binary gap #1324)');
+    it.todo(
+      'does NOT emit Caller.run → Sibling.area (single-match false-positive, native binary gap #1324)',
+    );
   } else {
     it('does NOT emit Shape.describe → Calculator.area (unrelated class, same method name)', () => {
       const edge = callEdges.find(
@@ -92,6 +99,19 @@ describe.each(ENGINES)('this-dispatch scope (%s)', (engine) => {
       expect(
         edge,
         `Expected NO Shape.describe → Formatter.area edge (false-positive from same-file scan).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+      ).toBeUndefined();
+    });
+
+    // single-sibling.ts: only one class (Sibling) has area(); Caller does not.
+    // The single-match arm must still check the caller's own class — Caller.run
+    // must not gain a false edge to Sibling.area.
+    it('does NOT emit Caller.run → Sibling.area (single-match false-positive, same-file scan)', () => {
+      const edge = callEdges.find(
+        (e) => e.caller_name === 'Caller.run' && e.callee_name === 'Sibling.area',
+      );
+      expect(
+        edge,
+        `Expected NO Caller.run → Sibling.area edge (false-positive from single-match suffix scan).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
       ).toBeUndefined();
     });
   }
