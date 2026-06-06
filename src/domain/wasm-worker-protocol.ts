@@ -70,6 +70,7 @@ export interface SerializedExtractorOutput {
   arrayCallbackBindings?: import('../types.js').ArrayCallbackBinding[];
   objectRestParamBindings?: import('../types.js').ObjectRestParamBinding[];
   objectPropBindings?: import('../types.js').ObjectPropBinding[];
+  paramBindings?: import('../types.js').ParamBinding[];
   newExpressions?: readonly string[];
   returnTypeMap?: Array<[string, TypeMapEntry]>;
   callAssignments?: CallAssignment[];
