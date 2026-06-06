@@ -177,10 +177,35 @@ Established Java static call graph tools all require compiled bytecode:
 | [Soot](https://github.com/soot-oss/soot) | CHA / RTA / VTA / Spark | Needs compiled `.class` files |
 | [javacg-static](https://github.com/gousiosg/java-callgraph) | CHA | Lightweight, reads JARs |
 
-The fixture contains raw `.java` source with no build system. Running these
-tools requires a `javac` compilation step (tracked in #1307).
+The fixture now includes a `Makefile` that compiles all `.java` sources into
+`fixture.jar`:
 
-**Current codegraph Java metrics** (`scripts/resolution-benchmark.ts`):
+```bash
+cd tests/benchmarks/resolution/fixtures/java && make
+```
+
+`scripts/compare-javacg.mjs` then runs
+[javacg-static](https://github.com/gousiosg/java-callgraph) on the compiled JAR.
+javacg-static uses CHA to enumerate all possible call targets at virtual,
+interface, and static call sites.
+
+```bash
+node scripts/compare-javacg.mjs --jar /path/to/javacg-0.1-SNAPSHOT.jar
+# or: JAVACG_JAR=... node scripts/compare-javacg.mjs
+```
+
+Download javacg-static from
+[github.com/gousiosg/java-callgraph/releases](https://github.com/gousiosg/java-callgraph/releases)
+or build with `mvn package -DskipTests`.
+
+**Name mapping:** javacg-static uses `pkg.ClassName:method(JVM-descriptors)` form.
+`compare-javacg.mjs` maps this to `ClassName.method` and matches
+`ClassName.ClassName` (source constructor) / `ClassName` (target constructor)
+against the expected-edges.json convention. Only edges where both class names
+appear in the fixture source files are counted; JDK calls (`String`, `HashMap`,
+`System.out`, …) are filtered out.
+
+**Codegraph Java metrics** (`scripts/resolution-benchmark.ts`):
 
 | Mode | Codegraph |
 |------|:---------:|
@@ -191,6 +216,19 @@ tools requires a `javac` compilation step (tracked in #1307).
 | `static` (2 edges) | 0/2 (0%) |
 | `class-inheritance` (3 edges) | 0/3 (0%) |
 | **Total** | **9/17 (53%)** · precision=100% |
+
+**javacg-static comparison** — run `node scripts/compare-javacg.mjs` to populate:
+
+| Tool | Precision | Recall | TP | FP | FN |
+|------|:---------:|:------:|---:|---:|---:|
+| Codegraph | 100% | 53% | 9 | 0 | 8 |
+| javacg-static (CHA) | — | — | — | — | — |
+
+javacg-static uses CHA and reads compiled bytecode, so it should resolve
+`class-inheritance` (inherited `log()` calls) and `interface-dispatched`
+(virtual dispatch via `UserRepository` interface) edges that codegraph
+currently misses at the source-level. `static` and `same-file` calls
+(`invokestatic` in bytecode) should also be fully captured.
 
 ---
 
@@ -231,8 +269,9 @@ tools requires a `javac` compilation step (tracked in #1307).
    2 `class-inheritance` edges (+7 recall on TS fixture).
 2. **Property-assignment type tracking** (#1306) — Track `this.prop = new Foo()`
    writes. Recovers 3 JS `receiver-typed` FN.
-3. **Java comparison with javacg-static** (#1307) — Add `javac` compilation to
-   the Java fixture so a bytecode-level tool can validate Java recall claims.
+3. **Java recall gaps** — `same-file` (0/2) and `static` (0/2) are `invokestatic`
+   patterns that javacg-static will expose; `class-inheritance` (0/3) requires
+   tracking inherited method calls from superclass to subclass invocation site.
 
 ---
 
@@ -299,6 +338,10 @@ npx tsx scripts/resolution-benchmark.ts | jq '{javascript, typescript, java}'
 # Jelly + ACG comparison (JS only for ACG, JS+TS for Jelly)
 npm install @cs-au-dk/jelly @persper/js-callgraph
 node scripts/compare-tools.mjs --all
+
+# javacg-static comparison (Java)
+cd tests/benchmarks/resolution/fixtures/java && make && cd -
+node scripts/compare-javacg.mjs --jar /path/to/javacg-0.1-SNAPSHOT.jar
 
 # Full resolution test suite
 npx vitest run tests/benchmarks/resolution/resolution-benchmark.test.ts
