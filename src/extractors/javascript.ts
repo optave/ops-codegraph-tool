@@ -498,6 +498,10 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
         endLine: nodeEndLine(declNode),
       });
       // Phase 8.3f: extract function/arrow properties from object literals.
+      // Scope guard: extractConstDeclarators is only called from extractConstantsWalk, which
+      // already skips const declarations inside function scopes (line ~412). So these definitions
+      // are always top-level. Do not call extractObjectLiteralFunctions from any other context
+      // without adding a hasFunctionScopeAncestor guard first.
       if (valueN.type === 'object') {
         extractObjectLiteralFunctions(valueN, nameN.text, definitions);
       }
@@ -1776,6 +1780,8 @@ function handleDefinePropertyTypeMap(
       setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
     }
     // Phase 8.3f: { get: getter } and/or { set: setter } → this inside each accessor is arg0 (obj)
+    // Key format: '<accessorName>:this' — colon is a reserved separator used only by this phase.
+    // JS identifiers cannot contain ':', so this key never collides with real variable names.
     for (const accessor of findDescriptorAccessors(arg2)) {
       setTypeMapEntry(typeMap, `${accessor}:this`, arg0.text, 0.85);
     }
