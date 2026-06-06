@@ -760,6 +760,14 @@ function buildObjectRestParamPostPass(
     // Mirrors the seeding in buildCallEdgesJS Phase 8.3f. Keys are scoped by
     // callee so two functions with the same rest-param name (e.g. `...rest`) in
     // the same file don't collide (#1358).
+    // When only one callee uses a given rest name, also seed the unscoped key
+    // as a null-callerName fallback so edges aren't silently dropped if
+    // findCaller can't identify the enclosing function (#1358).
+    const restNameCallees = new Map<string, Set<string>>();
+    for (const orpb of symbols.objectRestParamBindings!) {
+      if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
+      restNameCallees.get(orpb.restName)!.add(orpb.callee);
+    }
     const restNames = new Set<string>();
     for (const orpb of symbols.objectRestParamBindings!) {
       for (const pb of symbols.paramBindings!) {
@@ -767,6 +775,9 @@ function buildObjectRestParamPostPass(
           const scopedKey = `${orpb.callee}::${orpb.restName}`;
           if (!typeMap.has(scopedKey)) {
             typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
+            if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
+              typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+            }
           }
           restNames.add(orpb.restName);
         }
@@ -936,17 +947,26 @@ function buildCallEdgesJS(
       symbols.typeMap instanceof Map ? symbols.typeMap : [],
     );
 
-    // Phase 8.3f: seed typeMap[restName] = { type: argName } for each object-destructuring
-    // rest parameter binding cross-referenced with call-site argument bindings.
-    // e.g. function f({ a, ...rest }) called as f(obj) → typeMap['rest'] = { type: 'obj' }
-    // so that `rest.method()` resolves via typeMap['obj.method'].
+    // Phase 8.3f: seed typeMap[callee::restName] = { type: argName } for each
+    // object-destructuring rest parameter binding × call-site argument binding.
+    // Keys are scoped so two functions with the same rest-param name in the same
+    // file don't collide (#1358). When only one callee uses a given rest name,
+    // also seed the unscoped key as a null-callerName fallback.
     if (symbols.objectRestParamBindings?.length && symbols.paramBindings?.length) {
+      const restNameCallees = new Map<string, Set<string>>();
+      for (const orpb of symbols.objectRestParamBindings) {
+        if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
+        restNameCallees.get(orpb.restName)!.add(orpb.callee);
+      }
       for (const orpb of symbols.objectRestParamBindings) {
         for (const pb of symbols.paramBindings) {
           if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
             const scopedKey = `${orpb.callee}::${orpb.restName}`;
             if (!typeMap.has(scopedKey)) {
               typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
+              if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
+                typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+              }
             }
           }
         }

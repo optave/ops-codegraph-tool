@@ -79,15 +79,19 @@ function readCallEdges(dbPath: string) {
 }
 
 describe('Issue #1358: same rest-param name in two functions — scoped typeMap key', () => {
-  it('WASM: f1 → m1 and f2 → m2 both resolve independently', () => {
+  it('WASM: f1 → m1 and f2 → m2 both resolve independently without cross-edges', () => {
     const edges = readCallEdges(path.join(tmpWasm, '.codegraph', 'graph.db'));
     expect(edges.find((e) => e.src === 'f1' && e.tgt === 'm1')).toBeDefined();
     expect(edges.find((e) => e.src === 'f2' && e.tgt === 'm2')).toBeDefined();
+    expect(edges.find((e) => e.src === 'f1' && e.tgt === 'm2')).toBeUndefined();
+    expect(edges.find((e) => e.src === 'f2' && e.tgt === 'm1')).toBeUndefined();
   });
 
-  it('Native: f1 → m1 and f2 → m2 both resolve independently', () => {
+  it('Native: f1 → m1 and f2 → m2 both resolve independently without cross-edges', () => {
     const edges = readCallEdges(path.join(tmpNative, '.codegraph', 'graph.db'));
     expect(edges.find((e) => e.src === 'f1' && e.tgt === 'm1')).toBeDefined();
     expect(edges.find((e) => e.src === 'f2' && e.tgt === 'm2')).toBeDefined();
+    expect(edges.find((e) => e.src === 'f1' && e.tgt === 'm2')).toBeUndefined();
+    expect(edges.find((e) => e.src === 'f2' && e.tgt === 'm1')).toBeUndefined();
   });
 });
