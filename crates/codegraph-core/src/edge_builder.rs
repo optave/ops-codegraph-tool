@@ -1406,3 +1406,52 @@ mod call_edge_tests {
         assert_eq!(receiver_edge.unwrap().target_id, 2);
     }
 }
+
+#[cfg(test)]
+mod inline_new_type_tests {
+    use super::extract_inline_new_type;
+
+    #[test]
+    fn parens_new_uppercase() {
+        assert_eq!(extract_inline_new_type("(new Foo)"), Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn parens_new_with_args() {
+        // (new Foo('arg')) — parens and constructor args
+        assert_eq!(extract_inline_new_type("(new Foo('arg'))"), Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn no_parens_new_uppercase() {
+        assert_eq!(extract_inline_new_type("new Bar"), Some("Bar".to_string()));
+    }
+
+    #[test]
+    fn underscore_prefix_accepted() {
+        assert_eq!(extract_inline_new_type("new _Factory"), Some("_Factory".to_string()));
+    }
+
+    #[test]
+    fn dollar_prefix_accepted() {
+        assert_eq!(extract_inline_new_type("new $Service"), Some("$Service".to_string()));
+    }
+
+    #[test]
+    fn lowercase_constructor_rejected() {
+        // `new foo()` — lowercase, should return None to avoid false positives
+        assert_eq!(extract_inline_new_type("new foo"), None);
+    }
+
+    #[test]
+    fn not_a_new_expression() {
+        // plain receiver name — no `new` keyword
+        assert_eq!(extract_inline_new_type("myVar"), None);
+    }
+
+    #[test]
+    fn new_without_whitespace_is_not_new_keyword() {
+        // `newFoo` — not a `new` keyword, just an identifier
+        assert_eq!(extract_inline_new_type("newFoo"), None);
+    }
+}
