@@ -93,6 +93,7 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'points-to': 'points-to',
   'pts-define-property': 'points-to',
   'pts-create-prototype': 'points-to',
+  'define-property': 'ts-native',
 };
 
 // ── Configuration ────────────────────────────────────────────────────────
