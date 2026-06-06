@@ -12,12 +12,14 @@
 
 import type {
   Call,
+  CallAssignment,
   ClassRelation,
   DataflowResult,
   Definition,
   Export,
   Import,
   LanguageId,
+  ParamBinding,
   TypeMapEntry,
 } from '../types.js';
 
@@ -66,6 +68,9 @@ export interface SerializedExtractorOutput {
   newExpressions?: readonly string[];
   /** Serialized definePropertyReceivers map (funcName → receiverVarName) as tuple array. */
   definePropertyReceivers?: Array<[string, string]>;
+  returnTypeMap?: Array<[string, TypeMapEntry]>;
+  callAssignments?: CallAssignment[];
+  paramBindings?: ParamBinding[];
 }
 
 export interface WorkerParseResponseOk {

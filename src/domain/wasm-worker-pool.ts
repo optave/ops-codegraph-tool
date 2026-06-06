@@ -113,6 +113,13 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
     for (const [k, v] of ser.definePropertyReceivers) m.set(k, v);
     out.definePropertyReceivers = m;
   }
+  if (ser.returnTypeMap?.length) {
+    const returnTypeMap = new Map<string, TypeMapEntry>();
+    for (const [k, v] of ser.returnTypeMap) returnTypeMap.set(k, v);
+    out.returnTypeMap = returnTypeMap;
+  }
+  if (ser.callAssignments?.length) out.callAssignments = ser.callAssignments;
+  if (ser.paramBindings?.length) out.paramBindings = ser.paramBindings;
   return out;
 }
 
