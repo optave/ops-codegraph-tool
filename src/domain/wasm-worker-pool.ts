@@ -122,7 +122,6 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
     out.returnTypeMap = returnTypeMap;
   }
   if (ser.callAssignments?.length) out.callAssignments = ser.callAssignments;
-  if (ser.paramBindings?.length) out.paramBindings = ser.paramBindings;
   return out;
 }
 
