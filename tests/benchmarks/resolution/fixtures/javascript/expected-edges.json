@@ -165,6 +165,27 @@
       "notes": "obj.f2() — resolved via Object.create({ f1, f2 })"
     },
     {
+      "source": { "name": "runBind", "file": "bind-call-apply.js" },
+      "target": { "name": "greet", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "points-to",
+      "notes": "greetUser() — greetUser = greet.bind(user), pts tracks greetUser → greet"
+    },
+    {
+      "source": { "name": "runCall", "file": "bind-call-apply.js" },
+      "target": { "name": "greet", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "greet.call(user, 'Hi') — .call() extracts greet as the callee"
+    },
+    {
+      "source": { "name": "runApply", "file": "bind-call-apply.js" },
+      "target": { "name": "greet", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "greet.apply(user, ['Hey']) — .apply() extracts greet as the callee"
+    },
+    {
       "source": { "name": "Dog.speak", "file": "inheritance.js" },
       "target": { "name": "Animal.speak", "file": "inheritance.js" },
       "kind": "calls",

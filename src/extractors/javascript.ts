@@ -1456,8 +1456,7 @@ function handleVarDeclaratorTypeMap(
 
   // Phase 8.3: record function-reference bindings before any type-analysis early returns.
   // Captures `const fn = handler` (identifier) and `const fn = obj.method` (member_expression).
-  // call_expression and new_expression are intentionally excluded — those are handled by
-  // Phase 8.2 callAssignments and the constructor type-map respectively.
+  // Also handles `const f = fn.bind(ctx)` — bind returns a new function aliasing fn.
   if (fnRefBindings && valueN) {
     if (valueN.type === 'identifier' && !BUILTIN_GLOBALS.has(valueN.text)) {
       fnRefBindings.push({ lhs: nameN.text, rhs: valueN.text });
@@ -1474,6 +1473,21 @@ function handleVarDeclaratorTypeMap(
         !BUILTIN_GLOBALS.has(obj.text)
       ) {
         fnRefBindings.push({ lhs: nameN.text, rhs: prop.text, rhsReceiver: obj.text });
+      }
+    } else if (valueN.type === 'call_expression') {
+      // `const f = fn.bind(ctx)` — bind returns a bound copy of fn; track f → fn so
+      // pts(f) ⊇ pts(fn) and subsequent `f(args)` calls resolve to fn.
+      // Note: only flat-identifier binds (fn.bind) are tracked here; method-receiver
+      // binds like `obj.method.bind(ctx)` are not captured (boundFn must be an identifier).
+      const callFn = valueN.childForFieldName('function');
+      if (callFn?.type === 'member_expression') {
+        const bindProp = callFn.childForFieldName('property');
+        if (bindProp?.text === 'bind') {
+          const boundFn = callFn.childForFieldName('object');
+          if (boundFn?.type === 'identifier' && !BUILTIN_GLOBALS.has(boundFn.text)) {
+            fnRefBindings.push({ lhs: nameN.text, rhs: boundFn.text });
+          }
+        }
       }
     }
   }
