@@ -19,7 +19,14 @@
  * that build-edges.ts already builds per file is the cross-module link — if
  * a variable aliases an imported name, resolveCallTargets follows it).
  */
-import type { ArrayCallbackBinding, ArrayElemBinding, FnRefBinding, ForOfBinding, ParamBinding, SpreadArgBinding } from '../../../types.js';
+import type {
+  ArrayCallbackBinding,
+  ArrayElemBinding,
+  FnRefBinding,
+  ForOfBinding,
+  ParamBinding,
+  SpreadArgBinding,
+} from '../../../types.js';
 
 export type PointsToMap = Map<string, Set<string>>;
 
@@ -127,7 +134,7 @@ export function buildPointsToMap(
   if (spreadArgBindings && spreadArgBindings.length > 0 && definitionParams) {
     // Build a per-array index count from arrayElemBindings for precise per-index constraints.
     const arrayMaxIndex = new Map<string, number>();
-    for (const { arrayName, index } of (arrayElemBindings ?? [])) {
+    for (const { arrayName, index } of arrayElemBindings ?? []) {
       const cur = arrayMaxIndex.get(arrayName) ?? -1;
       if (index > cur) arrayMaxIndex.set(arrayName, index);
     }

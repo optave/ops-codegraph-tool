@@ -372,9 +372,6 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
-  // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
-  extractPrototypeMethodsWalk(tree.rootNode, definitions, typeMap);
-
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -1715,10 +1712,7 @@ function extractSpreadForOfWalk(
     if (depth >= MAX_WALK_DEPTH) return;
 
     let pushedFunc = false;
-    if (
-      node.type === 'function_declaration' ||
-      node.type === 'generator_function_declaration'
-    ) {
+    if (node.type === 'function_declaration' || node.type === 'generator_function_declaration') {
       const nameNode = node.childForFieldName('name');
       if (nameNode?.type === 'identifier') {
         funcStack.push(nameNode.text);
@@ -1745,8 +1739,7 @@ function extractSpreadForOfWalk(
           if (child.type === ',' || child.type === '(' || child.type === ')') continue;
           if (child.type === 'spread_element') {
             const spreadTarget =
-              child.childForFieldName('argument') ??
-              (child.childCount > 1 ? child.child(1) : null);
+              child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
             if (spreadTarget?.type === 'identifier' && !BUILTIN_GLOBALS.has(spreadTarget.text)) {
               spreadArgBindings.push({
                 callee: fn.text,
