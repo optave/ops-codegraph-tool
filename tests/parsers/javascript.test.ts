@@ -91,6 +91,27 @@ describe('JavaScript parser', () => {
     );
   });
 
+  it('extracts class field definitions with initializers as method definitions', () => {
+    const symbols = parseJS(`class C1 { f8 = () => { return 1; } }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C1.f8', kind: 'method' }),
+    );
+  });
+
+  it('extracts static class field definitions as method definitions', () => {
+    const symbols = parseJS(`class C6 { static staticProperty = (f1(), function() {}); }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C6.staticProperty', kind: 'method' }),
+    );
+  });
+
+  it('extracts static blocks as function definitions', () => {
+    const symbols = parseJS(`class C6 { static { f1(); } static { f2(); } }`);
+    const staticDefs = symbols.definitions.filter((d) => d.name === 'C6.<static>');
+    expect(staticDefs).toHaveLength(2);
+    expect(staticDefs[0]).toMatchObject({ kind: 'function' });
+  });
+
   it('extracts import statements', () => {
     const symbols = parseJS(`import { foo, bar } from './baz';`);
     expect(symbols.imports).toHaveLength(1);
