@@ -122,9 +122,9 @@ function collectModuleMembers(
 ): void {
   for (let i = 0; i < doBlock.childCount; i++) {
     const child = doBlock.child(i);
-    if (!child || child.type !== 'call') continue;
+    if (child?.type !== 'call') continue;
     const target = child.childForFieldName('target');
-    if (!target || target.type !== 'identifier') continue;
+    if (target?.type !== 'identifier') continue;
 
     if (target.text === 'def' || target.text === 'defp') {
       const fnName = extractFunctionName(child);
@@ -184,7 +184,7 @@ function extractElixirParams(defCallNode: TreeSitterNode): SubDeclaration[] {
 
   for (let i = 0; i < args.childCount; i++) {
     const child = args.child(i);
-    if (!child || child.type !== 'call') continue;
+    if (child?.type !== 'call') continue;
     const innerArgs = findChild(child, 'arguments');
     if (!innerArgs) continue;
     for (let j = 0; j < innerArgs.childCount; j++) {
@@ -277,13 +277,13 @@ function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): voi
   const parts: TreeSitterNode[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const content = node.child(i);
-    if (!content || content.type !== 'map_content') continue;
+    if (content?.type !== 'map_content') continue;
     for (let j = 0; j < content.childCount; j++) {
       const kws = content.child(j);
-      if (!kws || kws.type !== 'keywords') continue;
+      if (kws?.type !== 'keywords') continue;
       for (let k = 0; k < kws.childCount; k++) {
         const pair = kws.child(k);
-        if (!pair || pair.type !== 'pair') continue;
+        if (pair?.type !== 'pair') continue;
         for (let p = 0; p < pair.childCount; p++) {
           const part = pair.child(p);
           if (!part || part.type === 'keyword') continue;
