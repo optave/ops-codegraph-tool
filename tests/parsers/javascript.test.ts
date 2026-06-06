@@ -852,5 +852,61 @@ describe('JavaScript parser', () => {
       `);
       expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
     });
+
+    it('extracts rest binding from a class method', () => {
+      const symbols = parseJS(`
+        class Service {
+          handle({ event, ...rest }) {
+            rest.save();
+          }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'Service.handle',
+        argIndex: 0,
+        restName: 'rest',
+      });
+    });
+
+    it('extracts rest binding from object-literal shorthand method', () => {
+      const symbols = parseJS(`
+        const api = {
+          process({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        argIndex: 0,
+        restName: 'rest',
+      });
+    });
+
+    it('extracts rest binding from object-literal pair with function value', () => {
+      const symbols = parseJS(`
+        const api = {
+          process: function({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        argIndex: 0,
+        restName: 'rest',
+      });
+    });
+
+    it('uses unqualified method name for class method with no class name', () => {
+      const symbols = parseJS(`
+        export default class {
+          handle({ a, ...rest }) { rest.b(); }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual(
+        expect.objectContaining({ restName: 'rest', argIndex: 0 }),
+      );
+    });
   });
 });

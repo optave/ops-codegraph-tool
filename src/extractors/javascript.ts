@@ -1787,15 +1787,16 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
  * Phase 8.3f: record object-destructuring rest-parameter bindings from function definitions.
  *
  * For each `function f({ a, ...rest })` (or arrow/function-expression equivalent),
- * records { callee: 'f', argIndex: N, restName: 'rest' }. The edge builder uses these
- * to seed typeMap[rest] = { type: argName } when f(obj) is called with an identifier,
- * enabling `rest.method()` calls to resolve via the seeded object's composite keys.
+ * records { callee: 'f', argIndex: N, restName: 'rest' }. Also covers class methods
+ * (`callee: 'ClassName.method'`) and object-literal methods (`callee: 'method'`).
+ * The edge builder uses these to seed typeMap[rest] = { type: argName } when f(obj)
+ * is called with an identifier, enabling `rest.method()` calls to resolve.
  */
 function extractObjectRestParamBindingsWalk(
   rootNode: TreeSitterNode,
   bindings: ObjectRestParamBinding[],
 ): void {
-  function walk(node: TreeSitterNode, depth: number): void {
+  function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
     let fnName: string | null = null;
@@ -1816,6 +1817,30 @@ function extractObjectRestParamBindingsWalk(
           vt === 'generator_function'
         ) {
           fnName = nameN.text;
+          paramsNode =
+            valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
+        }
+      }
+    } else if (t === 'method_definition') {
+      // class method: `class Foo { bar({ a, ...rest }) {} }`
+      // object-literal shorthand method: `{ bar({ a, ...rest }) {} }`
+      const nameN = node.childForFieldName('name');
+      if (nameN) {
+        fnName = currentClass ? `${currentClass}.${nameN.text}` : nameN.text;
+        paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
+      }
+    } else if (t === 'pair') {
+      // object-literal method: `{ bar: function({ a, ...rest }) {} }`
+      const keyN = node.childForFieldName('key');
+      const valueN = node.childForFieldName('value');
+      if (keyN && valueN) {
+        const vt = valueN.type;
+        if (
+          vt === 'arrow_function' ||
+          vt === 'function_expression' ||
+          vt === 'generator_function'
+        ) {
+          fnName = keyN.type === 'string' ? keyN.text.replace(/['"]/g, '') : keyN.text;
           paramsNode =
             valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
         }
@@ -1846,11 +1871,19 @@ function extractObjectRestParamBindingsWalk(
       }
     }
 
+    // Thread class name into class_body children; reset for all other contexts.
+    let childClass: string | null = null;
+    if (t === 'class_declaration' || t === 'class') {
+      childClass = node.childForFieldName('name')?.text ?? null;
+    } else if (t === 'class_body') {
+      childClass = currentClass;
+    }
+
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
+      walk(node.child(i)!, depth + 1, childClass);
     }
   }
-  walk(rootNode, 0);
+  walk(rootNode, 0, null);
 }
 
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
