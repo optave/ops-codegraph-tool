@@ -36,7 +36,7 @@ function extractPhpParameters(fnNode: TreeSitterNode): SubDeclaration[] {
 function extractPhpProperties(member: TreeSitterNode, children: SubDeclaration[]): void {
   for (let j = 0; j < member.childCount; j++) {
     const el = member.child(j);
-    if (!el || el.type !== 'property_element') continue;
+    if (el?.type !== 'property_element') continue;
     const varNode = findChild(el, 'variable_name');
     if (varNode) {
       children.push({
@@ -53,7 +53,7 @@ function extractPhpProperties(member: TreeSitterNode, children: SubDeclaration[]
 function extractPhpConstants(member: TreeSitterNode, children: SubDeclaration[]): void {
   for (let j = 0; j < member.childCount; j++) {
     const el = member.child(j);
-    if (!el || el.type !== 'const_element') continue;
+    if (el?.type !== 'const_element') continue;
     const nameNode = el.childForFieldName('name') || findChild(el, 'name');
     if (nameNode) {
       children.push({

@@ -483,15 +483,27 @@ fn resolve_call_targets<'a>(
                 if !class_scoped.is_empty() { return class_scoped; }
             }
 
-            // Broader fallback: same-file suffix scan to pick up CHA-expanded targets
-            // (subclasses that override the method).
+            // Broader fallback: same-file suffix scan.  Always restrict to the caller's
+            // own class prefix — regardless of how many matches are found — to avoid
+            // false-positive edges to unrelated classes in the same file.
+            // (e.g. this.area() inside Shape.describe must never yield Calculator.area,
+            // even when Calculator.area is the only method with that name in the file.)
             let suffix = format!(".{}", call.name);
             if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
                 let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
                     .filter(|n| n.kind == "method" && n.name.ends_with(&suffix))
                     .copied()
                     .collect();
-                if !same_file_methods.is_empty() { return same_file_methods; }
+                if !same_file_methods.is_empty() {
+                    if let Some(dot_pos) = caller_name.find('.') {
+                        let caller_prefix = format!("{}.", &caller_name[..dot_pos]);
+                        let caller_scoped: Vec<&NodeInfo> = same_file_methods.iter()
+                            .filter(|n| n.name.starts_with(&caller_prefix))
+                            .copied()
+                            .collect();
+                        if !caller_scoped.is_empty() { return caller_scoped; }
+                    }
+                }
             }
         }
         return exact; // empty
@@ -1404,5 +1416,54 @@ mod call_edge_tests {
         let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
         assert!(receiver_edge.is_some(), "expected receiver edge for direct class-name receiver");
         assert_eq!(receiver_edge.unwrap().target_id, 2);
+    }
+}
+
+#[cfg(test)]
+mod inline_new_type_tests {
+    use super::extract_inline_new_type;
+
+    #[test]
+    fn parens_new_uppercase() {
+        assert_eq!(extract_inline_new_type("(new Foo)"), Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn parens_new_with_args() {
+        // (new Foo('arg')) — parens and constructor args
+        assert_eq!(extract_inline_new_type("(new Foo('arg'))"), Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn no_parens_new_uppercase() {
+        assert_eq!(extract_inline_new_type("new Bar"), Some("Bar".to_string()));
+    }
+
+    #[test]
+    fn underscore_prefix_accepted() {
+        assert_eq!(extract_inline_new_type("new _Factory"), Some("_Factory".to_string()));
+    }
+
+    #[test]
+    fn dollar_prefix_accepted() {
+        assert_eq!(extract_inline_new_type("new $Service"), Some("$Service".to_string()));
+    }
+
+    #[test]
+    fn lowercase_constructor_rejected() {
+        // `new foo()` — lowercase, should return None to avoid false positives
+        assert_eq!(extract_inline_new_type("new foo"), None);
+    }
+
+    #[test]
+    fn not_a_new_expression() {
+        // plain receiver name — no `new` keyword
+        assert_eq!(extract_inline_new_type("myVar"), None);
+    }
+
+    #[test]
+    fn new_without_whitespace_is_not_new_keyword() {
+        // `newFoo` — not a `new` keyword, just an identifier
+        assert_eq!(extract_inline_new_type("newFoo"), None);
     }
 }

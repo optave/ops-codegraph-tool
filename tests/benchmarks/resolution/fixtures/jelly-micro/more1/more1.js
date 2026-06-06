@@ -10,7 +10,7 @@ function fn7() {}
 function fn8() {}
 
 // for-of over plain array
-function iterPlain() {
+function _iterPlain() {
   const arr = [fn1, fn2];
   for (const f of arr) {
     f();
@@ -18,7 +18,7 @@ function iterPlain() {
 }
 
 // for-of over Set constructed from array
-function iterSet() {
+function _iterSet() {
   const arr = [fn3, fn4];
   const s = new Set(arr);
   for (const f of s) {
@@ -30,7 +30,7 @@ function iterSet() {
 function mapCallback(item) {
   item();
 }
-function runFrom() {
+function _runFrom() {
   const arr = [fn5, fn6];
   Array.from(arr, mapCallback);
 }
@@ -45,7 +45,7 @@ function consumer2(x, y) {
   y();
 }
 
-function runSpread() {
+function _runSpread() {
   const batch1 = [fn7, fn8];
   consumer1(...batch1);
 }
