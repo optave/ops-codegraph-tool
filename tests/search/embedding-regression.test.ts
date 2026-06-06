@@ -85,19 +85,10 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
     if (!tmpDir) return;
     // Flush any deferred DB closes before deleting the temp directory.
     // On Windows, SQLite WAL files can remain locked briefly after db.close(),
-    // causing intermittent EBUSY errors. Retry up to 3 times with a short delay.
+    // causing intermittent EBUSY errors. Node's built-in maxRetries handles
+    // retrying EBUSY/EMFILE automatically with retryDelay ms between attempts.
     flushDeferredClose();
-    const sharedBuf = new SharedArrayBuffer(4);
-    const sharedArr = new Int32Array(sharedBuf);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-        return;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EBUSY' || attempt === 2) throw err;
-        Atomics.wait(sharedArr, 0, 0, 100);
-      }
-    }
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
   describe('smoke tests', () => {
