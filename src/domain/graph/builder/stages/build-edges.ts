@@ -927,7 +927,9 @@ function buildCallEdgesJS(
     if (!fileNodeRow) continue;
 
     const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
-    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+    const typeMap: Map<string, TypeMapEntry | string> = new Map(
+      symbols.typeMap instanceof Map ? symbols.typeMap : [],
+    );
 
     // Phase 8.3f: seed typeMap[restName] = { type: argName } for each object-destructuring
     // rest parameter binding cross-referenced with call-site argument bindings.
