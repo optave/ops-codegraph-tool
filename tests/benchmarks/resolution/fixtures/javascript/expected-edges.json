@@ -236,10 +236,10 @@
     },
     {
       "source": { "name": "accessorGetter", "file": "define-property-accessor.js" },
-      "target": { "name": "accessMethod", "file": "define-property-accessor.js" },
+      "target": { "name": "accessorTarget.accessMethod", "file": "define-property-accessor.js" },
       "kind": "calls",
       "mode": "defineProperty-accessor",
-      "notes": "this.accessMethod() inside accessorGetter — this === accessorTarget (get accessor via Object.defineProperty); accessMethod is arrow function property of accessorTarget"
+      "notes": "this.accessMethod() inside accessorGetter — this === accessorTarget (get accessor via Object.defineProperty); accessorTarget.accessMethod is the qualified node name for the arrow function property of accessorTarget"
     }
   ]
 }
