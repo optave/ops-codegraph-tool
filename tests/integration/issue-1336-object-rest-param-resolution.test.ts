@@ -90,5 +90,6 @@ describe('Issue #1336 + #1349: object destructuring rest parameter call resoluti
     const edges = readCallEdges(path.join(tmpNative, '.codegraph', 'graph.db'));
     const edge = edges.find((e) => e.src === 'f3' && e.tgt === 'e4');
     expect(edge).toBeDefined();
+    expect(edge!.dynamic).toBe(0);
   });
 });
