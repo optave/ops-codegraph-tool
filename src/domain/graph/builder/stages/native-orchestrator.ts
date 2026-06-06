@@ -653,12 +653,13 @@ async function runPostNativeThisDispatch(
   }
 
   // Find the innermost containing method/function for a call at `line` in `file`.
-  // NULL end_line sorts last in SQLite ASC → only selected when no bounded node exists.
+  // COALESCE maps NULL end_line to a large sentinel so unbounded nodes sort last
+  // (SQLite ASC orders NULLs first, so a raw `end_line - line` would pick them first).
   const findCallerByLineStmt = db.prepare(`
     SELECT id, name FROM nodes
     WHERE file = ? AND kind IN ('method', 'function')
     AND line <= ? AND (end_line IS NULL OR end_line >= ?)
-    ORDER BY (end_line - line) ASC
+    ORDER BY COALESCE(end_line - line, 999999999) ASC
     LIMIT 1
   `);
 
@@ -670,8 +671,10 @@ async function runPostNativeThisDispatch(
 
   for (const [relPath, symbols] of wasmResults) {
     for (const call of symbols.calls) {
-      if (call.receiver !== 'this' && call.receiver !== 'self' && call.receiver !== 'super')
-        continue;
+      // Only 'this' and 'super' are class-instance receivers in JS/TS.
+      // 'self' refers to WindowOrWorkerGlobalScope — not a class instance — so
+      // filtering it here prevents spurious dispatch edges from Worker call sites.
+      if (call.receiver !== 'this' && call.receiver !== 'super') continue;
 
       const callerRow = findCallerByLineStmt.get(relPath, call.line, call.line) as
         | { id: number; name: string }
@@ -681,7 +684,7 @@ async function runPostNativeThisDispatch(
       const targets = resolveThisDispatch(
         call.name,
         callerRow.name,
-        call.receiver as 'this' | 'self' | 'super',
+        call.receiver as 'this' | 'super',
         chaCtx,
         lookup,
       );
