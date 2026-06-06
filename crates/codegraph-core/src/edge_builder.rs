@@ -439,7 +439,7 @@ fn resolve_call_targets<'a>(
         // accessor for `obj`, typeMap seeds 'callerName:this' = 'obj'. Resolve this.method()
         // via typeMap['obj.method'] → the concrete definition. Runs before the broad exact-name
         // lookup to avoid false positives from unrelated same-file definitions.
-        if call.receiver.as_deref() == Some("this") && !caller_name.contains('.') {
+        if call.receiver.as_deref() == Some("this") && !caller_name.is_empty() && !caller_name.contains('.') {
             let accessor_key = format!("{}:this", caller_name);
             if let Some(&(obj_name, _)) = type_map.get(accessor_key.as_str()) {
                 let obj_method_key = format!("{}.{}", obj_name, call.name);
