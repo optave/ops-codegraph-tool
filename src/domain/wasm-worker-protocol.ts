@@ -65,7 +65,7 @@ export interface SerializedExtractorOutput {
     receiver?: string;
   }>;
   fnRefBindings?: import('../types.js').FnRefBinding[];
-  paramBindings?: import('../types.js').ParamBinding[];
+  paramBindings?: ParamBinding[];
   arrayElemBindings?: import('../types.js').ArrayElemBinding[];
   spreadArgBindings?: import('../types.js').SpreadArgBinding[];
   forOfBindings?: import('../types.js').ForOfBinding[];
@@ -75,7 +75,6 @@ export interface SerializedExtractorOutput {
   newExpressions?: readonly string[];
   returnTypeMap?: Array<[string, TypeMapEntry]>;
   callAssignments?: CallAssignment[];
-  paramBindings?: ParamBinding[];
 }
 
 export interface WorkerParseResponseOk {
