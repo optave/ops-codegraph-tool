@@ -580,11 +580,12 @@ async function runPostNativeThisDispatch(
   rootDir: string,
   changedFiles: string[] | undefined,
   isFullBuild: boolean,
-): Promise<number> {
+): Promise<{ elapsedMs: number; targetIds: Set<number> }> {
   const t0 = Date.now();
+  const targetIds = new Set<number>();
   // Fast guard: need at least one extends edge for this/super to have meaning
   const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
-  if (!hasExtends) return 0;
+  if (!hasExtends) return { elapsedMs: 0, targetIds };
 
   // Build parents map: child class → direct parent class (from `extends` edges)
   const parentRows = db
@@ -601,7 +602,7 @@ async function runPostNativeThisDispatch(
   for (const row of parentRows) {
     if (!parents.has(row.child_name)) parents.set(row.child_name, row.parent_name);
   }
-  if (parents.size === 0) return 0;
+  if (parents.size === 0) return { elapsedMs: 0, targetIds };
 
   const chaCtx: ChaContext = {
     implementors: new Map(), // not needed for this/super resolution
@@ -648,7 +649,7 @@ async function runPostNativeThisDispatch(
     // rebuild (isFullBuild=true) is required to recover in that scenario.
     relFiles = changedFiles.filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
   }
-  if (relFiles.length === 0) return 0;
+  if (relFiles.length === 0) return { elapsedMs: 0, targetIds };
 
   // DB-backed CallNodeLookup — resolveThisDispatch only calls byName()
   const findByNameStmt = db.prepare(`SELECT id, file, kind FROM nodes WHERE name = ?`);
@@ -724,6 +725,7 @@ async function runPostNativeThisDispatch(
         const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
         if (conf <= 0) continue;
         newEdges.push([callerRow.id, t.id, 'calls', conf, 0, 'cha']);
+        targetIds.add(t.id);
       }
     }
   }
@@ -747,7 +749,7 @@ async function runPostNativeThisDispatch(
     (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
 
-  return Date.now() - t0;
+  return { elapsedMs: Date.now() - t0, targetIds };
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -1391,12 +1393,61 @@ export async function tryNativeOrchestrator(
 
   // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
   // whose raw receiver info the Rust pipeline does not persist to DB.
-  const thisDispatchMs = await runPostNativeThisDispatch(
-    ctx.db as unknown as BetterSqlite3Database,
-    ctx.rootDir,
-    result.changedFiles,
-    !!result.isFullBuild,
-  );
+  const { elapsedMs: thisDispatchMs, targetIds: thisDispatchTargetIds } =
+    await runPostNativeThisDispatch(
+      ctx.db as unknown as BetterSqlite3Database,
+      ctx.rootDir,
+      result.changedFiles,
+      !!result.isFullBuild,
+    );
+
+  // Re-classify roles for methods that gained incoming this/super dispatch edges.
+  // The Rust orchestrator classifies roles BEFORE this post-pass, so target methods
+  // (e.g. Animal.speak, ConcreteWorker.prepare) that had no callers at Rust time
+  // are classified `dead` or `dead-ffi`.  Inserting the new call edges does not
+  // automatically update those role labels — without a re-run the stale labels
+  // propagate to dead-code detection and API boundary analysis.
+  if (thisDispatchTargetIds.size > 0) {
+    try {
+      const db = ctx.db as unknown as BetterSqlite3Database;
+      const idArray = Array.from(thisDispatchTargetIds);
+      const CHUNK_SIZE = 500;
+      const seenFiles = new Set<string>();
+      const affectedFiles: Array<{ file: string }> = [];
+      for (let i = 0; i < idArray.length; i += CHUNK_SIZE) {
+        const chunk = idArray.slice(i, i + CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(',');
+        const rows = db
+          .prepare(
+            `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
+          )
+          .all(...chunk) as Array<{ file: string }>;
+        for (const row of rows) {
+          if (!seenFiles.has(row.file)) {
+            seenFiles.add(row.file);
+            affectedFiles.push(row);
+          }
+        }
+      }
+      if (affectedFiles.length > 0) {
+        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+          classifyNodeRoles: (
+            db: BetterSqlite3Database,
+            changedFiles?: string[] | null,
+          ) => Record<string, number>;
+        };
+        classifyNodeRoles(
+          db,
+          affectedFiles.map((r) => r.file),
+        );
+        debug(
+          `this/super dispatch post-pass: re-classified roles for ${affectedFiles.length} target file(s)`,
+        );
+      }
+    } catch (err) {
+      debug(`this/super dispatch post-pass role re-classification failed: ${toErrorMessage(err)}`);
+    }
+  }
 
   // Backfill the `technique` column on `calls` edges written by the Rust
   // orchestrator, which does not write the column. Runs after all edge-writing
