@@ -499,7 +499,7 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
       });
       // Phase 8.3f: extract function/arrow properties from object literals.
       if (valueN.type === 'object') {
-        extractObjectLiteralFunctions(valueN, definitions);
+        extractObjectLiteralFunctions(valueN, nameN.text, definitions);
       }
     }
   }
@@ -841,7 +841,7 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
           // Phase 8.3f: extract function/arrow properties from object literals so that
           // this.method() calls inside Object.defineProperty accessors can resolve them.
           if (valueN.type === 'object') {
-            extractObjectLiteralFunctions(valueN, ctx.definitions);
+            extractObjectLiteralFunctions(valueN, nameN.text, ctx.definitions);
           }
         } else if (isConst && nameN.type === 'object_pattern' && !hasFunctionScopeAncestor(node)) {
           // Destructured bindings: const { handleToken, checkPermissions } = initAuth(...)
@@ -866,11 +866,20 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 /**
  * Phase 8.3f: extract function/arrow function properties from an object literal as standalone
  * definitions so that `this.method()` calls inside Object.defineProperty accessor functions can
- * resolve them via the normal same-file definition lookup.
+ * resolve them via the same-file definition lookup.
  *
- * `const obj = { baz: () => {} }` → emits Definition { name: 'baz', kind: 'function' }
+ * Definitions are emitted as qualified names (`obj.baz` rather than bare `baz`) to avoid
+ * polluting the global definition index with common property names like `init`, `run`, or
+ * `render`. The typeMap value stored by the caller also uses the qualified name so the resolver
+ * looks up `lookup.byName('obj.baz')` rather than `lookup.byName('baz')`.
+ *
+ * `const obj = { baz: () => {} }` → emits Definition { name: 'obj.baz', kind: 'function' }
  */
-function extractObjectLiteralFunctions(objNode: TreeSitterNode, definitions: Definition[]): void {
+function extractObjectLiteralFunctions(
+  objNode: TreeSitterNode,
+  varName: string,
+  definitions: Definition[],
+): void {
   for (let i = 0; i < objNode.childCount; i++) {
     const child = objNode.child(i);
     if (!child) continue;
@@ -887,7 +896,7 @@ function extractObjectLiteralFunctions(objNode: TreeSitterNode, definitions: Def
         valueNode.type === 'function'
       ) {
         definitions.push({
-          name: keyName,
+          name: `${varName}.${keyName}`,
           kind: 'function',
           line: nodeStartLine(child),
           endLine: nodeEndLine(valueNode),
@@ -897,7 +906,7 @@ function extractObjectLiteralFunctions(objNode: TreeSitterNode, definitions: Def
       const nameNode = child.childForFieldName('name');
       if (nameNode) {
         definitions.push({
-          name: nameNode.text,
+          name: `${varName}.${nameNode.text}`,
           kind: 'function',
           line: nodeStartLine(child),
           endLine: nodeEndLine(child),
@@ -1637,10 +1646,15 @@ function handleVarDeclaratorTypeMap(
   }
 
   // Phase 8.3f: seed composite pts keys for object literal properties.
-  // `const obj = { baz: () => {} }` → typeMap['obj.baz'] = 'baz'
-  // `const obj = { baz }` (shorthand) → typeMap['obj.baz'] = 'baz'
+  // `const obj = { baz: () => {} }` → typeMap['obj.baz'] = 'obj.baz'
+  // `const obj = { baz }` (shorthand) → typeMap['obj.baz'] = 'baz'  (bare identifier target)
+  // `const obj = { baz: otherFn }` → typeMap['obj.baz'] = 'otherFn'  (identifier alias)
+  //
+  // For function/arrow values, the value is the qualified name ('obj.baz') because
+  // extractObjectLiteralFunctions now registers definitions under that qualified name to avoid
+  // polluting the global index with bare property names like 'init', 'run', or 'render'.
   // Enables accessor this-dispatch: when typeMap['getter:this'] = 'obj',
-  // resolving this.baz() inside getter → typeMap['obj.baz'] → 'baz'.
+  // resolving this.baz() inside getter → typeMap['obj.baz'] → 'obj.baz' → lookup.byName('obj.baz').
   if (valueN.type === 'object') {
     for (let i = 0; i < valueN.childCount; i++) {
       const child = valueN.child(i);
@@ -1654,14 +1668,16 @@ function handleVarDeclaratorTypeMap(
         const keyName =
           keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
         if (!keyName) continue;
+        const qualifiedKey = `${nameN.text}.${keyName}`;
         if (
           valNode.type === 'arrow_function' ||
           valNode.type === 'function_expression' ||
           valNode.type === 'function'
         ) {
-          setTypeMapEntry(typeMap, `${nameN.text}.${keyName}`, keyName, 0.85);
+          // Store the qualified name so the resolver finds the qualified definition.
+          setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85);
         } else if (valNode.type === 'identifier') {
-          setTypeMapEntry(typeMap, `${nameN.text}.${keyName}`, valNode.text, 0.85);
+          setTypeMapEntry(typeMap, qualifiedKey, valNode.text, 0.85);
         }
       }
     }
@@ -1759,9 +1775,8 @@ function handleDefinePropertyTypeMap(
     if (target) {
       setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
     }
-    // Phase 8.3f: { get: getter } or { set: setter } → this inside getter/setter is arg0 (obj)
-    const accessor = findDescriptorAccessor(arg2);
-    if (accessor) {
+    // Phase 8.3f: { get: getter } and/or { set: setter } → this inside each accessor is arg0 (obj)
+    for (const accessor of findDescriptorAccessors(arg2)) {
       setTypeMapEntry(typeMap, `${accessor}:this`, arg0.text, 0.85);
     }
   } else {
@@ -1799,19 +1814,23 @@ function findDescriptorValue(desc: TreeSitterNode): string | undefined {
 }
 
 /**
- * Phase 8.3f: return the identifier text of a `get` or `set` accessor in a property descriptor.
- * `{ get: getter }` → 'getter'; `{ set: setter }` → 'setter'.
+ * Phase 8.3f: return the identifier texts of all `get` and `set` accessors in a property
+ * descriptor. `{ get: getter, set: setter }` → ['getter', 'setter'].
+ * Returns all accessors so that each one gets a `callerName:this = obj` typeMap entry.
  */
-function findDescriptorAccessor(desc: TreeSitterNode): string | undefined {
-  if (desc.type !== 'object') return undefined;
+function findDescriptorAccessors(desc: TreeSitterNode): string[] {
+  if (desc.type !== 'object') return [];
+  const result: string[] = [];
   for (let i = 0; i < desc.childCount; i++) {
     const pair = desc.child(i);
     if (pair?.type !== 'pair') continue;
     const key = pair.childForFieldName('key');
     const val = pair.childForFieldName('value');
-    if ((key?.text === 'get' || key?.text === 'set') && val?.type === 'identifier') return val.text;
+    if ((key?.text === 'get' || key?.text === 'set') && val?.type === 'identifier') {
+      result.push(val.text);
+    }
   }
-  return undefined;
+  return result;
 }
 
 /** Seed composite pts keys for each property in a prototype object literal. */

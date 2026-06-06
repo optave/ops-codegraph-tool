@@ -242,8 +242,8 @@ fn seed_define_property_entries(node: &Node, source: &[u8], symbols: &mut FileSy
                 confidence: 0.85,
             });
         }
-        // Phase 8.3f: { get: getter } or { set: setter } → this inside getter/setter === obj
-        if let Some(accessor) = find_descriptor_accessor(&args[2], source) {
+        // Phase 8.3f: { get: getter } and/or { set: setter } → this inside each accessor === obj
+        for accessor in find_descriptor_accessors(&args[2], source) {
             symbols.type_map.push(TypeMapEntry {
                 name: format!("{}:this", accessor),
                 type_name: obj_name.to_string(),
@@ -357,10 +357,12 @@ fn find_descriptor_value<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a st
     None
 }
 
-/// Phase 8.3f: return the identifier text of a `get` or `set` accessor in a property descriptor.
-/// `{ get: getter }` → Some("getter"); `{ set: setter }` → Some("setter").
-fn find_descriptor_accessor<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
-    if node.kind() != "object" { return None; }
+/// Phase 8.3f: return the identifier texts of all `get` and `set` accessors in a property
+/// descriptor. `{ get: getter, set: setter }` → ["getter", "setter"].
+/// Returns all accessors so that each one gets a `callerName:this = obj` typeMap entry.
+fn find_descriptor_accessors<'a>(node: &Node<'a>, source: &'a [u8]) -> Vec<&'a str> {
+    if node.kind() != "object" { return Vec::new(); }
+    let mut result = Vec::new();
     for i in 0..node.child_count() {
         let Some(child) = node.child(i) else { continue };
         if child.kind() != "pair" { continue; }
@@ -369,18 +371,23 @@ fn find_descriptor_accessor<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a
         if key_text != "get" && key_text != "set" { continue; }
         let Some(val) = child.child_by_field_name("value") else { continue };
         if val.kind() == "identifier" {
-            return Some(node_text(&val, source));
+            result.push(node_text(&val, source));
         }
     }
-    None
+    result
 }
 
 /// Phase 8.3f: extract function/arrow properties from an object literal as standalone definitions
 /// and seed composite typeMap keys so that `this.method()` inside Object.defineProperty accessors
 /// can resolve them.
 ///
-/// `const obj = { baz: () => {} }` → Definition { name: "baz", kind: "function" }
-///                                  + TypeMapEntry { name: "obj.baz", type_name: "baz" }
+/// Definitions are emitted under qualified names (`obj.baz`) to avoid polluting the global
+/// definition index with common property names like `init`, `run`, or `render`. The typeMap
+/// value for function/arrow properties also uses the qualified name so the resolver calls
+/// `lookup.byName("obj.baz")` rather than `lookup.byName("baz")`.
+///
+/// `const obj = { baz: () => {} }` → Definition { name: "obj.baz", kind: "function" }
+///                                  + TypeMapEntry { name: "obj.baz", type_name: "obj.baz" }
 /// `const obj = { baz }` (shorthand) → TypeMapEntry { name: "obj.baz", type_name: "baz" }
 fn extract_object_literal_functions(
     obj_node: &Node,
@@ -408,10 +415,13 @@ fn extract_object_literal_functions(
                     Some(node_text(&key_n, source).to_string())
                 };
                 let Some(key) = key else { continue };
+                let qualified = format!("{}.{}", var_name, key);
                 match val_n.kind() {
                     "arrow_function" | "function_expression" | "function" => {
+                        // Use qualified name for the definition so it doesn't collide with
+                        // unrelated top-level functions sharing the same property name.
                         symbols.definitions.push(Definition {
-                            name: key.clone(),
+                            name: qualified.clone(),
                             kind: "function".to_string(),
                             line: start_line(&child),
                             end_line: Some(end_line(&val_n)),
@@ -420,16 +430,17 @@ fn extract_object_literal_functions(
                             cfg: build_function_cfg(&val_n, "javascript", source),
                             children: None,
                         });
+                        // Store qualified name as value so resolver looks up the qualified def.
                         symbols.type_map.push(TypeMapEntry {
-                            name: format!("{}.{}", var_name, key),
-                            type_name: key,
+                            name: qualified.clone(),
+                            type_name: qualified,
                             confidence: 0.85,
                         });
                     }
                     "identifier" => {
                         let target = node_text(&val_n, source);
                         symbols.type_map.push(TypeMapEntry {
-                            name: format!("{}.{}", var_name, key),
+                            name: qualified,
                             type_name: target.to_string(),
                             confidence: 0.85,
                         });
@@ -439,14 +450,16 @@ fn extract_object_literal_functions(
             }
             "method_definition" => {
                 let Some(name_n) = child.child_by_field_name("name") else { continue };
+                let qualified = format!("{}.{}", var_name, node_text(&name_n, source));
+                let body = child.child_by_field_name("body");
                 symbols.definitions.push(Definition {
-                    name: node_text(&name_n, source).to_string(),
+                    name: qualified,
                     kind: "function".to_string(),
                     line: start_line(&child),
                     end_line: Some(end_line(&child)),
                     decorators: None,
-                    complexity: None,
-                    cfg: None,
+                    complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
+                    cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
                     children: None,
                 });
             }
