@@ -15,6 +15,11 @@
  *   4. build-edges.ts cross-references (2) and (3) to seed typeMap['eerest'] = { type: 'obj' }.
  *   5. resolveByMethodOrGlobal: typeMap['eerest'] → obj; typeMap['obj.e4'] → e4 → resolved edge.
  *
+ * The fixture uses TWO files so that `e4` is not in the same file as the call site. This
+ * ensures the same-file name-lookup fallback cannot accidentally resolve `eerest.e4()` to
+ * the locally-defined `e4` — the edge MUST come from Phase 8.3f typeMap seeding. Without
+ * `paramBindings` serialized through the WASM worker boundary, this test would fail.
+ *
  * Native engine parity is tracked in #1349.
  */
 
@@ -25,9 +30,17 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildGraph } from '../../src/domain/graph/builder.js';
 
-const FIXTURE_CODE = `
-function e1() { console.log("31"); }
-function e4() { console.log("34"); }
+// helpers.js defines e4 — imported and placed in an object literal in main.js.
+const HELPERS_CODE = `
+export function e1() { console.log("31"); }
+export function e4() { console.log("34"); }
+`;
+
+// main.js imports e4 from helpers.js, wraps it in obj, and calls f3(obj).
+// f3 uses object-destructuring rest; eerest.e4() must resolve to e4 in helpers.js
+// via Phase 8.3f typeMap seeding — it cannot be found by the same-file name lookup.
+const MAIN_CODE = `
+import { e1, e4 } from './helpers.js';
 
 var obj = { e1, e4 };
 
@@ -42,7 +55,8 @@ let tmpDir: string;
 
 beforeAll(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1336-'));
-  fs.writeFileSync(path.join(tmpDir, 'rest.js'), FIXTURE_CODE);
+  fs.writeFileSync(path.join(tmpDir, 'helpers.js'), HELPERS_CODE);
+  fs.writeFileSync(path.join(tmpDir, 'main.js'), MAIN_CODE);
   // Force WASM engine — native engine parity tracked in #1349.
   await buildGraph(tmpDir, { engine: 'wasm', incremental: false, skipRegistry: true });
 });
