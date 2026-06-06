@@ -52,6 +52,7 @@ import {
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
+import { CHA_DISPATCH_PENALTY } from './build-edges.js';
 import { closeNativeDb } from './native-db-lifecycle.js';
 
 // ── Native orchestrator types ──────────────────────────────────────────
@@ -467,7 +468,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
   // Include the caller node's file so confidence can be computed file-pair-aware,
-  // matching the WASM path's computeConfidence(callerFile, targetFile, null) - 0.1 formula.
+  // matching the WASM path's computeConfidence(callerFile, targetFile, null) - CHA_DISPATCH_PENALTY formula.
   const callToMethods = db
     .prepare(`
       SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
@@ -534,10 +535,11 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - 0.1 penalty)
+            // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - CHA_DISPATCH_PENALTY)
             // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
             const conf =
-              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) - 0.1;
+              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) -
+              CHA_DISPATCH_PENALTY;
             if (conf <= 0) continue;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newTargetIds.add(methodNode.id);

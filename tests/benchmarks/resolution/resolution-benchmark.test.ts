@@ -91,6 +91,8 @@ const TECHNIQUE_MAP: Record<string, string> = {
   callback: 'points-to',
   dynamic: 'points-to',
   'points-to': 'points-to',
+  'pts-define-property': 'points-to',
+  'pts-create-prototype': 'points-to',
 };
 
 // ── Configuration ────────────────────────────────────────────────────────
@@ -112,6 +114,10 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // immediately, which is intentional. If a new fixture addition causes a genuine FP
   // (i.e. the code resolves an edge that is arguably correct but not in expected-edges),
   // the correct fix is to add it to expected-edges — not to lower the threshold.
+  // JS recall 0.9: Phase 8.3e adds Object.defineProperty/defineProperties/create composite pts keys
+  //   (5 new edges in define-property.js) + Phase 8.5 adds class-inheritance and prototype edges
+  //   (inheritance.js, prototypes.js, prototypes2.js), lifting total expected to 30. Phase 8.3f
+  //   adds bind/call/apply resolution (3 new edges in bind-call-apply.js), total expected now 33.
   javascript: { precision: 1.0, recall: 0.9 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
