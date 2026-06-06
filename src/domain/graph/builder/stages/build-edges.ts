@@ -1134,7 +1134,7 @@ function buildFileCallEdges(
           const qualifiedName = `${typeName}.${call.name}`;
           const qualified = lookup.byNameAndFile(qualifiedName, relPath);
           if (qualified.length > 0) {
-            targets = qualified;
+            targets = [...qualified];
           }
         }
         // If still no targets, search for any definition named `call.name` in
@@ -1146,7 +1146,7 @@ function buildFileCallEdges(
         if (targets.length === 0) {
           const sameFile = lookup.byNameAndFile(call.name, relPath);
           if (sameFile.length > 0) {
-            targets = sameFile;
+            targets = [...sameFile];
           }
         }
       }
