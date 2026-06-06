@@ -119,53 +119,34 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
   });
 
   // ── this-dispatch ──────────────────────────────────────────────────────
-  // The WASM path resolves `this.prepare()` through the class hierarchy via
-  // the inline CHA dispatch in buildFileCallEdges.
-  //
-  // The native orchestrator path does not persist raw call sites (with receiver
-  // info) to the DB after the Rust pipeline runs, so this-dispatch and
-  // super-dispatch cannot be resolved via runPostNativeCha.
-  // Tracked as a native accuracy gap in issue #1326.
 
-  if (engine === 'native') {
-    it.todo(
-      'this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare (native gap #1326)',
+  it('this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare', () => {
+    const edge = callEdges.find(
+      (e) =>
+        e.caller_name === 'ConcreteWorker.doWork' &&
+        e.callee_name === 'ConcreteWorker.prepare' &&
+        e.callee_file === 'ConcreteWorker.ts',
     );
-  } else {
-    it('this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare', () => {
-      const edge = callEdges.find(
-        (e) =>
-          e.caller_name === 'ConcreteWorker.doWork' &&
-          e.callee_name === 'ConcreteWorker.prepare' &&
-          e.callee_file === 'ConcreteWorker.ts',
-      );
-      expect(
-        edge,
-        `Expected ConcreteWorker.doWork → ConcreteWorker.prepare edge (this-dispatch).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
-      ).toBeDefined();
-    });
-  }
+    expect(
+      edge,
+      `Expected ConcreteWorker.doWork → ConcreteWorker.prepare edge (this-dispatch).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeDefined();
+  });
 
   // ── super-dispatch ─────────────────────────────────────────────────────
-  // Same native gap: super.speak() requires raw call-site receiver info not
-  // persisted to the DB by the Rust pipeline. See issue #1326.
 
-  if (engine === 'native') {
-    it.todo('super-dispatch: emits Lion.speak → Animal.speak (native gap #1326)');
-  } else {
-    it('super-dispatch: emits Lion.speak → Animal.speak', () => {
-      const edge = callEdges.find(
-        (e) =>
-          e.caller_name === 'Lion.speak' &&
-          e.callee_name === 'Animal.speak' &&
-          e.callee_file === 'Animal.ts',
-      );
-      expect(
-        edge,
-        `Expected Lion.speak → Animal.speak edge (super-dispatch via class hierarchy).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
-      ).toBeDefined();
-    });
-  }
+  it('super-dispatch: emits Lion.speak → Animal.speak', () => {
+    const edge = callEdges.find(
+      (e) =>
+        e.caller_name === 'Lion.speak' &&
+        e.callee_name === 'Animal.speak' &&
+        e.callee_file === 'Animal.ts',
+    );
+    expect(
+      edge,
+      `Expected Lion.speak → Animal.speak edge (super-dispatch via class hierarchy).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeDefined();
+  });
 
   // ── transitive multi-level CHA (issue #1311) ───────────────────────────
   // Hierarchy: IJob → AbstractJob (non-instantiated) → PrintJob / ScanJob

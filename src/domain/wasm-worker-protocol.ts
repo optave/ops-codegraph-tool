@@ -19,7 +19,6 @@ import type {
   Export,
   Import,
   LanguageId,
-  ParamBinding,
   TypeMapEntry,
 } from '../types.js';
 
@@ -65,7 +64,6 @@ export interface SerializedExtractorOutput {
     receiver?: string;
   }>;
   fnRefBindings?: import('../types.js').FnRefBinding[];
-  paramBindings?: ParamBinding[];
   arrayElemBindings?: import('../types.js').ArrayElemBinding[];
   spreadArgBindings?: import('../types.js').SpreadArgBinding[];
   forOfBindings?: import('../types.js').ForOfBinding[];

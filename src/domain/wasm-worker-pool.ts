@@ -107,7 +107,6 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
   // visitor output is cast the same way.
   if (ser.astNodes !== undefined) out.astNodes = ser.astNodes as unknown as ASTNodeRow[];
   if (ser.fnRefBindings?.length) out.fnRefBindings = ser.fnRefBindings;
-  if (ser.paramBindings?.length) out.paramBindings = ser.paramBindings;
   if (ser.arrayElemBindings?.length) out.arrayElemBindings = ser.arrayElemBindings;
   if (ser.spreadArgBindings?.length) out.spreadArgBindings = ser.spreadArgBindings;
   if (ser.forOfBindings?.length) out.forOfBindings = ser.forOfBindings;

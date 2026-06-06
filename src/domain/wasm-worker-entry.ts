@@ -805,7 +805,6 @@ function serializeExtractorOutput(
     dataflow: symbols.dataflow,
     astNodes,
     ...(symbols.fnRefBindings?.length ? { fnRefBindings: symbols.fnRefBindings } : {}),
-    ...(symbols.paramBindings?.length ? { paramBindings: symbols.paramBindings } : {}),
     ...(symbols.arrayElemBindings?.length ? { arrayElemBindings: symbols.arrayElemBindings } : {}),
     ...(symbols.spreadArgBindings?.length ? { spreadArgBindings: symbols.spreadArgBindings } : {}),
     ...(symbols.forOfBindings?.length ? { forOfBindings: symbols.forOfBindings } : {}),

@@ -908,4 +908,29 @@ describe('JavaScript parser', () => {
       );
     });
   });
+
+  describe('Phase 8.3e: extractSpreadForOfWalk — exported arrow function funcStack (#1354)', () => {
+    it('tracks plain const arrow function on funcStack for for-of loop', () => {
+      const symbols = parseJS(`const f = (arr) => { for (const x of arr) x(); };`);
+      expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
+    });
+
+    it('tracks exported const arrow function on funcStack for for-of loop', () => {
+      const symbols = parseJS(`export const f = (arr) => { for (const x of arr) x(); };`);
+      expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
+    });
+
+    it('records correct varName and sourceName for exported arrow for-of', () => {
+      const symbols = parseJS(
+        `export const handleItems = (items) => { for (const cb of items) cb(); };`,
+      );
+      expect(symbols.forOfBindings).toContainEqual(
+        expect.objectContaining({
+          varName: 'cb',
+          sourceName: 'items',
+          enclosingFunc: 'handleItems',
+        }),
+      );
+    });
+  });
 });
