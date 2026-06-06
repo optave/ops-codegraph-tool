@@ -598,7 +598,7 @@ async function runPostNativePrototypeMethods(
   const protoFiles = jsFiles.filter((relPath) => {
     try {
       const content = readFileSafe(path.join(rootDir, relPath));
-      return /\b\w+\.\w+\s*=\s*function/.test(content);
+      return /\b(?!prototype\.)\w+\.\w+\s*=\s*function/.test(content);
     } catch {
       return false;
     }
