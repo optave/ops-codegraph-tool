@@ -37,7 +37,7 @@ function wasmDataflow(code, filePath, langId) {
  */
 function nativeDataflow(code, filePath) {
   const result = native.parseFile(filePath, code, true);
-  if (!result || !result.dataflow) return null;
+  if (!result?.dataflow) return null;
   const df = result.dataflow;
   return {
     parameters: (df.parameters || []).map((p) => ({

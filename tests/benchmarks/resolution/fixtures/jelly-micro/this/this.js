@@ -1,7 +1,7 @@
 // Jelly micro-test: this — function-as-object property methods, this-dispatch
 
 function f() {}
-f.g = function () {
+f.g = () => {
   console.log('2');
 };
 f.h = function () {
