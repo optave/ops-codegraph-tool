@@ -44,6 +44,8 @@ import {
 import { computeConfidence } from '../../resolve.js';
 import type { CallNodeLookup } from '../call-resolver.js';
 import { findCaller, resolveByMethodOrGlobal } from '../call-resolver.js';
+import type { ChaContext } from '../cha.js';
+import { resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
@@ -397,9 +399,8 @@ async function runPostNativeAnalysis(
  * each call to an interface/abstract method to ALL RTA-filtered concrete
  * implementations.
  *
- * Note: `this`/`super` dispatch requires the raw unresolved call sites which are
- * not persisted to the DB by the Rust pipeline. That case is handled by the WASM
- * path (`buildFileCallEdges`) and is a known gap for the native orchestrator.
+ * Note: `this`/`super` dispatch is handled separately by `runPostNativeThisDispatch`,
+ * which WASM-re-parses JS/TS files to obtain raw call site receiver info.
  *
  * Returns the set of target node IDs for newly inserted CHA edges so the caller
  * can re-classify roles for the affected implementation files.  An empty set
@@ -561,16 +562,19 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
 }
 
 /**
- * Post-pass: backfill prototype-based method definitions and their call edges.
+ * Post-pass: backfill function-as-object-property method definitions and their call edges.
  *
- * The Rust engine does not recognise `Foo.prototype.bar = function(){}` as a
- * method definition, so those nodes are absent from the DB after the native
+ * The Rust engine does not recognise `fn.method = function(){}` patterns as
+ * method definitions, so those nodes are absent from the DB after the native
  * orchestrator completes. This pass:
  *   1. Re-parses JS/TS files via WASM to obtain the full ExtractorOutput
- *      (including definitions emitted by extractPrototypeMethodsWalk).
+ *      (including definitions emitted by extractFuncPropMethodsWalk).
  *   2. Inserts any method nodes that are missing from the DB.
  *   3. Resolves call edges to those newly-inserted nodes using the WASM typeMap
  *      and the existing DB node table as a lookup.
+ *
+ * Note: `Foo.prototype.bar = function(){}` patterns are handled natively by
+ * the Rust extractor and do not need a WASM re-parse here.
  */
 async function runPostNativePrototypeMethods(
   db: BetterSqlite3Database,
@@ -606,8 +610,8 @@ async function runPostNativePrototypeMethods(
 
   if (protoFiles.length === 0) return;
 
-  // WASM-parse only the files that have prototype patterns to get full
-  // ExtractorOutput including prototype method definitions and typeMap entries.
+  // WASM-parse only the files that have func-prop patterns to get full
+  // ExtractorOutput including method definitions and typeMap entries.
   const absPaths = protoFiles.map((f) => path.join(rootDir, f));
   let wasmResults: Map<string, ExtractorOutput>;
   try {
@@ -692,7 +696,7 @@ async function runPostNativePrototypeMethods(
   };
 
   // Build a fast set of newly-inserted node IDs so we only emit edges to
-  // prototype nodes that the Rust engine missed (avoids duplicating existing edges).
+  // func-prop nodes that the Rust engine missed (avoids duplicating existing edges).
   const newNodeIds = new Set<number>(
     newDefs.flatMap((d) => {
       const nodes = byNameFileMap.get(`${d.name}::${d.file}`);
@@ -707,8 +711,8 @@ async function runPostNativePrototypeMethods(
   // zero benefit and could OOM on large repositories.
   const seenByPair = new Set<string>();
 
-  // Resolve call edges in every file — not just those that define new prototype
-  // methods. A caller in app.js calling a prototype method defined in lib.js
+  // Resolve call edges in every file — not just those that define new func-prop
+  // methods. A caller in app.js calling a method defined in lib.js
   // would be silently missed if we only scanned definition files.
   // The newNodeIds guard inside the loop already prevents duplicate edges.
   const newEdgeRows: unknown[][] = [];
@@ -721,7 +725,7 @@ async function runPostNativePrototypeMethods(
     const typeMap = symbols.typeMap instanceof Map ? symbols.typeMap : new Map();
 
     for (const call of symbols.calls ?? []) {
-      if (!call.receiver) continue; // prototype resolution only applies to receiver calls
+      if (!call.receiver) continue; // receiver calls only
 
       const caller = findCaller(lookup, call, symbols.definitions ?? [], relPath, fileNodeRow);
 
@@ -734,7 +738,7 @@ async function runPostNativePrototypeMethods(
       );
 
       for (const t of targets) {
-        // Only emit edges to newly-inserted prototype nodes to avoid
+        // Only emit edges to newly-inserted func-prop nodes to avoid
         // duplicating edges the Rust engine already built.
         if (!newNodeIds.has(t.id)) continue;
         const key = `${caller.id}|${t.id}`;
@@ -752,11 +756,204 @@ async function runPostNativePrototypeMethods(
   }
 }
 
+// Extensions where `this`/`super` dispatch can occur (JS/TS family)
+const THIS_DISPATCH_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '.mts', '.cts']);
+
+/**
+ * Phase 8.5: this/super dispatch post-pass for the native orchestrator path.
+ *
+ * The Rust build pipeline resolves typed receiver calls but does NOT persist raw
+ * unresolved call site receiver info (e.g. `this`, `super`) to the DB. This
+ * hybrid post-pass re-parses JS/TS/TSX files via WASM to collect call sites with
+ * `this`/`super` receivers, then resolves them through the class hierarchy stored
+ * in DB `extends` edges — mirroring what `buildChaPostPass` does on the WASM path.
+ *
+ * Only runs when `extends` edges exist in the DB; if there is no inheritance
+ * hierarchy there is nothing to resolve via `this`/`super` dispatch.
+ */
+async function runPostNativeThisDispatch(
+  db: BetterSqlite3Database,
+  rootDir: string,
+  changedFiles: string[] | undefined,
+  isFullBuild: boolean,
+): Promise<{ elapsedMs: number; targetIds: Set<number> }> {
+  const t0 = Date.now();
+  const targetIds = new Set<number>();
+  // Fast guard: need at least one extends edge for this/super to have meaning
+  const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
+  if (!hasExtends) return { elapsedMs: 0, targetIds };
+
+  // Build parents map: child class → direct parent class (from `extends` edges)
+  const parentRows = db
+    .prepare(`
+      SELECT src.name AS child_name, tgt.name AS parent_name
+      FROM edges e
+      JOIN nodes src ON e.source_id = src.id
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind = 'extends'
+    `)
+    .all() as Array<{ child_name: string; parent_name: string }>;
+
+  const parents = new Map<string, string>();
+  for (const row of parentRows) {
+    if (!parents.has(row.child_name)) parents.set(row.child_name, row.parent_name);
+  }
+  if (parents.size === 0) return { elapsedMs: 0, targetIds };
+
+  const chaCtx: ChaContext = {
+    implementors: new Map(), // not needed for this/super resolution
+    parents,
+    instantiatedTypes: new Set(), // not needed for this/super resolution
+  };
+
+  // Determine which files to re-parse.
+  //
+  // On a full build we do NOT re-parse every JS/TS file — that would WASM-parse
+  // the entire project on top of the native pass, causing a massive regression
+  // (measured: +358% ms/file on codegraph itself). Instead we restrict to files
+  // that are part of the class inheritance hierarchy: both subclass files (which
+  // contain `super.X()` calls dispatching to a parent) and parent-class files
+  // (whose method bodies contain `this.X()` calls that CHA must resolve). Any
+  // file not in the hierarchy has no `extends` relationship, so `this`/`super`
+  // calls in it either resolve locally (same-class dispatch, already handled by
+  // the direct-call edge) or have no class context — and will be skipped by
+  // `resolveThisDispatch` anyway.
+  let relFiles: string[];
+  if (isFullBuild || !changedFiles) {
+    const rows = db
+      .prepare(`
+        SELECT DISTINCT file FROM (
+          SELECT src.file AS file
+          FROM edges e
+          JOIN nodes src ON e.source_id = src.id
+          WHERE e.kind = 'extends' AND src.file IS NOT NULL
+          UNION
+          SELECT tgt.file AS file
+          FROM edges e
+          JOIN nodes tgt ON e.target_id = tgt.id
+          WHERE e.kind = 'extends' AND tgt.file IS NOT NULL
+        )
+      `)
+      .all() as Array<{ file: string }>;
+    relFiles = rows
+      .map((r) => r.file)
+      .filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
+  } else {
+    // NOTE: Only files explicitly listed in changedFiles are re-parsed.
+    // If a parent-class method is replaced (new node ID) but the child file is
+    // unchanged, the stale super.method() edge is not refreshed here. A full
+    // rebuild (isFullBuild=true) is required to recover in that scenario.
+    relFiles = changedFiles.filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
+  }
+  if (relFiles.length === 0) return { elapsedMs: 0, targetIds };
+
+  // DB-backed CallNodeLookup — resolveThisDispatch only calls byName()
+  const findByNameStmt = db.prepare(`SELECT id, file, kind FROM nodes WHERE name = ?`);
+  const lookup: CallNodeLookup = {
+    byName: (name) => findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>,
+    byNameAndFile: (name, file) =>
+      (findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>).filter(
+        (n) => n.file === file,
+      ),
+    isBarrel: () => false,
+    resolveBarrel: () => null,
+    nodeId: () => undefined,
+  };
+
+  // Seed seen-pairs from existing call edges on source nodes in our file set
+  const seen = new Set<string>();
+  const CHUNK = 500;
+  for (let i = 0; i < relFiles.length; i += CHUNK) {
+    const chunk = relFiles.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT e.source_id, e.target_id
+         FROM edges e
+         JOIN nodes n ON e.source_id = n.id
+         WHERE e.kind = 'calls' AND n.file IN (${ph})`,
+      )
+      .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+    for (const r of rows) seen.add(`${r.source_id}|${r.target_id}`);
+  }
+
+  // Find the innermost containing method/function for a call at `line` in `file`.
+  // COALESCE maps NULL end_line to a large sentinel so unbounded nodes sort last
+  // (SQLite ASC orders NULLs first, so a raw `end_line - line` would pick them first).
+  const findCallerByLineStmt = db.prepare(`
+    SELECT id, name FROM nodes
+    WHERE file = ? AND kind IN ('method', 'function')
+    AND line <= ? AND (end_line IS NULL OR end_line >= ?)
+    ORDER BY COALESCE(end_line - line, 999999999) ASC
+    LIMIT 1
+  `);
+
+  // WASM-parse the files to obtain raw call sites with receiver info
+  const absFiles = relFiles.map((f) => path.join(rootDir, f));
+  const wasmResults = await parseFilesWasmForBackfill(absFiles, rootDir);
+
+  const newEdges: Array<[number, number, string, number, number, string]> = [];
+
+  for (const [relPath, symbols] of wasmResults) {
+    for (const call of symbols.calls) {
+      // Only 'this' and 'super' are class-instance receivers in JS/TS.
+      // 'self' refers to WindowOrWorkerGlobalScope — not a class instance — so
+      // filtering it here prevents spurious dispatch edges from Worker call sites.
+      if (call.receiver !== 'this' && call.receiver !== 'super') continue;
+
+      const callerRow = findCallerByLineStmt.get(relPath, call.line, call.line) as
+        | { id: number; name: string }
+        | undefined;
+      if (!callerRow) continue;
+
+      const targets = resolveThisDispatch(
+        call.name,
+        callerRow.name,
+        call.receiver as 'this' | 'super',
+        chaCtx,
+        lookup,
+      );
+
+      for (const t of targets) {
+        const key = `${callerRow.id}|${t.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+        if (conf <= 0) continue;
+        newEdges.push([callerRow.id, t.id, 'calls', conf, 0, 'cha']);
+        targetIds.add(t.id);
+      }
+    }
+  }
+
+  if (newEdges.length > 0) {
+    db.transaction(() => batchInsertEdges(db, newEdges))();
+    debug(`this/super dispatch post-pass: inserted ${newEdges.length} edge(s)`);
+  }
+
+  // Free WASM parse trees — mirrors the cleanup in backfillNativeDroppedFiles
+  for (const [, symbols] of wasmResults) {
+    const tree = (symbols as { _tree?: { delete?: () => void } })._tree;
+    if (tree && typeof tree.delete === 'function') {
+      try {
+        tree.delete();
+      } catch {
+        /* ignore cleanup errors */
+      }
+    }
+    (symbols as { _tree?: unknown; _langId?: unknown })._tree = undefined;
+    (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
+  }
+
+  return { elapsedMs: Date.now() - t0, targetIds };
+}
+
 /** Format timing result from native orchestrator phases + JS post-processing. */
 function formatNativeTimingResult(
   p: Record<string, number>,
   structurePatchMs: number,
   analysisTiming: { astMs: number; complexityMs: number; cfgMs: number; dataflowMs: number },
+  thisDispatchMs: number,
 ): BuildResult {
   return {
     phases: {
@@ -769,6 +966,7 @@ function formatNativeTimingResult(
       edgesMs: +(p.edgesMs ?? 0).toFixed(1),
       structureMs: +((p.structureMs ?? 0) + structurePatchMs).toFixed(1),
       rolesMs: +(p.rolesMs ?? 0).toFixed(1),
+      thisDispatchMs: +thisDispatchMs.toFixed(1),
       astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
       complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
       cfgMs: +(analysisTiming.cfgMs ?? 0).toFixed(1),
@@ -1308,7 +1506,7 @@ export async function tryNativeOrchestrator(
       ctx.nativeFirstProxy = false;
     } else if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
       // DB reopen failed — return partial result
-      return formatNativeTimingResult(p, 0, analysisTiming);
+      return formatNativeTimingResult(p, 0, analysisTiming, 0);
     }
   }
 
@@ -1399,10 +1597,68 @@ export async function tryNativeOrchestrator(
     debug(`Function-prop methods post-pass failed: ${toErrorMessage(err)}`);
   }
 
+  // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
+  // whose raw receiver info the Rust pipeline does not persist to DB.
+  const { elapsedMs: thisDispatchMs, targetIds: thisDispatchTargetIds } =
+    await runPostNativeThisDispatch(
+      ctx.db as unknown as BetterSqlite3Database,
+      ctx.rootDir,
+      result.changedFiles,
+      !!result.isFullBuild,
+    );
+
+  // Re-classify roles for methods that gained incoming this/super dispatch edges.
+  // The Rust orchestrator classifies roles BEFORE this post-pass, so target methods
+  // (e.g. Animal.speak, ConcreteWorker.prepare) that had no callers at Rust time
+  // are classified `dead` or `dead-ffi`.  Inserting the new call edges does not
+  // automatically update those role labels — without a re-run the stale labels
+  // propagate to dead-code detection and API boundary analysis.
+  if (thisDispatchTargetIds.size > 0) {
+    try {
+      const db = ctx.db as unknown as BetterSqlite3Database;
+      const idArray = Array.from(thisDispatchTargetIds);
+      const CHUNK_SIZE = 500;
+      const seenFiles = new Set<string>();
+      const affectedFiles: Array<{ file: string }> = [];
+      for (let i = 0; i < idArray.length; i += CHUNK_SIZE) {
+        const chunk = idArray.slice(i, i + CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(',');
+        const rows = db
+          .prepare(
+            `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
+          )
+          .all(...chunk) as Array<{ file: string }>;
+        for (const row of rows) {
+          if (!seenFiles.has(row.file)) {
+            seenFiles.add(row.file);
+            affectedFiles.push(row);
+          }
+        }
+      }
+      if (affectedFiles.length > 0) {
+        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+          classifyNodeRoles: (
+            db: BetterSqlite3Database,
+            changedFiles?: string[] | null,
+          ) => Record<string, number>;
+        };
+        classifyNodeRoles(
+          db,
+          affectedFiles.map((r) => r.file),
+        );
+        debug(
+          `this/super dispatch post-pass: re-classified roles for ${affectedFiles.length} target file(s)`,
+        );
+      }
+    } catch (err) {
+      debug(`this/super dispatch post-pass role re-classification failed: ${toErrorMessage(err)}`);
+    }
+  }
+
   // Backfill the `technique` column on `calls` edges written by the Rust
   // orchestrator, which does not write the column. Runs after all edge-writing
-  // phases (including the WASM dropped-language backfill and CHA post-pass) so
-  // every new edge in this build cycle gets a technique label.
+  // phases (including the WASM dropped-language backfill, CHA post-pass, and
+  // this/super dispatch) so every new edge in this build cycle gets a label.
   backfillEdgeTechniquesAfterNativeOrchestrator(ctx.db, !!result.isFullBuild, result.changedFiles);
 
   // ── Structure and analysis fallback (run after edge-writing so roles see full graph) ──
@@ -1427,5 +1683,5 @@ export async function tryNativeOrchestrator(
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-  return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
+  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, thisDispatchMs);
 }
