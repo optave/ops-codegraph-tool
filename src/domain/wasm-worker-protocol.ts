@@ -63,6 +63,13 @@ export interface SerializedExtractorOutput {
     receiver?: string;
   }>;
   fnRefBindings?: import('../types.js').FnRefBinding[];
+  paramBindings?: import('../types.js').ParamBinding[];
+  arrayElemBindings?: import('../types.js').ArrayElemBinding[];
+  spreadArgBindings?: import('../types.js').SpreadArgBinding[];
+  forOfBindings?: import('../types.js').ForOfBinding[];
+  arrayCallbackBindings?: import('../types.js').ArrayCallbackBinding[];
+  objectRestParamBindings?: import('../types.js').ObjectRestParamBinding[];
+  objectPropBindings?: import('../types.js').ObjectPropBinding[];
   newExpressions?: readonly string[];
 }
 

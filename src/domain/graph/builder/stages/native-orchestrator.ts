@@ -42,6 +42,8 @@ import {
   parseFilesWasmForBackfill,
 } from '../../../parser.js';
 import { computeConfidence } from '../../resolve.js';
+import type { CallNodeLookup } from '../call-resolver.js';
+import { findCaller, resolveByMethodOrGlobal } from '../call-resolver.js';
 import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
@@ -556,6 +558,199 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     db.transaction(() => batchInsertEdges(db, newEdges))();
   }
   return newTargetIds;
+}
+
+/**
+ * Post-pass: backfill prototype-based method definitions and their call edges.
+ *
+ * The Rust engine does not recognise `Foo.prototype.bar = function(){}` as a
+ * method definition, so those nodes are absent from the DB after the native
+ * orchestrator completes. This pass:
+ *   1. Re-parses JS/TS files via WASM to obtain the full ExtractorOutput
+ *      (including definitions emitted by extractPrototypeMethodsWalk).
+ *   2. Inserts any method nodes that are missing from the DB.
+ *   3. Resolves call edges to those newly-inserted nodes using the WASM typeMap
+ *      and the existing DB node table as a lookup.
+ */
+async function runPostNativePrototypeMethods(
+  db: BetterSqlite3Database,
+  rootDir: string,
+): Promise<void> {
+  // Collect JS/TS file paths from the DB — only extensions where prototype
+  // patterns can appear.
+  const jsExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx']);
+  const fileRows = db
+    .prepare(
+      `SELECT DISTINCT file FROM nodes WHERE kind = 'file' AND file IS NOT NULL ORDER BY file`,
+    )
+    .all() as Array<{ file: string }>;
+
+  const jsFiles = fileRows
+    .map((r) => r.file)
+    .filter((f) => jsExts.has(path.extname(f).toLowerCase()));
+
+  if (jsFiles.length === 0) return;
+
+  // Quick pre-filter: only re-parse files that actually contain prototype or
+  // function-as-object-property patterns to avoid an expensive WASM re-parse of
+  // every JS/TS file in large repos. Covers:
+  //   - `.prototype.`  — classical prototype method assignment
+  //   - `\b\w+\.\w+\s*=\s*function` — function-as-object property (`f.g = function(){}`)
+  const protoFiles = jsFiles.filter((relPath) => {
+    try {
+      const content = readFileSafe(path.join(rootDir, relPath));
+      return content.includes('.prototype.') || /\b\w+\.\w+\s*=\s*function/.test(content);
+    } catch {
+      return false;
+    }
+  });
+
+  if (protoFiles.length === 0) return;
+
+  // WASM-parse only the files that have prototype patterns to get full
+  // ExtractorOutput including prototype method definitions and typeMap entries.
+  const absPaths = protoFiles.map((f) => path.join(rootDir, f));
+  let wasmResults: Map<string, ExtractorOutput>;
+  try {
+    wasmResults = await parseFilesWasmForBackfill(absPaths, rootDir);
+  } catch (e) {
+    debug(`runPostNativePrototypeMethods: WASM parse failed: ${toErrorMessage(e)}`);
+    return;
+  }
+
+  if (wasmResults.size === 0) return;
+
+  // Check which nodes already exist — INSERT OR IGNORE handles races but
+  // we need the IDs of newly inserted rows, so we check first.
+  const existsStmt = db.prepare(
+    `SELECT id FROM nodes WHERE name = ? AND kind = 'method' AND file = ?`,
+  );
+
+  // Insert rows: [name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility]
+  const newNodeRows: unknown[][] = [];
+  // Track which file+definition combos are new so we can insert edges for them.
+  const newDefs: Array<{ name: string; file: string; line: number }> = [];
+
+  for (const [relPath, symbols] of wasmResults) {
+    for (const def of symbols.definitions ?? []) {
+      if (def.kind !== 'method') continue;
+      const dotIdx = def.name.indexOf('.');
+      if (dotIdx === -1) continue; // skip bare method names (shouldn't happen, but guard)
+
+      // Only insert if the node is not already in the DB.
+      const existing = existsStmt.get(def.name, relPath) as { id: number } | undefined;
+      if (existing) continue;
+
+      const scope = def.name.slice(0, dotIdx);
+      newNodeRows.push([
+        def.name,
+        'method',
+        relPath,
+        def.line,
+        def.endLine ?? null,
+        null,
+        def.name,
+        scope,
+        null,
+      ]);
+      newDefs.push({ name: def.name, file: relPath, line: def.line });
+    }
+  }
+
+  if (newNodeRows.length === 0) return;
+
+  db.transaction(() => batchInsertNodes(db, newNodeRows))();
+
+  // Build a name → node lookup from all DB nodes (including newly inserted ones).
+  type NodeEntry = { id: number; file: string; kind: string };
+  const byNameMap = new Map<string, NodeEntry[]>();
+  const byNameFileMap = new Map<string, NodeEntry[]>();
+  const byIdKey = new Map<string, { id: number }>();
+
+  const allNodes = db
+    .prepare(`SELECT id, name, kind, file, line FROM nodes WHERE kind != 'file'`)
+    .all() as Array<{ id: number; name: string; kind: string; file: string; line: number }>;
+
+  for (const n of allNodes) {
+    const list = byNameMap.get(n.name);
+    if (list) list.push(n);
+    else byNameMap.set(n.name, [n]);
+
+    const fk = `${n.name}::${n.file}`;
+    const flist = byNameFileMap.get(fk);
+    if (flist) flist.push(n);
+    else byNameFileMap.set(fk, [n]);
+
+    byIdKey.set(`${n.name}|${n.kind}|${n.file}|${n.line}`, { id: n.id });
+  }
+
+  const lookup: CallNodeLookup = {
+    byName: (name) => byNameMap.get(name) ?? [],
+    byNameAndFile: (name, file) => byNameFileMap.get(`${name}::${file}`) ?? [],
+    isBarrel: () => false,
+    resolveBarrel: () => null,
+    nodeId: (name, kind, file, line) => byIdKey.get(`${name}|${kind}|${file}|${line}`),
+  };
+
+  // Build a fast set of newly-inserted node IDs so we only emit edges to
+  // prototype nodes that the Rust engine missed (avoids duplicating existing edges).
+  const newNodeIds = new Set<number>(
+    newDefs.flatMap((d) => {
+      const nodes = byNameFileMap.get(`${d.name}::${d.file}`);
+      return nodes ? nodes.map((n) => n.id) : [];
+    }),
+  );
+
+  // seenByPair deduplicates edges we emit within this function only.
+  // No pre-existing edge can target a newly-inserted node ID (SQLite
+  // auto-increment guarantees the new IDs are unique), so there is no need
+  // to seed this set from the DB — doing so would load O(|edges|) data for
+  // zero benefit and could OOM on large repositories.
+  const seenByPair = new Set<string>();
+
+  // Resolve call edges in every file — not just those that define new prototype
+  // methods. A caller in app.js calling a prototype method defined in lib.js
+  // would be silently missed if we only scanned definition files.
+  // The newNodeIds guard inside the loop already prevents duplicate edges.
+  const newEdgeRows: unknown[][] = [];
+  const fileNodeStmt = db.prepare(`SELECT id FROM nodes WHERE kind = 'file' AND file = ?`);
+
+  for (const [relPath, symbols] of wasmResults) {
+    const fileNodeRow = fileNodeStmt.get(relPath) as { id: number } | undefined;
+    if (!fileNodeRow) continue;
+
+    const typeMap = symbols.typeMap instanceof Map ? symbols.typeMap : new Map();
+
+    for (const call of symbols.calls ?? []) {
+      if (!call.receiver) continue; // prototype resolution only applies to receiver calls
+
+      const caller = findCaller(lookup, call, symbols.definitions ?? [], relPath, fileNodeRow);
+
+      const targets = resolveByMethodOrGlobal(
+        lookup,
+        call,
+        relPath,
+        typeMap as Map<string, unknown>,
+        caller.callerName,
+      );
+
+      for (const t of targets) {
+        // Only emit edges to newly-inserted prototype nodes to avoid
+        // duplicating edges the Rust engine already built.
+        if (!newNodeIds.has(t.id)) continue;
+        const key = `${caller.id}|${t.id}`;
+        if (seenByPair.has(key)) continue;
+        seenByPair.add(key);
+        const conf = computeConfidence(relPath, t.file, null);
+        if (conf <= 0) continue;
+        newEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'receiver-typed']);
+      }
+    }
+  }
+
+  if (newEdgeRows.length > 0) {
+    db.transaction(() => batchInsertEdges(db, newEdgeRows))();
+  }
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -1193,6 +1388,15 @@ export async function tryNativeOrchestrator(
     } catch (err) {
       debug(`CHA post-pass role re-classification failed: ${toErrorMessage(err)}`);
     }
+  }
+
+  // Prototype method post-pass: the Rust engine does not recognise pre-ES6
+  // `Foo.prototype.bar = function(){}` patterns. Re-parse JS/TS files via
+  // WASM to insert missing method nodes and their call edges.
+  try {
+    await runPostNativePrototypeMethods(ctx.db as unknown as BetterSqlite3Database, ctx.rootDir);
+  } catch (err) {
+    debug(`Prototype methods post-pass failed: ${toErrorMessage(err)}`);
   }
 
   // Backfill the `technique` column on `calls` edges written by the Rust

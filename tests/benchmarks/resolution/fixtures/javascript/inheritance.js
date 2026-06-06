@@ -29,6 +29,6 @@ export class Counter {
 
 export class DoubleCounter extends Counter {
   static count() {
-    return super.count() * 2; // static super.method() → Counter.count
+    return Counter.count() * 2; // static super.method() → Counter.count
   }
 }
