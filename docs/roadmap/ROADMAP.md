@@ -1541,6 +1541,34 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 
 ---
 
+#### Groovy
+
+Groovy compiles almost entirely to JVM `invokedynamic` bytecode via its `CallSite` caching infrastructure. Source-level call-graph analysis reaches a precision ceiling at name matching; the concrete dispatch target is determined at runtime. All Groovy call edges should be emitted as low-confidence.
+
+**Reference tools:** Doop / OPAL (see JVM section above) — the same JVM-level toolchain covers Groovy bytecode analysis.
+
+**Codegraph gap:** No `invokedynamic` dispatch modelling; all Groovy call edges are emitted as name-matched with no confidence downgrade.
+
+**Adoption candidates:** Emit a `confidence: low` annotation on all Groovy call edges and surface this in `codegraph audit` output. No source-level precision improvement is achievable without JVM bytecode access.
+
+**Benchmark suites:** No dedicated source-level Groovy CG benchmark exists. JVM-hosted languages study (Ali et al., IEEE TSE) is the closest reference.
+
+---
+
+#### Clojure
+
+Clojure dispatches through persistent data structures and protocol `defprotocol`/`extend-type` dispatch, compiled to JVM `invokedynamic`. Source-level name matching is the practical ceiling; reflection and dynamic `eval` make full soundness impossible at tree-sitter level.
+
+**Reference tools:** Doop / OPAL (see JVM section above) — bytecode-level analysis is required for sound Clojure CG construction.
+
+**Codegraph gap:** No `invokedynamic` modelling; no `defprotocol` dispatch; `apply` and `eval` forms silently dropped.
+
+**Adoption candidates:** Emit `confidence: low` on all Clojure call edges. For `defprotocol`/`extend-type` forms, record the protocol name and all `extend-type` targets syntactically — these provide a partial static dispatch table even without bytecode.
+
+**Benchmark suites:** No dedicated source-level Clojure CG benchmark exists. JVM-hosted languages study (Ali et al., IEEE TSE) is the closest reference.
+
+---
+
 #### Python
 
 | Tool | Approach | Precision / Recall | URL |
@@ -1755,7 +1783,19 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 
 **Benchmark suites:** Linux kernel (used by MLTA, DeepType, KallGraph); Cocktail corpus (nginx, Redis, SQLite, OpenSSL, CPython — 5,355 annotated indirect calls, OOPSLA 2023); GNU coreutils 28 programs (Phoenix 2026); NVIDIA CUDA Samples repository; Syzkaller-generated call traces (KallGraph, IEEE S&P 2025).
 
-**Objective-C note:** Objective-C `[receiver selector]` message-send semantics are handled at the C/C++ tooling level — Clang's built-in `CallGraph` (AST-level) and SVF (LLVM-IR-level) both model Objective-C method dispatch via CHA over the class/protocol hierarchy. The tree-sitter-objc grammar captures receiver/selector pairs syntactically, but resolving them requires the same class-hierarchy CHA pass described above for C++ virtual calls. No standalone Objective-C call-graph benchmark comparable to JCG or PyCG exists; Apple's open-source projects (objc4, Foundation) serve as informal ground truth. All C/C++ tool-chain references above cover Objective-C when compiled with Clang.
+---
+
+#### Objective-C
+
+Objective-C `[receiver selector]` message-send semantics require class-hierarchy analysis (CHA) over the class/protocol hierarchy — the same pass needed for C++ virtual calls. The tree-sitter-objc grammar captures receiver/selector pairs syntactically, but dispatch target resolution requires the `extends` / `conforms-to` hierarchy data.
+
+**Reference tools:** Clang's built-in `CallGraph` (AST-level) and SVF (LLVM-IR-level) — both model Objective-C method dispatch via CHA when compiled with Clang.
+
+**Codegraph gap:** `[receiver selector]` messages are extracted as call edges with the selector as the callee name, but no CHA over the class/protocol hierarchy is performed. Dispatch targets are not enumerated for virtual selectors.
+
+**Adoption candidates:** The same CHA pass described for C++ virtual calls (using existing `ctx.classes` inheritance data) applies to Objective-C selectors. Enumerate all classes that implement the selector method via the class hierarchy, emitting additional edges with lower confidence weight.
+
+**Benchmark suites:** No standalone Objective-C CG benchmark comparable to JCG or PyCG exists. Apple's open-source projects (objc4, Foundation) serve as informal ground truth. All C/C++ toolchain benchmarks above cover Objective-C when compiled with Clang.
 
 ---
 
