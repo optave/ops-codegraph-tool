@@ -591,14 +591,15 @@ async function runPostNativePrototypeMethods(
 
   if (jsFiles.length === 0) return;
 
-  // Quick pre-filter: only re-parse files that actually contain ".prototype."
-  // to avoid an expensive WASM re-parse of every JS/TS file in large repos
-  // where prototype patterns are uncommon. This reduces the hot path from
-  // O(all_js_files) to O(files_with_prototype_patterns).
+  // Quick pre-filter: only re-parse files that actually contain prototype or
+  // function-as-object-property patterns to avoid an expensive WASM re-parse of
+  // every JS/TS file in large repos. Covers:
+  //   - `.prototype.`  — classical prototype method assignment
+  //   - `\b\w+\.\w+\s*=\s*function` — function-as-object property (`f.g = function(){}`)
   const protoFiles = jsFiles.filter((relPath) => {
     try {
       const content = readFileSafe(path.join(rootDir, relPath));
-      return content.includes('.prototype.');
+      return content.includes('.prototype.') || /\b\w+\.\w+\s*=\s*function/.test(content);
     } catch {
       return false;
     }

@@ -313,6 +313,7 @@ function dispatchQueryMatch(
     if (callInfo) calls.push(callInfo);
   } else if (c.assign_node) {
     handleCommonJSAssignment(c.assign_left!, c.assign_right!, c.assign_node, imports);
+    handleFuncPropAssignment(c.assign_left!, c.assign_right!, definitions);
   }
 }
 
@@ -643,6 +644,8 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   );
   // Prototype-based method definitions: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
   extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
+  // Function-as-object property methods: `fn.method = function() { ... }`
+  extractFuncPropMethodsWalk(tree.rootNode, ctx.definitions);
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
   // Phase 8.3e: Extract array-element and spread/for-of/Array.from bindings
@@ -1724,6 +1727,18 @@ function extractSpreadForOfWalk(
         funcStack.push(nameNode.text);
         pushedFunc = true;
       }
+    } else if (node.type === 'variable_declarator') {
+      // `const process = (arr) => { ... }` — arrow/expression functions assigned
+      // to a variable have no `name` field on the function node itself.
+      const nameNode = node.childForFieldName('name');
+      const valueNode = node.childForFieldName('value');
+      if (
+        nameNode?.type === 'identifier' &&
+        (valueNode?.type === 'arrow_function' || valueNode?.type === 'function_expression')
+      ) {
+        funcStack.push(nameNode.text);
+        pushedFunc = true;
+      }
     }
 
     if (node.type === 'call_expression') {
@@ -1836,8 +1851,10 @@ function extractSpreadForOfWalk(
               }
             }
           }
-          const enclosingFunc = funcStack.length > 0 ? funcStack[funcStack.length - 1]! : '';
-          if (varName && !BUILTIN_GLOBALS.has(varName) && enclosingFunc) {
+          // Use '<module>' as sentinel for top-level for-of outside any function.
+          const enclosingFunc =
+            funcStack.length > 0 ? funcStack[funcStack.length - 1]! : '<module>';
+          if (varName && !BUILTIN_GLOBALS.has(varName)) {
             forOfBindings.push({ varName, sourceName: right.text, enclosingFunc });
           }
         }
@@ -2428,6 +2445,60 @@ function emitPrototypeMethod(
     // Consumed by the prototype-alias fallback in resolveByMethodOrGlobal.
     setTypeMapEntry(typeMap, fullName, rhs.text, 0.9);
   }
+}
+
+/**
+ * Extract function-as-object property method definitions.
+ *
+ * Handles `fn.method = function() {}` and `fn.method = () => {}` patterns.
+ * Emits a `method` definition named `fn.method` so that:
+ *   1. `findCaller` attributes calls inside the body to `fn.method`
+ *   2. `resolveByMethodOrGlobal` resolves `this.other()` inside `fn.method` to `fn.other`
+ *
+ * Excludes BUILTIN_GLOBALS objects and `.prototype` (handled by extractPrototypeMethodsWalk).
+ */
+function extractFuncPropMethodsWalk(rootNode: TreeSitterNode, definitions: Definition[]): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'expression_statement') {
+      const expr = node.child(0);
+      if (expr?.type === 'assignment_expression') {
+        const lhs = expr.childForFieldName('left');
+        const rhs = expr.childForFieldName('right');
+        if (lhs && rhs) handleFuncPropAssignment(lhs, rhs, definitions);
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+function handleFuncPropAssignment(
+  lhs: TreeSitterNode,
+  rhs: TreeSitterNode,
+  definitions: Definition[],
+): void {
+  if (lhs.type !== 'member_expression') return;
+  if (rhs.type !== 'function_expression' && rhs.type !== 'arrow_function') return;
+
+  const obj = lhs.childForFieldName('object');
+  const prop = lhs.childForFieldName('property');
+  if (!obj || !prop) return;
+  if (obj.type !== 'identifier') return;
+  if (prop.type !== 'property_identifier' && prop.type !== 'identifier') return;
+  if (BUILTIN_GLOBALS.has(obj.text)) return;
+  if (prop.text === 'prototype') return;
+
+  const params = extractParameters(rhs);
+  definitions.push({
+    name: `${obj.text}.${prop.text}`,
+    kind: 'method',
+    line: nodeStartLine(rhs),
+    endLine: nodeEndLine(rhs),
+    children: params.length > 0 ? params : undefined,
+  });
 }
 
 /** Iterate over an object literal assigned to `Foo.prototype` and emit defs/aliases. */

@@ -813,4 +813,54 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.get('C.helper')).toEqual({ type: 'helper', confidence: 0.9 });
     });
   });
+
+  describe('function-as-object property method extraction (#1334)', () => {
+    it('extracts fn.method = function() {} as a method definition', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = function() { console.log("2"); }
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'f.g', kind: 'method' }),
+      );
+    });
+
+    it('extracts fn.method = () => {} as a method definition', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = () => 42;
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'f.g', kind: 'method' }),
+      );
+    });
+
+    it('extracts the this.g() call inside f.h', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = function() {}
+        f.h = function() { this.g(); }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'g', receiver: 'this' }),
+      );
+    });
+
+    it('does not extract func-prop assignments on built-in globals', () => {
+      const symbols = parseJS(`console.log = function() {};`);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'console.log' }),
+      );
+    });
+
+    it('does not extract .prototype property assignments (handled by prototype walk)', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = function() {};
+      `);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'C.prototype' }),
+      );
+    });
+  });
 });
