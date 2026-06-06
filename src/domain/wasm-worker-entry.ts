@@ -813,7 +813,9 @@ function serializeExtractorOutput(
     ...(symbols.objectRestParamBindings?.length
       ? { objectRestParamBindings: symbols.objectRestParamBindings }
       : {}),
-    ...(symbols.objectPropBindings?.length ? { objectPropBindings: symbols.objectPropBindings } : {}),
+    ...(symbols.objectPropBindings?.length
+      ? { objectPropBindings: symbols.objectPropBindings }
+      : {}),
     ...(symbols.newExpressions?.length ? { newExpressions: symbols.newExpressions } : {}),
   };
 }
