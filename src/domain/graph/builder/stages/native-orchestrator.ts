@@ -691,16 +691,15 @@ async function runPostNativePrototypeMethods(
     .all() as Array<{ source_id: number; target_id: number }>;
   const seenByPair = new Set<string>(existingPairs.map((e) => `${e.source_id}|${e.target_id}`));
 
-  // For each file that produced new prototype nodes, resolve call edges.
+  // Resolve call edges in every file — not just those that define new prototype
+  // methods. A caller in app.js calling a prototype method defined in lib.js
+  // would be silently missed if we only scanned definition files.
+  // The newNodeIds guard inside the loop already prevents duplicate edges.
   const newEdgeRows: unknown[][] = [];
-  const newDefFiles = new Set(newDefs.map((d) => d.file));
+  const fileNodeStmt = db.prepare(`SELECT id FROM nodes WHERE kind = 'file' AND file = ?`);
 
   for (const [relPath, symbols] of wasmResults) {
-    if (!newDefFiles.has(relPath)) continue;
-
-    const fileNodeRow = db
-      .prepare(`SELECT id FROM nodes WHERE kind = 'file' AND file = ?`)
-      .get(relPath) as { id: number } | undefined;
+    const fileNodeRow = fileNodeStmt.get(relPath) as { id: number } | undefined;
     if (!fileNodeRow) continue;
 
     const typeMap = symbols.typeMap instanceof Map ? symbols.typeMap : new Map();
