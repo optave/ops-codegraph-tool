@@ -1537,7 +1537,7 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 - Implement TCAexpand-this for Scala: when resolving a call on `this` inside a trait method, include all concrete classes that mix in the trait, using the `extends`/`implements` graph already extracted by Phase 4.3. Expected 1.5–17x reduction in Scala call graph edges per ECOOP 2014 results.
 - Apply Zipper's two-pass principle: run a fast initial pass, identify call sites with high receiver-type fan-out (the precision-critical positions), then apply type-narrowing only to those sites rather than globally.
 
-**Benchmark suites:** JCG (opalj/JCG) — annotated Java CG benchmark covering reflection, invokedynamic, lambdas; DaCapo suite; ISSTA 2024 dynamic baseline corpus (Zenodo 13134617).
+**Benchmark suites:** JCG (opalj/JCG, BSD) — annotated Java CG benchmark covering reflection, invokedynamic, lambdas; DaCapo suite; ISSTA 2024 dynamic baseline corpus (Zenodo 13134617).
 
 ---
 
@@ -1717,6 +1717,8 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 - Use `Module:Function/Arity` triples as call-target keys; build a module-export index analogous to Dialyzer's PLT during graph construction. Arity disambiguation is the single highest-leverage change for Erlang precision.
 - ELP-style incremental module index: resolve `M:F/A` triples across the whole corpus via a symbol index, replicating ELP's call-hierarchy queries without requiring a full LSP integration.
 
+**Benchmark suites:** ELP call hierarchy (WhatsApp/erlang-language-platform, Apache-2.0); Dialyzer OTP scalability benchmarks (Jansen et al.); Set-theoretic Types for Erlang test suite (321 tests, arXiv 2302.12783).
+
 ---
 
 #### Gleam
@@ -1729,6 +1731,8 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 
 **Adoption candidates:**
 - Exploit Gleam's type annotations to restrict dispatch candidates: unlike dynamic languages, Gleam function calls are fully type-resolved by the compiler. At minimum, use declared parameter types to filter candidate targets by type compatibility rather than name alone.
+
+**Benchmark suites:** No dedicated Gleam call-graph precision/recall benchmark exists as of the time of writing. The Reach project's BEAM bytecode test cases (elixir-vibe/reach, MIT) are the closest available ground truth.
 
 ---
 
