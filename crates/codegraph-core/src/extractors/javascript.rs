@@ -417,13 +417,19 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
                 let key_node = child.child_by_field_name("key");
                 let value_node = child.child_by_field_name("value");
                 if let (Some(key_node), Some(value_node)) = (key_node, value_node) {
-                    let method_name = if key_node.kind() == "string" {
-                        node_text(&key_node, source).replace(['\'', '"'], "")
+                    let method_name: &str = if key_node.kind() == "string" {
+                        let s = node_text(&key_node, source);
+                        // Strip exactly one matching pair of surrounding quote characters.
+                        // `trim_matches` would also strip embedded quotes; we only want the
+                        // outermost delimiter pair so `"it's"` stays `it's`.
+                        s.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+                            .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                            .unwrap_or(s)
                     } else {
-                        node_text(&key_node, source).to_string()
+                        node_text(&key_node, source)
                     };
                     if method_name.is_empty() { continue; }
-                    emit_js_prototype_method(class_name, &method_name, &value_node, source, symbols);
+                    emit_js_prototype_method(class_name, method_name, &value_node, source, symbols);
                 }
             }
             _ => {}
