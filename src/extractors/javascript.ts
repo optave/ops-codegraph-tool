@@ -1,5 +1,7 @@
 import { debug } from '../infrastructure/logger.js';
 import type {
+  ArrayCallbackBinding,
+  ArrayElemBinding,
   Call,
   CallAssignment,
   ClassRelation,
@@ -7,8 +9,10 @@ import type {
   Export,
   ExtractorOutput,
   FnRefBinding,
+  ForOfBinding,
   Import,
   ParamBinding,
+  SpreadArgBinding,
   SubDeclaration,
   TreeSitterNode,
   TreeSitterQuery,
@@ -323,6 +327,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const callAssignments: CallAssignment[] = [];
   const fnRefBindings: FnRefBinding[] = [];
   const paramBindings: ParamBinding[] = [];
+  const arrayElemBindings: ArrayElemBinding[] = [];
+  const spreadArgBindings: SpreadArgBinding[] = [];
+  const forOfBindings: ForOfBinding[] = [];
+  const arrayCallbackBindings: ArrayCallbackBinding[] = [];
 
   const matches = query.matches(tree.rootNode);
 
@@ -351,6 +359,16 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, paramBindings);
 
+  // Phase 8.3e: Extract array-element and spread/for-of/Array.from bindings
+  extractArrayElemBindingsWalk(tree.rootNode, arrayElemBindings);
+  extractSpreadForOfWalk(
+    tree.rootNode,
+    spreadArgBindings,
+    forOfBindings,
+    arrayCallbackBindings,
+    fnRefBindings,
+  );
+
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
@@ -372,6 +390,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     callAssignments,
     fnRefBindings,
     paramBindings,
+    arrayElemBindings,
+    spreadArgBindings,
+    forOfBindings,
+    arrayCallbackBindings,
     newExpressions,
   };
 }
@@ -605,6 +627,10 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     callAssignments: [],
     fnRefBindings: [],
     paramBindings: [],
+    arrayElemBindings: [],
+    spreadArgBindings: [],
+    forOfBindings: [],
+    arrayCallbackBindings: [],
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
@@ -622,8 +648,15 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
-  // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
-  extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
+  // Phase 8.3e: Extract array-element and spread/for-of/Array.from bindings
+  extractArrayElemBindingsWalk(tree.rootNode, ctx.arrayElemBindings!);
+  extractSpreadForOfWalk(
+    tree.rootNode,
+    ctx.spreadArgBindings!,
+    ctx.forOfBindings!,
+    ctx.arrayCallbackBindings!,
+    ctx.fnRefBindings!,
+  );
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -1621,6 +1654,210 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
       walk(node.child(i)!, depth + 1);
     }
   }
+  walk(rootNode, 0);
+}
+
+/** Collection constructors whose argument is treated as an element source. */
+const COLLECTION_CTOR_SET = new Set(['Set', 'Map']);
+
+/**
+ * Phase 8.3e: Extract array-element bindings from `const arr = [fn1, fn2]` patterns.
+ * Emits an ArrayElemBinding for each identifier element in an array literal assigned
+ * to a variable.
+ */
+function extractArrayElemBindingsWalk(
+  rootNode: TreeSitterNode,
+  arrayElemBindings: ArrayElemBinding[],
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN?.type === 'array') {
+        let idx = 0;
+        for (let i = 0; i < valueN.childCount; i++) {
+          const elem = valueN.child(i);
+          if (!elem) continue;
+          if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
+          if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
+            arrayElemBindings.push({ arrayName: nameN.text, index: idx, elemName: elem.text });
+          }
+          idx++;
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
+ * Phase 8.3e: Extract spread-argument, for-of, Array.from, and collection-wrap bindings.
+ *
+ * - Spread: `f(...arr)` → SpreadArgBinding
+ * - Array.from: `Array.from(src, cb)` → ArrayCallbackBinding
+ * - Collection wrap: `new Set(arr)` / `new Map(arr)` → FnRefBinding lhs=s[*] rhs=arr[*]
+ * - For-of: `for (const x of arr)` → ForOfBinding
+ */
+function extractSpreadForOfWalk(
+  rootNode: TreeSitterNode,
+  spreadArgBindings: SpreadArgBinding[],
+  forOfBindings: ForOfBinding[],
+  arrayCallbackBindings: ArrayCallbackBinding[],
+  fnRefBindings: FnRefBinding[],
+): void {
+  const funcStack: string[] = [];
+
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+
+    let pushedFunc = false;
+    if (
+      node.type === 'function_declaration' ||
+      node.type === 'generator_function_declaration'
+    ) {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode?.type === 'identifier') {
+        funcStack.push(nameNode.text);
+        pushedFunc = true;
+      }
+    } else if (node.type === 'method_definition') {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode) {
+        funcStack.push(nameNode.text);
+        pushedFunc = true;
+      }
+    }
+
+    if (node.type === 'call_expression') {
+      const fn = node.childForFieldName('function');
+      const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
+
+      // Spread: f(...arr)
+      if (fn?.type === 'identifier' && !BUILTIN_GLOBALS.has(fn.text) && argsNode) {
+        let argIdx = 0;
+        for (let i = 0; i < argsNode.childCount; i++) {
+          const child = argsNode.child(i);
+          if (!child) continue;
+          if (child.type === ',' || child.type === '(' || child.type === ')') continue;
+          if (child.type === 'spread_element') {
+            const spreadTarget =
+              child.childForFieldName('argument') ??
+              (child.childCount > 1 ? child.child(1) : null);
+            if (spreadTarget?.type === 'identifier' && !BUILTIN_GLOBALS.has(spreadTarget.text)) {
+              spreadArgBindings.push({
+                callee: fn.text,
+                arrayName: spreadTarget.text,
+                startIndex: argIdx,
+              });
+            }
+          }
+          argIdx++;
+        }
+      }
+
+      // Array.from(source, cb)
+      if (fn?.type === 'member_expression' && argsNode) {
+        const obj = fn.childForFieldName('object');
+        const prop = fn.childForFieldName('property');
+        if (obj?.text === 'Array' && prop?.text === 'from') {
+          const fnArgs: TreeSitterNode[] = [];
+          for (let i = 0; i < argsNode.childCount; i++) {
+            const child = argsNode.child(i);
+            if (!child) continue;
+            if (child.type === ',' || child.type === '(' || child.type === ')') continue;
+            fnArgs.push(child);
+          }
+          if (fnArgs.length >= 2) {
+            const srcArg = fnArgs[0]!;
+            const cbArg = fnArgs[1]!;
+            if (
+              srcArg.type === 'identifier' &&
+              !BUILTIN_GLOBALS.has(srcArg.text) &&
+              cbArg.type === 'identifier' &&
+              !BUILTIN_GLOBALS.has(cbArg.text)
+            ) {
+              arrayCallbackBindings.push({ sourceName: srcArg.text, calleeName: cbArg.text });
+            }
+          }
+        }
+      }
+    }
+
+    // Collection wrap: const s = new Set(arr) or new Map(arr)
+    if (node.type === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN?.type === 'new_expression') {
+        const ctor = valueN.childForFieldName('constructor');
+        const args = valueN.childForFieldName('arguments');
+        if (ctor && COLLECTION_CTOR_SET.has(ctor.text) && args) {
+          for (let i = 0; i < args.childCount; i++) {
+            const arg = args.child(i);
+            if (!arg || arg.type === '(' || arg.type === ')') continue;
+            if (arg.type === 'identifier' && !BUILTIN_GLOBALS.has(arg.text)) {
+              fnRefBindings.push({ lhs: `${nameN.text}[*]`, rhs: `${arg.text}[*]` });
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // For-of: for (const x of arr)
+    if (node.type === 'for_in_statement') {
+      let isForOf = false;
+      for (let i = 0; i < node.childCount; i++) {
+        if (node.child(i)?.text === 'of') {
+          isForOf = true;
+          break;
+        }
+      }
+      if (isForOf) {
+        const right = node.childForFieldName('right');
+        if (right?.type === 'identifier' && !BUILTIN_GLOBALS.has(right.text)) {
+          const left = node.childForFieldName('left');
+          let varName: string | null = null;
+          if (left?.type === 'identifier') {
+            varName = left.text;
+          } else if (left) {
+            for (let i = 0; i < left.childCount; i++) {
+              const lc = left.child(i);
+              if (lc?.type === 'variable_declarator') {
+                const nc = lc.childForFieldName('name');
+                if (nc?.type === 'identifier') {
+                  varName = nc.text;
+                  break;
+                }
+              } else if (
+                lc?.type === 'identifier' &&
+                lc.text !== 'const' &&
+                lc.text !== 'let' &&
+                lc.text !== 'var'
+              ) {
+                varName = lc.text;
+                break;
+              }
+            }
+          }
+          const enclosingFunc = funcStack.length > 0 ? funcStack[funcStack.length - 1]! : '';
+          if (varName && !BUILTIN_GLOBALS.has(varName) && enclosingFunc) {
+            forOfBindings.push({ varName, sourceName: right.text, enclosingFunc });
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+
+    if (pushedFunc) funcStack.pop();
+  }
+
   walk(rootNode, 0);
 }
 

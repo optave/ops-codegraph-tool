@@ -564,6 +564,45 @@ export interface ParamBinding {
   argName: string;
 }
 
+/**
+ * An array-element binding: `const arr = [fn1, fn2]` records each named function
+ * stored at a specific index. Phase 8.3e: array-element pts tracking.
+ */
+export interface ArrayElemBinding {
+  arrayName: string;
+  index: number;
+  elemName: string;
+}
+
+/**
+ * A spread-argument binding: `f(...arr)` records that `arr` is spread into `f`'s
+ * parameter list starting at `startIndex`. Phase 8.3e.
+ */
+export interface SpreadArgBinding {
+  callee: string;
+  arrayName: string;
+  startIndex: number;
+}
+
+/**
+ * A for-of iteration binding: `for (const x of arr)` records that `x` receives
+ * each element of `arr` within `enclosingFunc`. Phase 8.3e.
+ */
+export interface ForOfBinding {
+  varName: string;
+  sourceName: string;
+  enclosingFunc: string;
+}
+
+/**
+ * An array-callback binding: `Array.from(arr, cb)` records that `cb`'s first
+ * parameter receives each element of `arr`. Phase 8.3e.
+ */
+export interface ArrayCallbackBinding {
+  sourceName: string;
+  calleeName: string;
+}
+
 /** The normalized output shape returned by every language extractor. */
 export interface ExtractorOutput {
   definitions: Definition[];
@@ -595,6 +634,14 @@ export interface ExtractorOutput {
    * to propagate function references through function parameters.
    */
   paramBindings?: ParamBinding[];
+  /** Phase 8.3e: array-element bindings from `const arr = [fn1, fn2]` patterns. */
+  arrayElemBindings?: ArrayElemBinding[];
+  /** Phase 8.3e: spread-argument bindings from `f(...arr)` call sites. */
+  spreadArgBindings?: SpreadArgBinding[];
+  /** Phase 8.3e: for-of iteration variable bindings. */
+  forOfBindings?: ForOfBinding[];
+  /** Phase 8.3e: array callback bindings from Array.from/forEach/etc. */
+  arrayCallbackBindings?: ArrayCallbackBinding[];
   /**
    * Phase 8.5 (RTA): constructor names from all `new X()` expressions in the file,
    * including unassigned ones (e.g. `doSomething(new Foo())`). Used to build the

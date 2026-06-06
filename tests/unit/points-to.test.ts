@@ -139,3 +139,73 @@ describe('buildPointsToMap — parameter-flow constraints (Phase 8.3c)', () => {
     expect(resolveViaPointsTo('fn', pts)).toEqual([]);
   });
 });
+
+describe('buildPointsToMap — array-element pts constraints (Phase 8.3e)', () => {
+  it('seeds array[i] entries and wildcard from arrayElemBindings', () => {
+    const defNames = new Set(['fn1', 'fn2']);
+    const arrayElemBindings = [
+      { arrayName: 'arr', index: 0, elemName: 'fn1' },
+      { arrayName: 'arr', index: 1, elemName: 'fn2' },
+    ];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings);
+    // Wildcard collects all elements
+    expect(resolveViaPointsTo('arr[*]', pts)).toContain('fn1');
+    expect(resolveViaPointsTo('arr[*]', pts)).toContain('fn2');
+  });
+
+  it('resolves spread arguments via per-element constraints', () => {
+    // f(x, y) { x(); y(); }  f(...arr)  arr=[fn1, fn2]
+    const defNames = new Set(['f', 'fn1', 'fn2']);
+    const defParams = new Map([['f', ['x', 'y']]]);
+    const arrayElemBindings = [
+      { arrayName: 'arr', index: 0, elemName: 'fn1' },
+      { arrayName: 'arr', index: 1, elemName: 'fn2' },
+    ];
+    const spreadArgBindings = [{ callee: 'f', arrayName: 'arr', startIndex: 0 }];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, defParams, arrayElemBindings, spreadArgBindings);
+    expect(resolveViaPointsTo('f::x', pts)).toContain('fn1');
+    expect(resolveViaPointsTo('f::y', pts)).toContain('fn2');
+  });
+
+  it('resolves for-of loop variable via wildcard constraint', () => {
+    // function outer() { const arr = [fn1, fn2]; for (const f of arr) { f(); } }
+    const defNames = new Set(['outer', 'fn1', 'fn2']);
+    const arrayElemBindings = [
+      { arrayName: 'arr', index: 0, elemName: 'fn1' },
+      { arrayName: 'arr', index: 1, elemName: 'fn2' },
+    ];
+    const forOfBindings = [{ varName: 'f', sourceName: 'arr', enclosingFunc: 'outer' }];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings, undefined, forOfBindings);
+    expect(resolveViaPointsTo('outer::f', pts)).toContain('fn1');
+    expect(resolveViaPointsTo('outer::f', pts)).toContain('fn2');
+  });
+
+  it('resolves Array.from callback parameter via wildcard constraint', () => {
+    // function cb(item) { item(); }  Array.from(arr, cb)  arr=[fn1, fn2]
+    const defNames = new Set(['cb', 'fn1', 'fn2']);
+    const defParams = new Map([['cb', ['item']]]);
+    const arrayElemBindings = [
+      { arrayName: 'arr', index: 0, elemName: 'fn1' },
+      { arrayName: 'arr', index: 1, elemName: 'fn2' },
+    ];
+    const arrayCallbackBindings = [{ sourceName: 'arr', calleeName: 'cb' }];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, defParams, arrayElemBindings, undefined, undefined, arrayCallbackBindings);
+    expect(resolveViaPointsTo('cb::item', pts)).toContain('fn1');
+    expect(resolveViaPointsTo('cb::item', pts)).toContain('fn2');
+  });
+
+  it('chains through Set collection wrap: arr → s[*] → for-of var', () => {
+    // fnRefBindings carries s[*] → arr[*] (from extractSpreadForOfWalk collection-wrap)
+    // forOfBindings carries outer::f → s[*]
+    const defNames = new Set(['outer', 'fn1', 'fn2']);
+    const arrayElemBindings = [
+      { arrayName: 'arr', index: 0, elemName: 'fn1' },
+      { arrayName: 'arr', index: 1, elemName: 'fn2' },
+    ];
+    const fnRefBindings = [{ lhs: 's[*]', rhs: 'arr[*]' }];
+    const forOfBindings = [{ varName: 'f', sourceName: 's', enclosingFunc: 'outer' }];
+    const pts = buildPointsToMap(fnRefBindings, defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings, undefined, forOfBindings);
+    expect(resolveViaPointsTo('outer::f', pts)).toContain('fn1');
+    expect(resolveViaPointsTo('outer::f', pts)).toContain('fn2');
+  });
+});
