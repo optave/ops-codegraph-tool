@@ -128,6 +128,111 @@
       "kind": "calls",
       "mode": "constructor",
       "notes": "new UserService() — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "defProp", "file": "define-property.js" },
+      "target": { "name": "f1", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-define-property",
+      "notes": "obj.f() — resolved via Object.defineProperty(obj, \"f\", { value: f1 })"
+    },
+    {
+      "source": { "name": "defProps", "file": "define-property.js" },
+      "target": { "name": "f1", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-define-property",
+      "notes": "obj.f1() — resolved via Object.defineProperties(obj, { \"f1\": { value: f1 } })"
+    },
+    {
+      "source": { "name": "defProps", "file": "define-property.js" },
+      "target": { "name": "f2", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-define-property",
+      "notes": "obj.f2() — resolved via Object.defineProperties(obj, { \"f2\": { value: f2 } })"
+    },
+    {
+      "source": { "name": "create", "file": "define-property.js" },
+      "target": { "name": "f1", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-create-prototype",
+      "notes": "obj.f1() — resolved via Object.create({ f1, f2 })"
+    },
+    {
+      "source": { "name": "create", "file": "define-property.js" },
+      "target": { "name": "f2", "file": "define-property.js" },
+      "kind": "calls",
+      "mode": "pts-create-prototype",
+      "notes": "obj.f2() — resolved via Object.create({ f1, f2 })"
+    },
+    {
+      "source": { "name": "runBind", "file": "bind-call-apply.js" },
+      "target": { "name": "greet", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "points-to",
+      "notes": "greetUser() — greetUser = greet.bind(user), pts tracks greetUser → greet"
+    },
+    {
+      "source": { "name": "runCall", "file": "bind-call-apply.js" },
+      "target": { "name": "greet", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "greet.call(user, 'Hi') — .call() extracts greet as the callee"
+    },
+    {
+      "source": { "name": "runApply", "file": "bind-call-apply.js" },
+      "target": { "name": "greet", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "greet.apply(user, ['Hey']) — .apply() extracts greet as the callee"
+    },
+    {
+      "source": { "name": "Dog.speak", "file": "inheritance.js" },
+      "target": { "name": "Animal.speak", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "super.speak() in Dog.speak resolves to Animal.speak via CHA parents map"
+    },
+    {
+      "source": { "name": "Puppy.speak", "file": "inheritance.js" },
+      "target": { "name": "Dog.speak", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "super.speak() in Puppy.speak resolves to Dog.speak (nearest parent), not Animal.speak"
+    },
+    {
+      "source": { "name": "DoubleCounter.count", "file": "inheritance.js" },
+      "target": { "name": "Counter.count", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "static super.count() in DoubleCounter.count resolves to Counter.count via CHA parents map"
+    },
+    {
+      "source": { "name": "runPrototypes", "file": "prototypes.js" },
+      "target": { "name": "C", "file": "prototypes.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new C() — constructor call to function-based constructor"
+    },
+    {
+      "source": { "name": "runPrototypes", "file": "prototypes.js" },
+      "target": { "name": "C.foo", "file": "prototypes.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "v.foo() — v typed as C via new C(), C.foo defined via C.prototype = { foo: fn }"
+    },
+    {
+      "source": { "name": "testPrototypeAlias", "file": "prototypes2.js" },
+      "target": { "name": "A", "file": "prototypes2.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new A() — inline constructor call in new A().t()"
+    },
+    {
+      "source": { "name": "testPrototypeAlias", "file": "prototypes2.js" },
+      "target": { "name": "f", "file": "prototypes2.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "new A().t() — A.prototype.t = f alias; inline new receiver resolved to type A, typeMap['A.t'] = f"
     }
   ]
 }

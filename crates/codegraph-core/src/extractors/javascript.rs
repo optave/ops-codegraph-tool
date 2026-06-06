@@ -93,9 +93,17 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                                 });
                             }
                         }
+                        // Phase 8.3e: Object.create({ key: fn }) → composite pts key per property
+                        if value_n.kind() == "call_expression" {
+                            seed_object_create_entries(var_name, &value_n, source, symbols);
+                        }
                     }
                 }
             }
+        }
+        // Phase 8.3e: Object.defineProperty / defineProperties → composite pts key
+        "call_expression" => {
+            seed_define_property_entries(node, source, symbols);
         }
         "required_parameter" | "optional_parameter" => {
             let name_node = node.child_by_field_name("pattern")
@@ -192,6 +200,151 @@ fn is_js_builtin_global(name: &str) -> bool {
         // Node.js built-ins
         | "Buffer" | "EventEmitter" | "Stream"
     )
+}
+
+// ── Phase 8.3e: Object.defineProperty / defineProperties / create ────────────
+
+/// Seed composite pts keys for `Object.defineProperty(obj, "key", { value: fn })`
+/// and `Object.defineProperties(obj, { "key": { value: fn }, ... })`.
+fn seed_define_property_entries(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(callee) = node.child_by_field_name("function") else { return };
+    if callee.kind() != "member_expression" { return; }
+    let Some(callee_obj) = callee.child_by_field_name("object") else { return };
+    if node_text(&callee_obj, source) != "Object" { return; }
+    let Some(callee_prop) = callee.child_by_field_name("property") else { return };
+    let method = node_text(&callee_prop, source);
+    if method != "defineProperty" && method != "defineProperties" { return; }
+
+    let args_node = node.child_by_field_name("arguments")
+        .or_else(|| find_child(node, "arguments"));
+    let Some(args_node) = args_node else { return };
+
+    // Collect non-punctuation argument nodes in order
+    let mut args: Vec<Node> = Vec::new();
+    for i in 0..args_node.child_count() {
+        let Some(child) = args_node.child(i) else { continue };
+        if !matches!(child.kind(), "(" | ")" | ",") {
+            args.push(child);
+        }
+    }
+
+    if method == "defineProperty" {
+        // Object.defineProperty(obj, "key", { value: fn })
+        if args.len() < 3 { return; }
+        if args[0].kind() != "identifier" { return; }
+        let obj_name = node_text(&args[0], source);
+        let Some(key) = extract_string_fragment(&args[1], source) else { return };
+        let Some(target) = find_descriptor_value(&args[2], source) else { return };
+        symbols.type_map.push(TypeMapEntry {
+            name: format!("{}.{}", obj_name, key),
+            type_name: target.to_string(),
+            confidence: 0.85,
+        });
+    } else {
+        // Object.defineProperties(obj, { "key": { value: fn }, ... })
+        if args.len() < 2 { return; }
+        if args[0].kind() != "identifier" { return; }
+        let obj_name = node_text(&args[0], source).to_string();
+        if args[1].kind() != "object" { return; }
+        seed_descriptor_object(&obj_name, &args[1], source, symbols);
+    }
+}
+
+/// Seed composite pts keys from `const obj = Object.create({ f1, f2 })`.
+fn seed_object_create_entries(var_name: &str, call_node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(callee) = call_node.child_by_field_name("function") else { return };
+    if callee.kind() != "member_expression" { return; }
+    let Some(callee_obj) = callee.child_by_field_name("object") else { return };
+    if node_text(&callee_obj, source) != "Object" { return; }
+    let Some(callee_prop) = callee.child_by_field_name("property") else { return };
+    if node_text(&callee_prop, source) != "create" { return; }
+
+    let args_node = call_node.child_by_field_name("arguments")
+        .or_else(|| find_child(call_node, "arguments"));
+    let Some(args_node) = args_node else { return };
+
+    // First non-punctuation argument = prototype object
+    let proto = (0..args_node.child_count())
+        .filter_map(|i| args_node.child(i))
+        .find(|n| !matches!(n.kind(), "(" | ")" | ","));
+    let Some(proto) = proto else { return };
+    if proto.kind() != "object" { return };
+
+    for i in 0..proto.child_count() {
+        let Some(child) = proto.child(i) else { continue };
+        match child.kind() {
+            "shorthand_property_identifier" => {
+                // { f1 } shorthand — property name equals value name
+                let name = node_text(&child, source);
+                symbols.type_map.push(TypeMapEntry {
+                    name: format!("{}.{}", var_name, name),
+                    type_name: name.to_string(),
+                    confidence: 0.85,
+                });
+            }
+            "pair" => {
+                let Some(key_n) = child.child_by_field_name("key") else { continue };
+                let Some(val_n) = child.child_by_field_name("value") else { continue };
+                if val_n.kind() != "identifier" { continue; }
+                let key = if key_n.kind() == "string" {
+                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
+                } else {
+                    Some(node_text(&key_n, source).to_string())
+                };
+                let Some(key) = key else { continue };
+                symbols.type_map.push(TypeMapEntry {
+                    name: format!("{}.{}", var_name, key),
+                    type_name: node_text(&val_n, source).to_string(),
+                    confidence: 0.85,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Iterate over the properties of a `defineProperties` descriptor object and seed the type_map.
+fn seed_descriptor_object(obj_name: &str, obj_node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    for i in 0..obj_node.child_count() {
+        let Some(child) = obj_node.child(i) else { continue };
+        if child.kind() != "pair" { continue; }
+        let Some(key_n) = child.child_by_field_name("key") else { continue };
+        let Some(val_n) = child.child_by_field_name("value") else { continue };
+        let key = if key_n.kind() == "string" {
+            extract_string_fragment(&key_n, source).map(|s| s.to_string())
+        } else {
+            Some(node_text(&key_n, source).to_string())
+        };
+        let Some(key) = key else { continue };
+        let Some(target) = find_descriptor_value(&val_n, source) else { continue };
+        symbols.type_map.push(TypeMapEntry {
+            name: format!("{}.{}", obj_name, key),
+            type_name: target.to_string(),
+            confidence: 0.85,
+        });
+    }
+}
+
+/// Extract the text of the `string_fragment` child of a string node, i.e. content without quotes.
+fn extract_string_fragment<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    if node.kind() != "string" { return None; }
+    find_child(node, "string_fragment").map(|n| node_text(&n, source))
+}
+
+/// Find the `value` identifier in a property descriptor object `{ value: fn }`.
+fn find_descriptor_value<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    if node.kind() != "object" { return None; }
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() != "pair" { continue; }
+        let Some(key) = child.child_by_field_name("key") else { continue };
+        if node_text(&key, source) != "value" { continue; }
+        let Some(val) = child.child_by_field_name("value") else { continue };
+        if val.kind() == "identifier" {
+            return Some(node_text(&val, source));
+        }
+    }
+    None
 }
 
 // ── Return-type map extraction (Phase 8.2 parity) ───────────────────────────
@@ -2290,6 +2443,78 @@ mod tests {
             compute_call.unwrap().receiver.as_deref(),
             Some("calc"),
             "compute call should have receiver='calc'"
+        );
+    }
+
+    /// Phase 8.3e: Object.defineProperty seeds composite type_map key.
+    #[test]
+    fn type_map_from_define_property() {
+        let s = parse_js(
+            "function f1() {}\n\
+             const obj = {};\n\
+             Object.defineProperty(obj, \"f\", { value: f1 });",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "obj.f");
+        assert!(entry.is_some(), "type_map should contain 'obj.f'; got: {:?}", s.type_map);
+        assert_eq!(entry.unwrap().type_name, "f1");
+    }
+
+    /// Phase 8.3e: Object.defineProperties seeds composite type_map keys.
+    #[test]
+    fn type_map_from_define_properties() {
+        let s = parse_js(
+            "function f1() {}\n\
+             function f2() {}\n\
+             const obj = {};\n\
+             Object.defineProperties(obj, {\n\
+               \"f1\": { value: f1 },\n\
+               \"f2\": { value: f2 },\n\
+             });",
+        );
+        let e1 = s.type_map.iter().find(|e| e.name == "obj.f1");
+        let e2 = s.type_map.iter().find(|e| e.name == "obj.f2");
+        assert!(e1.is_some(), "type_map should contain 'obj.f1'; got: {:?}", s.type_map);
+        assert!(e2.is_some(), "type_map should contain 'obj.f2'; got: {:?}", s.type_map);
+        assert_eq!(e1.unwrap().type_name, "f1");
+        assert_eq!(e2.unwrap().type_name, "f2");
+    }
+
+    /// Phase 8.3e: Object.create seeds composite type_map keys from shorthand proto.
+    #[test]
+    fn type_map_from_object_create() {
+        let s = parse_js(
+            "function f1() {}\n\
+             function f2() {}\n\
+             const obj = Object.create({ f1, f2 });",
+        );
+        let e1 = s.type_map.iter().find(|e| e.name == "obj.f1");
+        let e2 = s.type_map.iter().find(|e| e.name == "obj.f2");
+        assert!(e1.is_some(), "type_map should contain 'obj.f1'; got: {:?}", s.type_map);
+        assert!(e2.is_some(), "type_map should contain 'obj.f2'; got: {:?}", s.type_map);
+        assert_eq!(e1.unwrap().type_name, "f1");
+        assert_eq!(e2.unwrap().type_name, "f2");
+    }
+
+    /// Phase 8.3e: call receiver is correctly recorded for obj.f() inside defProp body.
+    #[test]
+    fn call_receiver_for_define_property() {
+        let s = parse_js(
+            "function f1() {}\n\
+             function defProp() {\n\
+               const obj = {};\n\
+               Object.defineProperty(obj, \"f\", { value: f1 });\n\
+               obj.f();\n\
+             }",
+        );
+        let tm = s.type_map.iter().find(|e| e.name == "obj.f");
+        assert!(tm.is_some(), "type_map should contain 'obj.f'; got: {:?}", s.type_map);
+        assert_eq!(tm.unwrap().type_name, "f1");
+
+        let call = s.calls.iter().find(|c| c.name == "f" && c.receiver.as_deref() == Some("obj"));
+        assert!(
+            call.is_some(),
+            "calls should contain obj.f() with receiver='obj'; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, &c.receiver)).collect::<Vec<_>>()
         );
     }
 }
