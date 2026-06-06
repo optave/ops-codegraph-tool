@@ -29,6 +29,7 @@ export class Counter {
 
 export class DoubleCounter extends Counter {
   static count() {
-    return Counter.count() * 2; // static super.method() → Counter.count
+    // biome-ignore lint/complexity/noThisInStatic: intentional super call for class-inheritance resolution test
+    return super.count() * 2; // static super.method() → Counter.count
   }
 }
