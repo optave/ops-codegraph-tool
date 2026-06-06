@@ -779,4 +779,78 @@ describe('JavaScript parser', () => {
       expect(def.endLine).toBe(4);
     });
   });
+
+  describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('extracts rest binding from object-destructuring function parameter', () => {
+      const symbols = parseJS(`
+        function f3({ e1: eee1, ...eerest }) {
+          eerest.e4();
+        }
+        f3(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'f3',
+        argIndex: 0,
+        restName: 'eerest',
+      });
+    });
+
+    it('extracts rest binding from arrow function with object-destructuring parameter', () => {
+      const symbols = parseJS(`
+        const handler = ({ a, ...rest }) => { rest.b(); };
+        handler(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'handler',
+        argIndex: 0,
+        restName: 'rest',
+      });
+    });
+
+    it('records correct argIndex when rest param is not the first parameter', () => {
+      const symbols = parseJS(`
+        function g(x, { a, ...rest }) { rest.b(); }
+        g(1, obj);
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'g',
+        argIndex: 1,
+        restName: 'rest',
+      });
+    });
+
+    it('does not emit binding when object pattern has no rest element', () => {
+      const symbols = parseJS(`
+        function h({ a, b }) { a(); }
+        h(obj);
+      `);
+      expect(symbols.objectRestParamBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ callee: 'h' }),
+      );
+    });
+
+    it('seeds composite typeMap keys from object literal with shorthand properties', () => {
+      const symbols = parseJS(`
+        function e4() {}
+        var obj = { e4 };
+      `);
+      expect(symbols.typeMap.get('obj.e4')).toEqual({ type: 'e4', confidence: 0.85 });
+    });
+
+    it('seeds composite typeMap keys from object literal with pair properties', () => {
+      const symbols = parseJS(`
+        function handler() {}
+        var routes = { get: handler };
+      `);
+      expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
+    });
+  });
 });

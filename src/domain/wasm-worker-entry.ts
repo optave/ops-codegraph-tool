@@ -806,6 +806,9 @@ function serializeExtractorOutput(
     astNodes,
     ...(symbols.fnRefBindings?.length ? { fnRefBindings: symbols.fnRefBindings } : {}),
     ...(symbols.newExpressions?.length ? { newExpressions: symbols.newExpressions } : {}),
+    ...(symbols.objectRestParamBindings?.length
+      ? { objectRestParamBindings: symbols.objectRestParamBindings }
+      : {}),
   };
 }
 

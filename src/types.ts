@@ -564,6 +564,20 @@ export interface ParamBinding {
   argName: string;
 }
 
+/**
+ * Object-destructuring rest-parameter binding, recorded for Phase 8.3f
+ * rest-receiver resolution. Captures `function f({ a, ...rest })` patterns
+ * so the edge builder can seed typeMap[rest] = argName when `f(obj)` is called.
+ */
+export interface ObjectRestParamBinding {
+  /** Function whose formal parameter uses object destructuring with a rest element. */
+  callee: string;
+  /** Zero-based index of the destructured parameter in the formal parameter list. */
+  argIndex: number;
+  /** The rest-binding identifier name (the `rest` in `{ a, ...rest }`). */
+  restName: string;
+}
+
 /** The normalized output shape returned by every language extractor. */
 export interface ExtractorOutput {
   definitions: Definition[];
@@ -595,6 +609,13 @@ export interface ExtractorOutput {
    * to propagate function references through function parameters.
    */
   paramBindings?: ParamBinding[];
+  /**
+   * Object-destructuring rest-parameter bindings (Phase 8.3f).
+   * Records `function f({ a, ...rest })` patterns so the edge builder can seed
+   * typeMap[rest] = { type: argName } when `f(obj)` is called with an identifier,
+   * enabling `rest.method()` calls to resolve via the seeded object's typeMap entries.
+   */
+  objectRestParamBindings?: ObjectRestParamBinding[];
   /**
    * Phase 8.5 (RTA): constructor names from all `new X()` expressions in the file,
    * including unassigned ones (e.g. `doSomething(new Foo())`). Used to build the
