@@ -591,9 +591,24 @@ async function runPostNativePrototypeMethods(
 
   if (jsFiles.length === 0) return;
 
-  // WASM-parse all JS/TS files to get full ExtractorOutput including
-  // prototype method definitions and typeMap entries.
-  const absPaths = jsFiles.map((f) => path.join(rootDir, f));
+  // Quick pre-filter: only re-parse files that actually contain ".prototype."
+  // to avoid an expensive WASM re-parse of every JS/TS file in large repos
+  // where prototype patterns are uncommon. This reduces the hot path from
+  // O(all_js_files) to O(files_with_prototype_patterns).
+  const protoFiles = jsFiles.filter((relPath) => {
+    try {
+      const content = readFileSafe(path.join(rootDir, relPath));
+      return content.includes('.prototype.');
+    } catch {
+      return false;
+    }
+  });
+
+  if (protoFiles.length === 0) return;
+
+  // WASM-parse only the files that have prototype patterns to get full
+  // ExtractorOutput including prototype method definitions and typeMap entries.
+  const absPaths = protoFiles.map((f) => path.join(rootDir, f));
   let wasmResults: Map<string, ExtractorOutput>;
   try {
     wasmResults = await parseFilesWasmForBackfill(absPaths, rootDir);
@@ -685,11 +700,12 @@ async function runPostNativePrototypeMethods(
     }),
   );
 
-  // Seed seenByPair from existing call edges to avoid duplicates.
-  const existingPairs = db
-    .prepare(`SELECT source_id, target_id FROM edges WHERE kind = 'calls'`)
-    .all() as Array<{ source_id: number; target_id: number }>;
-  const seenByPair = new Set<string>(existingPairs.map((e) => `${e.source_id}|${e.target_id}`));
+  // seenByPair deduplicates edges we emit within this function only.
+  // No pre-existing edge can target a newly-inserted node ID (SQLite
+  // auto-increment guarantees the new IDs are unique), so there is no need
+  // to seed this set from the DB — doing so would load O(|edges|) data for
+  // zero benefit and could OOM on large repositories.
+  const seenByPair = new Set<string>();
 
   // Resolve call edges in every file — not just those that define new prototype
   // methods. A caller in app.js calling a prototype method defined in lib.js
