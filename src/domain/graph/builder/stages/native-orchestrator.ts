@@ -608,11 +608,34 @@ async function runPostNativeThisDispatch(
     instantiatedTypes: new Set(), // not needed for this/super resolution
   };
 
-  // Determine which files to re-parse (JS/TS family only)
+  // Determine which files to re-parse.
+  //
+  // On a full build we do NOT re-parse every JS/TS file — that would WASM-parse
+  // the entire project on top of the native pass, causing a massive regression
+  // (measured: +358% ms/file on codegraph itself). Instead we restrict to files
+  // that are part of the class inheritance hierarchy: both subclass files (which
+  // contain `super.X()` calls dispatching to a parent) and parent-class files
+  // (whose method bodies contain `this.X()` calls that CHA must resolve). Any
+  // file not in the hierarchy has no `extends` relationship, so `this`/`super`
+  // calls in it either resolve locally (same-class dispatch, already handled by
+  // the direct-call edge) or have no class context — and will be skipped by
+  // `resolveThisDispatch` anyway.
   let relFiles: string[];
   if (isFullBuild || !changedFiles) {
     const rows = db
-      .prepare("SELECT DISTINCT file FROM nodes WHERE kind = 'file' AND file IS NOT NULL")
+      .prepare(`
+        SELECT DISTINCT file FROM (
+          SELECT src.file AS file
+          FROM edges e
+          JOIN nodes src ON e.source_id = src.id
+          WHERE e.kind = 'extends' AND src.file IS NOT NULL
+          UNION
+          SELECT tgt.file AS file
+          FROM edges e
+          JOIN nodes tgt ON e.target_id = tgt.id
+          WHERE e.kind = 'extends' AND tgt.file IS NOT NULL
+        )
+      `)
       .all() as Array<{ file: string }>;
     relFiles = rows
       .map((r) => r.file)
@@ -693,7 +716,7 @@ async function runPostNativeThisDispatch(
         const key = `${callerRow.id}|${t.id}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        const conf = computeConfidence(relPath, t.file, null) - 0.1;
+        const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
         if (conf <= 0) continue;
         newEdges.push([callerRow.id, t.id, 'calls', conf, 0, 'cha']);
       }
