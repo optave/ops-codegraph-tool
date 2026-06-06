@@ -354,9 +354,6 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
-  // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
-  extractPrototypeMethodsWalk(tree.rootNode, definitions, typeMap);
-
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -622,8 +619,6 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
-  // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
-  extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
