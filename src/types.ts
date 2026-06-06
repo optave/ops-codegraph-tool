@@ -1172,6 +1172,8 @@ export interface BuildResult {
     edgesMs: number;
     structureMs: number;
     rolesMs: number;
+    /** Wall-clock time for the this/super dispatch WASM post-pass (native path only). */
+    thisDispatchMs?: number;
     astMs: number;
     complexityMs: number;
     cfgMs: number;
