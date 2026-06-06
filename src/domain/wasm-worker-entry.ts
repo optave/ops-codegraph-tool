@@ -809,6 +809,11 @@ function serializeExtractorOutput(
     ...(symbols.objectRestParamBindings?.length
       ? { objectRestParamBindings: symbols.objectRestParamBindings }
       : {}),
+    ...(symbols.returnTypeMap?.size
+      ? { returnTypeMap: Array.from(symbols.returnTypeMap.entries()) }
+      : {}),
+    ...(symbols.callAssignments?.length ? { callAssignments: symbols.callAssignments } : {}),
+    ...(symbols.paramBindings?.length ? { paramBindings: symbols.paramBindings } : {}),
   };
 }
 
