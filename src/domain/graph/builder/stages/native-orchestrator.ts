@@ -576,7 +576,7 @@ async function runPostNativePrototypeMethods(
   db: BetterSqlite3Database,
   rootDir: string,
 ): Promise<void> {
-  // Collect JS/TS file paths from the DB — only extensions where prototype
+  // Collect JS/TS file paths from the DB — only extensions where these
   // patterns can appear.
   const jsExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx']);
   const fileRows = db
@@ -591,15 +591,14 @@ async function runPostNativePrototypeMethods(
 
   if (jsFiles.length === 0) return;
 
-  // Quick pre-filter: only re-parse files that actually contain prototype or
-  // function-as-object-property patterns to avoid an expensive WASM re-parse of
-  // every JS/TS file in large repos. Covers:
-  //   - `.prototype.`  — classical prototype method assignment
-  //   - `\b\w+\.\w+\s*=\s*function` — function-as-object property (`f.g = function(){}`)
+  // Pre-filter: only re-parse files that contain the function-as-object-property
+  // pattern (`fn.method = function() {}`). The Rust engine now handles
+  // `Foo.prototype.bar = fn` natively, so `.prototype.` files no longer need
+  // a WASM re-parse here.
   const protoFiles = jsFiles.filter((relPath) => {
     try {
       const content = readFileSafe(path.join(rootDir, relPath));
-      return content.includes('.prototype.') || /\b\w+\.\w+\s*=\s*function/.test(content);
+      return /\b\w+\.\w+\s*=\s*function/.test(content);
     } catch {
       return false;
     }
@@ -1390,13 +1389,14 @@ export async function tryNativeOrchestrator(
     }
   }
 
-  // Prototype method post-pass: the Rust engine does not recognise pre-ES6
-  // `Foo.prototype.bar = function(){}` patterns. Re-parse JS/TS files via
-  // WASM to insert missing method nodes and their call edges.
+  // Function-as-object-property post-pass: the Rust engine does not yet recognise
+  // `fn.method = function() {}` patterns. Re-parse only those JS/TS files via
+  // WASM to insert missing method nodes. `Foo.prototype.bar = fn` is now
+  // handled natively by the Rust extractor and no longer needs a WASM re-parse.
   try {
     await runPostNativePrototypeMethods(ctx.db as unknown as BetterSqlite3Database, ctx.rootDir);
   } catch (err) {
-    debug(`Prototype methods post-pass failed: ${toErrorMessage(err)}`);
+    debug(`Function-prop methods post-pass failed: ${toErrorMessage(err)}`);
   }
 
   // Backfill the `technique` column on `calls` edges written by the Rust
