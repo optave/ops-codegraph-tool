@@ -120,13 +120,19 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
 
   // ── this-dispatch ──────────────────────────────────────────────────────
   // The WASM path resolves `this.prepare()` through the class hierarchy via
-  // the inline CHA dispatch in buildFileCallEdges.  The native orchestrator
-  // path does not persist raw call sites to the DB, so this-dispatch is a
-  // known gap for native — tested only for wasm.
+  // the inline CHA dispatch in buildFileCallEdges.
+  //
+  // The native orchestrator path does not persist raw call sites (with receiver
+  // info) to the DB after the Rust pipeline runs, so this-dispatch and
+  // super-dispatch cannot be resolved via runPostNativeCha.
+  // Tracked as a native accuracy gap in issue #1326.
 
-  it.skipIf(engine === 'native')(
-    'this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare',
-    () => {
+  if (engine === 'native') {
+    it.todo(
+      'this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare (native gap #1326)',
+    );
+  } else {
+    it('this-dispatch: emits ConcreteWorker.doWork → ConcreteWorker.prepare', () => {
       const edge = callEdges.find(
         (e) =>
           e.caller_name === 'ConcreteWorker.doWork' &&
@@ -137,25 +143,29 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
         edge,
         `Expected ConcreteWorker.doWork → ConcreteWorker.prepare edge (this-dispatch).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
       ).toBeDefined();
-    },
-  );
+    });
+  }
 
   // ── super-dispatch ─────────────────────────────────────────────────────
-  // Same gap as this-dispatch: super.speak() cannot be resolved from DB edges
-  // alone in the native orchestrator path.
+  // Same native gap: super.speak() requires raw call-site receiver info not
+  // persisted to the DB by the Rust pipeline. See issue #1326.
 
-  it.skipIf(engine === 'native')('super-dispatch: emits Lion.speak → Animal.speak', () => {
-    const edge = callEdges.find(
-      (e) =>
-        e.caller_name === 'Lion.speak' &&
-        e.callee_name === 'Animal.speak' &&
-        e.callee_file === 'Animal.ts',
-    );
-    expect(
-      edge,
-      `Expected Lion.speak → Animal.speak edge (super-dispatch via class hierarchy).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
-    ).toBeDefined();
-  });
+  if (engine === 'native') {
+    it.todo('super-dispatch: emits Lion.speak → Animal.speak (native gap #1326)');
+  } else {
+    it('super-dispatch: emits Lion.speak → Animal.speak', () => {
+      const edge = callEdges.find(
+        (e) =>
+          e.caller_name === 'Lion.speak' &&
+          e.callee_name === 'Animal.speak' &&
+          e.callee_file === 'Animal.ts',
+      );
+      expect(
+        edge,
+        `Expected Lion.speak → Animal.speak edge (super-dispatch via class hierarchy).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+      ).toBeDefined();
+    });
+  }
 
   // ── transitive multi-level CHA (issue #1311) ───────────────────────────
   // Hierarchy: IJob → AbstractJob (non-instantiated) → PrintJob / ScanJob
@@ -164,11 +174,14 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
   // The native path relies on the Rust extractor emitting `implements`/`extends`
   // edges for `abstract class X implements Y`.  The pre-compiled native binary
   // (v3.11.2) does not yet include the `abstract_class_declaration` fix, so
-  // transitive CHA tests are WASM-only until the native binary is updated.
+  // transitive CHA requires a binary update. Also blocked by the same raw
+  // call-site gap (issue #1326).
 
-  it.skipIf(engine === 'native')(
-    'CHA transitive: emits runJob → PrintJob.run (3-level hierarchy)',
-    () => {
+  if (engine === 'native') {
+    it.todo('CHA transitive: emits runJob → PrintJob.run (3-level hierarchy) (native gap #1326)');
+    it.todo('CHA transitive: emits runJob → ScanJob.run (3-level hierarchy) (native gap #1326)');
+  } else {
+    it('CHA transitive: emits runJob → PrintJob.run (3-level hierarchy)', () => {
       const edge = callEdges.find(
         (e) =>
           e.caller_name === 'runJob' &&
@@ -179,12 +192,9 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
         edge,
         `Expected runJob → PrintJob.run edge (transitive CHA through AbstractJob).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
       ).toBeDefined();
-    },
-  );
+    });
 
-  it.skipIf(engine === 'native')(
-    'CHA transitive: emits runJob → ScanJob.run (3-level hierarchy)',
-    () => {
+    it('CHA transitive: emits runJob → ScanJob.run (3-level hierarchy)', () => {
       const edge = callEdges.find(
         (e) =>
           e.caller_name === 'runJob' &&
@@ -195,8 +205,8 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
         edge,
         `Expected runJob → ScanJob.run edge (transitive CHA through AbstractJob).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
       ).toBeDefined();
-    },
-  );
+    });
+  }
 
   it('CHA transitive: does NOT emit runJob → AbstractJob.run (abstract, never instantiated)', () => {
     const edge = callEdges.find(
