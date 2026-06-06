@@ -1580,6 +1580,8 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 
 **Benchmark suites:** SunSpider (26 programs, 941 manually validated edges); Jelly benchmark set (25 large Node.js + 10 web + 4 mobile programs with NodeProf dynamic ground truth); SWARM-JS (50 npm packages, 163K edges, EMSE 2025).
 
+**TSX note:** TSX analysis is identical to TypeScript — the same tree-sitter grammar extension, the same TypeScript compiler API type-enrichment pipeline, and the same Jelly/ACG reference tools apply. JSX syntax within `.tsx` files introduces no additional dispatch patterns: JSX element types resolve to component function or class definitions via the same name-matching and CHA pass as any other call. All tools, gaps, adoption candidates, and benchmarks listed above for TypeScript apply equally to TSX.
+
 ---
 
 #### Go
@@ -1748,6 +1750,8 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 - Address-taken function pre-pass for C indirect call resolution (FLTA baseline): scan for identifier nodes whose text matches a known function definition and whose parent is not a `call_expression`; emit call edges from each indirect-call site to all address-taken functions with a matching parameter count. This is coarser than MLTA but sound and achievable at tree-sitter level.
 
 **Benchmark suites:** Linux kernel (used by MLTA, DeepType, KallGraph); Cocktail corpus (nginx, Redis, SQLite, OpenSSL, CPython — 5,355 annotated indirect calls, OOPSLA 2023); GNU coreutils 28 programs (Phoenix 2026); NVIDIA CUDA Samples repository; Syzkaller-generated call traces (KallGraph, IEEE S&P 2025).
+
+**Objective-C note:** Objective-C `[receiver selector]` message-send semantics are handled at the C/C++ tooling level — Clang's built-in `CallGraph` (AST-level) and SVF (LLVM-IR-level) both model Objective-C method dispatch via CHA over the class/protocol hierarchy. The tree-sitter-objc grammar captures receiver/selector pairs syntactically, but resolving them requires the same class-hierarchy CHA pass described above for C++ virtual calls. No standalone Objective-C call-graph benchmark comparable to JCG or PyCG exists; Apple's open-source projects (objc4, Foundation) serve as informal ground truth. All C/C++ tool-chain references above cover Objective-C when compiled with Clang.
 
 ---
 
