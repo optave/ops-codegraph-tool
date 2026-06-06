@@ -7,12 +7,15 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
+import { setTypeMapEntry } from '../../../../extractors/helpers.js';
+import { PROPAGATION_HOP_PENALTY } from '../../../../extractors/javascript.js';
 import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
   BetterSqlite3Database,
   Call,
   ClassRelation,
+  Definition,
   ExtractorOutput,
   Import,
   NativeAddon,
@@ -20,20 +23,24 @@ import type {
   TypeMapEntry,
 } from '../../../../types.js';
 import { computeConfidence } from '../../resolve.js';
+import type { PointsToMap } from '../../resolver/points-to.js';
+import { buildPointsToMap, resolveViaPointsTo } from '../../resolver/points-to.js';
+import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
   type CallNodeLookup,
   findCaller,
   resolveCallTargets,
   resolveReceiverEdge,
 } from '../call-resolver.js';
+import type { ChaContext } from '../cha.js';
+import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
-import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
-
-import { getResolved, isBarrelFile, resolveBarrelExport } from './resolve-imports.js';
+import { BUILTIN_RECEIVERS, batchInsertEdges, runChaPostPass } from '../helpers.js';
+import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
 
-type EdgeRowTuple = [number, number, string, number, number];
+type EdgeRowTuple = [number, number, string, number, number, string | null];
 
 interface NodeIdStmt {
   get(name: string, kind: string, file: string, line: number): { id: number } | undefined;
@@ -57,6 +64,8 @@ interface NativeFileEntry {
   importedNames: Array<{ name: string; file: string }>;
   classes: ClassRelation[];
   typeMap: Array<{ name: string; typeName: string; confidence: number }>;
+  /** Phase 8.3: function-reference bindings for pts analysis. */
+  fnRefBindings?: Array<{ lhs: string; rhs: string; rhsReceiver?: string }>;
 }
 
 /** Shape returned by native buildCallEdges. */
@@ -67,6 +76,9 @@ interface NativeEdge {
   confidence: number;
   dynamic: number;
 }
+
+/** Phase 8.5: confidence penalty applied to CHA-dispatch edges. */
+export const CHA_DISPATCH_PENALTY = 0.1;
 
 // ── Node lookup setup ───────────────────────────────────────────────────
 
@@ -119,12 +131,12 @@ function emitTypeOnlySymbolEdges(
     const cleanName = name.replace(/^\*\s+as\s+/, '');
     let targetFile = resolvedPath;
     if (isBarrelFile(ctx, resolvedPath)) {
-      const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
+      const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
       if (actual) targetFile = actual;
     }
     const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
     if (candidates && candidates.length > 0) {
-      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0]);
+      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0, null]);
     }
   }
 }
@@ -146,7 +158,7 @@ function emitEdgesForImport(
   if (!targetRow) return;
 
   const edgeKind = importEdgeKind(imp);
-  allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0]);
+  allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0, null]);
 
   if (imp.typeOnly) {
     emitTypeOnlySymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows);
@@ -190,7 +202,7 @@ function buildBarrelEdges(
   const resolvedSources = new Set<string>();
   for (const name of imp.names) {
     const cleanName = name.replace(/^\*\s+as\s+/, '');
-    const actualSource = resolveBarrelExport(ctx, resolvedPath, cleanName);
+    const actualSource = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
     if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
       resolvedSources.add(actualSource);
       const actualRow = getNodeIdStmt.get(actualSource, 'file', actualSource, 0);
@@ -201,7 +213,7 @@ function buildBarrelEdges(
             : edgeKind === 'dynamic-imports'
               ? 'dynamic-imports'
               : 'imports';
-        edgeRows.push([fileNodeId, actualRow.id, kind, 0.9, 0]);
+        edgeRows.push([fileNodeId, actualRow.id, kind, 0.9, 0, null]);
       }
     }
   }
@@ -384,7 +396,70 @@ function buildImportEdgesNative(
   ) as NativeEdge[];
 
   for (const e of nativeEdges) {
-    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic, null]);
+  }
+}
+
+// ── Phase 8.2: Cross-file return-type propagation ───────────────────────
+
+/**
+ * Augment each file's typeMap with return types from imported functions.
+ *
+ * The per-file extractor already resolves same-file call assignments (intra-file
+ * propagation). This function handles the cross-file case: when a file imports a
+ * function from another file and assigns its return value to a variable, we look up
+ * the callee's return type in the source file's returnTypeMap and inject it.
+ *
+ * Called once before call-edge building so both the native and JS paths benefit.
+ */
+function propagateReturnTypesAcrossFiles(
+  fileSymbols: Map<string, ExtractorOutput>,
+  ctx: PipelineContext,
+  rootDir: string,
+): void {
+  // Index: filePath → per-file return-type map
+  const returnTypeIndex = new Map<string, Map<string, TypeMapEntry>>();
+  for (const [relPath, symbols] of fileSymbols) {
+    if (symbols.returnTypeMap?.size) returnTypeIndex.set(relPath, symbols.returnTypeMap);
+  }
+  if (returnTypeIndex.size === 0) return;
+
+  // Flat global map for qualified method lookups (TypeName.methodName → entry).
+  // Conflicts resolved by keeping the highest-confidence entry.
+  const globalReturnTypeMap = new Map<string, TypeMapEntry>();
+  for (const rtm of returnTypeIndex.values()) {
+    for (const [name, entry] of rtm) {
+      const existing = globalReturnTypeMap.get(name);
+      if (!existing || entry.confidence > existing.confidence) globalReturnTypeMap.set(name, entry);
+    }
+  }
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (!symbols.callAssignments?.length) continue;
+    // Phase 8.4 side-effect: buildImportedNamesMap now traces through barrel
+    // files (traceBarrel), so `importedFrom` resolves to the leaf definition
+    // file rather than the barrel. This means returnTypeIndex.get(importedFrom)
+    // now finds entries it previously missed, improving cross-file return-type
+    // propagation through re-export chains (Phase 8.2 improvement).
+    const importedNamesMap = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+
+    for (const ca of symbols.callAssignments) {
+      if (symbols.typeMap.has(ca.varName)) continue; // already resolved locally
+
+      let returnEntry: TypeMapEntry | undefined;
+      if (ca.receiverTypeName) {
+        returnEntry = globalReturnTypeMap.get(`${ca.receiverTypeName}.${ca.calleeName}`);
+      } else {
+        const importedFrom = importedNamesMap.get(ca.calleeName);
+        if (importedFrom) returnEntry = returnTypeIndex.get(importedFrom)?.get(ca.calleeName);
+      }
+
+      if (returnEntry) {
+        const propagatedConf = returnEntry.confidence - PROPAGATION_HOP_PENALTY;
+        if (propagatedConf > 0)
+          setTypeMapEntry(symbols.typeMap, ca.varName, returnEntry.type, propagatedConf);
+      }
+    }
   }
 }
 
@@ -442,6 +517,7 @@ function buildCallEdgesNative(
       importedNames,
       classes: symbols.classes,
       typeMap,
+      fnRefBindings: symbols.fnRefBindings?.length ? symbols.fnRefBindings : undefined,
     });
   }
 
@@ -449,7 +525,265 @@ function buildCallEdgesNative(
     ...BUILTIN_RECEIVERS,
   ]) as NativeEdge[];
   for (const e of nativeEdges) {
-    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+    allEdgeRows.push([
+      e.sourceId,
+      e.targetId,
+      e.kind,
+      e.confidence,
+      e.dynamic,
+      e.kind === 'calls' ? 'ts-native' : null,
+    ]);
+  }
+}
+
+/**
+ * Phase 8.3c pts post-pass for the native call-edge path.
+ *
+ * The native Rust engine builds call edges without knowledge of paramBindings,
+ * so `fn()` calls inside higher-order functions are not resolved to their
+ * concrete targets. This JS post-pass runs after the native edge pass and adds
+ * only the parameter-flow pts edges that the native engine missed.
+ *
+ * To avoid duplicating edges already emitted by the native engine, the current
+ * allEdgeRows snapshot is used to seed a seenByPair set before processing each
+ * file.
+ */
+function buildParamFlowPtsPostPass(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  sharedLookup?: CallNodeLookup,
+): void {
+  // Only process files that actually have paramBindings (avoid useless work).
+  const filesWithParams = [...ctx.fileSymbols].filter(
+    ([, symbols]) => symbols.paramBindings && symbols.paramBindings.length > 0,
+  );
+  if (filesWithParams.length === 0) return;
+
+  // Seed seenByPair from the existing rows so we don't duplicate native edges.
+  // This is O(|allEdgeRows|) once per post-pass, which is acceptable.
+  const seenByPair = new Set<string>();
+  for (const [srcId, tgtId] of allEdgeRows) {
+    seenByPair.add(`${srcId}|${tgtId}`);
+  }
+
+  const { barrelOnlyFiles, rootDir } = ctx;
+  const lookup = sharedLookup ?? makeContextLookup(ctx, getNodeIdStmt);
+
+  for (const [relPath, symbols] of filesWithParams) {
+    if (barrelOnlyFiles.has(relPath)) continue;
+    const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+
+    const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+    const ptsMap = buildPointsToMapForFile(symbols, importedNames);
+    if (!ptsMap) continue;
+
+    for (const call of symbols.calls) {
+      if (call.receiver || call.dynamic) continue; // pts post-pass handles only param-flow (non-dynamic)
+
+      const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
+      const scopedKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+      if (!scopedKey || !ptsMap.has(scopedKey)) continue;
+
+      // Only resolve calls that had no direct targets (same guard as buildFileCallEdges).
+      const { targets } = resolveCallTargets(
+        lookup,
+        call,
+        relPath,
+        importedNames,
+        typeMap as Map<string, unknown>,
+      );
+      if (targets.length > 0) continue;
+
+      for (const alias of resolveViaPointsTo(scopedKey, ptsMap)) {
+        const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+          lookup,
+          { name: alias },
+          relPath,
+          importedNames,
+          typeMap as Map<string, unknown>,
+        );
+        for (const t of aliasTargets) {
+          const edgeKey = `${caller.id}|${t.id}`;
+          if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
+            const conf =
+              computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+            if (conf > 0) {
+              seenByPair.add(edgeKey);
+              allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'points-to']);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * bind/alias pts post-pass for the native call-edge path.
+ *
+ * The native Rust engine has no knowledge of JS-layer fnRefBindings (e.g.
+ * `const f = fn.bind(ctx)`), so calls to bind-created aliases are not resolved
+ * to their original function on the native path. This JS post-pass runs after
+ * the native edge pass and adds only the fnRefBindings-seeded pts edges that the
+ * native engine missed.
+ *
+ * Uses the same seenByPair dedup guard as buildParamFlowPtsPostPass to avoid
+ * duplicating edges already emitted by the native engine.
+ */
+function buildFnRefBindingsPtsPostPass(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  sharedLookup?: CallNodeLookup,
+): void {
+  // Only process files that actually have fnRefBindings.
+  const filesWithBindings = [...ctx.fileSymbols].filter(
+    ([, symbols]) => symbols.fnRefBindings && symbols.fnRefBindings.length > 0,
+  );
+  if (filesWithBindings.length === 0) return;
+
+  // Seed seenByPair from the existing rows so we don't duplicate native edges.
+  const seenByPair = new Set<string>();
+  for (const [srcId, tgtId] of allEdgeRows) {
+    seenByPair.add(`${srcId}|${tgtId}`);
+  }
+
+  const { barrelOnlyFiles, rootDir } = ctx;
+  const lookup = sharedLookup ?? makeContextLookup(ctx, getNodeIdStmt);
+
+  for (const [relPath, symbols] of filesWithBindings) {
+    if (barrelOnlyFiles.has(relPath)) continue;
+    const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+
+    const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+    const ptsMap = buildPointsToMapForFile(symbols, importedNames);
+    if (!ptsMap) continue;
+
+    // Only resolve calls whose name is an lhs in fnRefBindings — the same
+    // narrowed guard used in buildFileCallEdges case (c).
+    const fnRefBindingLhs = new Set(symbols.fnRefBindings!.map((b) => b.lhs));
+
+    for (const call of symbols.calls) {
+      if (call.receiver || call.dynamic) continue; // bind aliases are flat-keyed, never dynamic
+      if (!fnRefBindingLhs.has(call.name)) continue;
+      if (!ptsMap.has(call.name)) continue;
+
+      const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
+
+      // Only resolve calls that had no direct targets (same guard as buildFileCallEdges).
+      const { targets } = resolveCallTargets(
+        lookup,
+        call,
+        relPath,
+        importedNames,
+        typeMap as Map<string, unknown>,
+      );
+      if (targets.length > 0) continue;
+
+      for (const alias of resolveViaPointsTo(call.name, ptsMap)) {
+        const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+          lookup,
+          { name: alias },
+          relPath,
+          importedNames,
+          typeMap as Map<string, unknown>,
+        );
+        for (const t of aliasTargets) {
+          const edgeKey = `${caller.id}|${t.id}`;
+          if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
+            const conf =
+              computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+            if (conf > 0) {
+              seenByPair.add(edgeKey);
+              allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'points-to']);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Phase 8.5: CHA + RTA post-pass for the native call-edge path.
+ *
+ * The native Rust engine has no knowledge of the CHA context, so `this.method()`
+ * calls and interface method dispatches are not expanded to their concrete
+ * implementations.  This JS post-pass runs after the native edges (and the pts
+ * post-pass) and adds only the CHA-resolved edges that the native engine missed.
+ *
+ * Like buildParamFlowPtsPostPass, it seeds seenByPair from the current allEdgeRows
+ * snapshot to avoid duplicating edges the native engine already produced.
+ */
+function buildChaPostPass(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  chaCtx: ChaContext,
+): void {
+  // Fast-exit when the CHA context is empty (no class hierarchy in the project)
+  if (chaCtx.implementors.size === 0 && chaCtx.parents.size === 0) return;
+
+  // Seed only from 'calls' edges — import/extends/implements edges share (src,tgt) pairs
+  // with real call edges at the file-node level and would cause false dedup if included.
+  const seenByPair = new Set<string>();
+  for (const row of allEdgeRows) {
+    if (row[2] === 'calls') seenByPair.add(`${row[0]}|${row[1]}`);
+  }
+
+  const { fileSymbols, barrelOnlyFiles } = ctx;
+  const lookup = makeContextLookup(ctx, getNodeIdStmt);
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (barrelOnlyFiles.has(relPath)) continue;
+    const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+
+    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+
+    for (const call of symbols.calls) {
+      if (!call.receiver) continue;
+      if (BUILTIN_RECEIVERS.has(call.receiver)) continue;
+
+      const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
+      let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+
+      if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
+        chaTargets = resolveThisDispatch(
+          call.name,
+          caller.callerName,
+          call.receiver,
+          chaCtx,
+          lookup,
+        );
+      } else {
+        const typeEntry = typeMap.get(call.receiver);
+        const typeName = typeEntry
+          ? typeof typeEntry === 'string'
+            ? typeEntry
+            : (typeEntry as { type?: string }).type
+          : null;
+        if (typeName) {
+          chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+        }
+      }
+
+      for (const t of chaTargets) {
+        const edgeKey = `${caller.id}|${t.id}`;
+        if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
+          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          if (conf > 0) {
+            seenByPair.add(edgeKey);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+          }
+        }
+      }
+    }
   }
 }
 
@@ -469,7 +803,7 @@ function buildImportedNamesForNative(
       const cleanName = name.replace(/^\*\s+as\s+/, '');
       let targetFile = resolvedPath;
       if (isBarrelFile(ctx, resolvedPath)) {
-        const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
+        const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
         if (actual) targetFile = actual;
       }
       importedNames.push({ name: cleanName, file: targetFile });
@@ -490,6 +824,7 @@ function buildCallEdgesJS(
   ctx: PipelineContext,
   getNodeIdStmt: NodeIdStmt,
   allEdgeRows: EdgeRowTuple[],
+  chaCtx?: ChaContext,
 ): void {
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
   const lookup = makeContextLookup(ctx, getNodeIdStmt);
@@ -502,6 +837,7 @@ function buildCallEdgesJS(
     const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
     const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
     const seenCallEdges = new Set<string>();
+    const ptsMap = buildPointsToMapForFile(symbols, importedNames);
 
     buildFileCallEdges(
       relPath,
@@ -512,6 +848,8 @@ function buildCallEdgesJS(
       lookup,
       allEdgeRows,
       typeMap,
+      ptsMap,
+      chaCtx,
     );
     buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows);
   }
@@ -528,11 +866,21 @@ function buildImportedNamesMap(
   // (higher priority). Static imports represent direct bindings while dynamic
   // imports often use aliased destructuring (`{ foo: bar } = await import(…)`).
   // When both contribute the same name, the static binding is authoritative.
+  //
+  // Phase 8.4: trace through barrel files so that symbol names map to their
+  // actual definition file, not the re-exporting barrel. Mirrors the tracing
+  // already done in buildImportedNamesForNative (the native path).
+  const traceBarrel = (resolvedPath: string, cleanName: string): string => {
+    if (!isBarrelFile(ctx, resolvedPath)) return resolvedPath;
+    const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
+    return actual ?? resolvedPath;
+  };
   for (const imp of symbols.imports) {
     if (!imp.dynamicImport) continue;
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
-      importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      importedNames.set(cleanName, traceBarrel(resolvedPath, cleanName));
     }
   }
   for (const imp of symbols.imports) {
@@ -540,7 +888,7 @@ function buildImportedNamesMap(
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
       const cleanName = name.replace(/^\*\s+as\s+/, '');
-      importedNames.set(cleanName, resolvedPath);
+      importedNames.set(cleanName, traceBarrel(resolvedPath, cleanName));
     }
   }
   return importedNames;
@@ -551,9 +899,64 @@ function makeContextLookup(ctx: PipelineContext, getNodeIdStmt: NodeIdStmt): Cal
     byNameAndFile: (name, file) => ctx.nodesByNameAndFile.get(`${name}|${file}`) ?? [],
     byName: (name) => ctx.nodesByName.get(name) ?? [],
     isBarrel: (file) => isBarrelFile(ctx, file),
-    resolveBarrel: (barrelFile, symbolName) => resolveBarrelExport(ctx, barrelFile, symbolName),
+    resolveBarrel: (barrelFile, symbolName) =>
+      resolveBarrelExportCached(ctx, barrelFile, symbolName),
     nodeId: (name, kind, file, line) => getNodeIdStmt.get(name, kind, file, line),
   };
+}
+
+/**
+ * Build a per-file points-to map for Phase 8.3 alias resolution.
+ * Returns null fast when the file has no function-reference bindings.
+ *
+ * Only callable definitions (function/method) are seeded as concrete targets.
+ * Class and interface names are intentionally excluded — aliasing a constructor
+ * (`const Svc = MyService`) is an uncommon pattern that would require tracking
+ * `new`-expression flows separately from the alias chain. That is left to Phase
+ * 8.2 call-assignment propagation, which already handles constructor assignments.
+ */
+function buildPointsToMapForFile(
+  symbols: ExtractorOutput,
+  importedNames: Map<string, string>,
+): PointsToMap | null {
+  if (!symbols.fnRefBindings?.length && !symbols.paramBindings?.length) return null;
+  const defNames = new Set(
+    symbols.definitions
+      .filter((d) => d.kind === 'function' || d.kind === 'method')
+      .map((d) => d.name),
+  );
+  const definitionParams = buildDefinitionParamsMap(symbols.definitions);
+  return buildPointsToMap(
+    symbols.fnRefBindings ?? [],
+    defNames,
+    importedNames,
+    symbols.paramBindings,
+    definitionParams,
+  );
+}
+
+function buildDefinitionParamsMap(
+  definitions: readonly Definition[],
+): Map<string, readonly string[]> {
+  const map = new Map<string, readonly string[]>();
+  for (const def of definitions) {
+    if ((def.kind === 'function' || def.kind === 'method') && def.children) {
+      const params = def.children.filter((c) => c.kind === 'parameter').map((c) => c.name);
+      if (params.length > 0) {
+        if (map.has(def.name)) {
+          // Two definitions share the same name (e.g. overloads, same-named method and
+          // function, or conditional redeclaration). Keep the first entry — using the
+          // wrong parameter list would map argIndex to the wrong parameter name.
+          debug(
+            `buildDefinitionParamsMap: duplicate def name "${def.name}" (kind=${def.kind}, line=${def.line}) — skipping; first entry kept`,
+          );
+        } else {
+          map.set(def.name, params);
+        }
+      }
+    }
+  }
+  return map;
 }
 
 function buildFileCallEdges(
@@ -565,26 +968,138 @@ function buildFileCallEdges(
   lookup: CallNodeLookup,
   allEdgeRows: EdgeRowTuple[],
   typeMap: Map<string, TypeMapEntry | string>,
+  ptsMap?: PointsToMap | null,
+  chaCtx?: ChaContext,
 ): void {
+  // Tracks edges that were inserted by the pts fallback (edgeKey → allEdgeRows index).
+  // Kept separate from seenCallEdges so that a subsequent direct-call edge for the same
+  // caller→target pair can upgrade the confidence in-place rather than being silently
+  // dropped by the dedup guard. Once upgraded, the key moves to seenCallEdges and is
+  // no longer tracked here.
+  const ptsEdgeRows = new Map<string, number>();
+
+  // Pre-compute the set of names that appear as lhs in fnRefBindings so that
+  // case (c) of the pts gate below only fires for names that are genuine
+  // bind/alias entries, not for every locally-defined function or import that
+  // buildPointsToMap seeds with a self-pointing entry.
+  const fnRefBindingLhs = new Set(symbols.fnRefBindings?.map((b) => b.lhs) ?? []);
+
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
     const isDynamic: number = call.dynamic ? 1 : 0;
-    const { targets, importedFrom } = resolveCallTargets(
+    let { targets, importedFrom } = resolveCallTargets(
       lookup,
       call,
       relPath,
       importedNames,
       typeMap as Map<string, unknown>,
+      caller.callerName,
     );
+
+    // Same-class `this.method()` fallback: when the call receiver is `this` and
+    // resolveCallTargets found nothing, derive the enclosing class name from the
+    // caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
+    // qualified method name `Logger._write`. This mirrors what the native Rust
+    // engine does implicitly via its class-scoped symbol table.
+    // NOTE: restricted to `this` only — `super.method()` targets a parent class,
+    // not the enclosing class, so qualifying with the child class name would
+    // produce a false edge when the child also defines a same-named method.
+    if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
+      const dotIdx = caller.callerName.indexOf('.');
+      if (dotIdx > 0) {
+        const className = caller.callerName.slice(0, dotIdx);
+        const qualifiedName = `${className}.${call.name}`;
+        const qualified = lookup
+          .byNameAndFile(qualifiedName, relPath)
+          .filter((n) => n.kind === 'method');
+        if (qualified.length > 0) {
+          targets = qualified;
+        }
+      }
+    }
 
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
-      if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
-        seenCallEdges.add(edgeKey);
+      if (t.id !== caller.id) {
         const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
-        allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic]);
+        if (seenCallEdges.has(edgeKey)) continue;
+        const ptsIdx = ptsEdgeRows.get(edgeKey);
+        if (ptsIdx !== undefined) {
+          // A pts-resolved edge already exists for this caller→target pair with a
+          // penalised confidence. Upgrade it to the direct-call confidence in-place,
+          // then promote to seenCallEdges so no further processing is needed.
+          const ptsRow = allEdgeRows[ptsIdx];
+          if (ptsRow) {
+            ptsRow[3] = confidence;
+            ptsRow[4] = isDynamic; // upgrade is_dynamic: direct call overrides the pts-alias dynamic flag
+            ptsRow[5] = 'ts-native'; // promoted from pts to direct-call resolution
+          }
+          ptsEdgeRows.delete(edgeKey);
+          seenCallEdges.add(edgeKey);
+        } else {
+          seenCallEdges.add(edgeKey);
+          allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native']);
+        }
+      }
+    }
+
+    // Phase 8.3 / 8.3c / bind: points-to fallback for unresolved calls.
+    // Fires for three cases:
+    //   (a) dynamic=true: alias calls emitted by extractCallbackReferenceCalls.
+    //       Looks up `call.name` directly (alias entries are flat-keyed).
+    //   (b) non-dynamic: parameter variable calls (fn() where fn is a param).
+    //       Looks up the scoped key `callerName::call.name` to avoid spurious
+    //       edges from same-named parameters across different functions.
+    //   (c) non-dynamic: module-level alias bindings — `f = fn.bind(ctx)` or
+    //       `const f = handler` — where pts('f') was seeded by fnRefBindings.
+    //       Checked against fnRefBindingLhs (the pre-computed set of lhs names from
+    //       fnRefBindings) rather than the full ptsMap, so case (c) only fires for
+    //       genuine bind/alias entries and never for self-seeded local definitions.
+    // Confidence is penalised by one hop to reflect the extra indirection.
+    //
+    // Note: pts edges are added to ptsEdgeRows (not seenCallEdges) so that a later
+    // direct call to the same target in the same function body can upgrade confidence
+    // rather than being silently dropped by the dedup guard.
+    const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+    const flatPtsKey =
+      !call.dynamic && fnRefBindingLhs.has(call.name) && ptsMap?.has(call.name) ? call.name : null;
+    if (
+      targets.length === 0 &&
+      !call.receiver &&
+      ptsMap &&
+      (call.dynamic || (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) || flatPtsKey != null)
+    ) {
+      const ptsLookupName = call.dynamic
+        ? call.name
+        : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
+          ? scopedPtsKey
+          : // flatPtsKey != null is guaranteed by the outer if condition: if neither
+            // call.dynamic nor scopedPtsKey matched, flatPtsKey != null must be true.
+            flatPtsKey!;
+      for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
+        // Resolve the concrete alias target. Only `name` is needed here — receiver
+        // and line are not relevant for alias resolution (we are looking up the
+        // aliased function by name, not dispatching a method call).
+        const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+          lookup,
+          { name: alias },
+          relPath,
+          importedNames,
+          typeMap as Map<string, unknown>,
+        );
+        for (const t of aliasTargets) {
+          const edgeKey = `${caller.id}|${t.id}`;
+          if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+            const conf =
+              computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+            if (conf > 0) {
+              ptsEdgeRows.set(edgeKey, allEdgeRows.length);
+              allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+            }
+          }
+        }
       }
     }
 
@@ -604,7 +1119,44 @@ function buildFileCallEdges(
         seenCallEdges,
       );
       if (recv) {
-        allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0]);
+        allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0, null]);
+      }
+    }
+
+    // Phase 8.5: CHA + RTA dispatch expansion.
+    // For `this`/`self`/`super` calls: resolve through the class hierarchy instead
+    // of relying solely on global name matching.
+    // For typed receiver calls: expand to all instantiated concrete implementations.
+    if (chaCtx && call.receiver) {
+      let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+      if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
+        chaTargets = resolveThisDispatch(
+          call.name,
+          caller.callerName,
+          call.receiver,
+          chaCtx,
+          lookup,
+        );
+      } else if (!BUILTIN_RECEIVERS.has(call.receiver)) {
+        const typeEntry = typeMap.get(call.receiver);
+        const typeName = typeEntry
+          ? typeof typeEntry === 'string'
+            ? typeEntry
+            : (typeEntry as { type?: string }).type
+          : null;
+        if (typeName) {
+          chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+        }
+      }
+      for (const t of chaTargets) {
+        const edgeKey = `${caller.id}|${t.id}`;
+        if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          if (conf > 0) {
+            seenCallEdges.add(edgeKey);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+          }
+        }
       }
     }
   }
@@ -632,7 +1184,7 @@ function buildClassHierarchyEdges(
       );
       if (sourceRow) {
         for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0]);
+          allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null]);
         }
       }
     }
@@ -646,11 +1198,54 @@ function buildClassHierarchyEdges(
       );
       if (sourceRow) {
         for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0]);
+          allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null]);
         }
       }
     }
   }
+}
+
+// ── Native bulk-insert technique back-fill ──────────────────────────────
+
+/**
+ * After native bulkInsertEdges (which does not write the technique column),
+ * apply technique values from the in-memory row array back to the DB.
+ *
+ * Rows with an explicit technique get a targeted UPDATE by (source_id, target_id).
+ * The catch-all 'ts-native' tag is scoped to only the source_ids present in this
+ * batch — this prevents mis-tagging pre-migration NULL-technique edges from
+ * unchanged files that were never purged and re-inserted.
+ */
+function applyEdgeTechniquesAfterNativeInsert(
+  db: BetterSqlite3Database,
+  rows: EdgeRowTuple[],
+): void {
+  const callRows = rows.filter((r) => r[2] === 'calls');
+  if (callRows.length === 0) return;
+
+  const taggedRows = callRows.filter((r) => r[5] != null);
+  // Collect distinct source IDs for this batch so the catch-all UPDATE is scoped
+  // to edges inserted in the current run, not the entire table.
+  const sourceIds = [...new Set(callRows.map((r) => r[0]))];
+  // Chunk to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
+  const CHUNK_SIZE = 500;
+
+  const tx = db.transaction(() => {
+    if (taggedRows.length > 0) {
+      const stmt = db.prepare(
+        "UPDATE edges SET technique = ? WHERE kind = 'calls' AND source_id = ? AND target_id = ? AND technique IS NULL",
+      );
+      for (const r of taggedRows) stmt.run(r[5], r[0], r[1]);
+    }
+    for (let i = 0; i < sourceIds.length; i += CHUNK_SIZE) {
+      const chunk = sourceIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
+      ).run(...chunk);
+    }
+  });
+  tx();
 }
 
 // ── Reverse-dep edge reconnection (#932, #933) ─────────────────────────
@@ -685,6 +1280,7 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
         saved.edgeKind,
         saved.confidence,
         saved.dynamic,
+        saved.technique,
       ]);
     } else {
       // Target was removed or renamed in the changed file — edge is stale
@@ -704,6 +1300,8 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
       const ok = ctx.nativeDb.bulkInsertEdges(nativeEdges);
       if (!ok) {
         batchInsertEdges(db, reconnectedRows);
+      } else {
+        applyEdgeTechniquesAfterNativeInsert(db, reconnectedRows);
       }
     } else {
       batchInsertEdges(db, reconnectedRows);
@@ -803,7 +1401,24 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   addLazyFallback(ctx, scopedLoad);
 
   const t0 = performance.now();
+
+  // Enrich typeMap for .ts/.tsx files using the TypeScript compiler API.
+  // Runs before call-edge construction so the accurate types are available
+  // for method-call resolution. Gated on config so users can opt out.
+  if (ctx.config.build.typescriptResolver) {
+    await enrichTypeMapWithTsc(ctx.rootDir, ctx.fileSymbols);
+  }
+
   const native = engineName === 'native' ? loadNative() : null;
+
+  // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
+  // the transaction opens. This is pure in-memory mutation (no DB I/O) and must
+  // run outside the transaction to avoid leaving ctx.fileSymbols in a partial
+  // state if the transaction rolls back unexpectedly.
+  propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
+  // Phase 8.5: Build CHA context after propagation so typeMap confidence values
+  // (used for RTA seeding) reflect any cross-file propagated types.
+  const chaCtx = buildChaContext(ctx.fileSymbols);
 
   // Phase 1: Compute edges inside a better-sqlite3 transaction.
   // Barrel-edge deletion lives here so that the JS path (which also inserts
@@ -853,8 +1468,26 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
     if (useNativeCallEdges) {
       buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native!);
+      // Build the shared lookup once — both pts post-passes use it, avoiding
+      // redundant construction of the same context closure.
+      const sharedLookup = makeContextLookup(ctx, getNodeIdStmt);
+      // Phase 8.3c post-pass: augment native call edges with parameter-flow pts
+      // edges. The native Rust engine has no knowledge of paramBindings, so any
+      // `fn()` call inside a higher-order function would be missed. This JS pass
+      // runs on top of the native edges and adds only the pts-resolved edges that
+      // the native engine could not produce.
+      buildParamFlowPtsPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
+      // bind/alias post-pass: augment native call edges with fnRefBindings-seeded
+      // pts edges. The native Rust engine has no knowledge of JS fnRefBindings
+      // (e.g. `const f = fn.bind(ctx)`), so calls to bind-created aliases are
+      // not resolved to their original function on the native path.
+      buildFnRefBindingsPtsPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
+      // Phase 8.5 post-pass: augment native call edges with CHA-resolved dispatch.
+      // The native Rust engine has no knowledge of the CHA context, so this/self
+      // calls and interface dispatch are not expanded to concrete implementations.
+      buildChaPostPass(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
     } else {
-      buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows);
+      buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
     }
 
     // When using native edge insert, skip JS insert here — do it after tx commits.
@@ -881,6 +1514,8 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     if (!ok) {
       debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
       batchInsertEdges(ctx.db, allEdgeRows);
+    } else {
+      applyEdgeTechniquesAfterNativeInsert(ctx.db, allEdgeRows);
     }
   }
 
@@ -892,6 +1527,13 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   if (ctx.savedReverseDepEdges.length > 0) {
     reconnectReverseDepEdges(ctx);
   }
+
+  // Phase 4: CHA post-pass — expand virtual-dispatch edges for class hierarchies
+  // and interface implementations. Runs after all call + hierarchy edges are
+  // committed so the DB is consistent.
+  // Note: the native orchestrator success path runs this independently in
+  // tryNativeOrchestrator; this phase covers the WASM and native-fallback paths.
+  runChaPostPass(db);
 
   ctx.timing.edgesMs = performance.now() - t0;
 }

@@ -1382,6 +1382,11 @@ fn build_and_insert_call_edges(
                 })
                 .collect(),
             type_map,
+            fn_ref_bindings: if symbols.fn_ref_bindings.is_empty() {
+                None
+            } else {
+                Some(symbols.fn_ref_bindings.clone())
+            },
         });
     }
 

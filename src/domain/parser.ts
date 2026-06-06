@@ -152,8 +152,10 @@ interface WasmExtractResult {
 // Shared patterns for all JS/TS/TSX (class_declaration excluded — name type differs)
 const COMMON_QUERY_PATTERNS: string[] = [
   '(function_declaration name: (identifier) @fn_name) @fn_node',
+  '(generator_function_declaration name: (identifier) @fn_name) @fn_node',
   '(variable_declarator name: (identifier) @varfn_name value: (arrow_function) @varfn_value)',
   '(variable_declarator name: (identifier) @varfn_name value: (function_expression) @varfn_value)',
+  '(variable_declarator name: (identifier) @varfn_name value: (generator_function) @varfn_value)',
   '(method_definition name: (property_identifier) @meth_name) @meth_node',
   '(method_definition name: (private_property_identifier) @meth_name) @meth_node',
   '(import_statement source: (string) @imp_source) @imp_node',
@@ -170,8 +172,10 @@ const COMMON_QUERY_PATTERNS: string[] = [
 const JS_CLASS_PATTERN: string = '(class_declaration name: (identifier) @cls_name) @cls_node';
 
 // TS/TSX: class name is (type_identifier), plus interface and type alias
+// abstract_class_declaration is a separate node type in tree-sitter-typescript
 const TS_EXTRA_PATTERNS: string[] = [
   '(class_declaration name: (type_identifier) @cls_name) @cls_node',
+  '(abstract_class_declaration name: (type_identifier) @cls_name) @cls_node',
   '(interface_declaration name: (type_identifier) @iface_name) @iface_node',
   '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
 ];
@@ -684,6 +688,24 @@ function patchTypeMap(r: any): void {
   }
 }
 
+/** Normalize native returnTypeMap array to a Map instance, keeping highest-confidence entry per key. */
+function patchReturnTypeMap(r: any): void {
+  if (!r.returnTypeMap || r.returnTypeMap instanceof Map) return;
+  const map = new Map<string, TypeMapEntry>();
+  for (const e of r.returnTypeMap as Array<{
+    name: string;
+    typeName: string;
+    confidence?: number;
+  }>) {
+    const conf = e.confidence ?? 1.0;
+    const existing = map.get(e.name);
+    if (!existing || conf > existing.confidence) {
+      map.set(e.name, { type: e.typeName, confidence: conf });
+    }
+  }
+  r.returnTypeMap = map.size > 0 ? map : new Map();
+}
+
 /** Wrap bindingType into binding object for dataflow argFlows and mutations. */
 function patchDataflow(dataflow: any): void {
   if (dataflow.argFlows) {
@@ -706,6 +728,7 @@ function patchNativeResult(r: any): ExtractorOutput {
   if (r.definitions) patchDefinitions(r.definitions);
   if (r.imports) patchImports(r.imports);
   patchTypeMap(r);
+  patchReturnTypeMap(r);
   if (r.dataflow) patchDataflow(r.dataflow);
 
   return r;

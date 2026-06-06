@@ -12,12 +12,14 @@
 
 import type {
   Call,
+  CallAssignment,
   ClassRelation,
   DataflowResult,
   Definition,
   Export,
   Import,
   LanguageId,
+  ParamBinding,
   TypeMapEntry,
 } from '../types.js';
 
@@ -62,6 +64,11 @@ export interface SerializedExtractorOutput {
     text?: string;
     receiver?: string;
   }>;
+  fnRefBindings?: import('../types.js').FnRefBinding[];
+  newExpressions?: readonly string[];
+  returnTypeMap?: Array<[string, TypeMapEntry]>;
+  callAssignments?: CallAssignment[];
+  paramBindings?: ParamBinding[];
 }
 
 export interface WorkerParseResponseOk {

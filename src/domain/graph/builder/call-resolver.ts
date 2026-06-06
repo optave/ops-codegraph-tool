@@ -36,8 +36,9 @@ export function findCaller(
   }>,
   relPath: string,
   fileNodeRow: { id: number },
-): { id: number } {
+): { id: number; callerName: string | null } {
   let caller: { id: number } | null = null;
+  let callerName: string | null = null;
   let callerSpan = Infinity;
   for (const def of definitions) {
     if (def.line <= call.line) {
@@ -48,13 +49,14 @@ export function findCaller(
           const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
           if (row) {
             caller = row;
+            callerName = def.name;
             callerSpan = span;
           }
         }
       }
     }
   }
-  return caller ?? fileNodeRow;
+  return { ...(caller ?? fileNodeRow), callerName };
 }
 
 export function resolveByMethodOrGlobal(
@@ -62,17 +64,62 @@ export function resolveByMethodOrGlobal(
   call: { name: string; receiver?: string | null },
   relPath: string,
   typeMap: Map<string, unknown>,
+  callerName?: string | null,
 ): ReadonlyArray<{ id: number; file: string }> {
   if (call.receiver) {
-    const typeEntry = typeMap.get(call.receiver);
-    const typeName = typeEntry
+    // Strip "this." so `this.repo.method()` resolves via typeMap["repo"]
+    // (or the "this.repo" key seeded directly by the TSC property-declaration enricher).
+    const effectiveReceiver = call.receiver.startsWith('this.')
+      ? call.receiver.slice('this.'.length)
+      : call.receiver;
+    const typeEntry = typeMap.get(effectiveReceiver) ?? typeMap.get(call.receiver);
+    let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
         : (typeEntry as { type?: string }).type
       : null;
+
+    // Handle inline new-expression receivers: `(new Foo).bar()` or `(new Foo()).bar()`.
+    // extractReceiverName returns the raw node text for non-identifier nodes, so `(new A).t()`
+    // produces receiver='(new A)'. Extract the constructor name directly.
+    if (!typeName && call.receiver) {
+      const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
+      if (m?.[1]) typeName = m[1];
+    }
+
     if (typeName) {
       const typed = lookup.byName(`${typeName}.${call.name}`).filter((n) => n.kind === 'method');
       if (typed.length > 0) return typed;
+
+      // Prototype alias: `Foo.prototype.bar = identifier` seeds typeMap['Foo.bar'] = { type: identifier }.
+      // Checked after the symbol-DB lookup so an actual method definition always wins.
+      const protoEntry = typeMap.get(`${typeName}.${call.name}`);
+      const protoTarget = protoEntry
+        ? typeof protoEntry === 'string'
+          ? protoEntry
+          : (protoEntry as { type?: string }).type
+        : null;
+      if (protoTarget) {
+        const resolved = lookup
+          .byName(protoTarget)
+          .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+        if (resolved.length > 0) return resolved;
+      }
+    }
+
+    // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
+    // When a call site references `obj.prop` as a callback, resolve directly to the target fn.
+    const compositeEntry = typeMap.get(`${call.receiver}.${call.name}`);
+    const ptsTarget = compositeEntry
+      ? typeof compositeEntry === 'string'
+        ? compositeEntry
+        : (compositeEntry as { type?: string }).type
+      : null;
+    if (ptsTarget) {
+      const resolved = lookup
+        .byName(ptsTarget)
+        .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+      if (resolved.length > 0) return resolved;
     }
   }
   if (
@@ -81,7 +128,26 @@ export function resolveByMethodOrGlobal(
     call.receiver === 'self' ||
     call.receiver === 'super'
   ) {
-    return lookup.byName(call.name).filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+    const exact = lookup
+      .byName(call.name)
+      .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+    if (exact.length > 0) return exact;
+
+    // For this/self/super receiver: try same-class method lookup via callerName.
+    // e.g. `this.area()` inside `Shape.describe` → try `Shape.area`.
+    // This seeds the initial edge that runChaPostPass later expands to subclass overrides.
+    if (call.receiver && callerName) {
+      const dotIdx = callerName.lastIndexOf('.');
+      if (dotIdx > -1) {
+        const callerClass = callerName.slice(0, dotIdx);
+        const qualifiedName = `${callerClass}.${call.name}`;
+        const sameClass = lookup
+          .byName(qualifiedName)
+          .filter((t) => t.kind === 'method' && computeConfidence(relPath, t.file, null) >= 0.5);
+        if (sameClass.length > 0) return sameClass;
+      }
+    }
+    return exact; // empty
   }
   return [];
 }
@@ -92,6 +158,7 @@ export function resolveCallTargets(
   relPath: string,
   importedNames: Map<string, string>,
   typeMap: Map<string, unknown>,
+  callerName?: string | null,
 ): { targets: Array<{ id: number; file: string }>; importedFrom: string | undefined } {
   const importedFrom = importedNames.get(call.name);
   let targets: ReadonlyArray<{ id: number; file: string }> | undefined;
@@ -109,7 +176,7 @@ export function resolveCallTargets(
   if (!targets || targets.length === 0) {
     targets = lookup.byNameAndFile(call.name, relPath);
     if (targets.length === 0) {
-      targets = resolveByMethodOrGlobal(lookup, call, relPath, typeMap);
+      targets = resolveByMethodOrGlobal(lookup, call, relPath, typeMap, callerName);
     }
   }
 

@@ -560,9 +560,12 @@ mod tests {
             classes: vec![],
             exports: vec![],
             type_map: vec![],
+            return_type_map: vec![],
+            call_assignments: vec![],
             ast_nodes: vec![],
             dataflow: None,
             line_count: None,
+            fn_ref_bindings: vec![],
         }
     }
 

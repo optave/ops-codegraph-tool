@@ -4,6 +4,7 @@ use napi_derive::napi;
 
 use crate::barrel_resolution::{self, BarrelContext, ReexportRef};
 use crate::import_resolution;
+use crate::types::FnRefBinding;
 
 /// Kind sets for hierarchy edge resolution -- mirrors the JS constants in
 /// `build-edges.js` (`HIERARCHY_SOURCE_KINDS`, `EXTENDS_TARGET_KINDS`,
@@ -12,6 +13,10 @@ use crate::import_resolution;
 const HIERARCHY_SOURCE_KINDS: &[&str] = &["class", "struct", "record", "enum"];
 const EXTENDS_TARGET_KINDS: &[&str] = &["class", "struct", "trait", "record"];
 const IMPLEMENTS_TARGET_KINDS: &[&str] = &["interface", "trait", "class"];
+
+/// Confidence penalty per alias hop — mirrors `PROPAGATION_HOP_PENALTY` in
+/// `src/extractors/javascript.ts`.
+const PROPAGATION_HOP_PENALTY: f64 = 0.1;
 
 #[napi(object)]
 pub struct NodeInfo {
@@ -73,6 +78,9 @@ pub struct FileEdgeInput {
     pub classes: Vec<ClassInfo>,
     #[napi(js_name = "typeMap")]
     pub type_map: Vec<TypeMapInput>,
+    /// Function-reference bindings for Phase 8.3 pts analysis (optional).
+    #[napi(js_name = "fnRefBindings")]
+    pub fn_ref_bindings: Option<Vec<FnRefBinding>>,
 }
 
 #[napi(object)]
@@ -88,7 +96,7 @@ pub struct ComputedEdge {
 
 /// Internal struct for caller resolution (def line range → node ID).
 struct DefWithId<'a> {
-    _name: &'a str,
+    name: &'a str,
     line: u32,
     end_line: u32,
     node_id: Option<u32>,
@@ -98,6 +106,8 @@ struct DefWithId<'a> {
 struct EdgeContext<'a> {
     nodes_by_name: HashMap<&'a str, Vec<&'a NodeInfo>>,
     nodes_by_name_and_file: HashMap<(&'a str, &'a str), Vec<&'a NodeInfo>>,
+    /// All nodes grouped by file — used for same-file method resolution (CHA this-dispatch).
+    nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
     receiver_kinds: HashSet<&'a str>,
 }
@@ -106,17 +116,87 @@ impl<'a> EdgeContext<'a> {
     fn new(all_nodes: &'a [NodeInfo], builtin_receivers: &'a [String]) -> Self {
         let mut nodes_by_name: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         let mut nodes_by_name_and_file: HashMap<(&str, &str), Vec<&NodeInfo>> = HashMap::new();
+        let mut nodes_by_file: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         for node in all_nodes {
             nodes_by_name.entry(&node.name).or_default().push(node);
             nodes_by_name_and_file
                 .entry((&node.name, &node.file))
                 .or_default()
                 .push(node);
+            nodes_by_file.entry(&node.file).or_default().push(node);
         }
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        Self { nodes_by_name, nodes_by_name_and_file, builtin_set, receiver_kinds }
+        Self { nodes_by_name, nodes_by_name_and_file, nodes_by_file, builtin_set, receiver_kinds }
+    }
+}
+
+// ── Phase 8.3: points-to analysis ─────────────────────────────────────────
+
+/// Maximum fixed-point iterations for the pts solver.
+/// Mirrors `MAX_SOLVER_ITERATIONS` in `src/domain/graph/resolver/points-to.ts`.
+/// TODO: wire through `CodegraphConfig.analysis.pointsToMaxIterations` once
+/// config plumbing is in place (same pattern as `typePropagationDepth`).
+const MAX_SOLVER_ITERATIONS: usize = 50;
+
+/// Build a per-file points-to map.  Mirrors `buildPointsToMap` in
+/// `src/domain/graph/resolver/points-to.ts`.
+///
+/// Seeds every locally-defined callable and every imported name as
+/// pointing to itself, then propagates assignments (`pts(lhs) ⊇ pts(rhs)`)
+/// via fixed-point iteration.
+fn build_points_to_map(
+    fn_ref_bindings: &[FnRefBinding],
+    def_names: &HashSet<&str>,
+    imported_names: &HashMap<&str, &str>,
+) -> HashMap<String, HashSet<String>> {
+    let mut pts: HashMap<String, HashSet<String>> = HashMap::new();
+    for name in def_names {
+        pts.entry(name.to_string()).or_default().insert(name.to_string());
+    }
+    for name in imported_names.keys() {
+        pts.entry(name.to_string()).or_default().insert(name.to_string());
+    }
+    if fn_ref_bindings.is_empty() {
+        return pts;
+    }
+    let constraints: Vec<(String, String)> = fn_ref_bindings.iter().map(|b| {
+        let rhs_key = match &b.rhs_receiver {
+            Some(recv) => format!("{}.{}", recv, b.rhs),
+            None => b.rhs.clone(),
+        };
+        (b.lhs.clone(), rhs_key)
+    }).collect();
+    for _ in 0..MAX_SOLVER_ITERATIONS {
+        let mut changed = false;
+        for (lhs, rhs_key) in &constraints {
+            let rhs_pts: Option<Vec<String>> = pts.get(rhs_key.as_str())
+                .map(|s| s.iter().cloned().collect());
+            if let Some(targets) = rhs_pts {
+                let entry = pts.entry(lhs.clone()).or_default();
+                for t in targets {
+                    if entry.insert(t) { changed = true; }
+                }
+            }
+        }
+        if !changed { break; }
+    }
+    pts
+}
+
+/// Return the concrete targets `call_name` flows to, excluding self-references.
+/// Mirrors `resolveViaPointsTo` in `src/domain/graph/resolver/points-to.ts`.
+fn resolve_via_points_to<'a>(
+    call_name: &str,
+    pts: &'a HashMap<String, HashSet<String>>,
+) -> Vec<&'a str> {
+    match pts.get(call_name) {
+        None => vec![],
+        Some(targets) => targets.iter()
+            .filter(|t| t.as_str() != call_name)
+            .map(|t| t.as_str())
+            .collect(),
     }
 }
 
@@ -177,23 +257,85 @@ fn process_file<'a>(
         let node_id = file_nodes.iter()
             .find(|n| n.name == d.name && n.kind == d.kind && n.line == d.line)
             .map(|n| n.id);
-        DefWithId { _name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
+        DefWithId { name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
 
+    // Phase 8.3: build pts map for alias resolution.
+    // Only callable (function/method) defs are seeded — mirrors JS buildPointsToMapForFile.
+    let pts_map: Option<HashMap<String, HashSet<String>>> =
+        file_input.fn_ref_bindings.as_deref().filter(|b| !b.is_empty()).map(|bindings| {
+            let def_names: HashSet<&str> = file_input.definitions.iter()
+                .filter(|d| d.kind == "function" || d.kind == "method")
+                .map(|d| d.name.as_str())
+                .collect();
+            build_points_to_map(bindings, &def_names, &imported_names)
+        });
+
     let mut seen_edges: HashSet<u64> = HashSet::new();
+    // Phase 8.3: tracks pts-resolved edges separately from seen_edges so that a
+    // subsequent direct call to the same caller→target pair can upgrade confidence
+    // in-place rather than being silently dropped by the dedup guard.
+    // Mirrors `ptsEdgeRows` in `src/domain/graph/builder/stages/build-edges.ts`.
+    // Key: edge_key (same as seen_edges). Value: index into `edges` vec.
+    let mut pts_edge_map: HashMap<u64, usize> = HashMap::new();
 
     for call in &file_input.calls {
         if let Some(ref receiver) = call.receiver {
             if ctx.builtin_set.contains(receiver.as_str()) { continue; }
         }
 
-        let caller_id = find_enclosing_caller(&defs_with_ids, call.line, file_node_id);
+        let (caller_id, caller_name) = find_enclosing_caller(&defs_with_ids, call.line, file_node_id);
         let is_dynamic = if call.dynamic.unwrap_or(false) { 1u32 } else { 0u32 };
         let imported_from = imported_names.get(call.name.as_str()).copied();
 
-        let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map);
+        let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map, caller_name);
         sort_targets_by_confidence(&mut targets, rel_path, imported_from);
-        emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, edges);
+        emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
+
+        // Phase 8.3: pts fallback for unresolved dynamic identifier calls.
+        // When primary resolution finds nothing and the call is dynamic with no receiver,
+        // look up the call name in the pts map and retry resolution for each alias target.
+        // Confidence is penalised by one hop to reflect the extra indirection.
+        //
+        // Pts edges go into pts_edge_map (not seen_edges) so a later direct call to the
+        // same target in the same function body can upgrade confidence in-place — mirroring
+        // the ptsEdgeRows mechanism on the JS/WASM path.
+        if targets.is_empty() && call.dynamic.unwrap_or(false) && call.receiver.is_none() {
+            if let Some(ref pts) = pts_map {
+                for alias in resolve_via_points_to(call.name.as_str(), pts) {
+                    let alias_imported_from = imported_names.get(alias).copied();
+                    let alias_call = CallInfo {
+                        name: alias.to_string(),
+                        line: call.line,
+                        dynamic: Some(true),
+                        receiver: None,
+                    };
+                    let mut alias_targets = resolve_call_targets(
+                        ctx, &alias_call, rel_path, alias_imported_from, &type_map, caller_name,
+                    );
+                    sort_targets_by_confidence(&mut alias_targets, rel_path, alias_imported_from);
+                    for t in &alias_targets {
+                        let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
+                        if t.id != caller_id && !seen_edges.contains(&edge_key) && !pts_edge_map.contains_key(&edge_key) {
+                            let conf = import_resolution::compute_confidence(
+                                rel_path, &t.file, alias_imported_from,
+                            ) - PROPAGATION_HOP_PENALTY;
+                            if conf > 0.0 {
+                                pts_edge_map.insert(edge_key, edges.len());
+                                edges.push(ComputedEdge {
+                                    source_id: caller_id,
+                                    target_id: t.id,
+                                    kind: "calls".to_string(),
+                                    confidence: conf,
+                                    dynamic: is_dynamic,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &mut seen_edges, edges);
     }
 
@@ -201,8 +343,10 @@ fn process_file<'a>(
 }
 
 /// Find the narrowest enclosing definition for a call at the given line.
-fn find_enclosing_caller(defs: &[DefWithId], call_line: u32, file_node_id: u32) -> u32 {
+/// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call is at file scope.
+fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_id: u32) -> (u32, &'a str) {
     let mut caller_id = file_node_id;
+    let mut caller_name = "";
     let mut caller_span = u32::MAX;
     for def in defs {
         if def.line <= call_line && call_line <= def.end_line {
@@ -210,21 +354,25 @@ fn find_enclosing_caller(defs: &[DefWithId], call_line: u32, file_node_id: u32) 
             if span < caller_span {
                 if let Some(id) = def.node_id {
                     caller_id = id;
+                    caller_name = def.name;
                     caller_span = span;
                 }
             }
         }
     }
-    caller_id
+    (caller_id, caller_name)
 }
 
 /// Multi-strategy call target resolution: import-aware → same-file → method → type-aware → scoped.
+/// `caller_name` is the enclosing function/method name (e.g. `"Shape.describe"`) used to scope
+/// `this`/`self`/`super` dispatch to the caller's own class before falling back to a broader scan.
 fn resolve_call_targets<'a>(
     ctx: &EdgeContext<'a>,
     call: &CallInfo,
     rel_path: &str,
     imported_from: Option<&str>,
     type_map: &HashMap<&str, (&str, f64)>,
+    caller_name: &str,
 ) -> Vec<&'a NodeInfo> {
     // 1. Import-aware resolution
     if let Some(imp_file) = imported_from {
@@ -248,15 +396,35 @@ fn resolve_call_targets<'a>(
         .unwrap_or_default();
     if !method_candidates.is_empty() { return method_candidates; }
 
-    // 4. Type-aware resolution via receiver → type map
+    // 4. Type-aware resolution via receiver → type map.
+    // Strips "this." prefix so `this.repo.method()` resolves via typeMap["repo"]
+    // or typeMap["this.repo"] (both seeded by the class-field extractor).
     if let Some(ref receiver) = call.receiver {
-        if let Some(&(type_name, _conf)) = type_map.get(receiver.as_str()) {
+        let effective_receiver = if receiver.starts_with("this.") {
+            &receiver["this.".len()..]
+        } else {
+            receiver.as_str()
+        };
+        let type_lookup = type_map.get(effective_receiver)
+            .or_else(|| type_map.get(receiver.as_str()));
+        if let Some(&(type_name, _conf)) = type_lookup {
             let qualified = format!("{}.{}", type_name, call.name);
             let typed: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
                 .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
                 .unwrap_or_default();
             if !typed.is_empty() { return typed; }
+        }
+        // 4.5. Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop']
+        let composite_key = format!("{}.{}", receiver, call.name);
+        if let Some(&(pts_target, _)) = type_map.get(composite_key.as_str()) {
+            let resolved: Vec<&NodeInfo> = ctx.nodes_by_name
+                .get(pts_target)
+                .map(|v| v.iter()
+                    .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                    .copied().collect())
+                .unwrap_or_default();
+            if !resolved.is_empty() { return resolved; }
         }
     }
 
@@ -266,12 +434,56 @@ fn resolve_call_targets<'a>(
         || call.receiver.as_deref() == Some("self")
         || call.receiver.as_deref() == Some("super")
     {
-        return ctx.nodes_by_name
+        // First try exact name match (e.g. an unqualified function named "area").
+        let exact: Vec<&NodeInfo> = ctx.nodes_by_name
             .get(call.name.as_str())
             .map(|v| v.iter()
                 .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
                 .copied().collect())
             .unwrap_or_default();
+        if !exact.is_empty() { return exact; }
+
+        // For this/self/super: prefer class-scoped exact lookup (e.g. `this.area()` in
+        // `Shape.describe` → try `Shape.area` first).  This avoids false edges to unrelated
+        // classes that happen to have a method with the same name in the same file.
+        // Fall back to the broader same-file suffix scan only when the class-scoped lookup
+        // finds nothing (e.g. when the caller is at module scope or the name is unknown).
+        if call.receiver.is_some() {
+            // Extract the class prefix from the enclosing caller name (e.g. "Shape" from "Shape.describe").
+            if let Some(dot_pos) = caller_name.find('.') {
+                let class_prefix = &caller_name[..dot_pos];
+                let qualified = format!("{}.{}", class_prefix, call.name);
+                let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
+                    .get(qualified.as_str())
+                    .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
+                    .unwrap_or_default();
+                if !class_scoped.is_empty() { return class_scoped; }
+            }
+
+            // Broader fallback: same-file suffix scan.  Always restrict to the caller's
+            // own class prefix — regardless of how many matches are found — to avoid
+            // false-positive edges to unrelated classes in the same file.
+            // (e.g. this.area() inside Shape.describe must never yield Calculator.area,
+            // even when Calculator.area is the only method with that name in the file.)
+            let suffix = format!(".{}", call.name);
+            if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
+                let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
+                    .filter(|n| n.kind == "method" && n.name.ends_with(&suffix))
+                    .copied()
+                    .collect();
+                if !same_file_methods.is_empty() {
+                    if let Some(dot_pos) = caller_name.find('.') {
+                        let caller_prefix = format!("{}.", &caller_name[..dot_pos]);
+                        let caller_scoped: Vec<&NodeInfo> = same_file_methods.iter()
+                            .filter(|n| n.name.starts_with(&caller_prefix))
+                            .copied()
+                            .collect();
+                        if !caller_scoped.is_empty() { return caller_scoped; }
+                    }
+                }
+            }
+        }
+        return exact; // empty
     }
 
     Vec::new()
@@ -292,17 +504,30 @@ fn sort_targets_by_confidence(targets: &mut Vec<&NodeInfo>, rel_path: &str, impo
 fn emit_call_edges(
     targets: &[&NodeInfo], caller_id: u32, is_dynamic: u32,
     rel_path: &str, imported_from: Option<&str>,
-    seen_edges: &mut HashSet<u64>, edges: &mut Vec<ComputedEdge>,
+    seen_edges: &mut HashSet<u64>, pts_edge_map: &mut HashMap<u64, usize>, edges: &mut Vec<ComputedEdge>,
 ) {
     for t in targets {
         let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
         if t.id != caller_id && !seen_edges.contains(&edge_key) {
-            seen_edges.insert(edge_key);
             let confidence = import_resolution::compute_confidence(rel_path, &t.file, imported_from);
-            edges.push(ComputedEdge {
-                source_id: caller_id, target_id: t.id,
-                kind: "calls".to_string(), confidence, dynamic: is_dynamic,
-            });
+            if let Some(&pts_idx) = pts_edge_map.get(&edge_key) {
+                // A pts-resolved edge already exists for this caller→target pair with a
+                // penalised confidence. Upgrade it to the direct-call confidence in-place,
+                // then promote to seen_edges so no further processing is needed.
+                // Mirrors the ptsEdgeRows upgrade path in build-edges.ts.
+                if let Some(pts_row) = edges.get_mut(pts_idx) {
+                    pts_row.confidence = confidence;
+                    pts_row.dynamic = is_dynamic; // direct call overrides alias dynamic flag
+                }
+                pts_edge_map.remove(&edge_key);
+                seen_edges.insert(edge_key);
+            } else {
+                seen_edges.insert(edge_key);
+                edges.push(ComputedEdge {
+                    source_id: caller_id, target_id: t.id,
+                    kind: "calls".to_string(), confidence, dynamic: is_dynamic,
+                });
+            }
         }
     }
 }
@@ -1048,6 +1273,7 @@ mod call_edge_tests {
             imported_names: vec![],
             classes,
             type_map,
+            fn_ref_bindings: None,
         }
     }
 

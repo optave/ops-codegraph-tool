@@ -106,6 +106,15 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
   // {line, kind, name, text?, receiver?} shape — see engine.ts:822 where the
   // visitor output is cast the same way.
   if (ser.astNodes !== undefined) out.astNodes = ser.astNodes as unknown as ASTNodeRow[];
+  if (ser.fnRefBindings?.length) out.fnRefBindings = ser.fnRefBindings;
+  if (ser.newExpressions?.length) out.newExpressions = ser.newExpressions;
+  if (ser.returnTypeMap?.length) {
+    const returnTypeMap = new Map<string, TypeMapEntry>();
+    for (const [k, v] of ser.returnTypeMap) returnTypeMap.set(k, v);
+    out.returnTypeMap = returnTypeMap;
+  }
+  if (ser.callAssignments?.length) out.callAssignments = ser.callAssignments;
+  if (ser.paramBindings?.length) out.paramBindings = ser.paramBindings;
   return out;
 }
 

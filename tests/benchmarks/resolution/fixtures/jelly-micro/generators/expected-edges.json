@@ -1,0 +1,70 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Hand-annotated call edges for generator function resolution benchmark",
+  "edges": [
+    {
+      "source": { "name": "gen2", "file": "generators.js" },
+      "target": { "name": "gen1", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "yield* delegation inside generator — inner call_expression"
+    },
+    {
+      "source": { "name": "gen3", "file": "generators.js" },
+      "target": { "name": "gen9", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "direct call to another generator from within a generator"
+    },
+    {
+      "source": { "name": "gen4", "file": "generators.js" },
+      "target": { "name": "gen4helper", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "call to regular function from inside a generator"
+    },
+    {
+      "source": { "name": "gen5", "file": "generators.js" },
+      "target": { "name": "gen2", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "yield* delegation to another named generator"
+    },
+    {
+      "source": { "name": "gen5", "file": "generators.js" },
+      "target": { "name": "gen4", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "second yield* delegation from gen5"
+    },
+    {
+      "source": { "name": "gen6", "file": "generators.js" },
+      "target": { "name": "gen7", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "direct call to sibling generator"
+    },
+    {
+      "source": { "name": "gen7", "file": "generators.js" },
+      "target": { "name": "gen6", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "direct call to sibling generator (mutual recursion)"
+    },
+    {
+      "source": { "name": "gen9", "file": "generators.js" },
+      "target": { "name": "gen8", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "yield* delegation — inner call_expression resolves to gen8"
+    },
+    {
+      "source": { "name": "gen10", "file": "generators.js" },
+      "target": { "name": "gen8", "file": "generators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "call from variable-declared generator (const gen10 = function*(){})"
+    }
+  ]
+}

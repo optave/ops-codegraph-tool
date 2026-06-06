@@ -24,6 +24,7 @@ export const DEFAULTS = {
     dbPath: '.codegraph/graph.db',
     driftThreshold: 0.2,
     smallFilesThreshold: 5,
+    typescriptResolver: false,
   },
   query: {
     defaultDepth: 3,
@@ -79,6 +80,20 @@ export const DEFAULTS = {
     briefImporterDepth: 5,
     briefHighRiskCallers: 10,
     briefMediumRiskCallers: 3,
+    // TODO(Phase 8.3): wire these into the points-to solver and type-propagation path
+    // once config is threaded through to extractSymbols / buildPointsToMap. Currently
+    // controlled by hardcoded constants in src/extractors/javascript.ts
+    // (MAX_PROPAGATION_DEPTH, PROPAGATION_HOP_PENALTY) and in
+    // src/domain/graph/resolver/points-to.ts (MAX_SOLVER_ITERATIONS).
+    typePropagationDepth: 3,
+    /**
+     * Maximum fixed-point iterations for the Phase 8.3 points-to solver.
+     * @reserved — currently not wired to either the WASM solver
+     * (`MAX_SOLVER_ITERATIONS` in `points-to.ts`) or the native Rust solver
+     * (`MAX_SOLVER_ITERATIONS` in `edge_builder.rs`), both of which use the
+     * same hardcoded value of 50.  See the TODO comment above.
+     */
+    pointsToMaxIterations: 50,
   },
   community: {
     resolution: 1.0,

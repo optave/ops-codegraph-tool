@@ -109,8 +109,10 @@ function grammarPath(name: string): string {
 
 const COMMON_QUERY_PATTERNS: string[] = [
   '(function_declaration name: (identifier) @fn_name) @fn_node',
+  '(generator_function_declaration name: (identifier) @fn_name) @fn_node',
   '(variable_declarator name: (identifier) @varfn_name value: (arrow_function) @varfn_value)',
   '(variable_declarator name: (identifier) @varfn_name value: (function_expression) @varfn_value)',
+  '(variable_declarator name: (identifier) @varfn_name value: (generator_function) @varfn_value)',
   '(method_definition name: (property_identifier) @meth_name) @meth_node',
   '(method_definition name: (private_property_identifier) @meth_name) @meth_node',
   '(import_statement source: (string) @imp_source) @imp_node',
@@ -127,6 +129,7 @@ const JS_CLASS_PATTERN: string = '(class_declaration name: (identifier) @cls_nam
 
 const TS_EXTRA_PATTERNS: string[] = [
   '(class_declaration name: (type_identifier) @cls_name) @cls_node',
+  '(abstract_class_declaration name: (type_identifier) @cls_name) @cls_node',
   '(interface_declaration name: (type_identifier) @iface_name) @iface_node',
   '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
 ];
@@ -801,6 +804,13 @@ function serializeExtractorOutput(
     _lineCount: code.split('\n').length,
     dataflow: symbols.dataflow,
     astNodes,
+    ...(symbols.fnRefBindings?.length ? { fnRefBindings: symbols.fnRefBindings } : {}),
+    ...(symbols.newExpressions?.length ? { newExpressions: symbols.newExpressions } : {}),
+    ...(symbols.returnTypeMap?.size
+      ? { returnTypeMap: Array.from(symbols.returnTypeMap.entries()) }
+      : {}),
+    ...(symbols.callAssignments?.length ? { callAssignments: symbols.callAssignments } : {}),
+    ...(symbols.paramBindings?.length ? { paramBindings: symbols.paramBindings } : {}),
   };
 }
 

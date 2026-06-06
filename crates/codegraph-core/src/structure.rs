@@ -929,9 +929,12 @@ mod tests {
             classes: vec![],
             exports: vec![],
             type_map: vec![],
+            return_type_map: vec![],
+            call_assignments: vec![],
             ast_nodes: vec![],
             dataflow: None,
             line_count: Some(42),
+            fn_ref_bindings: vec![],
         };
         file_symbols.insert("src/a.ts".to_string(), sym.clone());
 

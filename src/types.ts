@@ -523,6 +523,47 @@ export interface TypeMapEntry {
   confidence: number;
 }
 
+/**
+ * A variable assignment from a call expression, recorded during extraction for
+ * cross-file return-type propagation (Phase 8.2).
+ */
+export interface CallAssignment {
+  /** Variable being assigned to. */
+  varName: string;
+  /** Name of the function or method being called. */
+  calleeName: string;
+  /** Resolved receiver type, if the call is a method call (e.g. service.getRepo()). */
+  receiverTypeName?: string;
+}
+
+/**
+ * A function-reference binding recorded during extraction for points-to analysis (Phase 8.3).
+ * Captures `const fn = handler` or `const fn = obj.method` patterns where the right-hand
+ * side is a named function reference (not a call expression or literal).
+ */
+export interface FnRefBinding {
+  /** Variable being assigned (the left-hand side identifier). */
+  lhs: string;
+  /** Named function/property on the right-hand side. */
+  rhs: string;
+  /** If rhs is a member expression (obj.method), the receiver object name. */
+  rhsReceiver?: string;
+}
+
+/**
+ * An argument-to-parameter binding at a call site, recorded for parameter-flow
+ * points-to analysis (Phase 8.3c). Captures `f(x)` where `x` is an identifier
+ * that may carry a function reference into `f`'s parameter.
+ */
+export interface ParamBinding {
+  /** The function being called at the call site. */
+  callee: string;
+  /** Zero-based index of the argument. */
+  argIndex: number;
+  /** Identifier name of the argument being passed. */
+  argName: string;
+}
+
 /** The normalized output shape returned by every language extractor. */
 export interface ExtractorOutput {
   definitions: Definition[];
@@ -531,6 +572,35 @@ export interface ExtractorOutput {
   classes: ClassRelation[];
   exports: Export[];
   typeMap: Map<string, TypeMapEntry>;
+  /**
+   * Maps function/method names to their declared or inferred return types.
+   * Keys: plain name (e.g. "createUser") or qualified name (e.g. "UserService.getUser").
+   * Populated by JS/TS extractor; used for inter-procedural type propagation (Phase 8.2).
+   */
+  returnTypeMap?: Map<string, TypeMapEntry>;
+  /**
+   * Variable assignments from call expressions that could not be resolved from the
+   * per-file returnTypeMap. Consumed by build-edges.ts to propagate cross-file return types.
+   */
+  callAssignments?: CallAssignment[];
+  /**
+   * Function-reference bindings for points-to analysis (Phase 8.3).
+   * Records `const fn = handler` and `const fn = obj.method` patterns so the
+   * edge builder can follow aliases when a call target has no direct definition.
+   */
+  fnRefBindings?: FnRefBinding[];
+  /**
+   * Argument-to-parameter bindings for parameter-flow points-to analysis (Phase 8.3c).
+   * Records `f(x)` call sites where `x` is an identifier, enabling the pts solver
+   * to propagate function references through function parameters.
+   */
+  paramBindings?: ParamBinding[];
+  /**
+   * Phase 8.5 (RTA): constructor names from all `new X()` expressions in the file,
+   * including unassigned ones (e.g. `doSomething(new Foo())`). Used to build the
+   * project-wide instantiated-types set for Rapid Type Analysis filtering.
+   */
+  newExpressions?: readonly string[];
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */
@@ -1092,6 +1162,8 @@ export interface BuildResult {
     edgesMs: number;
     structureMs: number;
     rolesMs: number;
+    /** Wall-clock time for the this/super dispatch WASM post-pass (native path only). */
+    thisDispatchMs?: number;
     astMs: number;
     complexityMs: number;
     cfgMs: number;
@@ -1119,6 +1191,14 @@ export interface CodegraphConfig {
     dbPath: string;
     driftThreshold: number;
     smallFilesThreshold: number;
+    /**
+     * Use the TypeScript compiler API to enrich typeMap for .ts/.tsx files.
+     * Improves method-call edge accuracy for patterns like `const svc = container.get<MyService>()`.
+     * Disabled by default because `ts.createProgram` adds ~1s overhead per build;
+     * enable in `.codegraphrc.json` when you need accurate type-resolved call edges.
+     * Default: false.
+     */
+    typescriptResolver: boolean;
   };
 
   query: {
@@ -1189,6 +1269,14 @@ export interface CodegraphConfig {
     briefImporterDepth: number;
     briefHighRiskCallers: number;
     briefMediumRiskCallers: number;
+    /** Maximum chain depth for inter-procedural return-type propagation (Phase 8.2). */
+    typePropagationDepth: number;
+    /**
+     * Maximum fixed-point iterations for the Phase 8.3 points-to solver.
+     * @reserved — currently not wired to either solver; both use a hardcoded
+     * constant of 50.  See TODO in `src/infrastructure/config.ts`.
+     */
+    pointsToMaxIterations: number;
   };
 
   community: {

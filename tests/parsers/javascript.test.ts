@@ -7,6 +7,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createParsers, extractSymbols } from '../../src/domain/parser.js';
+import { setTypeMapEntry } from '../../src/extractors/helpers.js';
 
 describe('JavaScript parser', () => {
   let parsers: any;
@@ -33,6 +34,51 @@ describe('JavaScript parser', () => {
     expect(symbols.definitions).toContainEqual(
       expect.objectContaining({ name: 'add', kind: 'function' }),
     );
+  });
+
+  it('extracts generator function declarations', () => {
+    const symbols = parseJS(`function* gen() { yield 1; }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'gen', kind: 'function' }),
+    );
+  });
+
+  it('extracts variable-declared generator functions', () => {
+    const symbols = parseJS(`const gen = function*() { yield 1; };`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'gen', kind: 'function' }),
+    );
+  });
+
+  it('attributes calls inside generator body to the generator', () => {
+    // Use multi-line generators so line ranges are non-overlapping and the
+    // attribution can be verified by line number containment.
+    const symbols = parseJS(
+      'function* gen9() {\n  yield* gen8();\n}\nfunction* gen8() { yield 1; }',
+    );
+    const gen9Def = symbols.definitions.find((d) => d.name === 'gen9');
+    const gen8Def = symbols.definitions.find((d) => d.name === 'gen8');
+    expect(gen9Def).toBeDefined();
+    expect(gen8Def).toBeDefined();
+
+    // The call to gen8 must exist.
+    const gen8Call = symbols.calls.find((c) => c.name === 'gen8');
+    expect(gen8Call).toBeDefined();
+
+    // The call's line must fall within gen9's range — proving it is attributed
+    // to gen9's body, not to file level or to gen8 itself.
+    expect(gen8Call!.line).toBeGreaterThanOrEqual(gen9Def!.line);
+    expect(gen8Call!.line).toBeLessThanOrEqual(gen9Def!.endLine!);
+
+    // Negative: the call must NOT fall within gen8's own range (not self-attributed).
+    const callIsInsideGen8 =
+      gen8Call!.line >= gen8Def!.line && gen8Call!.line <= (gen8Def!.endLine ?? gen8Def!.line);
+    expect(callIsInsideGen8).toBe(false);
+  });
+
+  it('captures calls inside yield* expressions', () => {
+    const symbols = parseJS(`function* delegator() { yield* inner(); }`);
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'inner' }));
   });
 
   it('extracts class declarations', () => {
@@ -256,6 +302,201 @@ describe('JavaScript parser', () => {
       expect(() => extractSymbols(fakeTree, 'test.js')).not.toThrow();
       const symbols = extractSymbols(fakeTree, 'test.js');
       expect(symbols.typeMap.has('x')).toBe(false);
+    });
+  });
+
+  describe('Phase 8.3d: property write pts tracking', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('seeds typeMap with composite key for obj.prop = identifier', () => {
+      const symbols = parseJS(`
+        const handlers = {};
+        handlers.auth = authMiddleware;
+      `);
+      expect(symbols.typeMap.get('handlers.auth')).toEqual({
+        type: 'authMiddleware',
+        confidence: 0.85,
+      });
+    });
+
+    it('ignores chained writes (a.b.c = x)', () => {
+      const symbols = parseJS(`a.b.c = handler;`);
+      expect(symbols.typeMap.has('a.b.c')).toBe(false);
+      expect(symbols.typeMap.has('b.c')).toBe(false);
+    });
+
+    it('seeds typeMap for this.prop = new ClassName() with confidence 1.0', () => {
+      const symbols = parseJS(`
+        class UserService {
+          constructor() {
+            this.logger = new Logger('UserService');
+          }
+        }
+      `);
+      expect(symbols.typeMap.get('this.logger')).toEqual({ type: 'Logger', confidence: 1.0 });
+    });
+
+    it('does not seed typeMap for this.prop = identifier (only new expressions)', () => {
+      const symbols = parseJS(`
+        class Foo {
+          init(logger) { this.logger = logger; }
+        }
+      `);
+      expect(symbols.typeMap.has('this.logger')).toBe(false);
+    });
+
+    it('ignores non-identifier RHS (a.prop = obj.method)', () => {
+      const symbols = parseJS(`router.use = obj.method;`);
+      expect(symbols.typeMap.has('router.use')).toBe(false);
+    });
+
+    it('ignores BUILTIN_GLOBALS as object names', () => {
+      const symbols = parseJS(`
+        console.warn = customWarn;
+        Object.assign = myAssign;
+        process.on = myHandler;
+        window.onload = myHandler;
+        document.ready = myHandler;
+        globalThis.fetch = myFetch;
+      `);
+      expect(symbols.typeMap.has('console.warn')).toBe(false);
+      expect(symbols.typeMap.has('Object.assign')).toBe(false);
+      expect(symbols.typeMap.has('process.on')).toBe(false);
+      expect(symbols.typeMap.has('window.onload')).toBe(false);
+      expect(symbols.typeMap.has('document.ready')).toBe(false);
+      expect(symbols.typeMap.has('globalThis.fetch')).toBe(false);
+    });
+
+    it('first-write wins when same key appears twice at equal confidence', () => {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(`
+        handlers.auth = firstMiddleware;
+        handlers.auth = secondMiddleware;
+      `);
+      const symbols = extractSymbols(tree, 'test.ts');
+      // Both writes are at 0.85; first-write wins (equal confidence does not promote)
+      expect(symbols.typeMap.get('handlers.auth')?.type).toBe('firstMiddleware');
+    });
+
+    it('higher-confidence entry promotes over lower-confidence entry (setTypeMapEntry)', () => {
+      const typeMap = new Map<string, { type: string; confidence: number }>();
+      // Seed with a low-confidence write (property-write confidence: 0.85)
+      setTypeMapEntry(typeMap, 'handlers.auth', 'firstMiddleware', 0.85);
+      // A higher-confidence annotation (0.9) should overwrite
+      setTypeMapEntry(typeMap, 'handlers.auth', 'AnnotatedHandler', 0.9);
+      expect(typeMap.get('handlers.auth')).toEqual({ type: 'AnnotatedHandler', confidence: 0.9 });
+    });
+  });
+
+  describe('Phase 8.2: inter-procedural return-type propagation', () => {
+    function parseTS(code) {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.ts');
+    }
+
+    describe('returnTypeMap extraction', () => {
+      it('records explicit TS return type annotation with confidence 1.0', () => {
+        const symbols = parseTS(`function createUser(): User { return new User(); }`);
+        expect(symbols.returnTypeMap).toBeInstanceOf(Map);
+        expect(symbols.returnTypeMap.get('createUser')).toEqual({ type: 'User', confidence: 1.0 });
+      });
+
+      it('infers return type from return new Constructor() with confidence 0.85', () => {
+        const symbols = parseTS(`function buildRouter() { return new Router(); }`);
+        expect(symbols.returnTypeMap.get('buildRouter')).toEqual({
+          type: 'Router',
+          confidence: 0.85,
+        });
+      });
+
+      it('prefers annotation over inferred return type', () => {
+        const symbols = parseTS(`function create(): Service { return new OtherService(); }`);
+        expect(symbols.returnTypeMap.get('create')).toEqual({ type: 'Service', confidence: 1.0 });
+      });
+
+      it('qualifies method return types with class name', () => {
+        const symbols = parseTS(`
+          class UserService {
+            getUser(): User { return new User(); }
+          }
+        `);
+        expect(symbols.returnTypeMap.get('UserService.getUser')).toEqual({
+          type: 'User',
+          confidence: 1.0,
+        });
+      });
+
+      it('records arrow function return type from variable declarator', () => {
+        const symbols = parseTS(`const createRepo = (): Repo => new Repo();`);
+        expect(symbols.returnTypeMap.get('createRepo')).toEqual({ type: 'Repo', confidence: 1.0 });
+      });
+
+      it('does not record constructor methods', () => {
+        const symbols = parseTS(`class Foo { constructor() {} }`);
+        expect(symbols.returnTypeMap.has('Foo.constructor')).toBe(false);
+      });
+    });
+
+    describe('intra-file propagation via returnTypeMap', () => {
+      it('propagates return type of annotated function — confidence 0.9 (1.0 - 0.1 × hop 1)', () => {
+        const symbols = parseTS(`
+          function createUser(): User { return new User(); }
+          const u = createUser();
+        `);
+        expect(symbols.typeMap.get('u')).toEqual({ type: 'User', confidence: 0.9 });
+      });
+
+      it('propagates return type inferred from return new — confidence 0.75 (0.85 - 0.1)', () => {
+        const symbols = parseTS(`
+          function buildRouter() { return new Router(); }
+          const r = buildRouter();
+        `);
+        expect(symbols.typeMap.get('r')).toEqual({ type: 'Router', confidence: 0.75 });
+      });
+
+      it('propagates return type via method call on typed receiver', () => {
+        const symbols = parseTS(`
+          class UserService {
+            getUser(): User { return new User(); }
+          }
+          const svc: UserService = new UserService();
+          const u = svc.getUser();
+        `);
+        expect(symbols.typeMap.get('u')).toEqual({ type: 'User', confidence: 0.9 });
+      });
+
+      it('resolves one-hop method chain — getService().getRepo()', () => {
+        const symbols = parseTS(`
+          function getService(): UserService { return new UserService(); }
+          class UserService {
+            getRepo(): Repo { return new Repo(); }
+          }
+          const repo = getService().getRepo();
+        `);
+        expect(symbols.typeMap.get('repo')).toEqual({ type: 'Repo', confidence: 0.8 });
+      });
+
+      it('does not override higher-confidence annotation with propagated type', () => {
+        const symbols = parseTS(`
+          function createUser(): User { return new User(); }
+          const u: Admin = createUser();
+        `);
+        // Annotation (0.9) wins over propagated (0.9) — setTypeMapEntry keeps first seen
+        expect(symbols.typeMap.get('u')?.type).toBe('Admin');
+      });
+
+      it('does not propagate for plain function calls with no return type info', () => {
+        const symbols = parseTS(`
+          function doSomething() { return 42; }
+          const x = doSomething();
+        `);
+        expect(symbols.typeMap.has('x')).toBe(false);
+      });
     });
   });
 
