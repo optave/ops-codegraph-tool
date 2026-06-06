@@ -11,6 +11,8 @@ import type {
   FnRefBinding,
   ForOfBinding,
   Import,
+  ObjectPropBinding,
+  ObjectRestParamBinding,
   ParamBinding,
   SpreadArgBinding,
   SubDeclaration,
@@ -332,6 +334,8 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const spreadArgBindings: SpreadArgBinding[] = [];
   const forOfBindings: ForOfBinding[] = [];
   const arrayCallbackBindings: ArrayCallbackBinding[] = [];
+  const objectRestParamBindings: ObjectRestParamBinding[] = [];
+  const objectPropBindings: ObjectPropBinding[] = [];
 
   const matches = query.matches(tree.rootNode);
 
@@ -373,6 +377,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Phase 8.3f: Extract object-rest parameter and object-property bindings
+  extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindings);
+  extractObjectPropBindingsWalk(tree.rootNode, objectPropBindings);
+
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -392,6 +400,8 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     spreadArgBindings,
     forOfBindings,
     arrayCallbackBindings,
+    objectRestParamBindings,
+    objectPropBindings,
     newExpressions,
   };
 }
@@ -629,6 +639,8 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     spreadArgBindings: [],
     forOfBindings: [],
     arrayCallbackBindings: [],
+    objectRestParamBindings: [],
+    objectPropBindings: [],
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
@@ -657,6 +669,9 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     ctx.arrayCallbackBindings!,
     ctx.fnRefBindings!,
   );
+  // Phase 8.3f: Extract object-rest parameter and object-property bindings
+  extractObjectRestParamBindingsWalk(tree.rootNode, ctx.objectRestParamBindings!);
+  extractObjectPropBindingsWalk(tree.rootNode, ctx.objectPropBindings!);
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
@@ -1868,6 +1883,101 @@ function extractSpreadForOfWalk(
     if (pushedFunc) funcStack.pop();
   }
 
+  walk(rootNode, 0);
+}
+
+/**
+ * Phase 8.3f: collect object-rest parameter bindings.
+ *
+ * `function f({ a, ...rest }) {}` → `{ callee: "f", restName: "rest", argIndex: 0 }`
+ *
+ * Enables resolving `rest.prop()` when a known object is passed as that parameter.
+ */
+function extractObjectRestParamBindingsWalk(
+  rootNode: TreeSitterNode,
+  bindings: ObjectRestParamBinding[],
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    const t = node.type;
+    if (t === 'function_declaration' || t === 'function_expression' || t === 'arrow_function') {
+      const nameNode = node.childForFieldName('name');
+      const funcName = nameNode?.text;
+      if (funcName) {
+        const paramsNode =
+          node.childForFieldName('parameters') || findChild(node, 'formal_parameters');
+        if (paramsNode) {
+          let argIndex = 0;
+          for (let i = 0; i < paramsNode.childCount; i++) {
+            const param = paramsNode.child(i);
+            if (!param) continue;
+            const pt = param.type;
+            if (pt === ',' || pt === '(' || pt === ')') continue;
+            if (pt === 'object_pattern') {
+              for (let j = 0; j < param.childCount; j++) {
+                const child = param.child(j);
+                if (!child) continue;
+                if (child.type !== 'rest_pattern' && child.type !== 'rest_element') continue;
+                const restNameNode = child.child(1) ?? child.childForFieldName('name');
+                if (restNameNode?.type === 'identifier') {
+                  bindings.push({ callee: funcName, restName: restNameNode.text, argIndex });
+                }
+              }
+            }
+            argIndex++;
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
+ * Phase 8.3f: collect object-property bindings from object literals.
+ *
+ * `const obj = { e4 }` → `{ objectName: "obj", propName: "e4", valueName: "e4" }`
+ * `const obj = { e1: fn }` → `{ objectName: "obj", propName: "e1", valueName: "fn" }`
+ *
+ * Only tracks shorthand and `key: identifier` pairs; skips function literals.
+ */
+function extractObjectPropBindingsWalk(
+  rootNode: TreeSitterNode,
+  bindings: ObjectPropBinding[],
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN?.type === 'object') {
+        const objectName = nameN.text;
+        for (let i = 0; i < valueN.childCount; i++) {
+          const child = valueN.child(i);
+          if (!child) continue;
+          if (child.type === 'shorthand_property_identifier') {
+            bindings.push({ objectName, propName: child.text, valueName: child.text });
+          } else if (child.type === 'pair') {
+            const keyN = child.childForFieldName('key');
+            const valN = child.childForFieldName('value');
+            if (
+              keyN?.type === 'property_identifier' &&
+              valN?.type === 'identifier' &&
+              !BUILTIN_GLOBALS.has(valN.text)
+            ) {
+              bindings.push({ objectName, propName: keyN.text, valueName: valN.text });
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
   walk(rootNode, 0);
 }
 

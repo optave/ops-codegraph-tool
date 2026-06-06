@@ -68,6 +68,8 @@ export interface SerializedExtractorOutput {
   spreadArgBindings?: import('../types.js').SpreadArgBinding[];
   forOfBindings?: import('../types.js').ForOfBinding[];
   arrayCallbackBindings?: import('../types.js').ArrayCallbackBinding[];
+  objectRestParamBindings?: import('../types.js').ObjectRestParamBinding[];
+  objectPropBindings?: import('../types.js').ObjectPropBinding[];
   newExpressions?: readonly string[];
 }
 

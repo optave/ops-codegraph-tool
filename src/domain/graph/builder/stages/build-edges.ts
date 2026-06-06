@@ -836,7 +836,9 @@ function buildPointsToMapForFile(
     !symbols.arrayElemBindings?.length &&
     !symbols.spreadArgBindings?.length &&
     !symbols.forOfBindings?.length &&
-    !symbols.arrayCallbackBindings?.length
+    !symbols.arrayCallbackBindings?.length &&
+    !symbols.objectRestParamBindings?.length &&
+    !symbols.objectPropBindings?.length
   )
     return null;
   const defNames = new Set(
@@ -855,6 +857,8 @@ function buildPointsToMapForFile(
     symbols.spreadArgBindings,
     symbols.forOfBindings,
     symbols.arrayCallbackBindings,
+    symbols.objectRestParamBindings,
+    symbols.objectPropBindings,
   );
 }
 
@@ -1001,6 +1005,43 @@ function buildFileCallEdges(
             if (conf > 0) {
               ptsEdgeRows.set(edgeKey, allEdgeRows.length);
               allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+            }
+          }
+        }
+      }
+    }
+
+    // Phase 8.3f: pts fallback for receiver calls via object-rest param bindings.
+    // Fires when `rest.prop()` is encountered and `rest` was seeded as `pts["rest.prop"]`
+    // by the object-rest dispatch chain (ObjectRestParamBinding + paramBinding + ObjectPropBinding).
+    if (
+      targets.length === 0 &&
+      call.receiver &&
+      !BUILTIN_RECEIVERS.has(call.receiver) &&
+      call.receiver !== 'this' &&
+      call.receiver !== 'self' &&
+      call.receiver !== 'super' &&
+      ptsMap
+    ) {
+      const receiverKey = `${call.receiver}.${call.name}`;
+      if (ptsMap.has(receiverKey)) {
+        for (const alias of resolveViaPointsTo(receiverKey, ptsMap)) {
+          const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+            lookup,
+            { name: alias },
+            relPath,
+            importedNames,
+            typeMap as Map<string, unknown>,
+          );
+          for (const t of aliasTargets) {
+            const edgeKey = `${caller.id}|${t.id}`;
+            if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+              const conf =
+                computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+              if (conf > 0) {
+                ptsEdgeRows.set(edgeKey, allEdgeRows.length);
+                allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+              }
             }
           }
         }

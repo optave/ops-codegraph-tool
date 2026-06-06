@@ -603,6 +603,33 @@ export interface ArrayCallbackBinding {
   calleeName: string;
 }
 
+/**
+ * An object-rest parameter binding: `function f({ a, ...rest })` records that
+ * `rest` is the rest of the object passed as argument `argIndex` to `f`.
+ * Phase 8.3f: object destructuring rest dispatch.
+ */
+export interface ObjectRestParamBinding {
+  /** Function that owns this rest parameter, e.g. "f3" */
+  callee: string;
+  /** Name of the rest binding, e.g. "eerest" */
+  restName: string;
+  /** Zero-based index of the argument whose rest is bound, e.g. 0 */
+  argIndex: number;
+}
+
+/**
+ * An object-property binding: `const obj = { e4 }` or `const obj = { e4: fn }` records
+ * that `obj.e4` points to the named function `fn`. Phase 8.3f.
+ */
+export interface ObjectPropBinding {
+  /** Variable holding the object, e.g. "obj" */
+  objectName: string;
+  /** Property name, e.g. "e4" */
+  propName: string;
+  /** Named function value, e.g. "e4" or "fn" */
+  valueName: string;
+}
+
 /** The normalized output shape returned by every language extractor. */
 export interface ExtractorOutput {
   definitions: Definition[];
@@ -642,6 +669,10 @@ export interface ExtractorOutput {
   forOfBindings?: ForOfBinding[];
   /** Phase 8.3e: array callback bindings from Array.from/forEach/etc. */
   arrayCallbackBindings?: ArrayCallbackBinding[];
+  /** Phase 8.3f: object-rest parameter bindings from `function f({ ...rest })` patterns. */
+  objectRestParamBindings?: ObjectRestParamBinding[];
+  /** Phase 8.3f: object-property bindings from `const obj = { fn }` patterns. */
+  objectPropBindings?: ObjectPropBinding[];
   /**
    * Phase 8.5 (RTA): constructor names from all `new X()` expressions in the file,
    * including unassigned ones (e.g. `doSomething(new Foo())`). Used to build the

@@ -810,6 +810,10 @@ function serializeExtractorOutput(
     ...(symbols.arrayCallbackBindings?.length
       ? { arrayCallbackBindings: symbols.arrayCallbackBindings }
       : {}),
+    ...(symbols.objectRestParamBindings?.length
+      ? { objectRestParamBindings: symbols.objectRestParamBindings }
+      : {}),
+    ...(symbols.objectPropBindings?.length ? { objectPropBindings: symbols.objectPropBindings } : {}),
     ...(symbols.newExpressions?.length ? { newExpressions: symbols.newExpressions } : {}),
   };
 }

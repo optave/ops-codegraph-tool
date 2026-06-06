@@ -112,6 +112,8 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
   if (ser.spreadArgBindings?.length) out.spreadArgBindings = ser.spreadArgBindings;
   if (ser.forOfBindings?.length) out.forOfBindings = ser.forOfBindings;
   if (ser.arrayCallbackBindings?.length) out.arrayCallbackBindings = ser.arrayCallbackBindings;
+  if (ser.objectRestParamBindings?.length) out.objectRestParamBindings = ser.objectRestParamBindings;
+  if (ser.objectPropBindings?.length) out.objectPropBindings = ser.objectPropBindings;
   if (ser.newExpressions?.length) out.newExpressions = ser.newExpressions;
   return out;
 }

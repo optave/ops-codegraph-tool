@@ -24,6 +24,8 @@ import type {
   ArrayElemBinding,
   FnRefBinding,
   ForOfBinding,
+  ObjectPropBinding,
+  ObjectRestParamBinding,
   ParamBinding,
   SpreadArgBinding,
 } from '../../../types.js';
@@ -68,6 +70,8 @@ export function buildPointsToMap(
   spreadArgBindings?: readonly SpreadArgBinding[],
   forOfBindings?: readonly ForOfBinding[],
   arrayCallbackBindings?: readonly ArrayCallbackBinding[],
+  objectRestParamBindings?: readonly ObjectRestParamBinding[],
+  objectPropBindings?: readonly ObjectPropBinding[],
 ): PointsToMap {
   const pts: PointsToMap = new Map();
 
@@ -174,6 +178,24 @@ export function buildPointsToMap(
       const params = definitionParams.get(calleeName);
       if (!params || params.length === 0) continue;
       constraints.push({ lhs: `${calleeName}::${params[0]}`, rhsKey: `${sourceName}[*]` });
+    }
+  }
+
+  // Phase 8.3f: object-rest parameter dispatch.
+  // `function f({ ...rest }) {}` + `f(obj)` + `const obj = { prop: fn }` →
+  // seed pts["rest.prop"] = {"fn"} so that `rest.prop()` resolves to `fn`.
+  if (objectRestParamBindings && objectPropBindings && paramBindings) {
+    for (const { callee, restName, argIndex } of objectRestParamBindings) {
+      for (const { callee: pbCallee, argIndex: pbArgIdx, argName } of paramBindings) {
+        if (pbCallee !== callee || pbArgIdx !== argIndex) continue;
+        for (const { objectName, propName, valueName } of objectPropBindings) {
+          if (objectName !== argName) continue;
+          if (!definitionNames.has(valueName) && !importedNames.has(valueName)) continue;
+          const key = `${restName}.${propName}`;
+          if (!pts.has(key)) pts.set(key, new Set());
+          pts.get(key)!.add(valueName);
+        }
+      }
     }
   }
 
