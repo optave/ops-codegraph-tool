@@ -1507,7 +1507,7 @@ Build a reaching definitions pass that computes which assignments reach each use
 
 **Affected files:** new `src/domain/graph/resolver/reaching-defs.ts`, `src/domain/graph/builder/stages/build-edges.ts`
 
-### 8.8 -- Language-Specific Analysis Reference Map
+### 8.8 — Language-Specific Analysis Reference Map
 
 This section is a research reference map, not an implementation plan. It documents the state-of-the-art static call-graph and points-to analysis tools for every language codegraph supports, identifies the precision/recall techniques those tools use, and maps the specific gaps in codegraph's current extraction for each language. Sub-phases of Phase 8 beyond 8.7 should consult this section to identify which tool or paper defines the target quality bar for the language they are improving.
 
@@ -1529,6 +1529,8 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 | Zipper / Zipper-e | Precision-guided selective context-sensitivity on top of Doop | Identifies 38% of methods as precision-critical; preserves 98.8% of 2-obj-sensitive precision at 3.4–9.2x speedup (OOPSLA 2018) | https://github.com/silverbullettt/zipper |
 
 **Codegraph gap:** No field-sensitivity, no points-to propagation, no Scala trait mixin (TCA) resolution, no handling of Groovy/Clojure invokedynamic patterns, no selective context-sensitivity.
+
+**Groovy and Clojure note:** Both languages compile almost entirely to JVM `invokedynamic` bytecode — Groovy via its `CallSite` caching infrastructure, Clojure via its persistent data structures and protocol dispatch. Source-level call-graph analysis reaches a precision ceiling at name matching: the concrete dispatch target is determined at runtime. For these two languages, the JVM-level tools above (Doop, OPAL) remain the reference; codegraph's current source-level name matching is the practical ceiling. All Groovy and Clojure call edges should be emitted as low-confidence. No dedicated source-level CG benchmark exists for either language; the JVM-hosted languages study (Ali et al., IEEE TSE) is the closest reference.
 
 **Adoption candidates:**
 - Implement VTA-style type propagation along assignment edges for Java/Kotlin (Soot/SPARK): instead of including all declared subtypes at a call site (CHA), propagate the set of types assigned to each variable through `new T()` allocation sites. Expected 2–5x reduction in false virtual dispatch edges.
@@ -1567,6 +1569,7 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 | Jelly | Flow-insensitive Andersen-style field-based points-to; on-the-fly CG; approximate interpretation (PLDI 2024); indirection bounding (ECOOP 2024) | Indirection-bounded: ~2x speedup at ~5% recall reduction vs baseline (ECOOP 2024, Chakraborty et al.) | https://github.com/cs-au-dk/jelly |
 | ACG | Field-based points-to (pessimistic/optimistic); ONESHOT optimization for IIFEs | 99% precision, 91% recall on SunSpider 26-program suite (ICSE 2013 / IEEE Access 2023) | https://github.com/ecspat/acg |
 | TAJS | Flow-sensitive abstract interpretation; .d.ts declaration files as library type filters | 98% precision, 71% recall on SunSpider; combined with ACG: 98% precision, 99% recall (IEEE Access 2023) | https://github.com/cs-au-dk/TAJS |
+| ArkAnalyzer | HarmonyOS-focused TypeScript/ArkTS CG + dataflow analysis; native ArkUI component awareness; Taint analysis | Evaluated on ArkTS apps in Huawei ecosystem; no published standalone P/R figures | https://github.com/ArkAnalyzer/ArkAnalyzer |
 
 **Codegraph gap:** Codegraph's JS/TS pipeline (tree-sitter + TypeScript compiler API type enrichment + intra-module Andersen-style field-based points-to per Phase 8.3c) is stronger than ACG on TypeScript files but has five concrete gaps vs Jelly: (1) no cross-module field-based alias propagation; (2) no handling of `obj[computedKey]()` dynamic property access (the #1 root cause of missing edges per ECOOP 2022); (3) no interprocedural higher-order function tracking; (4) no indirection-depth bound; (5) no dynamic ground truth validation.
 
@@ -1624,18 +1627,18 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 | Tool | Approach | Precision / Recall | URL |
 |------|----------|--------------------|-----|
 | dotnet/ILLink (Trimmer / NativeAOT ILC) | RTA-equivalent conditional dependency edges; virtual method body included only when declaring type is constructed; CHA-based devirtualization under closed-world | Production trimmer in .NET 6–10; no published academic P/R figures | https://github.com/dotnet/runtime/tree/main/docs/tools/illink |
-| CodeQL for C# | CHA-level virtual/interface dispatch via `getAnOverrider()`/`getAnImplementor()` predicates; over-approximation | Highest F1 on OWASP Benchmark v1.2 across SAST tools (arXiv 2601.22952, 2025); no standalone C# CG P/R benchmark published | https://codeql.github.com/ |
+| CodeQL for C# | CHA-level virtual/interface dispatch via `getAnOverrider()`/`getAnImplementor()` predicates; over-approximation | Highest F1 on taint-tracking OWASP Benchmark v1.2 across SAST tools (arXiv 2601.22952, 2025); no standalone C# CG P/R benchmark published | https://codeql.github.com/ |
 | call-graph-orleans | Roslyn-based CHA/RTA over C# source; `IMethodSymbol.OverriddenMethod` + `FindImplementationsAsync` chains | Tested on ShareX, ILSpy, Azure-PowerShell (FSE 2017); no numeric P/R figures | https://github.com/edgardozoppi/call-graph-orleans |
 | NoCFG | Language-agnostic lightweight CG approximation; coarse program abstraction | Lower-bound precision 90% on C# and Python corpora up to 2M LOC (arXiv 2105.03099) | https://arxiv.org/abs/2105.03099 |
 
 **Codegraph gap:** Virtual dispatch resolution is name-based only; interface implementors are not enumerated; no conditional-edge / RTA semantics (virtual override inclusion not gated on receiver-type instantiation); no Roslyn `IMethodSymbol` chain walk; F# discriminated-union dispatch entirely unmodeled.
 
 **Adoption candidates:**
-- CHA via Roslyn `IMethodSymbol` chains for C#: for every virtual/abstract/interface call site, walk `IMethodSymbol.OverriddenMethod` up to the root declaration, collect all overriders via `OverridingMethods`, and enumerate interface implementors via `FindImplementationsAsync`. This replicates what CodeQL and call-graph-orleans do without bytecode processing.
+- CHA via Roslyn `IMethodSymbol` chains for C#: for every virtual/abstract/interface call site, walk `IMethodSymbol.OverriddenMethod` up to the root declaration, collect all overriders via `OverridingMethods`, and enumerate interface implementors via `FindImplementationsAsync`. This replicates what CodeQL and call-graph-orleans do without bytecode processing. **Note:** this approach requires the Roslyn SDK (`Microsoft.CodeAnalysis.CSharp`) as a runtime dependency — unlike TypeScript where the compiler API is already in the pipeline, Roslyn is a separate .NET SDK and cannot be driven from tree-sitter output alone.
 - Conditional-edge (RTA) semantics from ILC/NativeAOT: after CHA expansion, prune virtual dispatch edges where the declaring type is never instantiated in reachable code. Track a "constructed types" worklist populated by `new T()` expressions; only include override edges for types in that set.
 - For C# delegate and lambda tracking: for every `new MethodName` or `SomeMethod` delegate-literal expression, add a call edge from any call site that invokes a delegate of the matching signature — analogous to Jelly's field-based treatment of function values in JS.
 
-**Benchmark suites:** No dedicated .NET CG benchmark comparable to JCG exists as of 2025. ShareX and ILSpy are used informally. ISSTA 2024 "Total Recall?" dynamic-baseline methodology is directly applicable to .NET; OWASP Benchmark v1.2 covers taint analysis but not raw CG edge precision/recall.
+**Benchmark suites:** No dedicated .NET CG benchmark comparable to JCG exists as of the time of writing. ShareX and ILSpy are used informally. ISSTA 2024 "Total Recall?" dynamic-baseline methodology is directly applicable to .NET; OWASP Benchmark v1.2 covers taint analysis but not raw CG edge precision/recall.
 
 ---
 
@@ -1718,9 +1721,9 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 
 | Tool | Approach | Precision / Recall | URL |
 |------|----------|--------------------|-----|
-| Reach (elixir-vibe/reach) | Native Gleam AST frontend; Hindley-Milner type system enables near-precise dispatch; integrates with BEAM bytecode frontend for compiled library calls | No published P/R figures; MIT license | https://github.com/elixir-vibe/reach |
+| Reach (elixir-vibe/reach) | Native Gleam AST frontend; Gleam's static type system provides full dispatch information at the source level; integrates with BEAM bytecode frontend for compiled library calls | No published P/R figures; MIT license | https://github.com/elixir-vibe/reach |
 
-**Codegraph gap:** Gleam's Hindley-Milner type system provides near-perfect static dispatch information; codegraph does not leverage it. All Gleam call resolution is currently name-based.
+**Codegraph gap:** Gleam's static type system provides full dispatch information at the source level; codegraph does not leverage it. All Gleam call resolution is currently name-based.
 
 **Adoption candidates:**
 - Exploit Gleam's type annotations to restrict dispatch candidates: unlike dynamic languages, Gleam function calls are fully type-resolved by the compiler. At minimum, use declared parameter types to filter candidate targets by type compatibility rather than name alone.
@@ -1814,7 +1817,7 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 - HIE-file ingestion: when a Haskell project is compiled with `-fwrite-ide-info`, detect the `.hie` directory and use HIE files as the authoritative symbol/call source instead of tree-sitter re-parsing. HIE files resolve type-class dispatch and all import aliasing at GHC type-checker level.
 - Even without HIE, tag all Haskell call-graph edges through type-class method names as low-confidence `dynamic` edges rather than emitting them as false-positive direct edges, making the precision gap visible.
 
-**Benchmark suites:** No published Haskell CG precision/recall benchmark comparable to PyCG or JCG exists as of 2025.
+**Benchmark suites:** No published Haskell CG precision/recall benchmark comparable to PyCG or JCG exists as of the time of writing.
 
 ---
 
@@ -1901,7 +1904,7 @@ Precision/recall figures are cited to their source paper or benchmark. Entries m
 - Acknowledge and flag unsoundness: mark all Bash call edges as low-confidence `dynamic` when the callee is derived from a variable, command substitution, or a `source` with a non-literal path rather than silently dropping or falsely emitting edges.
 - `source` file tracking: when a script sources another file with a literal path (`source ./lib.sh`), treat that file's functions as in-scope for the calling script — the same treatment codegraph already applies to JS/TS imports.
 
-**Benchmark suites:** No established public benchmark for Bash call graph precision/recall exists as of 2025 (acknowledged gap in the sash HotOS 2025 paper).
+**Benchmark suites:** No established public benchmark for Bash call graph precision/recall exists as of the time of writing (acknowledged gap in the sash HotOS 2025 paper).
 
 ---
 
@@ -1979,6 +1982,8 @@ The AISEC CPG framework is the closest architectural analogue to codegraph (sour
 - Blast Radius examples (MIT): https://github.com/28mm/blast-radius/tree/master/examples — multi-resource AWS/GCP/Azure HCL configurations
 - Rover example (MIT): https://github.com/im2nguyen/rover/tree/main/example — multi-feature module + output + locals configuration
 - Trivy/tfsec fixture corpus (Apache-2.0): https://github.com/aquasecurity/trivy — hundreds of annotated HCL snippets, reusable under Apache-2.0
+
+---
 
 #### Summary: All Supported Languages
 
