@@ -3,9 +3,29 @@
   "language": "javascript",
   "description": "Spread operator call resolution — named functions spread as arguments",
   "edges": [
-    { "source": { "name": "f", "file": "spread.js" }, "target": { "name": "a", "file": "spread.js" }, "kind": "calls", "mode": "pts-spread" },
-    { "source": { "name": "f", "file": "spread.js" }, "target": { "name": "b", "file": "spread.js" }, "kind": "calls", "mode": "pts-spread" },
-    { "source": { "name": "g", "file": "spread.js" }, "target": { "name": "c", "file": "spread.js" }, "kind": "calls", "mode": "pts-spread" },
-    { "source": { "name": "g", "file": "spread.js" }, "target": { "name": "d", "file": "spread.js" }, "kind": "calls", "mode": "pts-spread" }
+    {
+      "source": { "name": "f", "file": "spread.js" },
+      "target": { "name": "a", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "f", "file": "spread.js" },
+      "target": { "name": "b", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "g", "file": "spread.js" },
+      "target": { "name": "c", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "g", "file": "spread.js" },
+      "target": { "name": "d", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    }
   ]
 }

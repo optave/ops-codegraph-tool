@@ -12,26 +12,38 @@ function fn8() {}
 // for-of over plain array
 function iterPlain() {
   const arr = [fn1, fn2];
-  for (const f of arr) { f(); }
+  for (const f of arr) {
+    f();
+  }
 }
 
 // for-of over Set constructed from array
 function iterSet() {
   const arr = [fn3, fn4];
   const s = new Set(arr);
-  for (const f of s) { f(); }
+  for (const f of s) {
+    f();
+  }
 }
 
 // Array.from with named callback
-function mapCallback(item) { item(); }
+function mapCallback(item) {
+  item();
+}
 function runFrom() {
   const arr = [fn5, fn6];
   Array.from(arr, mapCallback);
 }
 
 // spread into callback consumers
-function consumer1(x, y) { x(); y(); }
-function consumer2(x, y) { x(); y(); }
+function consumer1(x, y) {
+  x();
+  y();
+}
+function consumer2(x, y) {
+  x();
+  y();
+}
 
 function runSpread() {
   const batch1 = [fn7, fn8];

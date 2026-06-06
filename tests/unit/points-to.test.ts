@@ -162,7 +162,15 @@ describe('buildPointsToMap — array-element pts constraints (Phase 8.3e)', () =
       { arrayName: 'arr', index: 1, elemName: 'fn2' },
     ];
     const spreadArgBindings = [{ callee: 'f', arrayName: 'arr', startIndex: 0 }];
-    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, defParams, arrayElemBindings, spreadArgBindings);
+    const pts = buildPointsToMap(
+      [],
+      defNames,
+      NO_IMPORTS,
+      undefined,
+      defParams,
+      arrayElemBindings,
+      spreadArgBindings,
+    );
     expect(resolveViaPointsTo('f::x', pts)).toContain('fn1');
     expect(resolveViaPointsTo('f::y', pts)).toContain('fn2');
   });
@@ -175,7 +183,16 @@ describe('buildPointsToMap — array-element pts constraints (Phase 8.3e)', () =
       { arrayName: 'arr', index: 1, elemName: 'fn2' },
     ];
     const forOfBindings = [{ varName: 'f', sourceName: 'arr', enclosingFunc: 'outer' }];
-    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings, undefined, forOfBindings);
+    const pts = buildPointsToMap(
+      [],
+      defNames,
+      NO_IMPORTS,
+      undefined,
+      undefined,
+      arrayElemBindings,
+      undefined,
+      forOfBindings,
+    );
     expect(resolveViaPointsTo('outer::f', pts)).toContain('fn1');
     expect(resolveViaPointsTo('outer::f', pts)).toContain('fn2');
   });
@@ -189,7 +206,17 @@ describe('buildPointsToMap — array-element pts constraints (Phase 8.3e)', () =
       { arrayName: 'arr', index: 1, elemName: 'fn2' },
     ];
     const arrayCallbackBindings = [{ sourceName: 'arr', calleeName: 'cb' }];
-    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, defParams, arrayElemBindings, undefined, undefined, arrayCallbackBindings);
+    const pts = buildPointsToMap(
+      [],
+      defNames,
+      NO_IMPORTS,
+      undefined,
+      defParams,
+      arrayElemBindings,
+      undefined,
+      undefined,
+      arrayCallbackBindings,
+    );
     expect(resolveViaPointsTo('cb::item', pts)).toContain('fn1');
     expect(resolveViaPointsTo('cb::item', pts)).toContain('fn2');
   });
@@ -204,7 +231,16 @@ describe('buildPointsToMap — array-element pts constraints (Phase 8.3e)', () =
     ];
     const fnRefBindings = [{ lhs: 's[*]', rhs: 'arr[*]' }];
     const forOfBindings = [{ varName: 'f', sourceName: 's', enclosingFunc: 'outer' }];
-    const pts = buildPointsToMap(fnRefBindings, defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings, undefined, forOfBindings);
+    const pts = buildPointsToMap(
+      fnRefBindings,
+      defNames,
+      NO_IMPORTS,
+      undefined,
+      undefined,
+      arrayElemBindings,
+      undefined,
+      forOfBindings,
+    );
     expect(resolveViaPointsTo('outer::f', pts)).toContain('fn1');
     expect(resolveViaPointsTo('outer::f', pts)).toContain('fn2');
   });
