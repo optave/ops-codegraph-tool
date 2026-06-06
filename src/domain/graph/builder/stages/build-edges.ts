@@ -1079,21 +1079,33 @@ function buildFileCallEdges(
     // direct call to the same target in the same function body can upgrade confidence
     // rather than being silently dropped by the dedup guard.
     const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+    // Module-level calls (callerName === null) use the '<module>' sentinel emitted by
+    // extractSpreadForOfWalk for top-level for-of loops. Look it up as a fallback so
+    // that `for (const f of arr) { f(); }` at module scope resolves correctly.
+    const modulePtsKey =
+      caller.callerName === null && ptsMap?.has(`<module>::${call.name}`)
+        ? `<module>::${call.name}`
+        : null;
     const flatPtsKey =
       !call.dynamic && fnRefBindingLhs.has(call.name) && ptsMap?.has(call.name) ? call.name : null;
     if (
       targets.length === 0 &&
       !call.receiver &&
       ptsMap &&
-      (call.dynamic || (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) || flatPtsKey != null)
+      (call.dynamic ||
+        (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) ||
+        modulePtsKey != null ||
+        flatPtsKey != null)
     ) {
       const ptsLookupName = call.dynamic
         ? call.name
         : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
           ? scopedPtsKey
-          : // flatPtsKey != null is guaranteed by the outer if condition: if neither
-            // call.dynamic nor scopedPtsKey matched, flatPtsKey != null must be true.
-            flatPtsKey!;
+          : modulePtsKey != null
+            ? modulePtsKey
+            : // flatPtsKey != null is guaranteed by the outer if condition: if neither
+              // call.dynamic nor scopedPtsKey nor modulePtsKey matched, flatPtsKey must be non-null.
+              flatPtsKey!;
       for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
         // Resolve the concrete alias target. Only `name` is needed here — receiver
         // and line are not relevant for alias resolution (we are looking up the
