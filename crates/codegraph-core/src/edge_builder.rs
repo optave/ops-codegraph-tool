@@ -506,10 +506,10 @@ fn resolve_call_targets<'a>(
 /// Handles `(new Foo)` and `(new Foo('arg'))` receivers that arise when the call site
 /// is `(new Foo).method()` without a named variable binding.
 ///
-/// Only extracts PascalCase (uppercase-initial) names to avoid false positives on
-/// lowercase constructor calls (rare but present in legacy code).
+/// Only extracts names that start with an uppercase letter, `_`, or `$` to avoid
+/// false positives on plain lowercase constructor calls (rare but present in legacy code).
 fn extract_inline_new_type(receiver: &str) -> Option<String> {
-    let s = receiver.trim_start_matches('(').trim_start();
+    let s = receiver.strip_prefix('(').unwrap_or(receiver).trim_start();
     let s = s.strip_prefix("new")?;
     if !s.starts_with(|c: char| c.is_whitespace()) { return None; }
     let s = s.trim_start();
