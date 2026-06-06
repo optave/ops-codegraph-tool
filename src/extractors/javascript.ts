@@ -189,6 +189,7 @@ function handleExportCapture(
     const declType = decl.type;
     const kindMap: Record<string, string> = {
       function_declaration: 'function',
+      generator_function_declaration: 'function',
       class_declaration: 'class',
       abstract_class_declaration: 'class',
       interface_declaration: 'interface',
@@ -487,7 +488,12 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
     if (nameN?.type !== 'identifier' || !valueN) continue;
     // Skip functions — already captured by query patterns
     const valType = valueN.type;
-    if (valType === 'arrow_function' || valType === 'function_expression' || valType === 'function')
+    if (
+      valType === 'arrow_function' ||
+      valType === 'function_expression' ||
+      valType === 'function' ||
+      valType === 'generator_function'
+    )
       continue;
     if (isConstantValue(valueN)) {
       definitions.push({
@@ -638,6 +644,7 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
 function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'function_declaration':
+    case 'generator_function_declaration':
       handleFunctionDecl(node, ctx);
       break;
     case 'class_declaration':
@@ -818,7 +825,8 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
         if (
           valType === 'arrow_function' ||
           valType === 'function_expression' ||
-          valType === 'function'
+          valType === 'function' ||
+          valType === 'generator_function'
         ) {
           const varFnChildren = extractParameters(valueN);
           ctx.definitions.push({
@@ -950,6 +958,7 @@ function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
     const declType = decl.type;
     const kindMap: Record<string, string> = {
       function_declaration: 'function',
+      generator_function_declaration: 'function',
       class_declaration: 'class',
       abstract_class_declaration: 'class',
       interface_declaration: 'interface',
@@ -1214,7 +1223,7 @@ function extractReturnTypeMapWalk(
       return;
     }
 
-    if (t === 'function_declaration') {
+    if (t === 'function_declaration' || t === 'generator_function_declaration') {
       const nameNode = node.childForFieldName('name');
       if (nameNode?.type === 'identifier' && nameNode.text !== 'constructor') {
         const fnName = currentClass ? `${currentClass}.${nameNode.text}` : nameNode.text;
@@ -1243,7 +1252,11 @@ function extractReturnTypeMapWalk(
       const valueN = node.childForFieldName('value');
       if (nameN?.type === 'identifier' && valueN) {
         const vt = valueN.type;
-        if (vt === 'arrow_function' || vt === 'function_expression') {
+        if (
+          vt === 'arrow_function' ||
+          vt === 'function_expression' ||
+          vt === 'generator_function'
+        ) {
           const fnName = currentClass ? `${currentClass}.${nameN.text}` : nameN.text;
           storeReturnType(valueN, fnName, returnTypeMap);
         }

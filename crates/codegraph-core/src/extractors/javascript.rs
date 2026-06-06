@@ -353,7 +353,7 @@ fn find_descriptor_value<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a st
 /// Mirrors `extractReturnTypeMapWalk` in src/extractors/javascript.ts.
 fn match_js_return_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "function_declaration" => {
+        "function_declaration" | "generator_function_declaration" => {
             let Some(name_n) = node.child_by_field_name("name") else { return };
             let fn_name = node_text(&name_n, source);
             if fn_name == "constructor" { return; }
@@ -381,9 +381,9 @@ fn match_js_return_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbol
             let Some(name_n) = node.child_by_field_name("name") else { return };
             if name_n.kind() != "identifier" { return; }
             let Some(value_n) = node.child_by_field_name("value") else { return };
-            // Only arrow_function and function_expression match the TS reference;
+            // Only arrow_function, function_expression and generator_function match the TS reference;
             // "function" is not a valid tree-sitter value-expression kind here.
-            if !matches!(value_n.kind(), "arrow_function" | "function_expression") {
+            if !matches!(value_n.kind(), "arrow_function" | "function_expression" | "generator_function") {
                 return;
             }
             let var_name = node_text(&name_n, source);
@@ -487,7 +487,7 @@ fn match_js_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbo
 
 fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "function_declaration" => handle_function_decl(node, source, symbols),
+        "function_declaration" | "generator_function_declaration" => handle_function_decl(node, source, symbols),
         "class_declaration" | "abstract_class_declaration" => {
             handle_class_decl(node, source, symbols)
         }
@@ -650,7 +650,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         let value_n = declarator.child_by_field_name("value");
         let (Some(name_n), Some(value_n)) = (name_n, value_n) else { continue };
         let vt = value_n.kind();
-        if vt == "arrow_function" || vt == "function_expression" || vt == "function" {
+        if vt == "arrow_function" || vt == "function_expression" || vt == "function" || vt == "generator_function" {
             let children = extract_js_parameters(&value_n, source);
             symbols.definitions.push(Definition {
                 name: node_text(&name_n, source).to_string(),
@@ -804,7 +804,7 @@ fn handle_export_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_export_declaration(node: &Node, decl: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let (kind_str, field) = match decl.kind() {
-        "function_declaration" => ("function", "name"),
+        "function_declaration" | "generator_function_declaration" => ("function", "name"),
         "class_declaration" | "abstract_class_declaration" => ("class", "name"),
         "interface_declaration" => ("interface", "name"),
         "type_alias_declaration" => ("type", "name"),
