@@ -596,13 +596,18 @@ async function runPostNativePrototypeMethods(
   if (jsFiles.length === 0) return;
 
   // Pre-filter: only re-parse files that contain the function-as-object-property
-  // pattern (`fn.method = function() {}`). The Rust engine now handles
-  // `Foo.prototype.bar = fn` natively, so `.prototype.` files no longer need
-  // a WASM re-parse here.
+  // pattern (`fn.method = function(){}` or `fn.method = () => {}`). The Rust engine
+  // now handles `Foo.prototype.bar = fn` natively, so `.prototype.` files no longer
+  // need a WASM re-parse here.
   const protoFiles = jsFiles.filter((relPath) => {
     try {
       const content = readFileSafe(path.join(rootDir, relPath));
-      return /\b(?!prototype\.)\w+\.\w+\s*=\s*function/.test(content);
+      // Match `fn.method = function(){}` (traditional) or `fn.method = () => {}`/
+      // `fn.method = param => {}` (arrow). The negative lookahead excludes `.prototype.`
+      // patterns already handled natively by the Rust extractor.
+      return /\b(?!prototype\.)\w+\.\w+\s*=\s*(?:function\b|(?:\([^)]*\)|[A-Za-z_$]\w*)\s*=>)/.test(
+        content,
+      );
     } catch {
       return false;
     }
