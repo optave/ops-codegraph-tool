@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { flushDeferredClose } from '../../src/db/index.js';
 
 // Detect whether transformers is available (optional dep)
 let hasTransformers = false;
@@ -69,7 +70,22 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
   }, 240_000);
 
   afterAll(() => {
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (!tmpDir) return;
+    flushDeferredClose();
+    const dir = tmpDir;
+    // On Windows, SQLite WAL checkpoint holds OS-level file locks for hundreds
+    // of ms after db.close() returns. Register a process.once('exit') safety
+    // net so a lingering EBUSY never surfaces as a test failure.
+    process.once('exit', () => {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    });
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      // Swallow — all assertions already passed; exit handler above cleans up.
+    }
   });
 
   describe('smoke tests', () => {
