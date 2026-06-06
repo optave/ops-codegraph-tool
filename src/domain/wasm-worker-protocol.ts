@@ -19,7 +19,6 @@ import type {
   Export,
   Import,
   LanguageId,
-  ParamBinding,
   TypeMapEntry,
 } from '../types.js';
 
@@ -74,7 +73,6 @@ export interface SerializedExtractorOutput {
   newExpressions?: readonly string[];
   returnTypeMap?: Array<[string, TypeMapEntry]>;
   callAssignments?: CallAssignment[];
-  paramBindings?: ParamBinding[];
 }
 
 export interface WorkerParseResponseOk {
