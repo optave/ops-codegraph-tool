@@ -744,7 +744,10 @@ fn handle_field_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         .or_else(|| find_child(node, "property_identifier"));
     let Some(name_node) = name_node else { return };
     // Skip computed property names (`class C { [expr] = ... }`).
-    if !matches!(name_node.kind(), "property_identifier" | "identifier" | "private_property_identifier") {
+    // Allow property_identifier (regular names), identifier, private_property_identifier (#foo),
+    // and string (e.g. `"method" = () => {}`) to match the TypeScript path which only denies
+    // computed_property_name.
+    if !matches!(name_node.kind(), "property_identifier" | "identifier" | "private_property_identifier" | "string") {
         return;
     }
     // Skip uninitialised fields (`class C { x; }`) — must have a value node.

@@ -443,7 +443,9 @@ fn resolve_call_targets<'a>(
         // like `Validators.IsValidEmail()` where the receiver IS the class.
         // Matches both "method" and "function" kinds to cover field-initializer synthetic defs.
         // ORDER: must run before composite pts lookup (4.6) to match WASM call-resolver.ts ordering.
-        if type_lookup.is_none() {
+        // Guard: skip when inline_new_type is Some — mirrors TS `!typeName` which is false when the
+        // inline-new regex extracted a type (e.g. `(new Foo).bar()` → typeName='Foo' → skip).
+        if type_lookup.is_none() && inline_new_type.is_none() {
             let qualified = format!("{}.{}", effective_receiver, call.name);
             let direct: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
