@@ -622,6 +622,16 @@ export interface ExtractorOutput {
    * project-wide instantiated-types set for Rapid Type Analysis filtering.
    */
   newExpressions?: readonly string[];
+  /**
+   * Object.defineProperty receiver bindings: maps function name → target object name.
+   * Records `Object.defineProperty(obj, "bar", { get: getter })` so the edge builder
+   * can resolve `this.X()` calls inside `getter` as `obj.X()` (this === obj when the
+   * accessor is invoked through the property).
+   *
+   * Example: `Object.defineProperty(obj, "bar", { get: getter })` emits
+   * `definePropertyReceivers.set("getter", "obj")`.
+   */
+  definePropertyReceivers?: Map<string, string>;
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */
@@ -1183,6 +1193,8 @@ export interface BuildResult {
     edgesMs: number;
     structureMs: number;
     rolesMs: number;
+    /** Wall-clock time for the this/super dispatch WASM post-pass (native path only). */
+    thisDispatchMs?: number;
     astMs: number;
     complexityMs: number;
     cfgMs: number;

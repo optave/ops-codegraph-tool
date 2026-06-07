@@ -809,6 +809,9 @@ function serializeExtractorOutput(
     ...(symbols.objectRestParamBindings?.length
       ? { objectRestParamBindings: symbols.objectRestParamBindings }
       : {}),
+    ...(symbols.definePropertyReceivers?.size
+      ? { definePropertyReceivers: Array.from(symbols.definePropertyReceivers.entries()) }
+      : {}),
     ...(symbols.returnTypeMap?.size
       ? { returnTypeMap: Array.from(symbols.returnTypeMap.entries()) }
       : {}),

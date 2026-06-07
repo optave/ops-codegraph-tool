@@ -364,6 +364,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
 
+  // Object.defineProperty accessor receiver bindings
+  const definePropertyReceivers: Map<string, string> = new Map();
+  extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
+
   return {
     definitions,
     calls,
@@ -377,6 +381,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     paramBindings,
     objectRestParamBindings: objectRestParamBindings.length ? objectRestParamBindings : undefined,
     newExpressions,
+    ...(definePropertyReceivers.size > 0 ? { definePropertyReceivers } : {}),
   };
 }
 
@@ -639,6 +644,10 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
   ctx.newExpressions = newExpressions;
+  // Object.defineProperty accessor receiver bindings
+  const definePropertyReceivers: Map<string, string> = new Map();
+  extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
+  if (definePropertyReceivers.size > 0) ctx.definePropertyReceivers = definePropertyReceivers;
   return ctx;
 }
 
@@ -1420,6 +1429,79 @@ function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: str
     }
     for (let i = 0; i < node.childCount; i++) {
       walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
+ * Walk the AST to find `Object.defineProperty(obj, "bar", { get: getter })` patterns
+ * and record which functions are used as getter/setter accessors for which objects.
+ *
+ * Result is stored in the provided map as `funcName → receiverVarName`.
+ */
+function extractDefinePropertyReceiversWalk(
+  rootNode: TreeSitterNode,
+  out: Map<string, string>,
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'call_expression') {
+      const fn = node.childForFieldName('function');
+      // Match `Object.defineProperty`
+      if (fn?.type === 'member_expression') {
+        const obj = fn.childForFieldName('object');
+        const prop = fn.childForFieldName('property');
+        if (
+          obj?.type === 'identifier' &&
+          obj.text === 'Object' &&
+          prop?.text === 'defineProperty'
+        ) {
+          const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
+          if (argsNode) {
+            // Collect non-punctuation children: arg0 (target obj), arg1 (prop name string), arg2 (descriptor)
+            const argChildren: TreeSitterNode[] = [];
+            for (let i = 0; i < argsNode.childCount; i++) {
+              const c = argsNode.child(i);
+              if (!c) continue;
+              if (c.type === ',' || c.type === '(' || c.type === ')') continue;
+              argChildren.push(c);
+            }
+            if (argChildren.length >= 3) {
+              const targetObj = argChildren[0];
+              const descriptor = argChildren[2];
+              if (targetObj?.type === 'identifier' && descriptor?.type === 'object') {
+                const targetName = targetObj.text;
+                // Walk the descriptor object's pair children looking for get/set
+                for (let i = 0; i < descriptor.childCount; i++) {
+                  const pair = descriptor.child(i);
+                  if (pair?.type !== 'pair') continue;
+                  const key = pair.childForFieldName('key');
+                  const val = pair.childForFieldName('value');
+                  if (
+                    key &&
+                    (key.text === 'get' || key.text === 'set') &&
+                    val?.type === 'identifier' &&
+                    !BUILTIN_GLOBALS.has(val.text)
+                  ) {
+                    // Known limitation: if the same function is registered as an
+                    // accessor on multiple objects, last-write-wins — only the
+                    // last target object is retained. This is an unusual pattern
+                    // (sharing one function across multiple defineProperty calls)
+                    // and covering it would require Map<string, string[]> which
+                    // changes the consumer API. Tracked as a known edge case.
+                    out.set(val.text, targetName);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) walk(child, depth + 1);
     }
   }
   walk(rootNode, 0);
