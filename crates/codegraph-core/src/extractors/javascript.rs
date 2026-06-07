@@ -29,6 +29,8 @@ impl SymbolExtractor for JsExtractor {
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_type_map);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_return_type_map);
+        // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_prototype_methods);
         // call_assignments runs after type_map is populated (needs receiver types)
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_call_assignments);
         symbols
@@ -443,6 +445,149 @@ fn push_return_type_entry(symbols: &mut FileSymbols, fn_name: &str, type_name: &
         type_name: type_name.to_string(),
         confidence,
     });
+}
+
+// ── Prototype-method extraction ─────────────────────────────────────────────
+
+/// Walk the AST collecting pre-ES6 prototype assignments.
+///
+/// Mirrors `extractPrototypeMethodsWalk` in `src/extractors/javascript.ts`.
+///
+/// Three patterns are handled:
+///   1. `Foo.prototype.bar = function(){}`  → emits `Foo.bar` as a method definition
+///   2. `Foo.prototype.bar = identifier`    → seeds `typeMap['Foo.bar'] = identifier`
+///   3. `Foo.prototype = { bar: fn, ... }`  → same rules applied per property
+fn match_js_prototype_methods(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    if node.kind() != "expression_statement" { return; }
+    let Some(expr) = node.child(0) else { return };
+    if expr.kind() != "assignment_expression" { return; }
+    let lhs = expr.child_by_field_name("left");
+    let rhs = expr.child_by_field_name("right");
+    if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
+        handle_js_prototype_assignment(&lhs, &rhs, source, symbols);
+    }
+}
+
+fn handle_js_prototype_assignment(lhs: &Node, rhs: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if lhs.kind() != "member_expression" { return; }
+    let Some(lhs_obj) = lhs.child_by_field_name("object") else { return };
+    let Some(lhs_prop) = lhs.child_by_field_name("property") else { return };
+
+    // Pattern 1: `Foo.prototype.bar = rhs`
+    // lhs.object is `Foo.prototype` (member_expression), lhs.property is `bar`
+    if lhs_obj.kind() == "member_expression"
+        && matches!(lhs_prop.kind(), "property_identifier" | "identifier")
+    {
+        let proto_obj = lhs_obj.child_by_field_name("object");
+        let proto_prop = lhs_obj.child_by_field_name("property");
+        if let (Some(proto_obj), Some(proto_prop)) = (proto_obj, proto_prop) {
+            if proto_obj.kind() == "identifier"
+                && node_text(&proto_prop, source) == "prototype"
+                && !is_js_builtin_global(node_text(&proto_obj, source))
+            {
+                emit_js_prototype_method(
+                    node_text(&proto_obj, source),
+                    node_text(&lhs_prop, source),
+                    rhs,
+                    source,
+                    symbols,
+                );
+            }
+        }
+        return;
+    }
+
+    // Pattern 2: `Foo.prototype = { bar: fn, ... }`
+    // lhs.object is `Foo` (identifier), lhs.property is `prototype`, rhs is object literal
+    if lhs_obj.kind() == "identifier"
+        && node_text(&lhs_prop, source) == "prototype"
+        && !is_js_builtin_global(node_text(&lhs_obj, source))
+        && rhs.kind() == "object"
+    {
+        extract_js_prototype_object_literal(node_text(&lhs_obj, source), rhs, source, symbols);
+    }
+}
+
+/// Emit one prototype method definition or typeMap alias for `ClassName.methodName = rhs`.
+///
+/// Mirrors `emitPrototypeMethod` in `src/extractors/javascript.ts`.
+fn emit_js_prototype_method(class_name: &str, method_name: &str, rhs: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let full_name = format!("{}.{}", class_name, method_name);
+    match rhs.kind() {
+        "function_expression" | "arrow_function" => {
+            symbols.definitions.push(Definition {
+                name: full_name,
+                kind: "method".to_string(),
+                line: start_line(rhs),
+                end_line: Some(end_line(rhs)),
+                decorators: None,
+                complexity: None,
+                cfg: None,
+                children: None,
+            });
+        }
+        "identifier" => {
+            let rhs_name = node_text(rhs, source);
+            if !is_js_builtin_global(rhs_name) {
+                push_type_map_entry(symbols, full_name, rhs_name.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Iterate over an object literal assigned to `Foo.prototype` and emit definitions/aliases.
+///
+/// Mirrors `extractPrototypeObjectLiteral` in `src/extractors/javascript.ts`.
+fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    for i in 0..obj_node.child_count() {
+        let Some(child) = obj_node.child(i) else { continue };
+        match child.kind() {
+            "method_definition" => {
+                let Some(name_node) = child.child_by_field_name("name") else { continue };
+                symbols.definitions.push(Definition {
+                    name: format!("{}.{}", class_name, node_text(&name_node, source)),
+                    kind: "method".to_string(),
+                    line: start_line(&child),
+                    end_line: Some(end_line(&child)),
+                    decorators: None,
+                    complexity: None,
+                    cfg: None,
+                    children: None,
+                });
+            }
+            "shorthand_property_identifier" => {
+                let prop_name = node_text(&child, source);
+                if !is_js_builtin_global(prop_name) {
+                    push_type_map_entry(
+                        symbols,
+                        format!("{}.{}", class_name, prop_name),
+                        prop_name.to_string(),
+                    );
+                }
+            }
+            "pair" => {
+                let key_node = child.child_by_field_name("key");
+                let value_node = child.child_by_field_name("value");
+                if let (Some(key_node), Some(value_node)) = (key_node, value_node) {
+                    let method_name: &str = if key_node.kind() == "string" {
+                        let s = node_text(&key_node, source);
+                        // Strip exactly one matching pair of surrounding quote characters.
+                        // `trim_matches` would also strip embedded quotes; we only want the
+                        // outermost delimiter pair so `"it's"` stays `it's`.
+                        s.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+                            .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                            .unwrap_or(s)
+                    } else {
+                        node_text(&key_node, source)
+                    };
+                    if method_name.is_empty() { continue; }
+                    emit_js_prototype_method(class_name, method_name, &value_node, source, symbols);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 // ── Call-assignment extraction (Phase 8.2 parity) ───────────────────────────
@@ -2444,6 +2589,79 @@ mod tests {
             Some("calc"),
             "compute call should have receiver='calc'"
         );
+    }
+
+    // ── Prototype-method extraction ─────────────────────────────────────────
+
+    #[test]
+    fn prototype_direct_method_emits_definition() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.foo = function() { return 1; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.foo");
+        assert!(def.is_some(), "C.foo definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        assert_eq!(def.unwrap().kind, "method");
+    }
+
+    #[test]
+    fn prototype_identifier_alias_seeds_type_map() {
+        let s = parse_js(
+            "let f = () => {};\n\
+             class A {}\n\
+             A.prototype.t = f;",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "A.t");
+        assert!(entry.is_some(), "type_map entry A.t missing; got: {:?}", s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(entry.unwrap().type_name, "f");
+    }
+
+    #[test]
+    fn prototype_object_literal_emits_definitions() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               foo: function() {},\n\
+               bar: function() {},\n\
+             };",
+        );
+        let foo = s.definitions.iter().find(|d| d.name == "C.foo");
+        let bar = s.definitions.iter().find(|d| d.name == "C.bar");
+        assert!(foo.is_some(), "C.foo missing");
+        assert_eq!(foo.unwrap().kind, "method");
+        assert!(bar.is_some(), "C.bar missing");
+    }
+
+    #[test]
+    fn prototype_object_literal_shorthand_method() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               greet() { return 'hi'; },\n\
+             };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.greet");
+        assert!(def.is_some(), "C.greet definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        assert_eq!(def.unwrap().kind, "method");
+    }
+
+    #[test]
+    fn prototype_object_literal_shorthand_property_seeds_type_map() {
+        let s = parse_js(
+            "function helper() {}\n\
+             function C() {}\n\
+             C.prototype = { helper };",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "C.helper");
+        assert!(entry.is_some(), "type_map entry C.helper missing; got: {:?}", s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(entry.unwrap().type_name, "helper");
+    }
+
+    #[test]
+    fn prototype_builtin_globals_are_excluded() {
+        let s = parse_js("Array.prototype.custom = function() {};");
+        let def = s.definitions.iter().find(|d| d.name.contains("Array"));
+        assert!(def.is_none(), "built-in prototype assignment should be ignored; got: {:?}", def);
     }
 
     /// Phase 8.3e: Object.defineProperty seeds composite type_map key.

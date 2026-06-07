@@ -1118,7 +1118,17 @@ function buildPointsToMapForFile(
   symbols: ExtractorOutput,
   importedNames: Map<string, string>,
 ): PointsToMap | null {
-  if (!symbols.fnRefBindings?.length && !symbols.paramBindings?.length) return null;
+  if (
+    !symbols.fnRefBindings?.length &&
+    !symbols.paramBindings?.length &&
+    !symbols.arrayElemBindings?.length &&
+    !symbols.spreadArgBindings?.length &&
+    !symbols.forOfBindings?.length &&
+    !symbols.arrayCallbackBindings?.length &&
+    !symbols.objectRestParamBindings?.length &&
+    !symbols.objectPropBindings?.length
+  )
+    return null;
   const defNames = new Set(
     symbols.definitions
       .filter((d) => d.kind === 'function' || d.kind === 'method')
@@ -1131,6 +1141,12 @@ function buildPointsToMapForFile(
     importedNames,
     symbols.paramBindings,
     definitionParams,
+    symbols.arrayElemBindings,
+    symbols.spreadArgBindings,
+    symbols.forOfBindings,
+    symbols.arrayCallbackBindings,
+    symbols.objectRestParamBindings,
+    symbols.objectPropBindings,
   );
 }
 
@@ -1306,21 +1322,33 @@ function buildFileCallEdges(
     // direct call to the same target in the same function body can upgrade confidence
     // rather than being silently dropped by the dedup guard.
     const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+    // Module-level calls (callerName === null) use the '<module>' sentinel emitted by
+    // extractSpreadForOfWalk for top-level for-of loops. Look it up as a fallback so
+    // that `for (const f of arr) { f(); }` at module scope resolves correctly.
+    const modulePtsKey =
+      caller.callerName === null && ptsMap?.has(`<module>::${call.name}`)
+        ? `<module>::${call.name}`
+        : null;
     const flatPtsKey =
       !call.dynamic && fnRefBindingLhs.has(call.name) && ptsMap?.has(call.name) ? call.name : null;
     if (
       targets.length === 0 &&
       !call.receiver &&
       ptsMap &&
-      (call.dynamic || (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) || flatPtsKey != null)
+      (call.dynamic ||
+        (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) ||
+        modulePtsKey != null ||
+        flatPtsKey != null)
     ) {
       const ptsLookupName = call.dynamic
         ? call.name
         : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
           ? scopedPtsKey
-          : // flatPtsKey != null is guaranteed by the outer if condition: if neither
-            // call.dynamic nor scopedPtsKey matched, flatPtsKey != null must be true.
-            flatPtsKey!;
+          : modulePtsKey != null
+            ? modulePtsKey
+            : // flatPtsKey != null is guaranteed by the outer if condition: if neither
+              // call.dynamic nor scopedPtsKey nor modulePtsKey matched, flatPtsKey must be non-null.
+              flatPtsKey!;
       for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
         // Resolve the concrete alias target. Only `name` is needed here — receiver
         // and line are not relevant for alias resolution (we are looking up the
@@ -1340,6 +1368,43 @@ function buildFileCallEdges(
             if (conf > 0) {
               ptsEdgeRows.set(edgeKey, allEdgeRows.length);
               allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+            }
+          }
+        }
+      }
+    }
+
+    // Phase 8.3f: pts fallback for receiver calls via object-rest param bindings.
+    // Fires when `rest.prop()` is encountered and `rest` was seeded as `pts["rest.prop"]`
+    // by the object-rest dispatch chain (ObjectRestParamBinding + paramBinding + ObjectPropBinding).
+    if (
+      targets.length === 0 &&
+      call.receiver &&
+      !BUILTIN_RECEIVERS.has(call.receiver) &&
+      call.receiver !== 'this' &&
+      call.receiver !== 'self' &&
+      call.receiver !== 'super' &&
+      ptsMap
+    ) {
+      const receiverKey = `${call.receiver}.${call.name}`;
+      if (ptsMap.has(receiverKey)) {
+        for (const alias of resolveViaPointsTo(receiverKey, ptsMap)) {
+          const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+            lookup,
+            { name: alias },
+            relPath,
+            importedNames,
+            typeMap as Map<string, unknown>,
+          );
+          for (const t of aliasTargets) {
+            const edgeKey = `${caller.id}|${t.id}`;
+            if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+              const conf =
+                computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+              if (conf > 0) {
+                ptsEdgeRows.set(edgeKey, allEdgeRows.length);
+                allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+              }
             }
           }
         }
