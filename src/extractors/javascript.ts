@@ -470,8 +470,9 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
 
 /**
  * Walk the AST to extract class field definitions and static initializer blocks.
- * Query patterns capture method_definition but not field_definition or static_block,
- * so both the query path and walk path use this targeted walk to fill the gap.
+ * Query patterns capture method_definition but not field_definition or class_static_block.
+ * Called by the query-based fast path (extractSymbolsQuery); the walk-based path
+ * (extractSymbolsWalk) handles these same node types via walkJavaScriptNode's switch cases.
  */
 function extractClassMembersWalk(node: TreeSitterNode, definitions: Definition[]): void {
   function walk(n: TreeSitterNode, depth: number): void {
