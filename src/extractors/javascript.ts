@@ -2340,9 +2340,11 @@ function extractObjectRestParamBindingsWalk(
       }
     } else if (t === 'pair') {
       // object-literal method: `{ bar: function({ a, ...rest }) {} }`
+      // Skip computed property keys (e.g. `{ [Symbol.iterator]: function({ ...rest }) {} }`)
+      // because `callee: '[Symbol.iterator]'` can never match a paramBinding callee.
       const keyN = node.childForFieldName('key');
       const valueN = node.childForFieldName('value');
-      if (keyN && valueN) {
+      if (keyN && valueN && keyN.type !== 'computed_property_name') {
         const vt = valueN.type;
         if (
           vt === 'arrow_function' ||
