@@ -21,7 +21,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **Complete** (v3.4.0) |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Rust extraction for AST/CFG/dataflow/complexity; batch SQLite inserts; incremental rebuilds; native DB write pipeline; full rusqlite migration so native engine never touches better-sqlite3 | **Complete** (v3.5.0) |
 | [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support — all 4 batches shipped across v3.6.0–v3.8.0 | **Complete** (v3.8.0) |
-| [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates | Planned |
+| [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates, language-specific analysis reference map (34 languages, Jelly-equivalents, fixture acquisition guide) | Planned |
 | [**9**](#phase-9--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
 | [**10**](#phase-10--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | In Progress |
 | [**11**](#phase-11--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
@@ -1486,7 +1486,7 @@ Upgrade the Phase 4.4 benchmark suite to enforce regression gates on the new res
 - ✅ Release workflow gated on resolution precision/recall thresholds ([#886](https://github.com/optave/ops-codegraph-tool/pull/886))
 - 🔲 Per-technique breakdown (edges contributed by each resolver)
 - 🔲 Coverage dashboard in `codegraph stats`
-- 🔲 Benchmark against Jelly and ACG on shared fixture projects
+- 🔲 Benchmark against Jelly and ACG on shared fixture projects (JS/TS); extend to per-language reference tools for all 34 languages (see 8.8 for the full reference map and fixture acquisition guide)
 
 **Affected files:** `tests/benchmarks/resolution/`, `src/domain/analysis/symbol-lookup.ts`, `src/presentation/queries-cli/overview.ts`
 
@@ -1506,6 +1506,571 @@ Build a reaching definitions pass that computes which assignments reach each use
 **Expected impact:** Indirect — enables more precise points-to resolution and unlocks data-flow queries for future phases. Modest direct impact on caller coverage (~1–2 points from disambiguating variable assignments in the same scope).
 
 **Affected files:** new `src/domain/graph/resolver/reaching-defs.ts`, `src/domain/graph/builder/stages/build-edges.ts`
+
+### 8.8 — Language-Specific Analysis Reference Map
+
+This section is a research reference map, not an implementation plan. It documents the state-of-the-art static call-graph and points-to analysis tools for every language codegraph supports, identifies the precision/recall techniques those tools use, and maps the specific gaps in codegraph's current extraction for each language. Sub-phases of Phase 8 beyond 8.7 should consult this section to identify which tool or paper defines the target quality bar for the language they are improving.
+
+Precision/recall figures are cited to their source paper or benchmark. Entries marked **(unverified)** could not be confirmed from publicly accessible materials at the time of writing.
+
+**Fixture acquisition:** Each language subsection includes a "Benchmark suites / fixture sources" entry that lists ground-truth test corpora with their licenses. Where the license is MIT, Apache-2.0, BSD-2/3, or CC-BY, fixtures may be copied directly into `tests/benchmarks/resolution/fixtures/<lang>/` and committed. CC-BY datasets require attribution in the fixture README. GPL-licensed fixtures may only be used as a run-time reference (run the tool, record expected edges) — do not copy source files into the repo. Academic benchmark suites with no explicit license listed should be treated as reference-only; derive expected edges by running the tool, not by copying test files.
+
+---
+
+#### JVM (Java, Kotlin, Scala, Groovy, Clojure)
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Doop | Declarative Datalog points-to (k-CFA, k-obj-sensitive) on Soufflé | Doop 0-CFA produces more edges than OPAL 0-CFA at comparable precision (ISSTA 2024, Helm et al., "Total Recall?") | https://github.com/plast-lab/doop |
+| OPAL / Unimocg | Modular CHA/RTA/XTA/0-CFA; Unimocg decouples type-set from dispatch | OPAL 0-CFA 0.5% higher precision than Doop 0-CFA while emitting 5000+ fewer edges (ISSTA 2024) | https://github.com/opalj/opal |
+| Soot / SootUp (SPARK) | CHA, RTA, VTA, SPARK field-sensitive Andersen on-the-fly | Soot IR more precise and scalable than WALA IR on DaCapo (PointEval 2019) | https://github.com/soot-oss/SootUp |
+| Qilin | Fine-grained variable-level context-sensitivity; context debloating (DebloaterX, Moon) | Same precision as Doop at 2.4x faster (ECOOP 2022) | https://github.com/QilinPTA/Qilin |
+| ScalaCG | Source-level TCA algorithms handling traits and abstract type members | TCAexpand-this: 1.5–17.3x fewer edges than bytecode RTA with formal soundness (ECOOP 2014 / TOSEM 2015) | https://github.com/themaplelab/scalacg |
+| Zipper / Zipper-e | Precision-guided selective context-sensitivity on top of Doop | Identifies 38% of methods as precision-critical; preserves 98.8% of 2-obj-sensitive precision at 3.4–9.2x speedup (OOPSLA 2018) | https://github.com/silverbullettt/zipper |
+
+**Codegraph gap:** No field-sensitivity, no points-to propagation, no Scala trait mixin (TCA) resolution, no handling of Groovy/Clojure invokedynamic patterns, no selective context-sensitivity.
+
+**Groovy and Clojure note:** Both languages compile almost entirely to JVM `invokedynamic` bytecode — Groovy via its `CallSite` caching infrastructure, Clojure via its persistent data structures and protocol dispatch. Source-level call-graph analysis reaches a precision ceiling at name matching: the concrete dispatch target is determined at runtime. For these two languages, the JVM-level tools above (Doop, OPAL) remain the reference; codegraph's current source-level name matching is the practical ceiling. All Groovy and Clojure call edges should be emitted as low-confidence. No dedicated source-level CG benchmark exists for either language; the JVM-hosted languages study (Ali et al., IEEE TSE) is the closest reference.
+
+**Adoption candidates:**
+- Implement VTA-style type propagation along assignment edges for Java/Kotlin (Soot/SPARK): instead of including all declared subtypes at a call site (CHA), propagate the set of types assigned to each variable through `new T()` allocation sites. Expected 2–5x reduction in false virtual dispatch edges.
+- Implement TCAexpand-this for Scala: when resolving a call on `this` inside a trait method, include all concrete classes that mix in the trait, using the `extends`/`implements` graph already extracted by Phase 4.3. Expected 1.5–17x reduction in Scala call graph edges per ECOOP 2014 results.
+- Apply Zipper's two-pass principle: run a fast initial pass, identify call sites with high receiver-type fan-out (the precision-critical positions), then apply type-narrowing only to those sites rather than globally.
+
+**Benchmark suites:** JCG (opalj/JCG, BSD) — annotated Java CG benchmark covering reflection, invokedynamic, lambdas; DaCapo suite; ISSTA 2024 dynamic baseline corpus (Zenodo 13134617).
+
+---
+
+#### Groovy
+
+Groovy compiles almost entirely to JVM `invokedynamic` bytecode via its `CallSite` caching infrastructure. Source-level call-graph analysis reaches a precision ceiling at name matching; the concrete dispatch target is determined at runtime. All Groovy call edges should be emitted as low-confidence.
+
+**Reference tools:** Doop / OPAL (see JVM section above) — the same JVM-level toolchain covers Groovy bytecode analysis.
+
+**Codegraph gap:** No `invokedynamic` dispatch modelling; all Groovy call edges are emitted as name-matched with no confidence downgrade.
+
+**Adoption candidates:** Emit a `confidence: low` annotation on all Groovy call edges and surface this in `codegraph audit` output. No source-level precision improvement is achievable without JVM bytecode access.
+
+**Benchmark suites:** No dedicated source-level Groovy CG benchmark exists. JVM-hosted languages study (Ali et al., IEEE TSE) is the closest reference.
+
+---
+
+#### Clojure
+
+Clojure dispatches through persistent data structures and protocol `defprotocol`/`extend-type` dispatch, compiled to JVM `invokedynamic`. Source-level name matching is the practical ceiling; reflection and dynamic `eval` make full soundness impossible at tree-sitter level.
+
+**Reference tools:** Doop / OPAL (see JVM section above) — bytecode-level analysis is required for sound Clojure CG construction.
+
+**Codegraph gap:** No `invokedynamic` modelling; no `defprotocol` dispatch; `apply` and `eval` forms silently dropped.
+
+**Adoption candidates:** Emit `confidence: low` on all Clojure call edges. For `defprotocol`/`extend-type` forms, record the protocol name and all `extend-type` targets syntactically — these provide a partial static dispatch table even without bytecode.
+
+**Benchmark suites:** No dedicated source-level Clojure CG benchmark exists. JVM-hosted languages study (Ali et al., IEEE TSE) is the closest reference.
+
+---
+
+#### Python
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| PyCG | Flow-insensitive assignment-graph type propagation | Macro: precision ~99.2%, recall ~69.9% (ICSE 2021, arXiv 2103.00587) | https://github.com/vitsalis/PyCG |
+| JARVIS | Per-function type graphs; flow-sensitive strong updates; application-centered reachability | ≥84% higher precision, ≥20% higher recall vs PyCG; 8.16 s/analysis avg (arXiv 2305.05949, TOSEM 2024) | https://pythonjarvis.github.io/ |
+| HeaderGen | PyCG extended with .pyi stub files for external library return-type resolution | 95.6% precision, 95.3% recall on call-graph benchmark (SANER 2023 / EMSE 2024) | https://github.com/secure-software-engineering/HeaderGen |
+| PoTo | First Andersen-style context-insensitive points-to for Python; hybrid concrete evaluation for external library calls | Outperforms Pytype and DLInfer on 10 real packages (ECOOP 2025, arXiv 2409.03918) | https://github.com/Ingkarat/PoTo |
+| PyAnalyzer | Points-to-style with first-class heap objects for functions/classes/modules; duck-typing and attribute mutation | +24.7% F1 over 7 compared tools on 191 real projects / 10M SLOC (ICSE 2024) | https://github.com/xjtu-enre/ICSE2024_PyAnalyzer |
+
+**Codegraph gap:** No assignment-graph or points-to analysis; no external library stub integration; flow-insensitive treatment of assignments; no tracking of `__call__`, `__getattr__`, or metaclass-generated methods; no PyCG-equivalent micro-benchmark regression harness.
+
+**Adoption candidates:**
+- Integrate Python stub files (typeshed + popular library stubs such as those bundled with pyright) into the import resolver: when a call target is an external module symbol, consult its `.pyi` stub to resolve return type, then re-enter resolution with that type. HeaderGen achieves 95%+ precision/recall from this technique alone over PyCG's 70% recall baseline.
+- Implement a per-function assignment graph (JARVIS-style FTG) for Python: maintain a local map from identifier to set of possible function objects within each function scope, updated at each assignment and propagated across call boundaries. This handles higher-order functions, closures, and decorated callables invisible to name-matching.
+- Adopt the PyCG micro-benchmark suite (vitsalis/pycg-evaluation, Apache-2.0, 112 tests, 16 categories) as a fixture set in `tests/benchmarks/resolution/` to track which Python call patterns regress or improve with each change.
+
+**Benchmark suites:** PyCG micro-benchmark (112 tests, vitsalis/pycg-evaluation); JARVIS extended benchmark (135 tests, 21 categories); TypeEvalPy (154 snippets, github.com/secure-software-engineering/TypeEvalPy); PyAnalyzer macro-corpus (191 projects, 10M SLOC).
+
+---
+
+#### JavaScript / TypeScript
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Jelly | Flow-insensitive Andersen-style field-based points-to; on-the-fly CG; approximate interpretation (PLDI 2024); indirection bounding (ECOOP 2024) | Indirection-bounded: ~2x speedup at ~5% recall reduction vs baseline (ECOOP 2024, Chakraborty et al.) | https://github.com/cs-au-dk/jelly |
+| ACG | Field-based points-to (pessimistic/optimistic); ONESHOT optimization for IIFEs | 99% precision, 91% recall on SunSpider 26-program suite (ICSE 2013 / IEEE Access 2023) | https://github.com/ecspat/acg |
+| TAJS | Flow-sensitive abstract interpretation; .d.ts declaration files as library type filters | 98% precision, 71% recall on SunSpider; combined with ACG: 98% precision, 99% recall (IEEE Access 2023) | https://github.com/cs-au-dk/TAJS |
+| ArkAnalyzer | HarmonyOS-focused TypeScript/ArkTS CG + dataflow analysis; native ArkUI component awareness; Taint analysis | Evaluated on ArkTS apps in Huawei ecosystem; no published standalone P/R figures | https://github.com/ArkAnalyzer/ArkAnalyzer |
+
+**Codegraph gap:** Codegraph's JS/TS pipeline (tree-sitter + TypeScript compiler API type enrichment + intra-module Andersen-style field-based points-to per Phase 8.3c) is stronger than ACG on TypeScript files but has five concrete gaps vs Jelly: (1) no cross-module field-based alias propagation; (2) no handling of `obj[computedKey]()` dynamic property access (the #1 root cause of missing edges per ECOOP 2022); (3) no interprocedural higher-order function tracking; (4) no indirection-depth bound; (5) no dynamic ground truth validation.
+
+**Adoption candidates:**
+- Cross-file field-based alias propagation: extend the existing `buildPointsToMap` to accept a cross-file alias map populated during the resolve-imports stage, mirroring ACG's field-based treatment across module boundaries. This closes the primary false-negative source in multi-module Node.js projects.
+- Expose a `pointsToMaxIndirections` config key in `DEFAULTS` (analogous to the existing `pointsToMaxIterations`); bound propagation depth at 3 hops by default (matching Jelly's default), providing a precision/recall knob and preventing pathological blowup — the ECOOP 2024 result shows ~2x speedup at 5% recall cost.
+- Add hard-coded parameter-flow rules for known higher-order API patterns (`Array.prototype.map/filter/reduce/forEach`, `Promise.then`, `EventEmitter.on`, express `Router.use/get/post`) as the ONESHOT strategy from ACG, catching the most common higher-order false-negative category without a full interprocedural solver.
+
+**Benchmark suites:** SunSpider (26 programs, 941 manually validated edges); Jelly benchmark set (25 large Node.js + 10 web + 4 mobile programs with NodeProf dynamic ground truth); SWARM-JS (50 npm packages, 163K edges, EMSE 2025).
+
+**TSX note:** TSX analysis is identical to TypeScript — the same tree-sitter grammar extension, the same TypeScript compiler API type-enrichment pipeline, and the same Jelly/ACG reference tools apply. JSX syntax within `.tsx` files introduces no additional dispatch patterns: JSX element types resolve to component function or class definitions via the same name-matching and CHA pass as any other call. All tools, gaps, adoption candidates, and benchmarks listed above for TypeScript apply equally to TSX.
+
+---
+
+#### Go
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| golang.org/x/tools — go/callgraph (CHA/RTA/VTA) | CHA → RTA → VTA graduated precision; VTA propagates type labels through struct fields, local vars, return values, function literals to fixed point | VTA is the algorithm used by govulncheck in production; CHA < RTA < VTA in precision (documented ordering, no published P/R figures) | https://pkg.go.dev/golang.org/x/tools/go/callgraph |
+| golang.org/x/tools — go/pointer (Andersen's) | Field-sensitive Andersen inclusion-based; whole-program; HVN presolver | Avg 30,481 non-static CG edges / 13,160 reachable functions at 14.89s on 14 real Go modules vs Steensgaard's 65,570 edges / 2.22s (BarrensZeppelin/pointer benchmark) | https://pkg.go.dev/golang.org/x/tools/go/pointer |
+| govulncheck / golang.org/x/vuln | VTA call graph + import graph + module dependency graph; ssa.InstantiateGenerics for generics | Production security use at scale; no published P/R figures | https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck |
+| go-callvis | Visualization wrapper over go/pointer / VTA / RTA / CHA; v0.7.1 (Jan 2025) fixed generics edge cases | No published P/R metrics; widely used as informal ground truth | https://github.com/ondrajz/go-callvis |
+
+**Codegraph gap:** No go/ssa IR; no interface-aware dispatch resolution; no function-value/closure tracking; no generics-aware call graph (`ssa.InstantiateGenerics`); `go f()` goroutine-launch call edges not extracted; no whole-program analysis.
+
+**Adoption candidates:**
+- Resolve Go interface calls using CHA as a minimum baseline: enumerate all concrete types in the parsed file set that implement the interface's method set, and add call edges to all their implementations. Codegraph already tracks class hierarchies for JS/TS (Phase 4.3); apply the same pattern for Go interface dispatch.
+- Detect and emit call edges for goroutine-launch statements (`go f(args)`): in the AST, `go_statement` has the call expression as a child. Treat `GoStmt` call targets identically to regular call targets — low effort, high recall gain for concurrency-heavy Go codebases.
+- Use `ssa.InstantiateGenerics` semantics for generic function instantiations: at each call site that instantiates a generic, record the type arguments and emit a resolved call edge to the monomorphic version rather than a single edge to the generic definition.
+
+**Benchmark suites:** BarrensZeppelin/pointer benchmark (14 real Go modules, Andersen vs Steensgaard comparison); govulncheck test suite (real CVE reproduction, golang.org/x/vuln); golang.org/x/tools/cmd/callgraph as reference ground truth.
+
+---
+
+#### Rust
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Rupta | Andersen-style k-callsite context-sensitive points-to on Rust MIR; on-the-fly CG; stack filtering (CGO 2025) | 29% more call edges than Ruscg; ~70% fewer spurious dynamic call edges than Rurta (CC 2024) | https://github.com/rustanlys/rupta |
+| MIRAI | Abstract interpretation over Rust MIR; summary-based interprocedural; Datalog/DOT export | Resolves 100% of static dispatch, dynamic dispatch, generics, function pointers, macros; 50% of conditionally compiled calls (ktrianta benchmark) | https://github.com/facebookexperimental/MIRAI |
+| rust-callgraph-benchmark (ktrianta) | Benchmark suite only; six categories: static_dispatch, dynamic_dispatch, generics, function_pointers, conditionally_compiled, macros | Reference ground truth used in CC 2024 Rupta paper and MIRAI evaluation | https://github.com/ktrianta/rust-callgraph-benchmark |
+| Charon | Compiler frontend lifting Rust MIR to structured LLBC, preserving full trait-clause and trait-bound information symbolically | Not a CG tool per se; the correct IR substrate for precise trait dispatch without monomorphization; TACAS 2025 | https://github.com/AeneasVerif/charon |
+
+**Codegraph gap:** No `dyn Trait` dispatch resolution (requires MIR or type information absent from tree-sitter AST); no generic monomorphization; no `Fn*` trait closure resolution; no benchmark validation against the six ktrianta categories.
+
+**Adoption candidates:**
+- Adopt the ktrianta/rust-callgraph-benchmark six categories (static_dispatch, dynamic_dispatch, generics, function_pointers, conditionally_compiled, macros) as fixture sets in `tests/benchmarks/resolution/` with `expected-edges.json` manifests, immediately surfacing which gap categories are real.
+- Build a trait-impl index for static dispatch approximation (CHA-equivalent): map `impl Trait for Type` blocks from the parsed AST so that `x.method()` where `x: SomeType` resolves to all `impl _ for SomeType` blocks that define `method`. Achievable purely from tree-sitter output, already significantly better than name-only matching.
+- Track closure literal and fn-pointer assignments to local variables in the same function scope; when a function-typed variable is called, resolve to the assigned function. Flow-insensitive, intra-scope, no external IR required.
+
+**Benchmark suites:** ktrianta/rust-callgraph-benchmark; Rupta CC 2024 evaluation corpus (Zenodo 10566216); RustSec Advisory Database (used by Rudra SOSP 2021 and cargo-scan ESOP 2026).
+
+---
+
+#### .NET (C#, F#)
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| dotnet/ILLink (Trimmer / NativeAOT ILC) | RTA-equivalent conditional dependency edges; virtual method body included only when declaring type is constructed; CHA-based devirtualization under closed-world | Production trimmer in .NET 6–10; no published academic P/R figures | https://github.com/dotnet/runtime/tree/main/docs/tools/illink |
+| CodeQL for C# | CHA-level virtual/interface dispatch via `getAnOverrider()`/`getAnImplementor()` predicates; over-approximation | Highest F1 on taint-tracking OWASP Benchmark v1.2 across SAST tools (arXiv 2601.22952, 2025); no standalone C# CG P/R benchmark published | https://codeql.github.com/ |
+| call-graph-orleans | Roslyn-based CHA/RTA over C# source; `IMethodSymbol.OverriddenMethod` + `FindImplementationsAsync` chains | Tested on ShareX, ILSpy, Azure-PowerShell (FSE 2017); no numeric P/R figures | https://github.com/edgardozoppi/call-graph-orleans |
+| NoCFG | Language-agnostic lightweight CG approximation; coarse program abstraction | Lower-bound precision 90% on C# and Python corpora up to 2M LOC (arXiv 2105.03099) | https://arxiv.org/abs/2105.03099 |
+
+**Codegraph gap:** Virtual dispatch resolution is name-based only; interface implementors are not enumerated; no conditional-edge / RTA semantics (virtual override inclusion not gated on receiver-type instantiation); no Roslyn `IMethodSymbol` chain walk; F# discriminated-union dispatch entirely unmodeled.
+
+**Adoption candidates:**
+- CHA via Roslyn `IMethodSymbol` chains for C#: for every virtual/abstract/interface call site, walk `IMethodSymbol.OverriddenMethod` up to the root declaration, collect all overriders via `OverridingMethods`, and enumerate interface implementors via `FindImplementationsAsync`. This replicates what CodeQL and call-graph-orleans do without bytecode processing. **Note:** this approach requires the Roslyn SDK (`Microsoft.CodeAnalysis.CSharp`) as a runtime dependency — unlike TypeScript where the compiler API is already in the pipeline, Roslyn is a separate .NET SDK and cannot be driven from tree-sitter output alone.
+- Conditional-edge (RTA) semantics from ILC/NativeAOT: after CHA expansion, prune virtual dispatch edges where the declaring type is never instantiated in reachable code. Track a "constructed types" worklist populated by `new T()` expressions; only include override edges for types in that set.
+- For C# delegate and lambda tracking: for every `new MethodName` or `SomeMethod` delegate-literal expression, add a call edge from any call site that invokes a delegate of the matching signature — analogous to Jelly's field-based treatment of function values in JS.
+
+**Benchmark suites:** No dedicated .NET CG benchmark comparable to JCG exists as of the time of writing. ShareX and ILSpy are used informally. ISSTA 2024 "Total Recall?" dynamic-baseline methodology is directly applicable to .NET; OWASP Benchmark v1.2 covers taint analysis but not raw CG edge precision/recall.
+
+---
+
+#### Ruby
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Sorbet | Flow-sensitive type inference with class hierarchy symbol table; gradual typing | No published CG P/R figures; open classes and `method_missing` are unmodeled | https://github.com/sorbet/sorbet |
+| TypeProf | Whole-program abstract interpreter; speculatively enumerates concrete receiver types from a reachability worklist | No published P/R figures; conservative under uncertainty (outputs "untyped") | https://github.com/ruby/typeprof |
+| Shopify/loupe (SCTP) | Sparse Conditional Type Propagation over a DAG call graph; field-sensitive object analysis; 175K functions in 2.5s | Experimental prototype; no P/R figures (Shopify, Feb 2025) | https://github.com/Shopify/loupe |
+
+**Codegraph gap:** No class hierarchy model; `obj.foo` resolved purely by string matching on `foo` rather than by narrowing receiver class; open classes and `method_missing` entirely unmodeled; no abstract type propagation.
+
+**Adoption candidates:**
+- Two-pass CHA: first collect all `class C < B` and `module M; include X` declarations to build a hierarchy; then for each `obj.method` call site, resolve to all classes in the receiver's concrete type set using the hierarchy rather than global name matching. Replicates Sorbet's two-pass strategy, achievable from tree-sitter output.
+- TypeProf-style reachability: start from declared entry points and speculatively enumerate all concrete receiver types reachable at each call site via a worklist. This converts name-based dispatch into a reachability-constrained type set.
+
+**Benchmark suites:** PyCG micro-benchmark methodology (directly portable to Ruby); CLBG (Computer Language Benchmarks Game) Ruby programs (methodology reference — the Ali et al. IEEE TSE study applied these to JVM-hosted languages, not MRI Ruby; no dedicated Ruby CG precision/recall evaluation exists as of the time of writing).
+
+---
+
+#### PHP
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Psalm | Flow-sensitive type inference; union-type narrowing at `instanceof`/`is_a()` guards; interprocedural via function-summary caching | No published CG P/R figures; v6.16.1 (Mar 2026) | https://github.com/vimeo/psalm |
+| Phan | Multi-pass whole-program type inference; phase 1 indexes all classes/functions; phase 2 type-checks using that index | No published CG P/R figures; v6.0.5 (Mar 2026) | https://github.com/phan/phan |
+| TChecker | Iterative type-sensitive CG construction for PHP; bootstraps with CHA, refines via data-flow to fixed point; explicit handling of PHP's seven method-invocation forms | CCS 2022: found 18 new vulnerabilities, 2 CVEs; outperforms PHPJoern and RIPS on precision | https://github.com/cuhk-seclab/TChecker |
+| Artemis | Hybrid explicit+implicit CG for PHP; magic methods, variable class/method names via heuristics; LLM-assisted false-positive pruning | OOPSLA 2025: 207 true vulnerable paths, 15 false positives, 35 new CVEs on 250 PHP web apps | https://arxiv.org/abs/2502.21026 |
+
+**Codegraph gap:** No handling of PHP's seven call-site forms (static literal, dynamic static, instance literal, dynamic instance, constructor, variable constructor, `call_user_func*`); no receiver type narrowing; no type propagation; magic methods (`__call`, `__callStatic`) and variable class/method names silently dropped.
+
+**Adoption candidates:**
+- Classify every PHP call site as one of the seven forms at extraction time (following TChecker CCS 2022 and Artemis OOPSLA 2025), then apply separate resolution strategies: literal forms use class-hierarchy lookup; dynamic forms union all classes implementing a same-named method; magic method forms match any class with `__call`.
+- Adopt Psalm-style flow-sensitive receiver narrowing: at `$v->method()`, use the narrowed type of `$v` from preceding `instanceof` guards or assignment context rather than the full class hierarchy.
+- Phan's two-phase design: build a global class/method index from all parsed files before resolving any call site. Replicates what codegraph's build pipeline already does for JS/TS but is not yet applied to PHP.
+
+**Benchmark suites:** TChecker evaluation corpus (CCS 2022); Artemis corpus (250 PHP web apps, OOPSLA 2025).
+
+---
+
+#### Elixir
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Dialyzer | Success typings; whole-program interprocedural via PLT; exports call graph; zero false positives by design at cost of recall | Zero false positives; recall is deliberately partial; part of Erlang/OTP (Apache-2.0) | https://www.erlang.org/doc/apps/dialyzer/dialyzer.html |
+| Elixir gradual set-theoretic type system (v1.17+) | Union/intersection/negation semantic subtyping built into Elixir compiler; guard-based narrowing at pattern-match branches; protocol dispatch checking (v1.19) | No published P/R figures; still being calibrated in v1.20-rc | https://elixir-lang.org/blog/2024/12/19/elixir-v1-18-0-released/ |
+| Reach (elixir-vibe/reach) | Program Dependence Graph combining CFG, call graph, dataflow, and OTP process relationships; four frontends (Elixir AST, Erlang AST, Gleam AST, BEAM bytecode); OTP-aware (GenServer, Supervisor, ETS) | No published P/R figures; 610+ commits, last update May 2026 | https://github.com/elixir-vibe/reach |
+| Erlang xref / mix xref | Cross-reference analysis from BEAM bytecode (xref) or source (mix xref); distinguishes compile / export / runtime dependency edge types | Sound for direct `M:F/A` calls; does not resolve `apply/3` with runtime atoms | https://www.erlang.org/doc/apps/tools/xref_chapter.html |
+
+**Codegraph gap:** No OTP dispatch pattern modeling — `GenServer.call/cast`, `Supervisor` child_spec, Phoenix controller routing, and `Ecto.Repo` callbacks are all false negatives; no guard-based type narrowing for multi-clause functions; `mix xref` compile/export/runtime edge-type distinction not preserved; no `M:F/A` arity-qualified resolution.
+
+**Adoption candidates:**
+- Add a post-processing step that inserts synthetic call edges for known OTP dispatch patterns: `GenServer.call` → `handle_call`, `GenServer.cast` → `handle_cast`, `Supervisor.start_child` → child module's `init/1`, Phoenix controller action → route handler. These are derivable from `use` declarations in the source.
+- Use the full `Module:Function/Arity` triple as the call-target key for Elixir/Erlang; build a module-export index during graph construction and resolve cross-module calls against it. This converts `apply(Mod, Fun, Args)` calls with statically known atoms into concrete edges.
+- Preserve the `mix xref` compile/export/runtime edge classification when extracting Elixir dependencies, exposing it as edge metadata so impact analysis correctly distinguishes compile-time ripple from runtime call.
+
+**Benchmark suites:** Set-theoretic Types for Erlang test suite (321 tests, arXiv 2302.12783); Dialyzer scalability benchmarks on OTP applications (Jansen et al.); flowR OOPSLA 2025 corpus methodology (portable to BEAM).
+
+---
+
+#### Erlang
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Dialyzer | Success typings; PLT-cached interprocedural; `M:F/A` triple resolution | Zero false positives by design; part of OTP | https://www.erlang.org/doc/apps/dialyzer/dialyzer.html |
+| eqWAlizer | Gradual type checker; typespec-aware interprocedural; deployed at WhatsApp scale | No published P/R figures; Apache-2.0 | https://github.com/WhatsApp/eqwalizer |
+| Erlang Language Platform (ELP) | Incremental IDE-first semantic analysis; call hierarchy (LSP `callHierarchy`); `M:F/A` resolution across whole codebase; written in Rust | Sound for direct `M:F/A` calls; dynamic `send`/`spawn` calls unresolved; v56, last release Feb 2026 | https://github.com/WhatsApp/erlang-language-platform |
+| InfERL | Compositional bi-abduction/separation-logic interprocedural analysis on Erlang; linear-time scaling; deployed in WhatsApp CI | Production-validated at millions of LOC (Erlang Workshop 2022) | https://research.facebook.com/publications/inferl-scalable-and-extensible-erlang-static-analysis/ |
+
+**Codegraph gap:** No `M:F/A` triple resolution across modules; `apply/3` with runtime atoms silently dropped; no PLT-equivalent inter-module index.
+
+**Adoption candidates:**
+- Use `Module:Function/Arity` triples as call-target keys; build a module-export index analogous to Dialyzer's PLT during graph construction. Arity disambiguation is the single highest-leverage change for Erlang precision.
+- ELP-style incremental module index: resolve `M:F/A` triples across the whole corpus via a symbol index, replicating ELP's call-hierarchy queries without requiring a full LSP integration.
+
+**Benchmark suites:** ELP call hierarchy (WhatsApp/erlang-language-platform, Apache-2.0); Dialyzer OTP scalability benchmarks (Jansen et al.); Set-theoretic Types for Erlang test suite (321 tests, arXiv 2302.12783).
+
+---
+
+#### Gleam
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Reach (elixir-vibe/reach) | Native Gleam AST frontend; Gleam's static type system provides full dispatch information at the source level; integrates with BEAM bytecode frontend for compiled library calls | No published P/R figures; MIT license | https://github.com/elixir-vibe/reach |
+
+**Codegraph gap:** Gleam's static type system provides full dispatch information at the source level; codegraph does not leverage it. All Gleam call resolution is currently name-based.
+
+**Adoption candidates:**
+- Exploit Gleam's type annotations to restrict dispatch candidates: unlike dynamic languages, Gleam function calls are fully type-resolved by the compiler. At minimum, use declared parameter types to filter candidate targets by type compatibility rather than name alone.
+
+**Benchmark suites:** No dedicated Gleam call-graph precision/recall benchmark exists as of the time of writing. The Reach project's BEAM bytecode test cases (elixir-vibe/reach, MIT) are the closest available ground truth.
+
+---
+
+#### C / C++ / CUDA / Objective-C
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| SVF | LLVM IR Andersen/Steensgaard/flow-sensitive/demand-driven points-to; SVFG; co-iterates CG and pts-to to fixed point | Demand-driven SUPA: 97.4% of full flow-sensitive results (IEEE TSE 2018); SVF-3.3 (May 2026) | https://github.com/SVF-tools/SVF |
+| TypeDive / MLTA | Multi-layer type analysis on LLVM IR: constrains indirect call targets by type-compatible struct-field layer | Eliminates 86–98% more indirect-call targets than FLTA on Linux kernel, FreeBSD, Firefox (CCS 2019) | https://github.com/umnsec/mlta |
+| KallGraph | On-demand backward-slicing indirect call analysis; points-to on value-flow graph; proves unsoundness in MLTA/DeepType under aliasing | Validated against 937 unique indirect calls / 981 targets from 7-day Syzkaller fuzzing on Linux-6.5 (IEEE S&P 2025) | https://github.com/seclab-ucr/KallGraph |
+| Cocktail | Staged cascade: constant propagation → type-inference → allocation-site tracking → full points-to; empirically-driven classification of 5,355 indirect calls | 34.5% of C indirect calls resolvable by constant folding; 23.9% of address-taken functions uniquely invocable by signature (OOPSLA 2023) | https://dl.acm.org/doi/10.1145/3622833 |
+| Clang Static Analyzer (built-in `CallGraph`) | AST-level recursive visitor; CHA for C++ virtual calls using the Clang type system | Sound for direct calls within a TU; no interprocedural pts-to; CHA for virtual is imprecise | https://clang.llvm.org/doxygen/classclang_1_1CallGraph.html |
+
+**Codegraph gap:** C function pointers completely unresolved when callee is a pointer dereference or field load; no C++ virtual dispatch CHA (class hierarchy `extends` data is present but not used for dispatch); CUDA `<<<...>>>` kernel launch calls silently dropped; no address-taken function tracking.
+
+**Adoption candidates:**
+- CHA for C++ virtual calls using the existing `ctx.classes` inheritance data: when a method call is made through a receiver, enumerate all subclasses that override the method and emit additional call edges. The `classes` array with `extends` edges is already populated by `handleCppClassSpecifier` — wire it into `handleCppCallExpression` for virtual method names.
+- CUDA kernel launch extraction: handle the `cuda_kernel_call_expression` AST node type in `walkCudaNode` alongside `call_expression`. The kernel function name is the first child of this node — a one-line addition that recovers the primary call edges in any CUDA program.
+- Address-taken function pre-pass for C indirect call resolution (FLTA baseline): scan for identifier nodes whose text matches a known function definition and whose parent is not a `call_expression`; emit call edges from each indirect-call site to all address-taken functions with a matching parameter count. This is coarser than MLTA but sound and achievable at tree-sitter level.
+
+**Benchmark suites:** Linux kernel (used by MLTA, DeepType, KallGraph); Cocktail corpus (nginx, Redis, SQLite, OpenSSL, CPython — 5,355 annotated indirect calls, OOPSLA 2023); GNU coreutils 28 programs (Phoenix 2026); NVIDIA CUDA Samples repository; Syzkaller-generated call traces (KallGraph, IEEE S&P 2025).
+
+---
+
+#### Objective-C
+
+Objective-C `[receiver selector]` message-send semantics require class-hierarchy analysis (CHA) over the class/protocol hierarchy — the same pass needed for C++ virtual calls. The tree-sitter-objc grammar captures receiver/selector pairs syntactically, but dispatch target resolution requires the `extends` / `conforms-to` hierarchy data.
+
+**Reference tools:** Clang's built-in `CallGraph` (AST-level) and SVF (LLVM-IR-level) — both model Objective-C method dispatch via CHA when compiled with Clang.
+
+**Codegraph gap:** `[receiver selector]` messages are extracted as call edges with the selector as the callee name, but no CHA over the class/protocol hierarchy is performed. Dispatch targets are not enumerated for virtual selectors.
+
+**Adoption candidates:** The same CHA pass described for C++ virtual calls (using existing `ctx.classes` inheritance data) applies to Objective-C selectors. Enumerate all classes that implement the selector method via the class hierarchy, emitting additional edges with lower confidence weight.
+
+**Benchmark suites:** No standalone Objective-C CG benchmark comparable to JCG or PyCG exists. Apple's open-source projects (objc4, Foundation) serve as informal ground truth. All C/C++ toolchain benchmarks above cover Objective-C when compiled with Clang.
+
+---
+
+#### Swift
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| SWAN | SIL-based whole-program CHA, VTA, and UCG algorithms; SPDS demand-driven pointer queries; SWIRL IR for library modelling | No published P/R figures; UCG described as slightly more precise than VTA (ESEC/FSE 2020) | https://github.com/themaplelab/swan |
+| CodeQL for Swift | CHA-level over-approximate call graph; closure semantics and protocol dispatch modelled in QL schema | No published numeric P/R figures for Swift CG specifically | https://codeql.github.com/ |
+| Barik et al. OOPSLA 2019 (Uber Swift protocol optimization) | SoleTypeAnalysis: whole-module SIL-level dataflow determines when a protocol variable has exactly one concrete type; devirtualizes those call sites | Up to 12% reduction in method call overhead on a large Uber production iOS app (OOPSLA 2019) | https://manu.sridharan.net/files/OOPSLA19Swift.pdf |
+
+**Codegraph gap:** No protocol conformance graph; `obj.method()` where `obj` is of protocol type resolves to the protocol declaration rather than conforming implementations; closures stored in protocol-typed variables produce no call edge; no SoleType pruning.
+
+**Adoption candidates:**
+- Protocol conformance graph construction: build a map from all `extension X: P` and `struct/class X: P` declarations. For any call site `x.method()` where `x` is typed as protocol `P`, add call edges to all conforming types' implementations — CHA over the conformance graph rather than the inheritance graph.
+- SoleType pruning (Barik et al. OOPSLA 2019): if a protocol-typed variable has only one concrete conforming type assigned across all visible assignment sites in the same file/module, demote the call to a direct edge. Implementable at tree-sitter AST level without SIL.
+
+**Benchmark suites:** SWAN crypto benchmark (13 iOS/macOS apps); ISSTA 2024 "Total Recall?" dynamic-baseline methodology applicable to Swift via XCTest coverage instrumentation.
+
+---
+
+#### Dart
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Dart VM Type Flow Analysis (TFA) — dart-lang/sdk pkg/vm | Two-phase: RTA seeds allocated classes; then iterative type-flow propagation to fixed point; sound devirtualization under closed-world assumption | 49.5% reduction in AOT compilation time in a large Flutter app; devirtualizes only when a unique target is provable (no published academic P/R paper) | https://github.com/dart-lang/sdk/tree/master/pkg/vm/lib/transformations/type_flow |
+| Heinze, Møller, Strocco (Aarhus, DLS 2016) | Flow analysis using optional Dart type annotations as filters | 99.3% of all property lookup operations type-safe across benchmark Dart programs (DLS 2016) | https://cs.au.dk/~amoeller/papers/safedart/ |
+
+**Codegraph gap:** No RTA pre-pass; Dart 2+ sound type annotations are unused for dispatch filtering; all Dart virtual calls treated as fully dynamic; closure argument types untracked.
+
+**Adoption candidates:**
+- RTA pre-pass: collect all `T()` and `new T()` constructor call sites; only emit virtual dispatch edges to types that are actually instantiated. Directly replicates the first phase of the Dart VM's TFA at tree-sitter level.
+- Leverage Dart 2+ sound type annotations: when a local variable or parameter is declared as `Foo x`, restrict dispatch targets of `x.method()` to `Foo` and its subtypes. Mirrors the Aarhus DLS 2016 finding that annotation-guided filtering achieves 99.3% precision without context sensitivity.
+
+**Benchmark suites:** DyPyBench methodology (arXiv 2403.00539) — executable benchmark comparing static vs dynamic CG — portable to Dart via Dart Observatory/VM coverage.
+
+---
+
+#### Zig
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Zig compiler internal call graph (ziglang/zig Sema) | Lazy whole-program semantic analysis; comptime-driven monomorphization produces per-instantiation AIR; all dispatch statically resolved at AIR level | 100% precise by construction for non-function-pointer calls — Zig has no runtime OOP polymorphism | https://github.com/ziglang/zig |
+| ZLint (DonIsaac/zlint) | AST-based linter; single-file intraprocedural only; no CG construction | No CG P/R figures; v0.8.1 (Apr 2026) | https://github.com/DonIsaac/zlint |
+| Zwanzig (forketyfork/zwanzig) | CFG-based checks using ZIR output; single-file intraprocedural; cross-file calls treated as external | No CG P/R figures | https://github.com/forketyfork/zwanzig |
+
+**Codegraph gap:** No comptime-aware monomorphic call graph; OOP dispatch heuristics (CHA/RTA) are inapplicable to Zig and produce false edges; function pointers (the only source of dynamic dispatch in Zig) not tracked; tagged-union dispatch unmodeled.
+
+**Adoption candidates:**
+- Comptime-aware monomorphic edge generation: detect `fn f(comptime T: type, ...)` patterns and the comptime arguments at each call site; emit one call edge per distinct instantiation of `T` observed in the corpus rather than a single polymorphic edge.
+- Explicitly suppress OOP dispatch heuristics for Zig: do not apply class-hierarchy virtual dispatch logic to Zig code; all `instance.method()` syntax in Zig resolves to a direct struct-field access followed by a direct call.
+- ZIR-level analysis (longer-term): consume `zig ast-check --emit-zir` output rather than the surface AST. ZIR has resolved comptime parameters and contains explicit monomorphized call targets, eliminating the comptime guessing problem entirely.
+
+---
+
+#### Haskell
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Calligraphy | HIE-file-based CG extraction; GHC-generated `.hie` files carry fully resolved, type-annotated ASTs | Authors report ~80% accuracy; no formal P/R benchmark (BSD-3-Clause) | https://github.com/jonascarpay/calligraphy |
+| Weeder | Whole-program reachability over HIE files; handles cross-module boundaries | No published P/R figures; known false positive: Template Haskell splices untracked | https://github.com/ocharles/weeder |
+| GHC-WPC (Whole Program Compiler project) | Exports External STG IR for whole-program analysis outside GHC; designed for Datalog/Soufflé-based CG construction | No published benchmarks; WIP research infrastructure | https://github.com/grin-compiler/ghc-whole-program-compiler-project |
+
+**Codegraph gap:** Type class dispatch (the dominant virtual call mechanism in Haskell) is invisible to tree-sitter; higher-order function calls through lambda-bound variables and dictionary-passing are not resolvable without GHC type information; no HIE or STG IR integration.
+
+**Adoption candidates:**
+- HIE-file ingestion: when a Haskell project is compiled with `-fwrite-ide-info`, detect the `.hie` directory and use HIE files as the authoritative symbol/call source instead of tree-sitter re-parsing. HIE files resolve type-class dispatch and all import aliasing at GHC type-checker level.
+- Even without HIE, tag all Haskell call-graph edges through type-class method names as low-confidence `dynamic` edges rather than emitting them as false-positive direct edges, making the precision gap visible.
+
+**Benchmark suites:** No published Haskell CG precision/recall benchmark comparable to PyCG or JCG exists as of the time of writing.
+
+---
+
+#### OCaml
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Salto | Abstract interpretation over salto-IL (desugared OCaml TypedTree); novel abstract domain for closure values with hash-consing; OPAM-installable (v0.2, Nov 2025) | No published P/R figures; experimental | https://salto.gitlabpages.inria.fr/ |
+| ocp-analyzer | Whole-program data and exception analysis over Xlambda IR (normalised OCaml Lambda bytecode) | No published benchmarks; README acknowledges tests are out of date; historical reference only | https://github.com/OCamlPro/ocp-analyzer |
+
+**Codegraph gap:** No IL normalisation; OCaml higher-order function calls through closure parameters invisible to name-matching; OCaml module system (first-class modules, functors, `include`) creates aliasing chains not resolvable from tree-sitter AST.
+
+**Adoption candidates:**
+- IL normalisation pass for OCaml before symbol extraction: convert nested match arms and point-free expressions to a flat let-binding form (A-normal form), making call sites explicit. Reference: Salto-IL and Xlambda normalisation design.
+- Closure allocation-site tagging: for calls through function-typed variables, tag the edge with the set of closure allocation sites visible at the binding point (even a 0-CFA approximation — all `fun`/`function` expressions in scope — is better than no edge). Reference: Salto's abstract domain for closure values.
+
+---
+
+#### Julia
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| JET.jl | Abstract interpretation piggybacking on Julia's native compiler inference (`Core.Compiler.AbstractInterpreter`); emits `:invoke` (direct) vs `:call` (dynamic dispatch) sites | No published P/R figures; inference terminates at non-inferable nodes so recall drops where type inference fails | https://github.com/aviatesk/JET.jl |
+| Cthulhu.jl | Interactive descent-based CG explorer using Julia's `AbstractInterpreter`; surfaces `:invoke`/`:call` distinction; `TypedSyntax.jl` for type-annotated source | No published P/R benchmark; resolution quality equals Julia compiler inference quality | https://github.com/JuliaDebug/Cthulhu.jl |
+
+**Codegraph gap:** Multiple dispatch makes name-based call resolution fundamentally incorrect — the same function name dispatches to different methods based on argument types. Codegraph likely treats all `foo(a, b)` calls as edges to all methods named `foo`, producing high recall but very low precision.
+
+**Adoption candidates:**
+- Multiple-dispatch aware resolution: for calls `f(a, b)` in Julia, use argument type information from context (literal types, declared types from prior assignments) to filter to matching method signatures rather than emitting edges to all methods named `f`.
+- Adopt the `:invoke`/`:call` confidence split: tag Julia call graph edges as `concrete` (argument types fully inferred, single dispatch target) vs `dynamic` (type unknown, multiple possible targets), surfacing unresolved dispatch sites to users rather than emitting potentially-false edges.
+
+**Benchmark suites:** Type Stability in Julia (OOPSLA 2021, arXiv 2109.01950) defines formal notions of type stability — the correct framework for evaluating Julia CG precision.
+
+---
+
+#### R
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| flowR | Sophisticated dataflow analysis framework; stateful fold over normalised AST; handles dynamic scoping, lazy evaluation, first-class environments, `source()` cross-file loading | 99.7% on 779 manually curated slicing points from real R scripts (OOPSLA 2025); 84.8% avg token reduction in program slicing; 153.2 ms/file | https://github.com/flowr-analysis/flowr |
+| CodeDepends / callGraph | AST-walk name-based dependency detection; pure name-matching | No published P/R figures; no handling of calls through function-valued variables | https://cran.r-project.org/web/packages/CodeDepends/index.html |
+
+**Codegraph gap:** R's dynamic scoping, `<<-`, `assign()`/`get()`, and `source()` make name-based call graphs severely incomplete. Calls through function-valued variables (`f <- mean; f(x)`) produce no edge. flowR achieves 99.7% slicing accuracy; codegraph's R extractor is at a CodeDepends-equivalent capability level.
+
+**Adoption candidates:**
+- AST normalisation before extraction (flowR-style): convert R's syntactic sugar into a uniform AST form before graph construction so that call sites are explicit, including those inside nested function-valued expressions.
+- Function-variable assignment tracking: detect `f <- some_function` patterns and treat any subsequent call through `f` as an edge to `some_function`. Even this simple step covers the most common R higher-order pattern.
+- `source()` resolution: when a script sources another file with a literal path (`source('./lib.R')`), include that file's functions as in-scope for the calling script's call graph.
+
+**Benchmark suites:** flowR OOPSLA 2025 evaluation corpus (779 manually curated slicing points + 4,230 CRAN scripts, github.com/flowr-analysis/flowr) — the only published precision/recall benchmark for R static analysis.
+
+---
+
+#### Lua
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| LuaLS (lua-language-server) | Contextual type inference; annotation-assisted (LuaCATS); go-to-definition and find-references cross-file | No published CG P/R figures; metatable-based OOP dispatch is a known open gap | https://github.com/LuaLS/lua-language-server |
+| Luau | Gradual typing with bidirectional inference and flow-sensitive refinement; strict mode | No published CG P/R figures; POPL 2024 benchmarks type-error detection but not CG accuracy | https://github.com/luau-lang/luau |
+| LuaTaint | Interprocedural taint analysis; field-sensitive table tracking; LuCI dispatcher-rule injection; context-sensitive | Precision 89.29% on 2,447 IoT firmware samples; recall 97.80% on 323 manufactured test cases (arXiv 2402.16043) | https://arxiv.org/abs/2402.16043 |
+
+**Codegraph gap:** No metatable and `__index`-based dispatch resolution (the dominant OOP pattern in Lua); no field-sensitive table tracking; no framework dispatch-rule injection (e.g. LuCI entry points); LuaLS annotation-based class model not consulted.
+
+**Adoption candidates:**
+- Annotation-based metatable resolution: when a local variable is assigned `setmetatable({}, {__index = ClassName})`, record `ClassName` as the receiver type for method calls on that variable, following LuaLS's annotation-guided model.
+- Field-sensitive table tracking (LuaTaint approach): track table field types individually rather than treating the whole table as a single node; this recovers method calls on table slots in OOP-style Lua.
+- Framework entry-point injection: for Lua frameworks with implicit dispatch (LuCI, OpenResty), add known framework caller-callee edges as synthetic nodes.
+
+**Benchmark suites:** LuaTaint corpus (2,447 IoT firmware samples, arXiv 2402.16043).
+
+---
+
+#### Bash
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| sash (MIT/Penn/Rice/Brown, HotOS 2025) | Formal regular-language type system for shell string shapes; JIT seeding for dynamic values; LLM-guardrailed command specification | No published P/R figures; position paper identifying core soundness blockers (HotOS 2025) | https://dl.acm.org/doi/10.1145/3713082.3730395 |
+| shell-call-graph (rak) | Static regex scan of shell scripts for function definitions and call sites; DOT output | No benchmarks; does not handle `eval`, variable-based dispatch, or command substitution | https://codeberg.org/rak/shell-call-graph |
+| callGraph (koknat) | Regex-based multi-language CG including Bash; no type inference or alias analysis | No benchmarks; covers both Lua and Bash | https://github.com/koknat/callGraph |
+
+**Codegraph gap:** Variable-indirection calls (`$func_name`), `eval`, and `source` with non-literal paths are the three core soundness blockers identified by sash (HotOS 2025). These are fundamentally unresolvable by static name matching.
+
+**Adoption candidates:**
+- Acknowledge and flag unsoundness: mark all Bash call edges as low-confidence `dynamic` when the callee is derived from a variable, command substitution, or a `source` with a non-literal path rather than silently dropping or falsely emitting edges.
+- `source` file tracking: when a script sources another file with a literal path (`source ./lib.sh`), treat that file's functions as in-scope for the calling script — the same treatment codegraph already applies to JS/TS imports.
+
+**Benchmark suites:** No established public benchmark for Bash call graph precision/recall exists as of the time of writing (acknowledged gap in the sash HotOS 2025 paper).
+
+---
+
+#### Solidity
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Slither | SSA-based SlithIR; per-contract CG, inheritance graph, CFG; C3-linearized MRO for `super` call resolution; handles `virtual`/`override` modifiers | Avg F1 0.941 across vulnerability types (arXiv 2310.20212v4); parses 99.9% of public Solidity | https://github.com/crytic/slither |
+| Aderyn | Rust-based Solidity AST analyzer using foundry-compilers and compiler-verified AST; CI toolchain integration | No published CG P/R figures; 45K+ downloads | https://github.com/Cyfrin/aderyn |
+| SmartBugs 2.0 | Execution framework wrapping 19 Solidity tools; SmartBugs-Curated annotated vulnerability dataset | Conkas avg F1 0.968; Slither avg F1 0.941 (arXiv 2310.20212v4) | https://arxiv.org/abs/2306.05057 |
+
+**Codegraph gap:** No C3-linearized MRO for `super` call resolution; no `virtual`/`override` dispatch modeling; no cross-contract interface-typed call resolution.
+
+**Adoption candidates:**
+- C3 MRO dispatch: implement C3 linearization of contract inheritance hierarchies and resolve `super.f()` and `virtual f()` calls using MRO position of the calling contract, matching Slither's approach.
+- `virtual`/`override` modeling: when a function is declared `virtual` and a call target has the same signature in a derived contract marked `override`, add an edge to the most-derived override visible from the call site.
+- Cross-contract interface calls: when an external call is made on an interface-typed variable, add edges to all contracts in the compilation unit that implement that interface (CHA-style over-approximation).
+
+**Benchmark suites:** SmartBugs-Curated (github.com/smartbugs/smartbugs-curated); SWC Registry (swcregistry.io).
+
+---
+
+#### Verilog / SystemVerilog
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Qihe | First general-purpose Verilog static analysis framework; three-address code IR; models blocking/non-blocking/delayed assignments, module instantiation as call edges, `invokeStmt` nodes for task/function calls; 22 fundamental analyses | Found 9 previously unknown bugs confirmed by developers; 18 bugs beyond existing linters (PLDI 2026, arXiv 2601.11408) | https://arxiv.org/abs/2601.11408 |
+| slang (sv-lang) | Full-featured SystemVerilog IEEE 1800-2023 parser and analysis library; cross-module elaboration; semantic verification; used by Qihe as its frontend | No CG P/R figures; highest-conformance open SystemVerilog frontend | https://sv-lang.com/ |
+| Pyverilog | Python toolkit; dataflow and control-flow analysis; no task/function call graph | No published CG P/R figures; ARC 2015 | https://github.com/PyHDI/Pyverilog |
+
+**Codegraph gap:** Tree-sitter Verilog grammar lacks semantic elaboration; hierarchical name resolution, parameterized module instantiation, and blocking vs non-blocking assignment semantics not captured; task and function call sites not distinguished from module instantiation edges.
+
+**Adoption candidates:**
+- Module instantiation as call edges: add module instantiation relationships as directed call edges in the graph (parent module → child module instance). This is the primary unit of Verilog call graph construction and requires only AST-level detection of `module_instantiation` node types.
+- Distinguish task/function call edges from module instantiation edges: classify `task_call` and `function_call` AST node types as function-level call edges, emitting them separately from structural module instantiation edges.
+- Longer-term: consider slang (via pyslang bindings) as an alternative frontend for SystemVerilog projects where semantic elaboration is needed for correct hierarchical name resolution.
+
+**Benchmark suites:** Qihe evaluation corpus (popular real-world Verilog hardware projects from OpenCores and CVA6, PLDI 2026).
+
+---
+
+#### Multi-language / General frameworks
+
+| Tool | Coverage | Approach | URL |
+|------|----------|----------|-----|
+| Joern / CPG | C, C++, Java, JS, Python, Kotlin, Binary | Code Property Graph (AST + CFG + PDG); CALL edges pre-materialized; interprocedural dataflow via query-time call-resolver | https://github.com/joernio/joern |
+| Fraunhofer AISEC CPG | Java, C++, Python, Go, TypeScript/JS (exp.), Ruby (exp.), LLVM IR (Rust, Swift, ObjC, Haskell) | Source-level CPG with multi-pass type-inference and virtual-dispatch resolution passes after initial graph build | https://github.com/Fraunhofer-AISEC/cpg |
+| CodeQL | C, C++, Java, C#, JS, TS, Python, Ruby, Go, Swift, Kotlin | TypeTracker demand-driven type-tag propagation; `polyCalls` predicate for virtual dispatch; per-language extractors | https://codeql.github.com/ |
+| Tai-e | Java, Android | On-the-fly Andersen-style CG + context-sensitive pts-to; reflection analysis; lambda/invokedynamic; extensible plugin system | https://github.com/pascal-lab/Tai-e |
+| WALA | Java, Android, JavaScript | On-the-fly CG co-evolved with flow-insensitive pts-to; CHA/RTA/0-CFA/n-CFA; SSA IR | https://github.com/wala/WALA |
+
+The AISEC CPG framework is the closest architectural analogue to codegraph (source-level, multi-language, Apache-2.0, multi-pass resolution). Its key differentiator is multi-pass resolution: after the initial graph is built, additional passes use type information from neighboring files to re-resolve previously unknown call targets. This is the pattern codegraph's builder pipeline should adopt as analysis depth improves.
+
+---
+
+
+#### Terraform / HCL
+
+| Tool | Approach | Precision / Recall | URL |
+|------|----------|--------------------|-----|
+| Checkov (graph runner) | Graph-based cross-resource analysis; interpolation walking + variable default resolution + module inheritance; 800+ cross-resource policies | No published P/R for edge accuracy; security check correctness tested internally | https://github.com/bridgecrewio/checkov |
+| InfraMap | HCL interpolation expression walking → resource-reference edges; provider-specific edge filtering; reads `hashicorp/hcl/v2` | No published P/R benchmark | https://github.com/cycloidio/inframap |
+| Pulumi Converter (`pulumi-converter-terraform`) | Full HCL→Pulumi AST translation; resolves all module call, variable, output, and data-source references to emit valid Pulumi programs | Conversion correctness test suite acts as implicit ground truth for reference resolution | https://github.com/pulumi/pulumi-converter-terraform |
+| Rover | Parses plan JSON + raw HCL; builds resource state overview + resource-dependency graph; models module structure, locals, outputs | No published P/R benchmark | https://github.com/im2nguyen/rover |
+
+**Codegraph gap:** No module-call edge tracking (`module "foo" { source = "..." }` not emitted as a call edge); no variable-flow edges across module boundaries (`var.x` → consuming resource); no data-source attribute reference edges (`data.aws_ami.latest.id`); no module output reference edges (`module.foo.output_name`). HCL has no dynamic dispatch concept — the equivalent of "call graph precision" is dependency-edge coverage across these four reference classes. No existing tool models all four, and no published precision/recall benchmark exists for any tool.
+
+**Adoption candidates:**
+- Study Checkov's `checkov/terraform/graph_builders/` (Apache-2.0) for interpolation walking and variable-default resolution — the most complete open-source implementation of HCL reference resolution, suitable as a reference algorithm for codegraph's HCL extractor.
+- Mine the `pulumi-converter-terraform` test corpus (Apache-2.0) for multi-module HCL configurations that require correct cross-module reference resolution — these function as de facto ground-truth fixture candidates.
+- Use the **TerraDS dataset** (CC-BY-4.0, 279,344 modules, Zenodo 14217386, MSR 2025) as the HCL precision/recall corpus: the `external_module_calls` JSON field records declared module call edges and provides ground truth for module-call resolution benchmarking. This is the closest available analogue to the PyCG micro-benchmark for Python.
+
+**Benchmark suites / fixture sources:**
+- TerraDS (MSR 2025, CC-BY-4.0): https://zenodo.org/records/14217386 — 279,344 Terraform modules with structured module-call metadata
+- Blast Radius examples (MIT): https://github.com/28mm/blast-radius/tree/master/examples — multi-resource AWS/GCP/Azure HCL configurations
+- Rover example (MIT): https://github.com/im2nguyen/rover/tree/main/example — multi-feature module + output + locals configuration
+- Trivy/tfsec fixture corpus (Apache-2.0): https://github.com/aquasecurity/trivy — hundreds of annotated HCL snippets, reusable under Apache-2.0
+
+---
+
+#### Summary: All Supported Languages
+
+| Language | Top Reference Tool | Primary Technique Gap in Codegraph | Target Benchmark |
+|----------|-------------------|-------------------------------------|-----------------|
+| JavaScript | Jelly (BSD-3) | Cross-module field-based alias propagation; dynamic property access | SWARM-JS; Jelly benchmark set |
+| TypeScript | Jelly / ArkAnalyzer | Cross-module field-based alias propagation; indirection bounding | SWARM-JS; SunSpider 26-program suite |
+| TSX | Jelly | Same as TypeScript | Same as TypeScript |
+| Python | JARVIS / HeaderGen | External library stub integration; per-function type graphs | PyCG 112-test suite; TypeEvalPy |
+| Go | golang.org/x/tools VTA | Interface-aware dispatch; goroutine-launch edges; generics instantiation | BarrensZeppelin/pointer 14-module benchmark |
+| Rust | Rupta (CC 2024) | `dyn Trait` dispatch (requires MIR); generic monomorphization; closure provenance | ktrianta/rust-callgraph-benchmark (6 categories) |
+| Java | Doop / OPAL | Field-sensitive VTA / points-to propagation; no RTA instantiation filtering | JCG (opalj/JCG); ISSTA 2024 dynamic baseline |
+| Kotlin | OPAL / Soot | Same as Java; Android lifecycle callbacks | JCG; DaCapo suite |
+| Scala | ScalaCG (ECOOP 2014) | Trait mixin TCA dispatch (1.5–17x edge reduction per ECOOP 2014) | JCG; ScalaCG TOSEM 2015 evaluation |
+| C# | dotnet/ILLink (NativeAOT) | CHA via Roslyn IMethodSymbol chains; RTA conditional-edge semantics; interface implementor enumeration | No public P/R benchmark; ShareX/ILSpy informal |
+| F# | dotnet/ILLink (NativeAOT) | F# DU/computation-expression dispatch unmodeled; CIL-level CHA needed | No public P/R benchmark |
+| C | KallGraph (S&P 2025) | Address-taken function tracking; FLTA/MLTA indirect call target narrowing | Cocktail corpus (5,355 annotated indirect calls); Linux kernel subsystems |
+| C++ | SVF / Clang CallGraph | CHA for virtual calls using existing `ctx.classes` inheritance data | Linux kernel; Firefox (MLTA CCS 2019) |
+| CUDA | Clang CallGraph / SVF | `<<<...>>>` kernel launch calls silently dropped | NVIDIA CUDA Samples repository |
+| Objective-C | Clang CallGraph | `[receiver selector]` message send CHA via protocol/superclass graph | No dedicated benchmark |
+| Swift | SWAN (ESEC/FSE 2020) | Protocol conformance graph; SoleType pruning (OOPSLA 2019) | SWAN crypto benchmark (13 iOS/macOS apps) |
+| Dart | Dart VM TFA (dart-lang/sdk) | RTA pre-pass; sound type annotation leverage | DyPyBench methodology (arXiv 2403.00539) |
+| Zig | Zig compiler Sema (internal) | Comptime monomorphization; suppress inapplicable OOP heuristics | No public benchmark; ZIR output as ground truth |
+| Haskell | Calligraphy / GHC-WPC | Type class dispatch invisible without HIE files; HIE ingestion needed | No public CG P/R benchmark |
+| OCaml | Salto (INRIA, v0.2 2025) | IL normalisation before extraction; closure allocation-site tagging | No public CG P/R benchmark |
+| Julia | JET.jl / Cthulhu.jl | Multiple-dispatch name resolution produces false edges; `:invoke`/`:call` confidence split needed | OOPSLA 2021 type-stability benchmark (arXiv 2109.01950) |
+| R | flowR (OOPSLA 2025) | Dynamic scoping, `<<-`, `assign()`/`get()`, function-valued variables entirely unmodeled | flowR corpus (779 curated slicing points + 4,230 CRAN scripts) |
+| Elixir | Dialyzer / Elixir v1.17+ type system | OTP dispatch patterns (GenServer, Supervisor) produce false negatives; no `M:F/A` arity resolution | Set-theoretic Types for Erlang test suite (321 tests) |
+| Erlang | Dialyzer / ELP | `M:F/A` triple resolution not used; `apply/3` silently dropped | ELP call hierarchy; Dialyzer OTP scalability benchmarks |
+| Gleam | Reach (MIT, BEAM PDG) | Hindley-Milner type information unused; name-only matching | No dedicated benchmark |
+| Lua | LuaTaint / LuaLS | Metatable/`__index` OOP dispatch unmodeled; field-sensitive table tracking absent | LuaTaint corpus (2,447 IoT firmware samples) |
+| Bash | sash (HotOS 2025) | Variable-indirection calls unresolvable; `eval` and non-literal `source` paths are fundamental soundness limits | No public benchmark (gap acknowledged in sash paper) |
+| Ruby | TypeProf / Shopify loupe | No class hierarchy model; all method dispatch is name-only | PyCG methodology portable to Ruby |
+| PHP | TChecker (CCS 2022) / Artemis (OOPSLA 2025) | Seven PHP call-site forms not classified; magic methods and variable class/method names dropped | TChecker corpus (CCS 2022); Artemis corpus (250 apps, OOPSLA 2025) |
+| Solidity | Slither (Apache-2.0) | No C3 MRO `super` resolution; no `virtual`/`override` dispatch; no cross-contract interface resolution | SmartBugs-Curated; SWC Registry |
+| Groovy | Doop / OPAL (JVM-level) | Compiles almost entirely to `invokedynamic`; source-level analysis is the only tractable path; all Groovy call edges should be flagged low-confidence | JVM-hosted languages study (Ali et al., IEEE TSE) |
+| Clojure | Doop / OPAL (JVM-level) | Same as Groovy; `invokedynamic` and reflection make bytecode analysis unsound; source-level name matching is the practical ceiling | JVM-hosted languages study (Ali et al., IEEE TSE) |
+| Verilog / SystemVerilog | Qihe (PLDI 2026) | Module instantiation not emitted as call edges; task/function call sites not distinguished; no semantic elaboration | Qihe evaluation corpus (OpenCores, CVA6) |
+| Terraform / HCL | Checkov graph runner (Apache-2.0) / Pulumi Converter (Apache-2.0) | No module-call, variable-flow, or data-source reference edges; 4 reference edge classes unmodeled | TerraDS (CC-BY-4.0, MSR 2025); Trivy fixtures (Apache-2.0) |
 
 ### Optional runtime dependencies
 
