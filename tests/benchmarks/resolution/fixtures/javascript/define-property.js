@@ -30,3 +30,18 @@ function _create() {
   obj.f1();
   obj.f2();
 }
+
+// Object.defineProperty accessor this-dispatch:
+// When getter is registered as a get accessor for accessorTarget, `this` inside getter
+// refers to accessorTarget. So this.baz() → accessorTarget.baz → baz.
+function baz() {
+  return 42;
+}
+
+const accessorTarget = { baz };
+
+function getter() {
+  this.baz();
+}
+
+Object.defineProperty(accessorTarget, 'bar', { get: getter });
