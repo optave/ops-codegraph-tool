@@ -123,7 +123,7 @@ function collectHaskellPatternBindings(node: TreeSitterNode, out: SubDeclaration
     case 'record':
       for (let i = 0; i < node.childCount; i++) {
         const fp = node.child(i);
-        if (!fp || fp.type !== 'field_pattern') continue;
+        if (fp?.type !== 'field_pattern') continue;
         for (let j = 0; j < fp.childCount; j++) {
           const g = fp.child(j);
           if (g && g.type !== 'field_name') collectHaskellPatternBindings(g, out);
