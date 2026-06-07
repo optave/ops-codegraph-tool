@@ -66,6 +66,8 @@ export interface SerializedExtractorOutput {
   }>;
   fnRefBindings?: import('../types.js').FnRefBinding[];
   newExpressions?: readonly string[];
+  /** Serialized definePropertyReceivers map (funcName → receiverVarName) as tuple array. */
+  definePropertyReceivers?: Array<[string, string]>;
   returnTypeMap?: Array<[string, TypeMapEntry]>;
   callAssignments?: CallAssignment[];
   paramBindings?: ParamBinding[];
