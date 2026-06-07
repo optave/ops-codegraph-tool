@@ -110,6 +110,7 @@ describe('JavaScript parser', () => {
     const staticDefs = symbols.definitions.filter((d) => d.name === 'C6.<static>');
     expect(staticDefs).toHaveLength(2);
     expect(staticDefs[0]).toMatchObject({ kind: 'function' });
+    expect(staticDefs[1]).toMatchObject({ kind: 'function' });
   });
 
   it('extracts import statements', () => {
