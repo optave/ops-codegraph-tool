@@ -481,15 +481,27 @@ fn resolve_call_targets<'a>(
                 if !class_scoped.is_empty() { return class_scoped; }
             }
 
-            // Broader fallback: same-file suffix scan to pick up CHA-expanded targets
-            // (subclasses that override the method).
+            // Broader fallback: same-file suffix scan.  Always restrict to the caller's
+            // own class prefix — regardless of how many matches are found — to avoid
+            // false-positive edges to unrelated classes in the same file.
+            // (e.g. this.area() inside Shape.describe must never yield Calculator.area,
+            // even when Calculator.area is the only method with that name in the file.)
             let suffix = format!(".{}", call.name);
             if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
                 let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
                     .filter(|n| n.kind == "method" && n.name.ends_with(&suffix))
                     .copied()
                     .collect();
-                if !same_file_methods.is_empty() { return same_file_methods; }
+                if !same_file_methods.is_empty() {
+                    if let Some(dot_pos) = caller_name.find('.') {
+                        let caller_prefix = format!("{}.", &caller_name[..dot_pos]);
+                        let caller_scoped: Vec<&NodeInfo> = same_file_methods.iter()
+                            .filter(|n| n.name.starts_with(&caller_prefix))
+                            .copied()
+                            .collect();
+                        if !caller_scoped.is_empty() { return caller_scoped; }
+                    }
+                }
             }
         }
         return exact; // empty
