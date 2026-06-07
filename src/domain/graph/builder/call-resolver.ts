@@ -143,6 +143,35 @@ export function resolveByMethodOrGlobal(
     call.receiver === 'self' ||
     call.receiver === 'super'
   ) {
+    // Phase 8.3f: accessor this-dispatch via Object.defineProperty.
+    // When a plain function (no class prefix) is registered as a get/set accessor for `obj`
+    // via Object.defineProperty, typeMap seeds 'callerName:this' = 'obj'.
+    // We then resolve this.method() → typeMap['obj.method'] → the concrete definition.
+    // This runs before the broad exact-name lookup to avoid false positives from
+    // unrelated same-file definitions.
+    if (call.receiver === 'this' && callerName && !callerName.includes('.')) {
+      const accessorThisEntry = typeMap.get(`${callerName}:this`);
+      const objName = accessorThisEntry
+        ? typeof accessorThisEntry === 'string'
+          ? accessorThisEntry
+          : (accessorThisEntry as { type?: string }).type
+        : null;
+      if (objName) {
+        const objMethodEntry = typeMap.get(`${objName}.${call.name}`);
+        const targetFn = objMethodEntry
+          ? typeof objMethodEntry === 'string'
+            ? objMethodEntry
+            : (objMethodEntry as { type?: string }).type
+          : null;
+        if (targetFn) {
+          const resolved = lookup
+            .byName(targetFn)
+            .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+          if (resolved.length > 0) return resolved;
+        }
+      }
+    }
+
     const exact = lookup
       .byName(call.name)
       .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
