@@ -2070,7 +2070,14 @@ function extractObjectRestParamBindingsWalk(
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
     if (t === 'function_declaration' || t === 'function_expression' || t === 'arrow_function') {
-      const nameNode = node.childForFieldName('name');
+      // `function_declaration` has a `name` field; `arrow_function` and
+      // `function_expression` do not — get the name from the enclosing
+      // `variable_declarator` instead (e.g. `const f3 = ({ ...rest }) => {}`).
+      const nameNode =
+        node.childForFieldName('name') ??
+        (node.parent?.type === 'variable_declarator'
+          ? node.parent.childForFieldName('name')
+          : null);
       const funcName = nameNode?.text;
       if (funcName) {
         const paramsNode =
