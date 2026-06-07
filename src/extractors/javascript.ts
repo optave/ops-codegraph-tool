@@ -2202,7 +2202,7 @@ function extractObjectRestParamBindingsWalk(
           vt === 'function_expression' ||
           vt === 'generator_function'
         ) {
-          fnName = keyN.type === 'string' ? keyN.text.replace(/['"]/g, '') : keyN.text;
+          fnName = keyN.type === 'string' ? keyN.text.slice(1, -1) : keyN.text;
           paramsNode =
             valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
         }
