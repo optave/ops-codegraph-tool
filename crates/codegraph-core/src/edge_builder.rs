@@ -415,7 +415,21 @@ fn resolve_call_targets<'a>(
                 .unwrap_or_default();
             if !typed.is_empty() { return typed; }
         }
-        // 4.5. Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop']
+        // 4.5. Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
+        // when the receiver is a class name with no typeMap entry. Handles static method calls
+        // like `Validators.IsValidEmail()` where the receiver IS the class.
+        // Matches both "method" and "function" kinds to cover field-initializer synthetic defs.
+        // ORDER: must run before composite pts lookup (4.6) to match WASM call-resolver.ts ordering.
+        if type_lookup.is_none() {
+            let qualified = format!("{}.{}", effective_receiver, call.name);
+            let direct: Vec<&NodeInfo> = ctx.nodes_by_name
+                .get(qualified.as_str())
+                .map(|v| v.iter().filter(|n| n.kind == "method" || n.kind == "function").copied().collect())
+                .unwrap_or_default();
+            if !direct.is_empty() { return direct; }
+        }
+
+        // 4.6. Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop']
         let composite_key = format!("{}.{}", receiver, call.name);
         if let Some(&(pts_target, _)) = type_map.get(composite_key.as_str()) {
             let resolved: Vec<&NodeInfo> = ctx.nodes_by_name
@@ -425,19 +439,6 @@ fn resolve_call_targets<'a>(
                     .copied().collect())
                 .unwrap_or_default();
             if !resolved.is_empty() { return resolved; }
-        }
-
-        // 4.6. Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
-        // when the receiver is a class name with no typeMap entry. Handles static method calls
-        // like `Validators.IsValidEmail()` where the receiver IS the class.
-        // Matches both "method" and "function" kinds to cover field-initializer synthetic defs.
-        if type_lookup.is_none() {
-            let qualified = format!("{}.{}", effective_receiver, call.name);
-            let direct: Vec<&NodeInfo> = ctx.nodes_by_name
-                .get(qualified.as_str())
-                .map(|v| v.iter().filter(|n| n.kind == "method" || n.kind == "function").copied().collect())
-                .unwrap_or_default();
-            if !direct.is_empty() { return direct; }
         }
     }
 
