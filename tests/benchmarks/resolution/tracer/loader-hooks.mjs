@@ -106,7 +106,7 @@ function instrumentSource(source, filename) {
 
     // Insert enter/try for new function declarations
     if (funcName && trimmed.endsWith('{')) {
-      const inner = indent + '  ';
+      const inner = `${indent}  `;
       const escaped = funcName.replace(/'/g, "\\'");
       output.push(`${inner}globalThis.__tracer?.enter('${escaped}', '${file}');`);
       output.push(`${inner}try {`);

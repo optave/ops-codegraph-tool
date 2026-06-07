@@ -1,0 +1,13 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Object destructuring rest parameter dispatch — eerest.e4() → e4",
+  "edges": [
+    {
+      "source": { "name": "f3", "file": "rest.js" },
+      "target": { "name": "e4", "file": "rest.js" },
+      "kind": "calls",
+      "mode": "pts-obj-rest"
+    }
+  ]
+}
