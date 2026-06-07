@@ -515,6 +515,7 @@ fn emit_js_prototype_method(class_name: &str, method_name: &str, rhs: &Node, sou
     let full_name = format!("{}.{}", class_name, method_name);
     match rhs.kind() {
         "function_expression" | "arrow_function" => {
+            let children = extract_js_parameters(rhs, source);
             symbols.definitions.push(Definition {
                 name: full_name,
                 kind: "method".to_string(),
@@ -523,7 +524,7 @@ fn emit_js_prototype_method(class_name: &str, method_name: &str, rhs: &Node, sou
                 decorators: None,
                 complexity: compute_all_metrics(rhs, source, "javascript"),
                 cfg: build_function_cfg(rhs, "javascript", source),
-                children: None,
+                children: opt_children(children),
             });
         }
         "identifier" => {
@@ -545,6 +546,7 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
         match child.kind() {
             "method_definition" => {
                 let Some(name_node) = child.child_by_field_name("name") else { continue };
+                let children = extract_js_parameters(&child, source);
                 symbols.definitions.push(Definition {
                     name: format!("{}.{}", class_name, node_text(&name_node, source)),
                     kind: "method".to_string(),
@@ -553,7 +555,7 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
                     decorators: None,
                     complexity: compute_all_metrics(&child, source, "javascript"),
                     cfg: build_function_cfg(&child, "javascript", source),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
             "shorthand_property_identifier" => {
@@ -2689,6 +2691,82 @@ mod tests {
         let s = parse_js("Array.prototype.custom = function() {};");
         let def = s.definitions.iter().find(|d| d.name.contains("Array"));
         assert!(def.is_none(), "built-in prototype assignment should be ignored; got: {:?}", def);
+    }
+
+    #[test]
+    fn prototype_direct_method_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.foo = function(x, y) { if (true) { return 1; } return 0; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.foo").expect("C.foo missing");
+        assert!(def.complexity.is_some(), "C.foo should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.foo should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "x"),
+            "C.foo should have parameter 'x'; got: {:?}", children
+        );
+        assert!(
+            children.iter().any(|c| c.name == "y"),
+            "C.foo should have parameter 'y'; got: {:?}", children
+        );
+    }
+
+    #[test]
+    fn prototype_direct_arrow_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.bar = (a, b) => a > 0 ? a : b;",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.bar").expect("C.bar missing");
+        assert!(def.complexity.is_some(), "C.bar arrow should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.bar arrow should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "a"),
+            "C.bar should have parameter 'a'; got: {:?}", children
+        );
+        assert!(
+            children.iter().any(|c| c.name == "b"),
+            "C.bar should have parameter 'b'; got: {:?}", children
+        );
+    }
+
+    #[test]
+    fn prototype_object_literal_method_definition_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               greet(name) { if (true) { return 'hi'; } return ''; },\n\
+             };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.greet").expect("C.greet missing");
+        assert!(def.complexity.is_some(), "C.greet should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.greet should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "name"),
+            "C.greet should have parameter 'name'; got: {:?}", children
+        );
+    }
+
+    #[test]
+    fn prototype_object_literal_pair_fn_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               bar: function(n) { if (true) { return 1; } return 0; },\n\
+             };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.bar").expect("C.bar missing");
+        assert!(def.complexity.is_some(), "C.bar should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.bar should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "n"),
+            "C.bar should have parameter 'n'; got: {:?}", children
+        );
     }
 
     /// Phase 8.3e: Object.defineProperty seeds composite type_map key.
