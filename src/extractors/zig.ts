@@ -86,7 +86,7 @@ function extractZigParams(funcNode: TreeSitterNode): SubDeclaration[] {
 
   for (let i = 0; i < paramList.childCount; i++) {
     const param = paramList.child(i);
-    if (!param || param.type !== 'parameter') continue;
+    if (param?.type !== 'parameter') continue;
     const nameNode = findChild(param, 'identifier');
     if (nameNode) {
       params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });
@@ -151,7 +151,7 @@ function zigContainerKind(nodeType: string): 'struct' | 'enum' | undefined {
 function tryHandleZigImportDecl(node: TreeSitterNode, name: string, ctx: ExtractorOutput): boolean {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (!child || child.type !== 'builtin_function') continue;
+    if (child?.type !== 'builtin_function') continue;
     const source = extractZigImportSource(child);
     if (source) {
       ctx.imports.push({ source, names: [name], line: node.startPosition.row + 1 });
@@ -175,7 +175,7 @@ function extractZigContainerFields(container: TreeSitterNode): SubDeclaration[] 
   const fields: SubDeclaration[] = [];
   for (let i = 0; i < container.childCount; i++) {
     const child = container.child(i);
-    if (!child || child.type !== 'container_field') continue;
+    if (child?.type !== 'container_field') continue;
     const nameNode = child.childForFieldName('name') || findChild(child, 'identifier');
     if (nameNode) {
       fields.push({ name: nameNode.text, kind: 'property', line: child.startPosition.row + 1 });
@@ -191,7 +191,7 @@ function extractZigContainerMethods(
 ): void {
   for (let i = 0; i < container.childCount; i++) {
     const child = container.child(i);
-    if (!child || child.type !== 'function_declaration') continue;
+    if (child?.type !== 'function_declaration') continue;
     const nameNode = child.childForFieldName('name');
     if (nameNode) {
       ctx.definitions.push({

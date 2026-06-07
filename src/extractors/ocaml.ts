@@ -168,7 +168,7 @@ function handleOCamlTypeDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // type_definition contains one or more type_bindings
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (!child || child.type !== 'type_binding') continue;
+    if (child?.type !== 'type_binding') continue;
 
     const nameNode =
       child.childForFieldName('name') ||

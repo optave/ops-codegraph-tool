@@ -25,5 +25,13 @@
       "semicolons": "always",
       "trailingCommas": "all"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["tests/benchmarks/resolution/fixtures/**"],
+      "linter": {
+        "enabled": false
+      }
+    }
+  ]
 }
