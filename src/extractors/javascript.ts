@@ -1751,7 +1751,11 @@ function handleVarDeclaratorTypeMap(
   // polluting the global index with bare property names like 'init', 'run', or 'render'.
   // Enables accessor this-dispatch: when typeMap['getter:this'] = 'obj',
   // resolving this.baz() inside getter → typeMap['obj.baz'] → 'obj.baz' → lookup.byName('obj.baz').
-  if (valueN.type === 'object') {
+  //
+  // Scope guard: mirrors Rust handle_var_decl's find_parent_of_types check — skip object literals
+  // inside function bodies so function-scoped `const localObj = { fn: ... }` never seeds
+  // the typeMap (which would shadow a module-level `const obj` with the same property names).
+  if (valueN.type === 'object' && !hasFunctionScopeAncestor(node)) {
     for (let i = 0; i < valueN.childCount; i++) {
       const child = valueN.child(i);
       if (!child) continue;

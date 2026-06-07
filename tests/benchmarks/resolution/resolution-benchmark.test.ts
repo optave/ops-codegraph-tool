@@ -119,7 +119,7 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   (5 new edges in define-property.js) + Phase 8.5 adds class-inheritance and prototype edges
   //   (inheritance.js, prototypes.js, prototypes2.js), lifting total expected to 30. Phase 8.3f
   //   adds bind/call/apply resolution (3 new edges in bind-call-apply.js), total expected now 33.
-  //   Phase 8.3g adds Object.defineProperty accessor this-dispatch (#1335): getter→baz in
+  //   Phase 8.3f adds Object.defineProperty accessor this-dispatch (#1335): getter→baz in
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
   //   total expected now 35.
   javascript: { precision: 1.0, recall: 0.9 },
