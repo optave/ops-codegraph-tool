@@ -2691,7 +2691,6 @@ mod tests {
         assert!(def.is_none(), "built-in prototype assignment should be ignored; got: {:?}", def);
     }
 
-
     /// Phase 8.3e: Object.defineProperty seeds composite type_map key.
     #[test]
     fn type_map_from_define_property() {
