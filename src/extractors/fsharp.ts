@@ -303,7 +303,7 @@ function handleValueDefinition(
   currentModule: string | null,
 ): void {
   const first = node.child(0);
-  if (!first || first.type !== 'val') return;
+  if (first?.type !== 'val') return;
 
   const declLeft = findChild(node, 'value_declaration_left');
   if (!declLeft) return;

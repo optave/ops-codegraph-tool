@@ -7,14 +7,14 @@ function f2() {
 }
 
 // Object.defineProperty(obj, "key", { value: fn }) → obj.key() resolves to fn
-function defProp() {
+function _defProp() {
   const obj = {};
   Object.defineProperty(obj, 'f', { value: f1 });
   obj.f();
 }
 
 // Object.defineProperties(obj, { key: { value: fn } }) → obj.key() resolves to fn
-function defProps() {
+function _defProps() {
   const obj = {};
   Object.defineProperties(obj, {
     f1: { value: f1 },
@@ -25,7 +25,7 @@ function defProps() {
 }
 
 // Object.create({ key: fn }) → obj.key() resolves via prototype
-function create() {
+function _create() {
   const obj = Object.create({ f1, f2 });
   obj.f1();
   obj.f2();

@@ -102,7 +102,7 @@ function collectKotlinEnumEntries(node: TreeSitterNode): SubDeclaration[] {
   if (!body) return entries;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'enum_entry') continue;
+    if (child?.type !== 'enum_entry') continue;
     const entryName = findChild(child, 'simple_identifier');
     if (entryName) {
       entries.push({
@@ -122,7 +122,7 @@ function collectKotlinProperties(node: TreeSitterNode): SubDeclaration[] {
   if (!body) return props;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'property_declaration') continue;
+    if (child?.type !== 'property_declaration') continue;
     const varDecl = findChild(child, 'variable_declaration');
     if (!varDecl) continue;
     const id = findChild(varDecl, 'simple_identifier');
@@ -144,7 +144,7 @@ function collectKotlinMethods(node: TreeSitterNode, className: string, ctx: Extr
   if (!body) return;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'function_declaration') continue;
+    if (child?.type !== 'function_declaration') continue;
     const methName = findChild(child, 'simple_identifier');
     if (methName) {
       const params = extractKotlinParameters(child);
@@ -168,7 +168,7 @@ function collectKotlinInheritance(
 ): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (!child || child.type !== 'delegation_specifier') continue;
+    if (child?.type !== 'delegation_specifier') continue;
 
     // constructor_invocation > user_type > type_identifier (extends)
     const ctorInvocation = findChild(child, 'constructor_invocation');
@@ -294,7 +294,7 @@ function extractKotlinParameters(funcNode: TreeSitterNode): SubDeclaration[] {
   if (!paramList) return params;
   for (let i = 0; i < paramList.childCount; i++) {
     const param = paramList.child(i);
-    if (!param || param.type !== 'parameter') continue;
+    if (param?.type !== 'parameter') continue;
     const nameNode = findChild(param, 'simple_identifier');
     if (nameNode) {
       params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });

@@ -407,13 +407,36 @@ fn resolve_call_targets<'a>(
         };
         let type_lookup = type_map.get(effective_receiver)
             .or_else(|| type_map.get(receiver.as_str()));
-        if let Some(&(type_name, _conf)) = type_lookup {
+        // Inline new-expression receiver: `(new Foo).bar()` — extract the constructor name
+        // when no typeMap entry exists for the complex receiver expression.
+        // Mirrors the regex `/^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/` in call-resolver.ts.
+        let inline_new_type = if type_lookup.is_none() {
+            extract_inline_new_type(receiver)
+        } else {
+            None
+        };
+        // Use typeMap-resolved type or inline-new-extracted type, whichever is available.
+        let resolved_type = type_lookup.map(|&(t, _)| t).or(inline_new_type.as_deref());
+        if let Some(type_name) = resolved_type {
             let qualified = format!("{}.{}", type_name, call.name);
             let typed: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
                 .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
                 .unwrap_or_default();
             if !typed.is_empty() { return typed; }
+            // Prototype alias: `Foo.prototype.bar = identifier` seeds typeMap['Foo.bar'] = identifier.
+            // After the direct method lookup misses (no definition emitted for this method),
+            // check if the typeMap holds an alias to a standalone function.
+            // Mirrors the protoAlias fallback in resolveByMethodOrGlobal in call-resolver.ts.
+            if let Some(&(proto_target, _)) = type_map.get(qualified.as_str()) {
+                let resolved: Vec<&NodeInfo> = ctx.nodes_by_name
+                    .get(proto_target)
+                    .map(|v| v.iter()
+                        .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                        .copied().collect())
+                    .unwrap_or_default();
+                if !resolved.is_empty() { return resolved; }
+            }
         }
         // 4.5. Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
         // when the receiver is a class name with no typeMap entry. Handles static method calls
@@ -501,6 +524,31 @@ fn resolve_call_targets<'a>(
     }
 
     Vec::new()
+}
+
+/// Extract the constructor name from an inline `new` receiver expression.
+///
+/// Mirrors the regex `/^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/` used in call-resolver.ts.
+/// Handles `(new Foo)` and `(new Foo('arg'))` receivers that arise when the call site
+/// is `(new Foo).method()` without a named variable binding.
+///
+/// Only extracts names that start with an uppercase letter, `_`, or `$` to avoid
+/// false positives on plain lowercase constructor calls (rare but present in legacy code).
+fn extract_inline_new_type(receiver: &str) -> Option<String> {
+    let s = receiver.strip_prefix('(').unwrap_or(receiver).trim_start();
+    let s = s.strip_prefix("new")?;
+    if !s.starts_with(|c: char| c.is_whitespace()) { return None; }
+    let s = s.trim_start();
+    let end = s.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+        .unwrap_or(s.len());
+    let name = &s[..end];
+    if name.is_empty() { return None; }
+    let first = name.chars().next()?;
+    if first.is_uppercase() || first == '_' || first == '$' {
+        Some(name.to_string())
+    } else {
+        None
+    }
 }
 
 /// Sort targets by confidence descending.
@@ -1382,5 +1430,54 @@ mod call_edge_tests {
         let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
         assert!(receiver_edge.is_some(), "expected receiver edge for direct class-name receiver");
         assert_eq!(receiver_edge.unwrap().target_id, 2);
+    }
+}
+
+#[cfg(test)]
+mod inline_new_type_tests {
+    use super::extract_inline_new_type;
+
+    #[test]
+    fn parens_new_uppercase() {
+        assert_eq!(extract_inline_new_type("(new Foo)"), Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn parens_new_with_args() {
+        // (new Foo('arg')) — parens and constructor args
+        assert_eq!(extract_inline_new_type("(new Foo('arg'))"), Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn no_parens_new_uppercase() {
+        assert_eq!(extract_inline_new_type("new Bar"), Some("Bar".to_string()));
+    }
+
+    #[test]
+    fn underscore_prefix_accepted() {
+        assert_eq!(extract_inline_new_type("new _Factory"), Some("_Factory".to_string()));
+    }
+
+    #[test]
+    fn dollar_prefix_accepted() {
+        assert_eq!(extract_inline_new_type("new $Service"), Some("$Service".to_string()));
+    }
+
+    #[test]
+    fn lowercase_constructor_rejected() {
+        // `new foo()` — lowercase, should return None to avoid false positives
+        assert_eq!(extract_inline_new_type("new foo"), None);
+    }
+
+    #[test]
+    fn not_a_new_expression() {
+        // plain receiver name — no `new` keyword
+        assert_eq!(extract_inline_new_type("myVar"), None);
+    }
+
+    #[test]
+    fn new_without_whitespace_is_not_new_keyword() {
+        // `newFoo` — not a `new` keyword, just an identifier
+        assert_eq!(extract_inline_new_type("newFoo"), None);
     }
 }
