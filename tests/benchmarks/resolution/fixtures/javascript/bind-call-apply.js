@@ -1,7 +1,7 @@
 // Patterns for Function.prototype.bind / .call / .apply resolution.
 
 function greet(greeting) {
-  return greeting + ' ' + this.name;
+  return `${greeting} ${this.name}`;
 }
 
 var user = { name: 'Alice' };

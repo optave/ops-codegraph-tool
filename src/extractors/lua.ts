@@ -90,7 +90,7 @@ function extractLuaParams(funcNode: TreeSitterNode): SubDeclaration[] {
 
   for (let i = 0; i < paramList.childCount; i++) {
     const param = paramList.child(i);
-    if (!param || param.type !== 'identifier') continue;
+    if (param?.type !== 'identifier') continue;
     params.push({ name: param.text, kind: 'parameter', line: param.startPosition.row + 1 });
   }
   return params;

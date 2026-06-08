@@ -19,7 +19,16 @@
  * that build-edges.ts already builds per file is the cross-module link — if
  * a variable aliases an imported name, resolveCallTargets follows it).
  */
-import type { FnRefBinding, ParamBinding } from '../../../types.js';
+import type {
+  ArrayCallbackBinding,
+  ArrayElemBinding,
+  FnRefBinding,
+  ForOfBinding,
+  ObjectPropBinding,
+  ObjectRestParamBinding,
+  ParamBinding,
+  SpreadArgBinding,
+} from '../../../types.js';
 
 export type PointsToMap = Map<string, Set<string>>;
 
@@ -41,11 +50,15 @@ const MAX_SOLVER_ITERATIONS = 50;
  * look up — either a locally-defined function name (found via byNameAndFile) or
  * an imported name (found via importedNames → byNameAndFile in the source file).
  *
- * @param fnRefBindings    - identifier/member-expr bindings from the extractor
- * @param definitionNames  - locally-defined callable names in this file
- * @param importedNames    - names imported into this file (name → resolved file)
- * @param paramBindings    - call-site arg→param bindings (Phase 8.3c)
- * @param definitionParams - per-function ordered parameter names (Phase 8.3c)
+ * @param fnRefBindings         - identifier/member-expr bindings from the extractor
+ * @param definitionNames       - locally-defined callable names in this file
+ * @param importedNames         - names imported into this file (name → resolved file)
+ * @param paramBindings         - call-site arg→param bindings (Phase 8.3c)
+ * @param definitionParams      - per-function ordered parameter names (Phase 8.3c)
+ * @param arrayElemBindings     - array literal element bindings (Phase 8.3e)
+ * @param spreadArgBindings     - spread-argument bindings (Phase 8.3e)
+ * @param forOfBindings         - for-of iteration variable bindings (Phase 8.3e)
+ * @param arrayCallbackBindings - Array.from/callback bindings (Phase 8.3e)
  */
 export function buildPointsToMap(
   fnRefBindings: readonly FnRefBinding[],
@@ -53,6 +66,12 @@ export function buildPointsToMap(
   importedNames: ReadonlyMap<string, string>,
   paramBindings?: readonly ParamBinding[],
   definitionParams?: ReadonlyMap<string, readonly string[]>,
+  arrayElemBindings?: readonly ArrayElemBinding[],
+  spreadArgBindings?: readonly SpreadArgBinding[],
+  forOfBindings?: readonly ForOfBinding[],
+  arrayCallbackBindings?: readonly ArrayCallbackBinding[],
+  objectRestParamBindings?: readonly ObjectRestParamBinding[],
+  objectPropBindings?: readonly ObjectPropBinding[],
 ): PointsToMap {
   const pts: PointsToMap = new Map();
 
@@ -97,6 +116,86 @@ export function buildPointsToMap(
       if (!params || argIndex >= params.length) continue;
       const paramName = params[argIndex];
       if (paramName) constraints.push({ lhs: `${callee}::${paramName}`, rhsKey: argName });
+    }
+  }
+
+  // Phase 8.3e: array-element bindings — seed concrete elements and wildcard.
+  // `arr[0]` etc. are seeded from literal arrays; `arr[*]` collects all elements.
+  if (arrayElemBindings && arrayElemBindings.length > 0) {
+    for (const { arrayName, index, elemName } of arrayElemBindings) {
+      const elemKey = `${arrayName}[${index}]`;
+      const wildcardKey = `${arrayName}[*]`;
+      // Seed the per-index entry if the elemName is a concrete function.
+      if (!pts.has(elemKey)) pts.set(elemKey, new Set());
+      pts.get(elemKey)!.add(elemName);
+      // Wildcard: array[*] collects all element targets for imprecise spread/for-of.
+      constraints.push({ lhs: wildcardKey, rhsKey: elemKey });
+    }
+  }
+
+  // Phase 8.3e: spread-argument constraints.
+  // f(...arr) → pts[f::param_i] ⊇ pts[arr[i]] for each known element.
+  if (spreadArgBindings && spreadArgBindings.length > 0 && definitionParams) {
+    // Build a per-array index count from arrayElemBindings for precise per-index constraints.
+    const arrayMaxIndex = new Map<string, number>();
+    for (const { arrayName, index } of arrayElemBindings ?? []) {
+      const cur = arrayMaxIndex.get(arrayName) ?? -1;
+      if (index > cur) arrayMaxIndex.set(arrayName, index);
+    }
+
+    for (const { callee, arrayName, startIndex } of spreadArgBindings) {
+      const params = definitionParams.get(callee);
+      if (!params) continue;
+      const maxIdx = arrayMaxIndex.get(arrayName) ?? -1;
+      if (maxIdx >= 0) {
+        // Precise: per-element constraints.
+        for (let i = 0; i <= maxIdx; i++) {
+          const paramIdx = startIndex + i;
+          if (paramIdx >= params.length) break;
+          constraints.push({ lhs: `${callee}::${params[paramIdx]}`, rhsKey: `${arrayName}[${i}]` });
+        }
+      } else {
+        // Unknown array size: all params at/after startIndex get the wildcard.
+        for (let j = startIndex; j < params.length; j++) {
+          constraints.push({ lhs: `${callee}::${params[j]}`, rhsKey: `${arrayName}[*]` });
+        }
+      }
+    }
+  }
+
+  // Phase 8.3e: for-of iteration constraints.
+  // `for (const x of arr)` inside `outer` → pts[outer::x] ⊇ pts[arr[*]]
+  if (forOfBindings) {
+    for (const { varName, sourceName, enclosingFunc } of forOfBindings) {
+      constraints.push({ lhs: `${enclosingFunc}::${varName}`, rhsKey: `${sourceName}[*]` });
+    }
+  }
+
+  // Phase 8.3e: Array.from / callback constraints.
+  // Array.from(source, cb) → pts[cb::param0] ⊇ pts[source[*]]
+  if (arrayCallbackBindings && definitionParams) {
+    for (const { sourceName, calleeName } of arrayCallbackBindings) {
+      const params = definitionParams.get(calleeName);
+      if (!params || params.length === 0) continue;
+      constraints.push({ lhs: `${calleeName}::${params[0]}`, rhsKey: `${sourceName}[*]` });
+    }
+  }
+
+  // Phase 8.3f: object-rest parameter dispatch.
+  // `function f({ ...rest }) {}` + `f(obj)` + `const obj = { prop: fn }` →
+  // seed pts["rest.prop"] = {"fn"} so that `rest.prop()` resolves to `fn`.
+  if (objectRestParamBindings && objectPropBindings && paramBindings) {
+    for (const { callee, restName, argIndex } of objectRestParamBindings) {
+      for (const { callee: pbCallee, argIndex: pbArgIdx, argName } of paramBindings) {
+        if (pbCallee !== callee || pbArgIdx !== argIndex) continue;
+        for (const { objectName, propName, valueName } of objectPropBindings) {
+          if (objectName !== argName) continue;
+          if (!definitionNames.has(valueName) && !importedNames.has(valueName)) continue;
+          const key = `${restName}.${propName}`;
+          if (!pts.has(key)) pts.set(key, new Set());
+          pts.get(key)!.add(valueName);
+        }
+      }
     }
   }
 

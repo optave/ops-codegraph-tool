@@ -29,6 +29,8 @@ impl SymbolExtractor for JsExtractor {
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_type_map);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_return_type_map);
+        // Pre-ES6 prototype methods: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_prototype_methods);
         // call_assignments runs after type_map is populated (needs receiver types)
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_call_assignments);
         symbols
@@ -229,17 +231,27 @@ fn seed_define_property_entries(node: &Node, source: &[u8], symbols: &mut FileSy
     }
 
     if method == "defineProperty" {
-        // Object.defineProperty(obj, "key", { value: fn })
+        // Object.defineProperty(obj, "key", { value: fn }) or { get: getter }
         if args.len() < 3 { return; }
         if args[0].kind() != "identifier" { return; }
         let obj_name = node_text(&args[0], source);
         let Some(key) = extract_string_fragment(&args[1], source) else { return };
-        let Some(target) = find_descriptor_value(&args[2], source) else { return };
-        symbols.type_map.push(TypeMapEntry {
-            name: format!("{}.{}", obj_name, key),
-            type_name: target.to_string(),
-            confidence: 0.85,
-        });
+        // Phase 8.3e: { value: fn } → obj.key pts to fn
+        if let Some(target) = find_descriptor_value(&args[2], source) {
+            symbols.type_map.push(TypeMapEntry {
+                name: format!("{}.{}", obj_name, key),
+                type_name: target.to_string(),
+                confidence: 0.85,
+            });
+        }
+        // Phase 8.3f: { get: getter } and/or { set: setter } → this inside each accessor === obj
+        for accessor in find_descriptor_accessors(&args[2], source) {
+            symbols.type_map.push(TypeMapEntry {
+                name: format!("{}:this", accessor),
+                type_name: obj_name.to_string(),
+                confidence: 0.85,
+            });
+        }
     } else {
         // Object.defineProperties(obj, { "key": { value: fn }, ... })
         if args.len() < 2 { return; }
@@ -347,6 +359,124 @@ fn find_descriptor_value<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a st
     None
 }
 
+/// Phase 8.3f: return the identifier texts of all `get` and `set` accessors in a property
+/// descriptor. `{ get: getter, set: setter }` → ["getter", "setter"].
+/// Returns all accessors so that each one gets a `callerName:this = obj` typeMap entry.
+fn find_descriptor_accessors<'a>(node: &Node<'a>, source: &'a [u8]) -> Vec<&'a str> {
+    if node.kind() != "object" { return Vec::new(); }
+    let mut result = Vec::new();
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() != "pair" { continue; }
+        let Some(key) = child.child_by_field_name("key") else { continue };
+        let key_text = node_text(&key, source);
+        if key_text != "get" && key_text != "set" { continue; }
+        let Some(val) = child.child_by_field_name("value") else { continue };
+        if val.kind() == "identifier" {
+            result.push(node_text(&val, source));
+        }
+    }
+    result
+}
+
+/// Phase 8.3f: extract function/arrow properties from an object literal as standalone definitions
+/// and seed composite typeMap keys so that `this.method()` inside Object.defineProperty accessors
+/// can resolve them.
+///
+/// Definitions are emitted under qualified names (`obj.baz`) to avoid polluting the global
+/// definition index with common property names like `init`, `run`, or `render`. The typeMap
+/// value for function/arrow properties also uses the qualified name so the resolver calls
+/// `lookup.byName("obj.baz")` rather than `lookup.byName("baz")`.
+///
+/// `const obj = { baz: () => {} }` → Definition { name: "obj.baz", kind: "function" }
+///                                  + TypeMapEntry { name: "obj.baz", type_name: "obj.baz" }
+/// `const obj = { baz }` (shorthand) → TypeMapEntry { name: "obj.baz", type_name: "baz" }
+fn extract_object_literal_functions(
+    obj_node: &Node,
+    source: &[u8],
+    var_name: &str,
+    symbols: &mut FileSymbols,
+) {
+    for i in 0..obj_node.child_count() {
+        let Some(child) = obj_node.child(i) else { continue };
+        match child.kind() {
+            "shorthand_property_identifier" => {
+                let prop_name = node_text(&child, source);
+                symbols.type_map.push(TypeMapEntry {
+                    name: format!("{}.{}", var_name, prop_name),
+                    type_name: prop_name.to_string(),
+                    confidence: 0.85,
+                });
+            }
+            "pair" => {
+                let Some(key_n) = child.child_by_field_name("key") else { continue };
+                let Some(val_n) = child.child_by_field_name("value") else { continue };
+                let key = if key_n.kind() == "string" {
+                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
+                } else {
+                    Some(node_text(&key_n, source).to_string())
+                };
+                let Some(key) = key else { continue };
+                let qualified = format!("{}.{}", var_name, key);
+                match val_n.kind() {
+                    "arrow_function" | "function_expression" | "function" => {
+                        // Use qualified name for the definition so it doesn't collide with
+                        // unrelated top-level functions sharing the same property name.
+                        symbols.definitions.push(Definition {
+                            name: qualified.clone(),
+                            kind: "function".to_string(),
+                            line: start_line(&child),
+                            end_line: Some(end_line(&val_n)),
+                            decorators: None,
+                            complexity: compute_all_metrics(&val_n, source, "javascript"),
+                            cfg: build_function_cfg(&val_n, "javascript", source),
+                            children: None,
+                        });
+                        // Store qualified name as value so resolver looks up the qualified def.
+                        symbols.type_map.push(TypeMapEntry {
+                            name: qualified.clone(),
+                            type_name: qualified,
+                            confidence: 0.85,
+                        });
+                    }
+                    "identifier" => {
+                        let target = node_text(&val_n, source);
+                        symbols.type_map.push(TypeMapEntry {
+                            name: qualified,
+                            type_name: target.to_string(),
+                            confidence: 0.85,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            "method_definition" => {
+                let Some(name_n) = child.child_by_field_name("name") else { continue };
+                let qualified = format!("{}.{}", var_name, node_text(&name_n, source));
+                let body = child.child_by_field_name("body");
+                symbols.definitions.push(Definition {
+                    name: qualified.clone(),
+                    kind: "function".to_string(),
+                    line: start_line(&child),
+                    end_line: Some(end_line(&child)),
+                    decorators: None,
+                    complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
+                    cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
+                    children: None,
+                });
+                // Seed typeMap so the two-step accessor dispatch can find the qualified def.
+                // `const obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
+                symbols.type_map.push(TypeMapEntry {
+                    name: qualified.clone(),
+                    type_name: qualified,
+                    confidence: 0.85,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
 // ── Return-type map extraction (Phase 8.2 parity) ───────────────────────────
 
 /// Walk the AST collecting function/method return types into `symbols.return_type_map`.
@@ -445,6 +575,151 @@ fn push_return_type_entry(symbols: &mut FileSymbols, fn_name: &str, type_name: &
     });
 }
 
+// ── Prototype-method extraction ─────────────────────────────────────────────
+
+/// Walk the AST collecting pre-ES6 prototype assignments.
+///
+/// Mirrors `extractPrototypeMethodsWalk` in `src/extractors/javascript.ts`.
+///
+/// Three patterns are handled:
+///   1. `Foo.prototype.bar = function(){}`  → emits `Foo.bar` as a method definition
+///   2. `Foo.prototype.bar = identifier`    → seeds `typeMap['Foo.bar'] = identifier`
+///   3. `Foo.prototype = { bar: fn, ... }`  → same rules applied per property
+fn match_js_prototype_methods(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    if node.kind() != "expression_statement" { return; }
+    let Some(expr) = node.child(0) else { return };
+    if expr.kind() != "assignment_expression" { return; }
+    let lhs = expr.child_by_field_name("left");
+    let rhs = expr.child_by_field_name("right");
+    if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
+        handle_js_prototype_assignment(&lhs, &rhs, source, symbols);
+    }
+}
+
+fn handle_js_prototype_assignment(lhs: &Node, rhs: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if lhs.kind() != "member_expression" { return; }
+    let Some(lhs_obj) = lhs.child_by_field_name("object") else { return };
+    let Some(lhs_prop) = lhs.child_by_field_name("property") else { return };
+
+    // Pattern 1: `Foo.prototype.bar = rhs`
+    // lhs.object is `Foo.prototype` (member_expression), lhs.property is `bar`
+    if lhs_obj.kind() == "member_expression"
+        && matches!(lhs_prop.kind(), "property_identifier" | "identifier")
+    {
+        let proto_obj = lhs_obj.child_by_field_name("object");
+        let proto_prop = lhs_obj.child_by_field_name("property");
+        if let (Some(proto_obj), Some(proto_prop)) = (proto_obj, proto_prop) {
+            if proto_obj.kind() == "identifier"
+                && node_text(&proto_prop, source) == "prototype"
+                && !is_js_builtin_global(node_text(&proto_obj, source))
+            {
+                emit_js_prototype_method(
+                    node_text(&proto_obj, source),
+                    node_text(&lhs_prop, source),
+                    rhs,
+                    source,
+                    symbols,
+                );
+            }
+        }
+        return;
+    }
+
+    // Pattern 2: `Foo.prototype = { bar: fn, ... }`
+    // lhs.object is `Foo` (identifier), lhs.property is `prototype`, rhs is object literal
+    if lhs_obj.kind() == "identifier"
+        && node_text(&lhs_prop, source) == "prototype"
+        && !is_js_builtin_global(node_text(&lhs_obj, source))
+        && rhs.kind() == "object"
+    {
+        extract_js_prototype_object_literal(node_text(&lhs_obj, source), rhs, source, symbols);
+    }
+}
+
+/// Emit one prototype method definition or typeMap alias for `ClassName.methodName = rhs`.
+///
+/// Mirrors `emitPrototypeMethod` in `src/extractors/javascript.ts`.
+fn emit_js_prototype_method(class_name: &str, method_name: &str, rhs: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let full_name = format!("{}.{}", class_name, method_name);
+    match rhs.kind() {
+        "function_expression" | "arrow_function" => {
+            let children = extract_js_parameters(rhs, source);
+            symbols.definitions.push(Definition {
+                name: full_name,
+                kind: "method".to_string(),
+                line: start_line(rhs),
+                end_line: Some(end_line(rhs)),
+                decorators: None,
+                complexity: compute_all_metrics(rhs, source, "javascript"),
+                cfg: build_function_cfg(rhs, "javascript", source),
+                children: opt_children(children),
+            });
+        }
+        "identifier" => {
+            let rhs_name = node_text(rhs, source);
+            if !is_js_builtin_global(rhs_name) {
+                push_type_map_entry(symbols, full_name, rhs_name.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Iterate over an object literal assigned to `Foo.prototype` and emit definitions/aliases.
+///
+/// Mirrors `extractPrototypeObjectLiteral` in `src/extractors/javascript.ts`.
+fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    for i in 0..obj_node.child_count() {
+        let Some(child) = obj_node.child(i) else { continue };
+        match child.kind() {
+            "method_definition" => {
+                let Some(name_node) = child.child_by_field_name("name") else { continue };
+                let children = extract_js_parameters(&child, source);
+                symbols.definitions.push(Definition {
+                    name: format!("{}.{}", class_name, node_text(&name_node, source)),
+                    kind: "method".to_string(),
+                    line: start_line(&child),
+                    end_line: Some(end_line(&child)),
+                    decorators: None,
+                    complexity: compute_all_metrics(&child, source, "javascript"),
+                    cfg: build_function_cfg(&child, "javascript", source),
+                    children: opt_children(children),
+                });
+            }
+            "shorthand_property_identifier" => {
+                let prop_name = node_text(&child, source);
+                if !is_js_builtin_global(prop_name) {
+                    push_type_map_entry(
+                        symbols,
+                        format!("{}.{}", class_name, prop_name),
+                        prop_name.to_string(),
+                    );
+                }
+            }
+            "pair" => {
+                let key_node = child.child_by_field_name("key");
+                let value_node = child.child_by_field_name("value");
+                if let (Some(key_node), Some(value_node)) = (key_node, value_node) {
+                    let method_name: &str = if key_node.kind() == "string" {
+                        let s = node_text(&key_node, source);
+                        // Strip exactly one matching pair of surrounding quote characters.
+                        // `trim_matches` would also strip embedded quotes; we only want the
+                        // outermost delimiter pair so `"it's"` stays `it's`.
+                        s.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+                            .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                            .unwrap_or(s)
+                    } else {
+                        node_text(&key_node, source)
+                    };
+                    if method_name.is_empty() { continue; }
+                    emit_js_prototype_method(class_name, method_name, &value_node, source, symbols);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 // ── Call-assignment extraction (Phase 8.2 parity) ───────────────────────────
 
 /// Walk the AST recording variable assignments from call expressions into
@@ -501,6 +776,11 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "import_statement" => handle_import_stmt(node, source, symbols),
         "export_statement" => handle_export_stmt(node, source, symbols),
         "expression_statement" => handle_expr_stmt(node, source, symbols),
+        // Synthetic definitions for class field initializers and static blocks.
+        // These give `findCaller` a narrower span with a kind that passes the SQL
+        // call-edge filter (`kind IN ('function','method')`), matching WASM behaviour.
+        "field_definition" | "public_field_definition" => handle_field_def(node, source, symbols),
+        "class_static_block" => handle_static_block(node, source, symbols),
         _ => {}
     }
 }
@@ -582,6 +862,56 @@ fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             children: opt_children(children),
         });
     }
+}
+
+/// Emit a `ClassName.fieldName` synthetic definition for each `class { field = ... }` node.
+/// Only fired when a value node is present (skips bare `x;` declarations), mirroring the WASM
+/// `handleFieldDef` guard.  The synthetic definition has `kind = "method"` so that the SQL
+/// call-edge filter (`kind IN ('function','method')`) accepts edges rooted here.
+fn handle_field_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("property"))
+        .or_else(|| find_child(node, "property_identifier"));
+    let Some(name_node) = name_node else { return };
+    // Skip computed property names (`class C { [expr] = ... }`).
+    // Allow property_identifier (regular names), identifier, private_property_identifier (#foo),
+    // and string (e.g. `"method" = () => {}`) to match the TypeScript path which only denies
+    // computed_property_name.
+    if !matches!(name_node.kind(), "property_identifier" | "identifier" | "private_property_identifier" | "string") {
+        return;
+    }
+    // Skip uninitialised fields (`class C { x; }`) — must have a value node.
+    let Some(_value_node) = node.child_by_field_name("value") else { return };
+    let field_name = node_text(&name_node, source);
+    if field_name.is_empty() { return; }
+    let Some(class_name) = find_parent_class(node, source) else { return };
+    symbols.definitions.push(Definition {
+        name: format!("{}.{}", class_name, field_name),
+        kind: "method".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: None,
+    });
+}
+
+/// Emit a `ClassName.<static>` synthetic definition for each `static { }` block.
+/// Enables `findCaller` to attribute calls inside static initializer blocks to this
+/// synthetic node rather than to the enclosing class node, matching WASM behaviour.
+fn handle_static_block(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(class_name) = find_parent_class(node, source) else { return };
+    symbols.definitions.push(Definition {
+        name: format!("{}.<static>", class_name),
+        kind: "function".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: None,
+    });
 }
 
 fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
@@ -690,6 +1020,13 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 cfg: None,
                 children: None,
             });
+            // Phase 8.3f: extract function/arrow properties from object literals and seed
+            // typeMap composite keys so that this.method() inside Object.defineProperty
+            // accessor functions can resolve them.
+            if value_n.kind() == "object" && name_n.kind() == "identifier" {
+                let var_name = node_text(&name_n, source);
+                extract_object_literal_functions(&value_n, source, var_name, symbols);
+            }
         } else if name_n.kind() == "identifier" && value_n.kind() == "identifier" {
             // Phase 8.3: `const alias = handler` — record for pts analysis.
             // Mirror the JS BUILTIN_GLOBALS guard: skip well-known JS globals so
@@ -2443,6 +2780,182 @@ mod tests {
             compute_call.unwrap().receiver.as_deref(),
             Some("calc"),
             "compute call should have receiver='calc'"
+        );
+    }
+
+    // ── Prototype-method extraction ─────────────────────────────────────────
+
+    #[test]
+    fn prototype_direct_method_emits_definition() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.foo = function() { return 1; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.foo");
+        assert!(def.is_some(), "C.foo definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        let def = def.unwrap();
+        assert_eq!(def.kind, "method");
+        assert!(def.complexity.is_some(), "C.foo should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.foo should have a CFG");
+    }
+
+    #[test]
+    fn prototype_arrow_function_method_emits_definition() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.foo = () => { return 1; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.foo");
+        assert!(def.is_some(), "C.foo definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        let def = def.unwrap();
+        assert_eq!(def.kind, "method");
+        assert!(def.complexity.is_some(), "C.foo (arrow) should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.foo (arrow) should have a CFG");
+    }
+
+    #[test]
+    fn prototype_identifier_alias_seeds_type_map() {
+        let s = parse_js(
+            "let f = () => {};\n\
+             class A {}\n\
+             A.prototype.t = f;",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "A.t");
+        assert!(entry.is_some(), "type_map entry A.t missing; got: {:?}", s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(entry.unwrap().type_name, "f");
+    }
+
+    #[test]
+    fn prototype_object_literal_emits_definitions() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               foo: function() {},\n\
+               bar: function() {},\n\
+             };",
+        );
+        let foo = s.definitions.iter().find(|d| d.name == "C.foo");
+        let bar = s.definitions.iter().find(|d| d.name == "C.bar");
+        assert!(foo.is_some(), "C.foo missing");
+        let foo = foo.unwrap();
+        assert_eq!(foo.kind, "method");
+        assert!(foo.complexity.is_some(), "C.foo should have complexity metrics");
+        assert!(foo.cfg.is_some(), "C.foo should have a CFG");
+        assert!(bar.is_some(), "C.bar missing");
+        let bar = bar.unwrap();
+        assert_eq!(bar.kind, "method");
+        assert!(bar.complexity.is_some(), "C.bar should have complexity metrics");
+        assert!(bar.cfg.is_some(), "C.bar should have a CFG");
+    }
+
+    #[test]
+    fn prototype_object_literal_shorthand_method() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               greet() { return 'hi'; },\n\
+             };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.greet");
+        assert!(def.is_some(), "C.greet definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        let def = def.unwrap();
+        assert_eq!(def.kind, "method");
+        assert!(def.complexity.is_some(), "C.greet should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.greet should have a CFG");
+    }
+
+    #[test]
+    fn prototype_object_literal_shorthand_property_seeds_type_map() {
+        let s = parse_js(
+            "function helper() {}\n\
+             function C() {}\n\
+             C.prototype = { helper };",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "C.helper");
+        assert!(entry.is_some(), "type_map entry C.helper missing; got: {:?}", s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(entry.unwrap().type_name, "helper");
+    }
+
+    #[test]
+    fn prototype_builtin_globals_are_excluded() {
+        let s = parse_js("Array.prototype.custom = function() {};");
+        let def = s.definitions.iter().find(|d| d.name.contains("Array"));
+        assert!(def.is_none(), "built-in prototype assignment should be ignored; got: {:?}", def);
+    }
+
+    #[test]
+    fn prototype_direct_method_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.foo = function(x, y) { if (true) { return 1; } return 0; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.foo").expect("C.foo missing");
+        assert!(def.complexity.is_some(), "C.foo should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.foo should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "x"),
+            "C.foo should have parameter 'x'; got: {:?}", children
+        );
+        assert!(
+            children.iter().any(|c| c.name == "y"),
+            "C.foo should have parameter 'y'; got: {:?}", children
+        );
+    }
+
+    #[test]
+    fn prototype_direct_arrow_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype.bar = (a, b) => a > 0 ? a : b;",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.bar").expect("C.bar missing");
+        assert!(def.complexity.is_some(), "C.bar arrow should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.bar arrow should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "a"),
+            "C.bar should have parameter 'a'; got: {:?}", children
+        );
+        assert!(
+            children.iter().any(|c| c.name == "b"),
+            "C.bar should have parameter 'b'; got: {:?}", children
+        );
+    }
+
+    #[test]
+    fn prototype_object_literal_method_definition_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               greet(name) { if (true) { return 'hi'; } return ''; },\n\
+             };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.greet").expect("C.greet missing");
+        assert!(def.complexity.is_some(), "C.greet should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.greet should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "name"),
+            "C.greet should have parameter 'name'; got: {:?}", children
+        );
+    }
+
+    #[test]
+    fn prototype_object_literal_pair_fn_has_complexity_cfg_and_children() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               bar: function(n) { if (true) { return 1; } return 0; },\n\
+             };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.bar").expect("C.bar missing");
+        assert!(def.complexity.is_some(), "C.bar should have complexity metrics");
+        assert!(def.cfg.is_some(), "C.bar should have CFG data");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "n"),
+            "C.bar should have parameter 'n'; got: {:?}", children
         );
     }
 
