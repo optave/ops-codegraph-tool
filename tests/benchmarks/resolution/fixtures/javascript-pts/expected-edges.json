@@ -1,5 +1,5 @@
 {
-  "$schema": "../expected-edges.schema.json",
+  "$schema": "../../expected-edges.schema.json",
   "language": "javascript",
   "description": "Hand-authored: array iteration patterns (for-of, Set, Array.from, spread) — requires points-to resolution",
   "edges": [
@@ -62,6 +62,18 @@
       "target": { "name": "fn2", "file": "more1.js" },
       "kind": "calls",
       "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "runFrom", "file": "more1.js" },
+      "target": { "name": "mapCallback", "file": "more1.js" },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": { "name": "runSpread", "file": "more1.js" },
+      "target": { "name": "consumer1", "file": "more1.js" },
+      "kind": "calls",
+      "mode": "static"
     }
   ]
 }

@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: for-in",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/for-in.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "for-in.js"
+      },
+      "target": {
+        "name": "a",
+        "file": "for-in.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "for-in.js"
+      },
+      "target": {
+        "name": "b",
+        "file": "for-in.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "$schema": "../../expected-edges.schema.json",
+  "$schema": "../../../expected-edges.schema.json",
   "language": "javascript",
   "description": "Jelly micro-test: classes",
   "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/classes.js",

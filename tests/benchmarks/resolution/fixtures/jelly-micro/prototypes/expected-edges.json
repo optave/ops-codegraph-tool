@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: prototypes",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/prototypes.js",
+  "edges": [
+    {
+      "source": {
+        "name": "C",
+        "file": "prototypes.js"
+      },
+      "target": {
+        "name": "foo",
+        "file": "prototypes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
