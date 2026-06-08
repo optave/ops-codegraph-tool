@@ -1,4 +1,4 @@
-// Jelly micro-test: more1 — array iteration patterns (for-of, Set, Array.from)
+// Hand-authored: array iteration patterns (for-of, Set, Array.from)
 
 function fn1() {}
 function fn2() {}
