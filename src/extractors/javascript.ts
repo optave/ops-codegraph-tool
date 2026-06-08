@@ -734,6 +734,7 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'class_declaration':
     case 'abstract_class_declaration':
+    case 'class':
       handleClassDecl(node, ctx);
       break;
     case 'method_definition':

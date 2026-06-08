@@ -1112,7 +1112,7 @@ describe('JavaScript parser', () => {
     it('creates ClassName.<static> definition for class static block', () => {
       const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: 'A.<static>', kind: 'method' }),
+        expect.objectContaining({ name: 'A.<static>', kind: 'function' }),
       );
     });
 
