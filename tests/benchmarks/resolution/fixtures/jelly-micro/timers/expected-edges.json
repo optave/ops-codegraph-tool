@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: timers",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/timers.js",
+  "edges": []
+}

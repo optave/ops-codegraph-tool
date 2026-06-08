@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: require-extensions",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/require-extensions.js",
+  "edges": []
+}
