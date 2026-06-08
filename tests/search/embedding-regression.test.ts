@@ -102,7 +102,7 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     } catch (err: unknown) {
       // Only swallow EBUSY / EPERM — Windows WAL locks that outlast the retry budget.
-      // Any other error (permission denied, quota, path corruption) surfaces normally.
+      // Any other error (quota, path corruption, unexpected OS error) surfaces normally.
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'EBUSY' && code !== 'EPERM') throw err;
     }
