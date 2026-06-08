@@ -113,6 +113,18 @@ export function resolveByMethodOrGlobal(
       }
     }
 
+    // Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
+    // when the receiver is a class name with no typeMap entry. Handles static method calls
+    // like `C6.staticMethod()` or `D.d()` where the receiver IS the class.
+    // Matches both 'method' and 'function' kinds to cover field-initializer synthetic defs.
+    if (!typeName) {
+      const qualifiedName = `${effectiveReceiver}.${call.name}`;
+      const direct = lookup
+        .byName(qualifiedName)
+        .filter((n) => n.kind === 'method' || n.kind === 'function');
+      if (direct.length > 0) return direct;
+    }
+
     // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
     // When a call site references `obj.prop` as a callback, resolve directly to the target fn.
     const compositeEntry = typeMap.get(`${call.receiver}.${call.name}`);
