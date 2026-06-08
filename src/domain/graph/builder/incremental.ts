@@ -502,6 +502,34 @@ function buildCallEdges(
             ]),
           )
         : new Map();
+
+  // Phase 8.3f: seed typeMap[callee::restName] = { type: argName } from
+  // objectRestParamBindings × paramBindings, mirroring buildObjectRestParamPostPass.
+  // Scoped keys prevent same-name rest-param collisions when two functions in
+  // the same file both use `...rest` (#1358). The unscoped key is also seeded
+  // when only one callee uses a given rest name, preserving resolution when
+  // callerName is null (findCaller couldn't identify the enclosing function).
+  if (symbols.objectRestParamBindings?.length && symbols.paramBindings?.length) {
+    const restNameCallees = new Map<string, Set<string>>();
+    for (const orpb of symbols.objectRestParamBindings) {
+      if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
+      restNameCallees.get(orpb.restName)!.add(orpb.callee);
+    }
+    for (const orpb of symbols.objectRestParamBindings) {
+      for (const pb of symbols.paramBindings) {
+        if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
+          const scopedKey = `${orpb.callee}::${orpb.restName}`;
+          if (!typeMap.has(scopedKey)) {
+            typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
+            if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
+              typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+            }
+          }
+        }
+      }
+    }
+  }
+
   const seenCallEdges = new Set<string>();
   const lookup = makeIncrementalLookup(db, stmts);
   let edgesAdded = 0;
