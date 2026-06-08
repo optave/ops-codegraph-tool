@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: templateliterals",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/templateliterals.js",
+  "edges": [
+    {
+      "source": {
+        "name": "fun",
+        "file": "templateliterals.js"
+      },
+      "target": {
+        "name": "<anon@4:12>",
+        "file": "templateliterals.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "fun",
+        "file": "templateliterals.js"
+      },
+      "target": {
+        "name": "x",
+        "file": "templateliterals.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "fun",
+        "file": "templateliterals.js"
+      },
+      "target": {
+        "name": "x",
+        "file": "templateliterals.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

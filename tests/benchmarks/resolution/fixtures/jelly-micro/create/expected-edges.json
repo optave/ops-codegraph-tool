@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: create",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/create.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "create.js"
+      },
+      "target": {
+        "name": "<anon@6:17>",
+        "file": "create.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "create.js"
+      },
+      "target": {
+        "name": "<anon@2:17>",
+        "file": "create.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

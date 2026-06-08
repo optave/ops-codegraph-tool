@@ -1,0 +1,344 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: promises",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/promises.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<anon@32:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@12:25>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@32:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@63:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@12:25>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@63:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@40:8>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@17:24>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@40:8>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@22:23>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@67:8>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@17:24>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@67:8>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@22:23>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@81:14>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@17:24>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@81:14>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@22:23>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@94:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@93:17>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@106:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@102:16>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@112:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@47:15>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@37:16>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@47:15>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@43:16>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@87:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@12:25>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@87:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@84:16>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@87:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@73:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@70:16>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@73:13>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@126:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@134:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@121:12>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@139:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@139:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@121:12>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@145:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@153:5>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@2:13>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@58:14>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@17:24>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@58:14>",
+        "file": "promises.js"
+      },
+      "target": {
+        "name": "<anon@22:23>",
+        "file": "promises.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
