@@ -131,6 +131,7 @@ export function loadNative(): NativeAddon | null {
   if (pkg) {
     try {
       _cached = _require(pkg) as NativeAddon;
+      debug(`loadNative: loaded npm package: ${pkg}`);
       return _cached;
     } catch (err) {
       _loadError = err as Error;
