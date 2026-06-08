@@ -72,10 +72,22 @@ export function resolveByMethodOrGlobal(
     const effectiveReceiver = call.receiver.startsWith('this.')
       ? call.receiver.slice('this.'.length)
       : call.receiver;
-    const typeEntry =
+    // For this.prop receivers, also try the class-scoped key (ClassName.prop) seeded by
+    // handlePropWriteTypeMap — prevents false edges when multiple classes define the same
+    // property name (issue #1323).
+    let typeEntry =
       typeMap.get(effectiveReceiver) ??
       typeMap.get(call.receiver) ??
+      // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) to avoid
+      // same-name rest-binding collision across functions in the same file (#1358).
       (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
+    if (!typeEntry && call.receiver.startsWith('this.') && callerName) {
+      const dotIdx = callerName.lastIndexOf('.');
+      if (dotIdx > -1) {
+        const callerClass = callerName.slice(0, dotIdx);
+        typeEntry = typeMap.get(`${callerClass}.${effectiveReceiver}`);
+      }
+    }
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry

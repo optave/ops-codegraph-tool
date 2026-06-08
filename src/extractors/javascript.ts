@@ -1715,23 +1715,41 @@ function extractTypeMapWalk(
   callAssignments?: CallAssignment[],
   fnRefBindings?: FnRefBinding[],
 ): void {
-  function walk(node: TreeSitterNode, depth: number): void {
+  function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
+    if (t === 'class_declaration' || t === 'abstract_class_declaration') {
+      const nameNode = node.childForFieldName('name');
+      const className = nameNode?.text ?? null;
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, className);
+      }
+      return;
+    }
+    // Class expressions (e.g. `const Foo = class Bar { ... }`): the expression-internal
+    // name (`Bar`) is never visible to the resolver, which derives callerClass from the
+    // binding name (`Foo`). Walking with null preserves the pre-fix `this.prop` fallback
+    // so the second lookup in resolveByMethodOrGlobal still finds the entry.
+    if (t === 'class') {
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
+    }
     if (t === 'variable_declarator') {
       handleVarDeclaratorTypeMap(node, typeMap, returnTypeMap, callAssignments, fnRefBindings);
     } else if (t === 'required_parameter' || t === 'optional_parameter') {
       handleParamTypeMap(node, typeMap);
     } else if (t === 'assignment_expression') {
-      handlePropWriteTypeMap(node, typeMap);
+      handlePropWriteTypeMap(node, typeMap, currentClass);
     } else if (t === 'call_expression') {
       handleDefinePropertyTypeMap(node, typeMap);
     }
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
+      walk(node.child(i)!, depth + 1, currentClass);
     }
   }
-  walk(rootNode, 0);
+  walk(rootNode, 0, null);
 }
 
 /** Extract type info from a variable_declarator: type annotation, constructor, or factory. */
@@ -1931,12 +1949,17 @@ function handleParamTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEn
  * Phase 8.3d: seed the pts map from object property writes.
  *
  * `handlers.auth = authMiddleware` → typeMap.set('handlers.auth', { type: 'authMiddleware', confidence: 0.85 })
- * `this.logger = new Logger(...)` → typeMap.set('this.logger', { type: 'Logger', confidence: 1.0 })
+ * `this.logger = new Logger(...)` → typeMap.set('UserService.logger', { type: 'Logger', confidence: 1.0 })
+ *   (keyed as ClassName.prop when currentClass is known, to avoid collisions across classes)
  *
  * Only simple `obj.prop = identifier` and `this.prop = new Ctor()` writes are tracked
  * (not chained `a.b.c = x`). BUILTIN_GLOBALS are skipped (e.g. `console.log = fn`).
  */
-function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+function handlePropWriteTypeMap(
+  node: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+  currentClass: string | null,
+): void {
   const lhsN = node.childForFieldName('left');
   const rhsN = node.childForFieldName('right');
   if (!lhsN || !rhsN) return;
@@ -1949,10 +1972,15 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
   // computed subscript expressions — consistent with the adjacent fnRefBindings block.
   if (prop.type !== 'property_identifier' && prop.type !== 'identifier') return;
 
-  // this.prop = new ClassName(...) — constructor-assigned property type
+  // this.prop = new ClassName(...) — constructor-assigned property type.
+  // Key as ClassName.prop (class-scoped) so two classes with identically-named
+  // properties don't overwrite each other's typeMap entry.
   if (obj.type === 'this' && rhsN.type === 'new_expression') {
     const ctorType = extractNewExprTypeName(rhsN);
-    if (ctorType) setTypeMapEntry(typeMap, `this.${prop.text}`, ctorType, 1.0);
+    if (ctorType) {
+      const key = currentClass ? `${currentClass}.${prop.text}` : `this.${prop.text}`;
+      setTypeMapEntry(typeMap, key, ctorType, 1.0);
+    }
     return;
   }
 
