@@ -2442,7 +2442,6 @@ function extractObjectPropBindingsWalk(
   walk(rootNode, 0);
 }
 
-
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
   if (!objNode) return undefined;
   const t = objNode.type;
