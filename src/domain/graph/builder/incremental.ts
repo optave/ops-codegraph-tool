@@ -510,13 +510,58 @@ function buildCallEdges(
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
-    const { targets, importedFrom } = resolveCallTargets(
+    let { targets, importedFrom } = resolveCallTargets(
       lookup,
       call,
       relPath,
       importedNames,
       typeMap,
+      caller.callerName,
     );
+
+    if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
+      const dotIdx = caller.callerName.indexOf('.');
+      if (dotIdx > 0) {
+        const className = caller.callerName.slice(0, dotIdx);
+        const qualifiedName = `${className}.${call.name}`;
+        const qualified = lookup
+          .byNameAndFile(qualifiedName, relPath)
+          .filter((n) => n.kind === 'method');
+        if (qualified.length > 0) {
+          targets = qualified;
+        }
+      }
+    }
+
+    if (
+      targets.length === 0 &&
+      call.receiver === 'this' &&
+      caller.callerName != null &&
+      symbols.definePropertyReceivers
+    ) {
+      const receiverVarName = symbols.definePropertyReceivers.get(caller.callerName);
+      if (receiverVarName) {
+        const typeEntry = typeMap.get(receiverVarName);
+        const typeName = typeEntry
+          ? typeof typeEntry === 'string'
+            ? typeEntry
+            : (typeEntry as { type?: string }).type
+          : null;
+        if (typeName) {
+          const qualifiedName = `${typeName}.${call.name}`;
+          const qualified = lookup.byNameAndFile(qualifiedName, relPath);
+          if (qualified.length > 0) {
+            targets = [...qualified];
+          }
+        }
+        if (targets.length === 0) {
+          const sameFile = lookup.byNameAndFile(call.name, relPath);
+          if (sameFile.length > 0) {
+            targets = [...sameFile];
+          }
+        }
+      }
+    }
 
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
