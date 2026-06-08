@@ -6,7 +6,7 @@
   "edges": [
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -18,7 +18,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -30,7 +30,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -42,7 +42,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -54,7 +54,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -66,7 +66,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -78,7 +78,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -90,7 +90,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -102,7 +102,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -114,7 +114,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -126,7 +126,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
@@ -138,7 +138,7 @@
     },
     {
       "source": {
-        "name": "x",
+        "name": "<root>",
         "file": "fun.js"
       },
       "target": {
