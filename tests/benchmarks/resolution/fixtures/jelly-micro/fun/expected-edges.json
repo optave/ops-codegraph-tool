@@ -1,0 +1,260 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: fun",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/fun.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "foo",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "<anon@6:21>",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "baz",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "q",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "baz2",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "q2",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "baz3",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "q3",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "<anon@24:7>",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "baz4",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "q4",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "foo",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "<anon@6:11>",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "baz",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "<anon@10:22>",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "<anon@15:22>",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "<anon@20:22>",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "<anon@28:22>",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "baz2",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "baz3",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "baz4",
+        "file": "fun.js"
+      },
+      "target": {
+        "name": "bar",
+        "file": "fun.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

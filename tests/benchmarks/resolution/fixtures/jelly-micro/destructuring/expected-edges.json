@@ -1,0 +1,116 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: destructuring",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/destructuring.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "a",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "c",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "<anon@7:16>",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "<anon@10:88>",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "<anon@27:5>",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "<anon@29:9>",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "<anon@40:25>",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "<anon@40:35>",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@19:5>",
+        "file": "destructuring.js"
+      },
+      "target": {
+        "name": "a",
+        "file": "destructuring.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

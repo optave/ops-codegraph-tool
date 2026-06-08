@@ -1,0 +1,164 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: super",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/super.js",
+  "edges": [
+    {
+      "source": {
+        "name": "A",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "B",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "B.m",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "B.s",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "A.f",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "m2",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "m3",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "B.<static>",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "A.f",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "B",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "A.m",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "B.super",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "B.m",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "A.m",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "B.s",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "A.s",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "m2",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "m1",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "m3",
+        "file": "super.js"
+      },
+      "target": {
+        "name": "m1",
+        "file": "super.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
