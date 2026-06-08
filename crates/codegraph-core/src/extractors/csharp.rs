@@ -440,7 +440,7 @@ fn extract_csharp_base_types(
 
 fn extract_var_init_type(declarator: &Node, source: &[u8]) -> Option<String> {
     for i in 0..declarator.child_count() {
-        let child = declarator.child(i)?;
+        let Some(child) = declarator.child(i) else { continue };
         if child.kind() == "object_creation_expression" {
             if let Some(t) = child.child_by_field_name("type") {
                 return extract_csharp_type_name(&t, source).map(|s| s.to_string());
