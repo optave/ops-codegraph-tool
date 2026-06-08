@@ -684,16 +684,19 @@ async function runPostNativePrototypeMethods(
 
   let mergedWasmResults = wasmResults;
   if (newMethodSuffixes.size > 0) {
+    // Pre-compile patterns once — avoids re-compiling up to newMethodSuffixes.size
+    // regexes on every file in the scan loop.
+    const suffixPatterns = [...newMethodSuffixes].map((m) => {
+      const escaped = m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`\\.${escaped}\\s*\\(`);
+    });
     const protoFileSet = new Set(protoFiles);
     const callerCandidateAbs: string[] = [];
     for (const relPath of jsFiles) {
       if (protoFileSet.has(relPath)) continue; // already parsed in first pass
       try {
         const content = readFileSafe(path.join(rootDir, relPath));
-        const matchesAny = [...newMethodSuffixes].some((m) => {
-          const escaped = m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          return new RegExp(`\\.${escaped}\\s*\\(`).test(content);
-        });
+        const matchesAny = suffixPatterns.some((re) => re.test(content));
         if (matchesAny) callerCandidateAbs.push(path.join(rootDir, relPath));
       } catch {
         /* skip unreadable files */
@@ -786,9 +789,10 @@ async function runPostNativePrototypeMethods(
       // Direct receiver.method fallback: caller-only files often lack typeMap entries
       // for the receiver (e.g. `f.process()` where `f` isn't declared in the file).
       // Try qualified-name lookup scoped to newly-inserted nodes to avoid false positives.
+      // Note: `call.receiver` is always truthy here — the `if (!call.receiver) continue`
+      // guard above ensures we never reach this point with a falsy receiver.
       if (
         targets.length === 0 &&
-        call.receiver &&
         call.receiver !== 'this' &&
         call.receiver !== 'super' &&
         call.receiver !== 'self'
