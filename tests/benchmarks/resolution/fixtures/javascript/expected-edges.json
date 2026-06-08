@@ -247,6 +247,34 @@
       "kind": "calls",
       "mode": "defineProperty-accessor",
       "notes": "this.accessMethod() inside accessorGetter — this === accessorTarget (get accessor via Object.defineProperty); accessorTarget.accessMethod is the qualified node name for the arrow function property of accessorTarget"
+    },
+    {
+      "source": { "name": "ClassA.constructor", "file": "multi-class.js" },
+      "target": { "name": "ServiceA", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new ServiceA() — constructor call in ClassA.constructor"
+    },
+    {
+      "source": { "name": "ClassB.constructor", "file": "multi-class.js" },
+      "target": { "name": "ServiceB", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new ServiceB() — constructor call in ClassB.constructor"
+    },
+    {
+      "source": { "name": "ClassA.runA", "file": "multi-class.js" },
+      "target": { "name": "ServiceA.doA", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.service.doA() — receiver-typed via ClassA.service = new ServiceA() (class-scoped typeMap key prevents collision with ClassB.service)"
+    },
+    {
+      "source": { "name": "ClassB.runB", "file": "multi-class.js" },
+      "target": { "name": "ServiceB.doB", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.service.doB() — receiver-typed via ClassB.service = new ServiceB() (class-scoped typeMap key prevents collision with ClassA.service)"
     }
   ]
 }
