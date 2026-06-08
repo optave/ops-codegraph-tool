@@ -1,7 +1,7 @@
 {
   "$schema": "../../../expected-edges.schema.json",
   "language": "javascript",
-  "description": "Array iteration patterns: for-of, Set, Array.from, spread",
+  "description": "Hand-authored: array iteration patterns — moved to pts-javascript fixture",
   "edges": [
     {
       "source": { "name": "iterPlain", "file": "more1.js" },
