@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: arrays",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/arrays.js",
+  "edges": [
+    {
+      "source": {
+        "name": "x",
+        "file": "arrays.js"
+      },
+      "target": {
+        "name": "<anon@3:8>",
+        "file": "arrays.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "x",
+        "file": "arrays.js"
+      },
+      "target": {
+        "name": "<anon@9:8>",
+        "file": "arrays.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

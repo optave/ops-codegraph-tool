@@ -1,0 +1,68 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: arrays2",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/arrays2.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "arrays2.js"
+      },
+      "target": {
+        "name": "<anon@16:16>",
+        "file": "arrays2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "y",
+        "file": "arrays2.js"
+      },
+      "target": {
+        "name": "<anon@2:5>",
+        "file": "arrays2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "y",
+        "file": "arrays2.js"
+      },
+      "target": {
+        "name": "<anon@5:8>",
+        "file": "arrays2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "y",
+        "file": "arrays2.js"
+      },
+      "target": {
+        "name": "<anon@18:9>",
+        "file": "arrays2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "y",
+        "file": "arrays2.js"
+      },
+      "target": {
+        "name": "<anon@3:5>",
+        "file": "arrays2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

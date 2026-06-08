@@ -91,6 +91,28 @@ describe('JavaScript parser', () => {
     );
   });
 
+  it('extracts class field definitions with initializers as method definitions', () => {
+    const symbols = parseJS(`class C1 { f8 = () => { return 1; } }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C1.f8', kind: 'method' }),
+    );
+  });
+
+  it('extracts static class field definitions as method definitions', () => {
+    const symbols = parseJS(`class C6 { static staticProperty = (f1(), function() {}); }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C6.staticProperty', kind: 'method' }),
+    );
+  });
+
+  it('extracts static blocks as function definitions', () => {
+    const symbols = parseJS(`class C6 { static { f1(); } static { f2(); } }`);
+    const staticDefs = symbols.definitions.filter((d) => d.name === 'C6.<static>');
+    expect(staticDefs).toHaveLength(2);
+    expect(staticDefs[0]).toMatchObject({ kind: 'function' });
+    expect(staticDefs[1]).toMatchObject({ kind: 'function' });
+  });
+
   it('extracts import statements', () => {
     const symbols = parseJS(`import { foo, bar } from './baz';`);
     expect(symbols.imports).toHaveLength(1);
@@ -329,7 +351,7 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.has('b.c')).toBe(false);
     });
 
-    it('seeds typeMap for this.prop = new ClassName() with confidence 1.0', () => {
+    it('seeds typeMap for this.prop = new ClassName() using class-scoped key', () => {
       const symbols = parseJS(`
         class UserService {
           constructor() {
@@ -337,7 +359,47 @@ describe('JavaScript parser', () => {
           }
         }
       `);
+      expect(symbols.typeMap.get('UserService.logger')).toEqual({
+        type: 'Logger',
+        confidence: 1.0,
+      });
+      expect(symbols.typeMap.has('this.logger')).toBe(false);
+    });
+
+    it('uses this.prop key when no enclosing class is present', () => {
+      const symbols = parseJS(`
+        function setup() {
+          this.logger = new Logger();
+        }
+      `);
       expect(symbols.typeMap.get('this.logger')).toEqual({ type: 'Logger', confidence: 1.0 });
+    });
+
+    it('scopes this.prop typeMap key to enclosing class — no collision across classes', () => {
+      const symbols = parseJS(`
+        class ClassA {
+          constructor() { this.service = new ServiceA(); }
+        }
+        class ClassB {
+          constructor() { this.service = new ServiceB(); }
+        }
+      `);
+      expect(symbols.typeMap.get('ClassA.service')).toEqual({ type: 'ServiceA', confidence: 1.0 });
+      expect(symbols.typeMap.get('ClassB.service')).toEqual({ type: 'ServiceB', confidence: 1.0 });
+      expect(symbols.typeMap.has('this.service')).toBe(false);
+    });
+
+    it('uses this.prop fallback for named class expressions (expression name not resolver-visible)', () => {
+      // `const Foo = class Bar { ... }` — the resolver derives callerClass from the
+      // binding name `Foo`, never from the expression name `Bar`. Storing as `Bar.x`
+      // would produce an unreachable key, so we fall back to `this.x` instead.
+      const symbols = parseJS(`
+        const Foo = class Bar {
+          constructor() { this.x = new X(); }
+        };
+      `);
+      expect(symbols.typeMap.get('this.x')).toEqual({ type: 'X', confidence: 1.0 });
+      expect(symbols.typeMap.has('Bar.x')).toBe(false);
     });
 
     it('does not seed typeMap for this.prop = identifier (only new expressions)', () => {
@@ -347,6 +409,7 @@ describe('JavaScript parser', () => {
         }
       `);
       expect(symbols.typeMap.has('this.logger')).toBe(false);
+      expect(symbols.typeMap.has('Foo.logger')).toBe(false);
     });
 
     it('ignores non-identifier RHS (a.prop = obj.method)', () => {
@@ -777,6 +840,136 @@ describe('JavaScript parser', () => {
       expect(def).toBeDefined();
       expect(def.line).toBe(2);
       expect(def.endLine).toBe(4);
+    });
+  });
+
+  describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('extracts rest binding from object-destructuring function parameter', () => {
+      const symbols = parseJS(`
+        function f3({ e1: eee1, ...eerest }) {
+          eerest.e4();
+        }
+        f3(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'f3',
+        restName: 'eerest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from arrow function with object-destructuring parameter', () => {
+      const symbols = parseJS(`
+        const handler = ({ a, ...rest }) => { rest.b(); };
+        handler(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'handler',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('records correct argIndex when rest param is not the first parameter', () => {
+      const symbols = parseJS(`
+        function g(x, { a, ...rest }) { rest.b(); }
+        g(1, obj);
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'g',
+        restName: 'rest',
+        argIndex: 1,
+      });
+    });
+
+    it('does not emit binding when object pattern has no rest element', () => {
+      const symbols = parseJS(`
+        function h({ a, b }) { a(); }
+        h(obj);
+      `);
+      expect(symbols.objectRestParamBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ callee: 'h' }),
+      );
+    });
+
+    it('seeds composite typeMap keys from object literal with shorthand properties', () => {
+      const symbols = parseJS(`
+        function e4() {}
+        var obj = { e4 };
+      `);
+      expect(symbols.typeMap.get('obj.e4')).toEqual({ type: 'e4', confidence: 0.85 });
+    });
+
+    it('seeds composite typeMap keys from object literal with pair properties', () => {
+      const symbols = parseJS(`
+        function handler() {}
+        var routes = { get: handler };
+      `);
+      expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
+    });
+
+    it('extracts rest binding from a class method', () => {
+      const symbols = parseJS(`
+        class Service {
+          handle({ event, ...rest }) {
+            rest.save();
+          }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'Service.handle',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal shorthand method', () => {
+      const symbols = parseJS(`
+        const api = {
+          process({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal pair with function value', () => {
+      const symbols = parseJS(`
+        const api = {
+          process: function({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('uses unqualified method name for class method with no class name', () => {
+      const symbols = parseJS(`
+        export default class {
+          handle({ a, ...rest }) { rest.b(); }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual(
+        expect.objectContaining({ restName: 'rest', argIndex: 0 }),
+      );
     });
   });
 

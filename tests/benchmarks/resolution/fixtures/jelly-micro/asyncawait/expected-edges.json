@@ -1,0 +1,176 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: asyncawait",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/asyncawait.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@4:17>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "t2",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@16:16>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "f3",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "f5",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "f7",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@1:2>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@41:17>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@24:15>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@22:16>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@33:20>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@29:15>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@36:20>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@30:16>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@46:13>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@41:17>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@49:20>",
+        "file": "asyncawait.js"
+      },
+      "target": {
+        "name": "<anon@42:16>",
+        "file": "asyncawait.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

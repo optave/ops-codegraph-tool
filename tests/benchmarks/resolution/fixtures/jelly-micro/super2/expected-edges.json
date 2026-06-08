@@ -1,0 +1,68 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: super2",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/super2.js",
+  "edges": [
+    {
+      "source": {
+        "name": "A",
+        "file": "super2.js"
+      },
+      "target": {
+        "name": "B",
+        "file": "super2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super2.js"
+      },
+      "target": {
+        "name": "B.m",
+        "file": "super2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super2.js"
+      },
+      "target": {
+        "name": "B.s",
+        "file": "super2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "B.m",
+        "file": "super2.js"
+      },
+      "target": {
+        "name": "A.m",
+        "file": "super2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "B.s",
+        "file": "super2.js"
+      },
+      "target": {
+        "name": "A.s",
+        "file": "super2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
