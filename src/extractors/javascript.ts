@@ -395,10 +395,8 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const definePropertyReceivers: Map<string, string> = new Map();
   extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
 
-  // this-call bindings: `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)`
-  extractThisCallBindingsWalk(tree.rootNode, thisCallBindings);
-  // this() calls: `this(args)` where `this` is used as a function (not a receiver)
-  extractThisCallsWalk(tree.rootNode, calls);
+  // this() calls + this-call bindings in a single pass (fn.call(ctx,...) / fn.apply(ctx,...))
+  extractThisCallAndBindingsWalk(tree.rootNode, calls, thisCallBindings);
 
   return {
     definitions,
@@ -732,10 +730,6 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   const definePropertyReceivers: Map<string, string> = new Map();
   extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
   if (definePropertyReceivers.size > 0) ctx.definePropertyReceivers = definePropertyReceivers;
-  // this-call bindings: `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)`
-  extractThisCallBindingsWalk(tree.rootNode, ctx.thisCallBindings!);
-  // this() calls: `this(args)` where `this` is used as a function
-  extractThisCallsWalk(tree.rootNode, ctx.calls);
   return ctx;
 }
 
@@ -1111,11 +1105,44 @@ function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (fn.type === 'import') {
     handleDynamicImportCall(node, ctx.imports);
   } else {
+    // this() calls: `this` used as a function (not as a receiver).
+    if (fn.type === 'this') {
+      ctx.calls.push({ name: 'this', line: nodeStartLine(node) });
+      return; // no further processing needed for this()-style calls
+    }
     const callInfo = extractCallInfo(fn, node);
     if (callInfo) ctx.calls.push(callInfo);
     if (fn.type === 'member_expression') {
       const cbDef = extractCallbackDefinition(node, fn);
       if (cbDef) ctx.definitions.push(cbDef);
+      // this-call bindings: `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)`
+      const obj = fn.childForFieldName('object');
+      const prop = fn.childForFieldName('property');
+      if (
+        obj?.type === 'identifier' &&
+        prop &&
+        (prop.text === 'call' || prop.text === 'apply') &&
+        !BUILTIN_GLOBALS.has(obj.text)
+      ) {
+        const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+        if (args) {
+          for (let i = 0; i < args.childCount; i++) {
+            const child = args.child(i);
+            if (!child) continue;
+            const t = child.type;
+            if (t === '(' || t === ')' || t === ',') continue;
+            if (
+              t === 'identifier' &&
+              !BUILTIN_GLOBALS.has(child.text) &&
+              child.text !== 'undefined' &&
+              child.text !== 'null'
+            ) {
+              ctx.thisCallBindings!.push({ callee: obj.text, thisArg: child.text });
+            }
+            break;
+          }
+        }
+      }
     }
     ctx.calls.push(...extractCallbackReferenceCalls(node));
   }
@@ -2781,35 +2808,25 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 }
 
 /**
- * Walk the AST and collect `this(args)` call expressions as `{name: 'this', ...}` calls.
- * These are calls where `this` itself is used as a function (not as a receiver).
- * Emitted so the points-to resolver can match them against thisCallBindings.
+ * Single-pass walk to collect both:
+ * - `this(args)` call expressions → `{name: 'this', ...}` entries in `calls`
+ *   (where `this` is used as a function, not as a receiver)
+ * - `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)` bindings →
+ *   `{ callee: 'fn', thisArg: 'namedCtx' }` entries in `thisCallBindings`
+ *
+ * Combining both into one traversal halves the AST walk cost compared to
+ * running two separate recursive passes.
  */
-function extractThisCallsWalk(node: TreeSitterNode, calls: Call[]): void {
-  if (node.type === 'call_expression') {
-    const fn = node.childForFieldName('function');
-    if (fn?.type === 'this') {
-      calls.push({ name: 'this', line: nodeStartLine(node) });
-    }
-  }
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (child) extractThisCallsWalk(child, calls);
-  }
-}
-
-/**
- * Walk the AST and collect `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)` bindings.
- * Emits `{ callee: 'fn', thisArg: 'namedCtx' }` when the first argument is a plain identifier
- * (named function reference) so the edge builder can seed `fn::this → namedCtx` in the PTS map.
- */
-function extractThisCallBindingsWalk(
+function extractThisCallAndBindingsWalk(
   node: TreeSitterNode,
+  calls: Call[],
   thisCallBindings: ThisCallBinding[],
 ): void {
   if (node.type === 'call_expression') {
     const fn = node.childForFieldName('function');
-    if (fn?.type === 'member_expression') {
+    if (fn?.type === 'this') {
+      calls.push({ name: 'this', line: nodeStartLine(node) });
+    } else if (fn?.type === 'member_expression') {
       const obj = fn.childForFieldName('object');
       const prop = fn.childForFieldName('property');
       if (
@@ -2842,7 +2859,7 @@ function extractThisCallBindingsWalk(
   }
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (child) extractThisCallBindingsWalk(child, thisCallBindings);
+    if (child) extractThisCallAndBindingsWalk(child, calls, thisCallBindings);
   }
 }
 
