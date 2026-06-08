@@ -127,12 +127,10 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
   //   total expected now 35.
   javascript: { precision: 1.0, recall: 0.9 },
-  // javascript-pts: hand-authored fixture for for-of/Set/Array.from/spread patterns.
-  // 10 pts edges (100% recall) + 2 direct static calls (runFrom→mapCallback, runSpread→consumer1)
-  // listed in expected-edges.json. Precision floor set at 0.5: the pts analysis over-approximates
-  // (e.g. iterPlain also picks up fn3/fn5 from sibling arrays) which are false positives.
-  // Raising the floor requires tighter pts scoping — tracked in a follow-up.
-  'javascript-pts': { precision: 0.5, recall: 1.0 },
+  // pts-javascript: hand-authored points-to JS fixture (for-of, Set, Array.from, spread) — patterns
+  //   too broad for the main JS fixture. Patterns split per file to prevent intra-fixture FPs.
+  //   Currently resolves all 13 expected edges (100% recall, 100% precision).
+  'pts-javascript': { precision: 1.0, recall: 0.9 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
