@@ -780,11 +780,6 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "import_statement" => handle_import_stmt(node, source, symbols),
         "export_statement" => handle_export_stmt(node, source, symbols),
         "expression_statement" => handle_expr_stmt(node, source, symbols),
-        // Synthetic definitions for class field initializers and static blocks.
-        // These give `findCaller` a narrower span with a kind that passes the SQL
-        // call-edge filter (`kind IN ('function','method')`), matching WASM behaviour.
-        "field_definition" | "public_field_definition" => handle_field_def(node, source, symbols),
-        "class_static_block" => handle_static_block(node, source, symbols),
         _ => {}
     }
 }
