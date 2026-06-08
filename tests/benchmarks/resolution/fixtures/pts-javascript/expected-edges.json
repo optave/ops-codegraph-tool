@@ -1,0 +1,98 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Hand-authored: points-to JavaScript patterns (for-of, Set, Array.from, spread). Each pattern lives in its own file. Previously jelly-micro/more1 — moved here because these are hand-authored, not from Jelly's micro-test corpus.",
+  "edges": [
+    {
+      "source": { "name": "iterPlain", "file": "for-of.js" },
+      "target": { "name": "forOf1", "file": "for-of.js" },
+      "kind": "calls",
+      "mode": "pts-for-of",
+      "notes": "cb() inside for-of over [forOf1, forOf2] — pts resolves cb to each array element"
+    },
+    {
+      "source": { "name": "iterPlain", "file": "for-of.js" },
+      "target": { "name": "forOf2", "file": "for-of.js" },
+      "kind": "calls",
+      "mode": "pts-for-of",
+      "notes": "cb() inside for-of over [forOf1, forOf2] — pts resolves cb to each array element"
+    },
+    {
+      "source": { "name": "iterSet", "file": "set-iter.js" },
+      "target": { "name": "setFn1", "file": "set-iter.js" },
+      "kind": "calls",
+      "mode": "pts-set",
+      "notes": "cb() inside for-of over new Set([setFn1, setFn2]) — pts resolves cb through Set construction"
+    },
+    {
+      "source": { "name": "iterSet", "file": "set-iter.js" },
+      "target": { "name": "setFn2", "file": "set-iter.js" },
+      "kind": "calls",
+      "mode": "pts-set",
+      "notes": "cb() inside for-of over new Set([setFn1, setFn2]) — pts resolves cb through Set construction"
+    },
+    {
+      "source": { "name": "_runFrom", "file": "array-from.js" },
+      "target": { "name": "mapCallback", "file": "array-from.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Array.from(arr, mapCallback) — direct reference to mapCallback as the mapping function"
+    },
+    {
+      "source": { "name": "mapCallback", "file": "array-from.js" },
+      "target": { "name": "arrFn1", "file": "array-from.js" },
+      "kind": "calls",
+      "mode": "pts-array-from",
+      "notes": "item() inside mapCallback — Array.from([arrFn1, arrFn2], mapCallback) passes arrFn1/arrFn2 as item"
+    },
+    {
+      "source": { "name": "mapCallback", "file": "array-from.js" },
+      "target": { "name": "arrFn2", "file": "array-from.js" },
+      "kind": "calls",
+      "mode": "pts-array-from",
+      "notes": "item() inside mapCallback — Array.from([arrFn1, arrFn2], mapCallback) passes arrFn1/arrFn2 as item"
+    },
+    {
+      "source": { "name": "_runSpread1", "file": "spread.js" },
+      "target": { "name": "consumer1", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "consumer1(...batch1) — direct spread call to consumer1"
+    },
+    {
+      "source": { "name": "consumer1", "file": "spread.js" },
+      "target": { "name": "sprFn1", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread",
+      "notes": "x() inside consumer1 — spread consumer1(...[sprFn1, sprFn2]) binds sprFn1 to x"
+    },
+    {
+      "source": { "name": "consumer1", "file": "spread.js" },
+      "target": { "name": "sprFn2", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread",
+      "notes": "y() inside consumer1 — spread consumer1(...[sprFn1, sprFn2]) binds sprFn2 to y"
+    },
+    {
+      "source": { "name": "_runSpread2", "file": "spread.js" },
+      "target": { "name": "consumer2", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "consumer2(...batch2) — direct spread call to consumer2"
+    },
+    {
+      "source": { "name": "consumer2", "file": "spread.js" },
+      "target": { "name": "sprFn3", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread",
+      "notes": "x() inside consumer2 — spread consumer2(...[sprFn3, sprFn4]) binds sprFn3 to x"
+    },
+    {
+      "source": { "name": "consumer2", "file": "spread.js" },
+      "target": { "name": "sprFn4", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread",
+      "notes": "y() inside consumer2 — spread consumer2(...[sprFn3, sprFn4]) binds sprFn4 to y"
+    }
+  ]
+}
