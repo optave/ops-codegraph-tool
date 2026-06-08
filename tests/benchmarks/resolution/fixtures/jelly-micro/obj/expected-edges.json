@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: obj",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/obj.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "obj.js"
+      },
+      "target": {
+        "name": "printIntroduction",
+        "file": "obj.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

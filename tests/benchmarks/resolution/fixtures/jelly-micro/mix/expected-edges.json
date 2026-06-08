@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: mix",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/mix.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "mix.js"
+      },
+      "target": {
+        "name": "<anon@4:10>",
+        "file": "mix.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "mix.js"
+      },
+      "target": {
+        "name": "<anon@12:8>",
+        "file": "mix.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "mix.js"
+      },
+      "target": {
+        "name": "c",
+        "file": "mix.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
