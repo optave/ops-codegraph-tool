@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: client4",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/client4.js",
+  "edges": [
+    {
+      "source": {
+        "name": "__importDefault",
+        "file": "client4.js"
+      },
+      "target": {
+        "name": "<anon@2:1>",
+        "file": "lib4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "__importDefault",
+        "file": "client4.js"
+      },
+      "target": {
+        "name": "<anon@6:3>",
+        "file": "lib4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

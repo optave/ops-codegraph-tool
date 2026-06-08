@@ -1,0 +1,56 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: prototypes3",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/prototypes3.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "prototypes3.js"
+      },
+      "target": {
+        "name": "Foo",
+        "file": "prototypes3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "prototypes3.js"
+      },
+      "target": {
+        "name": "foo",
+        "file": "prototypes3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "prototypes3.js"
+      },
+      "target": {
+        "name": "foo",
+        "file": "prototypes3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "prototypes3.js"
+      },
+      "target": {
+        "name": "Bar.bar",
+        "file": "prototypes3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

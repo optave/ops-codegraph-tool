@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: promiseall",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/promiseall.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<anon@6:36>",
+        "file": "promiseall.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "promiseall.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

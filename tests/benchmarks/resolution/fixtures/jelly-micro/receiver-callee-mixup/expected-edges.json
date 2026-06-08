@@ -1,0 +1,56 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: receiver-callee-mixup",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/receiver-callee-mixup.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "receiver-callee-mixup.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "receiver-callee-mixup.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "receiver-callee-mixup.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "receiver-callee-mixup.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f",
+        "file": "receiver-callee-mixup.js"
+      },
+      "target": {
+        "name": "g",
+        "file": "receiver-callee-mixup.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f",
+        "file": "receiver-callee-mixup.js"
+      },
+      "target": {
+        "name": "g",
+        "file": "receiver-callee-mixup.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

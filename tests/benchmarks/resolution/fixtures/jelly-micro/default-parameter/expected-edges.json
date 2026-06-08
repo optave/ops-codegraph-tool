@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: default-parameter",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/default-parameter.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "default-parameter.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "default-parameter.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "default-parameter.js"
+      },
+      "target": {
+        "name": "g",
+        "file": "default-parameter.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
