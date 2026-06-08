@@ -779,4 +779,288 @@ describe('JavaScript parser', () => {
       expect(def.endLine).toBe(4);
     });
   });
+
+  describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('extracts rest binding from object-destructuring function parameter', () => {
+      const symbols = parseJS(`
+        function f3({ e1: eee1, ...eerest }) {
+          eerest.e4();
+        }
+        f3(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'f3',
+        restName: 'eerest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from arrow function with object-destructuring parameter', () => {
+      const symbols = parseJS(`
+        const handler = ({ a, ...rest }) => { rest.b(); };
+        handler(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'handler',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('records correct argIndex when rest param is not the first parameter', () => {
+      const symbols = parseJS(`
+        function g(x, { a, ...rest }) { rest.b(); }
+        g(1, obj);
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'g',
+        restName: 'rest',
+        argIndex: 1,
+      });
+    });
+
+    it('does not emit binding when object pattern has no rest element', () => {
+      const symbols = parseJS(`
+        function h({ a, b }) { a(); }
+        h(obj);
+      `);
+      expect(symbols.objectRestParamBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ callee: 'h' }),
+      );
+    });
+
+    it('seeds composite typeMap keys from object literal with shorthand properties', () => {
+      const symbols = parseJS(`
+        function e4() {}
+        var obj = { e4 };
+      `);
+      expect(symbols.typeMap.get('obj.e4')).toEqual({ type: 'e4', confidence: 0.85 });
+    });
+
+    it('seeds composite typeMap keys from object literal with pair properties', () => {
+      const symbols = parseJS(`
+        function handler() {}
+        var routes = { get: handler };
+      `);
+      expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
+    });
+
+    it('extracts rest binding from a class method', () => {
+      const symbols = parseJS(`
+        class Service {
+          handle({ event, ...rest }) {
+            rest.save();
+          }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'Service.handle',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal shorthand method', () => {
+      const symbols = parseJS(`
+        const api = {
+          process({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal pair with function value', () => {
+      const symbols = parseJS(`
+        const api = {
+          process: function({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('uses unqualified method name for class method with no class name', () => {
+      const symbols = parseJS(`
+        export default class {
+          handle({ a, ...rest }) { rest.b(); }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual(
+        expect.objectContaining({ restName: 'rest', argIndex: 0 }),
+      );
+    });
+  });
+
+  describe('prototype method extraction', () => {
+    it('extracts Foo.prototype.bar = function() {} as a method definition', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype.foo = function() {}
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.foo', kind: 'method' }),
+      );
+    });
+
+    it('extracts Foo.prototype.bar = arrow as a method definition', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype.greet = () => 'hello';
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.greet', kind: 'method' }),
+      );
+    });
+
+    it('seeds typeMap for Foo.prototype.bar = identifier with confidence 0.9', () => {
+      const symbols = parseJS(`
+        const f = () => {};
+        class A {}
+        A.prototype.t = f;
+      `);
+      expect(symbols.typeMap.get('A.t')).toEqual({ type: 'f', confidence: 0.9 });
+    });
+
+    it('extracts methods from Foo.prototype = { bar: fn } object literal', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = {
+          foo: function() {},
+          baz: function() {},
+        };
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.foo', kind: 'method' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.baz', kind: 'method' }),
+      );
+    });
+
+    it('seeds typeMap for identifier values in object literal prototype assignment', () => {
+      const symbols = parseJS(`
+        function helper() {}
+        function C() {}
+        C.prototype = { run: helper };
+      `);
+      expect(symbols.typeMap.get('C.run')).toEqual({ type: 'helper', confidence: 0.9 });
+    });
+
+    it('does not extract prototype assignments on built-in globals', () => {
+      const symbols = parseJS(
+        `Array.prototype.last = function() { return this[this.length - 1]; };`,
+      );
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'Array.last' }),
+      );
+    });
+
+    it('does not seed typeMap for prototype identifier assignment from built-in globals', () => {
+      const symbols = parseJS(`Object.prototype.clone = myClone;`);
+      expect(symbols.typeMap.has('Object.clone')).toBe(false);
+    });
+
+    it('seeds typeMap for shorthand property in prototype object literal', () => {
+      const symbols = parseJS(`
+        function helper() {}
+        function C() {}
+        C.prototype = { helper };
+      `);
+      expect(symbols.typeMap.get('C.helper')).toEqual({ type: 'helper', confidence: 0.9 });
+    });
+  });
+
+  describe('function-as-object property method extraction (#1334)', () => {
+    it('extracts fn.method = function() {} as a method definition', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = function() { console.log("2"); }
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'f.g', kind: 'method' }),
+      );
+    });
+
+    it('extracts fn.method = () => {} as a method definition', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = () => 42;
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'f.g', kind: 'method' }),
+      );
+    });
+
+    it('extracts the this.g() call inside f.h', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = function() {}
+        f.h = function() { this.g(); }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'g', receiver: 'this' }),
+      );
+    });
+
+    it('does not extract func-prop assignments on built-in globals', () => {
+      const symbols = parseJS(`console.log = function() {};`);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'console.log' }),
+      );
+    });
+
+    it('does not extract .prototype property assignments (handled by prototype walk)', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = function() {};
+      `);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'C.prototype' }),
+      );
+    });
+  });
+
+  describe('Phase 8.3e: extractSpreadForOfWalk — exported arrow function funcStack (#1354)', () => {
+    it('tracks plain const arrow function on funcStack for for-of loop', () => {
+      const symbols = parseJS(`const f = (arr) => { for (const x of arr) x(); };`);
+      expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
+    });
+
+    it('tracks exported const arrow function on funcStack for for-of loop', () => {
+      const symbols = parseJS(`export const f = (arr) => { for (const x of arr) x(); };`);
+      expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
+    });
+
+    it('records correct varName and sourceName for exported arrow for-of', () => {
+      const symbols = parseJS(
+        `export const handleItems = (items) => { for (const cb of items) cb(); };`,
+      );
+      expect(symbols.forOfBindings).toContainEqual(
+        expect.objectContaining({
+          varName: 'cb',
+          sourceName: 'items',
+          enclosingFunc: 'handleItems',
+        }),
+      );
+    });
+  });
 });

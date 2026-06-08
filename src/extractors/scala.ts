@@ -263,7 +263,7 @@ function extractScalaParameters(funcNode: TreeSitterNode): SubDeclaration[] {
   if (!paramList) return params;
   for (let i = 0; i < paramList.childCount; i++) {
     const param = paramList.child(i);
-    if (!param || param.type !== 'parameter') continue;
+    if (param?.type !== 'parameter') continue;
     const nameNode = findChild(param, 'identifier');
     if (nameNode) {
       params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });

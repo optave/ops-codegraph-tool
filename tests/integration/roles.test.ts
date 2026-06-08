@@ -112,8 +112,8 @@ describe('barrel re-export role classification', () => {
 
     // Symbol nodes
     const queryName = insertNode(db, 'queryName', 'function', 'src/inspect.ts', 10);
-    const helperFn = insertNode(db, 'helperFn', 'function', 'src/inspect.ts', 30);
-    const appMain = insertNode(db, 'appMain', 'function', 'src/app.ts', 1);
+    const _helperFn = insertNode(db, 'helperFn', 'function', 'src/inspect.ts', 30);
+    const _appMain = insertNode(db, 'appMain', 'function', 'src/app.ts', 1);
     const testFn = insertNode(db, 'testQueryName', 'function', 'tests/inspect.test.ts', 1);
 
     // Barrel re-exports inspect.ts
@@ -190,7 +190,7 @@ describe('multi-level barrel re-export chain', () => {
     const fQueriesCli = insertNode(db, 'src/queries-cli.ts', 'file', 'src/queries-cli.ts', 0);
     const fQuery = insertNode(db, 'src/query.ts', 'file', 'src/query.ts', 0);
 
-    const queryName = insertNode(db, 'queryName', 'function', 'src/queries-cli/inspect.ts', 10);
+    const _queryName = insertNode(db, 'queryName', 'function', 'src/queries-cli/inspect.ts', 10);
     insertNode(db, 'queryCmd', 'function', 'src/query.ts', 1);
 
     // Barrel chain: each barrel re-exports from the one below

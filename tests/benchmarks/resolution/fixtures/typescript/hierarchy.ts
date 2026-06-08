@@ -1,4 +1,6 @@
 // Class hierarchy fixture — tests class-inheritance and constructor edges
+// Includes a 3-level hierarchy (Shape → Circle → Ellipse) to validate
+// transitive CHA closure (issue #1313).
 
 export class Shape {
   area(): number {
@@ -17,6 +19,19 @@ export class Circle extends Shape {
 
   area(): number {
     return Math.PI * this.radius * this.radius;
+  }
+}
+
+export class Ellipse extends Circle {
+  constructor(
+    private rx: number,
+    private ry: number,
+  ) {
+    super(rx);
+  }
+
+  area(): number {
+    return Math.PI * this.rx * this.ry;
   }
 }
 
@@ -39,6 +54,10 @@ export function printShape(shape: Shape): void {
 
 export function makeCircle(r: number): Circle {
   return new Circle(r);
+}
+
+export function makeEllipse(rx: number, ry: number): Ellipse {
+  return new Ellipse(rx, ry);
 }
 
 export function makeRectangle(w: number, h: number): Rectangle {

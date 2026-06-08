@@ -264,7 +264,7 @@ function extractRubyBodyConstants(containerNode: TreeSitterNode): SubDeclaration
   if (!body) return children;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'assignment') continue;
+    if (child?.type !== 'assignment') continue;
     const left = child.childForFieldName('left');
     if (left && left.type === 'constant') {
       children.push({ name: left.text, kind: 'constant', line: child.startPosition.row + 1 });
@@ -279,7 +279,7 @@ function extractRubyClassChildren(classNode: TreeSitterNode): SubDeclaration[] {
   if (!body) return children;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'assignment') continue;
+    if (child?.type !== 'assignment') continue;
     const left = child.childForFieldName('left');
     if (!left) continue;
     if (left.type === 'instance_variable') {
