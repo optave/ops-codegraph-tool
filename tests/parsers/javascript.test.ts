@@ -367,6 +367,19 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.has('this.service')).toBe(false);
     });
 
+    it('uses this.prop fallback for named class expressions (expression name not resolver-visible)', () => {
+      // `const Foo = class Bar { ... }` — the resolver derives callerClass from the
+      // binding name `Foo`, never from the expression name `Bar`. Storing as `Bar.x`
+      // would produce an unreachable key, so we fall back to `this.x` instead.
+      const symbols = parseJS(`
+        const Foo = class Bar {
+          constructor() { this.x = new X(); }
+        };
+      `);
+      expect(symbols.typeMap.get('this.x')).toEqual({ type: 'X', confidence: 1.0 });
+      expect(symbols.typeMap.has('Bar.x')).toBe(false);
+    });
+
     it('does not seed typeMap for this.prop = identifier (only new expressions)', () => {
       const symbols = parseJS(`
         class Foo {

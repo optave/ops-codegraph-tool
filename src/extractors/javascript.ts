@@ -1648,11 +1648,21 @@ function extractTypeMapWalk(
   function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
-    if (t === 'class_declaration' || t === 'abstract_class_declaration' || t === 'class') {
+    if (t === 'class_declaration' || t === 'abstract_class_declaration') {
       const nameNode = node.childForFieldName('name');
       const className = nameNode?.text ?? null;
       for (let i = 0; i < node.childCount; i++) {
         walk(node.child(i)!, depth + 1, className);
+      }
+      return;
+    }
+    // Class expressions (e.g. `const Foo = class Bar { ... }`): the expression-internal
+    // name (`Bar`) is never visible to the resolver, which derives callerClass from the
+    // binding name (`Foo`). Walking with null preserves the pre-fix `this.prop` fallback
+    // so the second lookup in resolveByMethodOrGlobal still finds the entry.
+    if (t === 'class') {
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
       }
       return;
     }
