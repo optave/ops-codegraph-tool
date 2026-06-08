@@ -99,10 +99,16 @@ describe('JavaScript parser', () => {
   });
 
   it('extracts static class field definitions as method definitions', () => {
-    const symbols = parseJS(`class C6 { static staticProperty = (f1(), function() {}); }`);
+    const symbols = parseJS(`class C6 { static staticProperty = function() {}; }`);
     expect(symbols.definitions).toContainEqual(
       expect.objectContaining({ name: 'C6.staticProperty', kind: 'method' }),
     );
+  });
+
+  it('does not extract scalar static field definitions as method definitions', () => {
+    const symbols = parseJS(`class C7 { static x = 42; }`);
+    const names = symbols.definitions.map((d: { name: string }) => d.name);
+    expect(names).not.toContain('C7.x');
   });
 
   it('extracts static blocks as method definitions with unique names', () => {

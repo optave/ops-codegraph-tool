@@ -876,6 +876,12 @@ function handleStaticBlock(node: TreeSitterNode, definitions: Definition[]): voi
  * `public_field_definition` uses `'name'`. As a third fallback (Rust/TS parity) we
  * also check for a positional `property_identifier` child.
  */
+const CALLABLE_FIELD_TYPES = new Set([
+  'arrow_function',
+  'function_expression',
+  'generator_function',
+]);
+
 function handleFieldDef(node: TreeSitterNode, definitions: Definition[]): void {
   // JS field_definition uses 'property' field; TS public_field_definition uses 'name' field
   const nameNode =
@@ -885,6 +891,9 @@ function handleFieldDef(node: TreeSitterNode, definitions: Definition[]): void {
   const valueNode = node.childForFieldName('value');
   if (!nameNode || !valueNode) return;
   if (nameNode.type === 'computed_property_name') return;
+  // Only emit a callable definition when the initializer is a function/arrow expression.
+  // Scalar fields like `static x = 42` should not appear as method-kind nodes.
+  if (!CALLABLE_FIELD_TYPES.has(valueNode.type)) return;
   const fieldName = nameNode.text;
   if (!fieldName) return;
   const parentClass = findParentClass(node);

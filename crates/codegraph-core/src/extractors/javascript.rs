@@ -908,7 +908,12 @@ fn handle_field_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         return;
     }
     // Skip uninitialised fields (`class C { x; }`) — must have a value node.
-    let Some(_value_node) = node.child_by_field_name("value") else { return };
+    let Some(value_node) = node.child_by_field_name("value") else { return };
+    // Only emit a callable definition when the initializer is a function/arrow expression.
+    // Scalar fields like `static x = 42` should not appear as method-kind nodes.
+    if !matches!(value_node.kind(), "arrow_function" | "function_expression" | "generator_function") {
+        return;
+    }
     let field_name = node_text(&name_node, source);
     if field_name.is_empty() { return; }
     let Some(class_name) = find_parent_class(node, source) else { return };
