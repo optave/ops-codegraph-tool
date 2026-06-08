@@ -502,6 +502,34 @@ function buildCallEdges(
             ]),
           )
         : new Map();
+
+  // Phase 8.3f: seed typeMap[callee::restName] = { type: argName } from
+  // objectRestParamBindings × paramBindings, mirroring buildObjectRestParamPostPass.
+  // Scoped keys prevent same-name rest-param collisions when two functions in
+  // the same file both use `...rest` (#1358). The unscoped key is also seeded
+  // when only one callee uses a given rest name, preserving resolution when
+  // callerName is null (findCaller couldn't identify the enclosing function).
+  if (symbols.objectRestParamBindings?.length && symbols.paramBindings?.length) {
+    const restNameCallees = new Map<string, Set<string>>();
+    for (const orpb of symbols.objectRestParamBindings) {
+      if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
+      restNameCallees.get(orpb.restName)!.add(orpb.callee);
+    }
+    for (const orpb of symbols.objectRestParamBindings) {
+      for (const pb of symbols.paramBindings) {
+        if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
+          const scopedKey = `${orpb.callee}::${orpb.restName}`;
+          if (!typeMap.has(scopedKey)) {
+            typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
+            if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
+              typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+            }
+          }
+        }
+      }
+    }
+  }
+
   const seenCallEdges = new Set<string>();
   const lookup = makeIncrementalLookup(db, stmts);
   let edgesAdded = 0;
@@ -510,13 +538,58 @@ function buildCallEdges(
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
-    const { targets, importedFrom } = resolveCallTargets(
+    let { targets, importedFrom } = resolveCallTargets(
       lookup,
       call,
       relPath,
       importedNames,
       typeMap,
+      caller.callerName,
     );
+
+    if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
+      const dotIdx = caller.callerName.indexOf('.');
+      if (dotIdx > 0) {
+        const className = caller.callerName.slice(0, dotIdx);
+        const qualifiedName = `${className}.${call.name}`;
+        const qualified = lookup
+          .byNameAndFile(qualifiedName, relPath)
+          .filter((n) => n.kind === 'method');
+        if (qualified.length > 0) {
+          targets = qualified;
+        }
+      }
+    }
+
+    if (
+      targets.length === 0 &&
+      call.receiver === 'this' &&
+      caller.callerName != null &&
+      symbols.definePropertyReceivers
+    ) {
+      const receiverVarName = symbols.definePropertyReceivers.get(caller.callerName);
+      if (receiverVarName) {
+        const typeEntry = typeMap.get(receiverVarName);
+        const typeName = typeEntry
+          ? typeof typeEntry === 'string'
+            ? typeEntry
+            : (typeEntry as { type?: string }).type
+          : null;
+        if (typeName) {
+          const qualifiedName = `${typeName}.${call.name}`;
+          const qualified = lookup.byNameAndFile(qualifiedName, relPath);
+          if (qualified.length > 0) {
+            targets = [...qualified];
+          }
+        }
+        if (targets.length === 0) {
+          const sameFile = lookup.byNameAndFile(call.name, relPath);
+          if (sameFile.length > 0) {
+            targets = [...sameFile];
+          }
+        }
+      }
+    }
 
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
