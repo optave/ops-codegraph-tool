@@ -1,0 +1,272 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: iterators",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/iterators.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@4:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@5:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@7:12>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@62:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@63:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@81:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@81:19>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@82:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@82:19>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@13:15>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@4:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@13:15>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@5:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@13:15>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@7:12>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "t11",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@4:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "t11",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@5:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "t12",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@5:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "t12",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@4:5>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@72:13>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@62:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@72:13>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@63:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@95:13>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@81:19>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@95:13>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@81:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@95:13>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@82:19>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@95:13>",
+        "file": "iterators.js"
+      },
+      "target": {
+        "name": "<anon@82:9>",
+        "file": "iterators.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

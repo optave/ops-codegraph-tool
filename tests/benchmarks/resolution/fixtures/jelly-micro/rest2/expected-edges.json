@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: rest2",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/rest2.js",
+  "edges": [
+    {
+      "source": {
+        "name": "f",
+        "file": "rest2.js"
+      },
+      "target": {
+        "name": "g",
+        "file": "rest2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

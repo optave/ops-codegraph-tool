@@ -72,7 +72,10 @@ export function resolveByMethodOrGlobal(
     const effectiveReceiver = call.receiver.startsWith('this.')
       ? call.receiver.slice('this.'.length)
       : call.receiver;
-    const typeEntry = typeMap.get(effectiveReceiver) ?? typeMap.get(call.receiver);
+    const typeEntry =
+      typeMap.get(effectiveReceiver) ??
+      typeMap.get(call.receiver) ??
+      (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
@@ -108,6 +111,18 @@ export function resolveByMethodOrGlobal(
           .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
         if (resolved.length > 0) return resolved;
       }
+    }
+
+    // Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
+    // when the receiver is a class name with no typeMap entry. Handles static method calls
+    // like `C6.staticMethod()` or `D.d()` where the receiver IS the class.
+    // Matches both 'method' and 'function' kinds to cover field-initializer synthetic defs.
+    if (!typeName) {
+      const qualifiedName = `${effectiveReceiver}.${call.name}`;
+      const direct = lookup
+        .byName(qualifiedName)
+        .filter((n) => n.kind === 'method' || n.kind === 'function');
+      if (direct.length > 0) return direct;
     }
 
     // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
