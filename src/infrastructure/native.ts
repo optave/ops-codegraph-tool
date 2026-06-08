@@ -58,9 +58,25 @@ function resolvePlatformPackage(): string | null {
 /**
  * Try to load the native napi addon.
  * Returns the module on success, null on failure.
+ *
+ * Dev override: CODEGRAPH_NATIVE_ADDON_PATH can point to a locally built
+ * .node file (e.g. crates/codegraph-core/index.node from `cargo build`).
+ * Only honoured when set explicitly — never falls back to it implicitly.
  */
 export function loadNative(): NativeAddon | null {
   if (_cached !== undefined) return _cached;
+
+  const devOverride = process.env.CODEGRAPH_NATIVE_ADDON_PATH;
+  if (devOverride) {
+    try {
+      _cached = _require(devOverride) as NativeAddon;
+      return _cached;
+    } catch (err) {
+      _loadError = err as Error;
+      _cached = null;
+      return null;
+    }
+  }
 
   const pkg = resolvePlatformPackage();
   if (pkg) {
