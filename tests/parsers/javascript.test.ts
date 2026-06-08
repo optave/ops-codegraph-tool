@@ -1063,4 +1063,52 @@ describe('JavaScript parser', () => {
       );
     });
   });
+
+  describe('class expression extends + static block + field def extraction', () => {
+    it('extracts extends relationship from named class expression', () => {
+      const symbols = parseJS(
+        `function make() { return class Child extends Parent { m() { super.m(); } } }`,
+      );
+      expect(symbols.classes).toContainEqual(
+        expect.objectContaining({ name: 'Child', extends: 'Parent' }),
+      );
+    });
+
+    it('extracts methods from named class expression', () => {
+      const symbols = parseJS(`const X = class Foo extends Base { bar() { return 1; } }`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'Foo.bar', kind: 'method' }),
+      );
+    });
+
+    it('records super.method() call with receiver=super from class expression method', () => {
+      const symbols = parseJS(`const X = class Child extends Parent { m() { super.m(); } }`);
+      const superCall = symbols.calls.find((c) => c.name === 'm' && c.receiver === 'super');
+      expect(superCall).toBeDefined();
+    });
+
+    it('creates ClassName.<static> definition for class static block', () => {
+      const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'A.<static>', kind: 'method' }),
+      );
+    });
+
+    it('attributes super.method() call inside static block to ClassName.<static>', () => {
+      const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
+      const staticDef = symbols.definitions.find((d) => d.name === 'A.<static>');
+      expect(staticDef).toBeDefined();
+      const superCall = symbols.calls.find((c) => c.name === 'init' && c.receiver === 'super');
+      expect(superCall).toBeDefined();
+      expect(superCall!.line).toBeGreaterThanOrEqual(staticDef!.line);
+      expect(superCall!.line).toBeLessThanOrEqual(staticDef!.endLine!);
+    });
+
+    it('extracts class field arrow function as callable ClassName.fieldName method', () => {
+      const symbols = parseJS(`class A {\n  static f = () => {\n    doSomething();\n  };\n}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'A.f', kind: 'method' }),
+      );
+    });
+  });
 });

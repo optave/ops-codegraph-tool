@@ -350,6 +350,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract top-level constants via targeted walk (query patterns don't cover these)
   extractConstantsWalk(tree.rootNode, definitions);
 
+  // Extract class static block definitions so calls inside them can be attributed to
+  // `ClassName.<static>` and `super.method()` can resolve via the class hierarchy.
+  extractClassMembersWalk(tree.rootNode, definitions);
+
   // Extract dynamic import() calls via targeted walk (query patterns don't match `import` function type)
   extractDynamicImportsWalk(tree.rootNode, imports);
 
@@ -710,7 +714,16 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'class_declaration':
     case 'abstract_class_declaration':
+    // class expressions: `return class Foo extends Bar { ... }` or `const X = class Foo { ... }`
+    case 'class':
       handleClassDecl(node, ctx);
+      break;
+    case 'class_static_block':
+      handleStaticBlock(node, ctx.definitions);
+      break;
+    case 'field_definition':
+    case 'public_field_definition':
+      handleFieldDef(node, ctx.definitions);
       break;
     case 'method_definition':
       handleMethodDef(node, ctx);
@@ -807,6 +820,64 @@ function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
       children: methChildren.length > 0 ? methChildren : undefined,
       visibility: methVis,
     });
+  }
+}
+
+/**
+ * Create a synthetic `ClassName.<static>` definition for a class static block
+ * so that calls inside the block can be attributed to a method-kind node and
+ * `resolveThisDispatch` can walk up to the parent class for `super.method()`.
+ *
+ * Tree-sitter uses `class_static_block` (not `static_block`) for `static { ... }`.
+ */
+function handleStaticBlock(node: TreeSitterNode, definitions: Definition[]): void {
+  const parentClass = findParentClass(node);
+  if (!parentClass) return;
+  definitions.push({
+    name: `${parentClass}.<static>`,
+    kind: 'method',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(node),
+  });
+}
+
+/**
+ * Extract a class field definition with a function/arrow-function value as a
+ * top-level `ClassName.fieldName` method definition so it is a resolvable call
+ * target (e.g. `static f = () => { ... }` becomes callable as `A.f`).
+ *
+ * JS `field_definition` uses the `'property'` field name; TS
+ * `public_field_definition` uses `'name'`.
+ */
+function handleFieldDef(node: TreeSitterNode, definitions: Definition[]): void {
+  const value = node.childForFieldName('value');
+  if (!value) return;
+  if (value.type !== 'arrow_function' && value.type !== 'function_expression') return;
+  const nameNode = node.childForFieldName('property') || node.childForFieldName('name');
+  if (!nameNode) return;
+  const parentClass = findParentClass(node);
+  if (!parentClass) return;
+  definitions.push({
+    name: `${parentClass}.${nameNode.text}`,
+    kind: 'method',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(value),
+  });
+}
+
+/**
+ * Targeted walk that extracts synthetic definitions for class static blocks and
+ * field definitions with function values.  Called from `extractSymbolsQuery`
+ * (query path); the walk path handles these inline via `walkJavaScriptNode`.
+ */
+function extractClassMembersWalk(node: TreeSitterNode, definitions: Definition[]): void {
+  if (node.type === 'class_static_block') {
+    handleStaticBlock(node, definitions);
+  } else if (node.type === 'field_definition' || node.type === 'public_field_definition') {
+    handleFieldDef(node, definitions);
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    extractClassMembersWalk(node.child(i)!, definitions);
   }
 }
 
