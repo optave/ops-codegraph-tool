@@ -62,7 +62,7 @@ Skip the above commands for non-code files, trivial edits, or when you already h
 
 Codegraph (`@optave/codegraph`) is a local code dependency graph CLI. It parses codebases with tree-sitter (WASM), builds function-level dependency graphs stored in SQLite, and supports semantic search with local embeddings. No cloud services required.
 
-**Languages supported (23):** JavaScript, TypeScript, TSX, Python, Go, Rust, Java, C#, Ruby, PHP, C, C++, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, OCaml, Terraform/HCL. `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth — check there for the current list.
+**Languages supported (34):** JavaScript, TypeScript, TSX, Python, Go, Rust, Java, C#, Ruby, PHP, C, C++, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, OCaml, F#, Terraform/HCL, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, Verilog. `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth — check there for the current list.
 
 ## Commands
 

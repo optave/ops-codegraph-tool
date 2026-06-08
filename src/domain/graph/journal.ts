@@ -235,7 +235,7 @@ interface JournalResult {
 }
 
 function parseJournalHeader(firstLine: string | undefined): number | null {
-  if (!firstLine || !firstLine.startsWith(HEADER_PREFIX)) {
+  if (!firstLine?.startsWith(HEADER_PREFIX)) {
     debug('Journal has malformed or missing header');
     return null;
   }

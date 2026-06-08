@@ -468,7 +468,7 @@ function extractPropertyName(propNode: TreeSitterNode): string | null {
   if (!structDecl) return null;
   for (let i = 0; i < structDecl.childCount; i++) {
     const child = structDecl.child(i);
-    if (!child || child.type !== 'struct_declarator') continue;
+    if (child?.type !== 'struct_declarator') continue;
     const id = findIdentifierDeep(child);
     if (id) return id.text;
   }
@@ -494,7 +494,7 @@ function extractMethodParams(methodNode: TreeSitterNode): SubDeclaration[] {
   const params: SubDeclaration[] = [];
   for (let i = 0; i < methodNode.childCount; i++) {
     const child = methodNode.child(i);
-    if (!child || child.type !== 'method_parameter') continue;
+    if (child?.type !== 'method_parameter') continue;
     let nameNode: TreeSitterNode | null = null;
     for (let j = 0; j < child.childCount; j++) {
       const inner = child.child(j);
@@ -516,7 +516,7 @@ function extractCParams(paramListNode: TreeSitterNode | null): SubDeclaration[] 
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
-    if (!param || param.type !== 'parameter_declaration') continue;
+    if (param?.type !== 'parameter_declaration') continue;
     const nameNode = param.childForFieldName('declarator');
     if (nameNode) {
       const name = unwrapObjCDeclaratorName(nameNode);
