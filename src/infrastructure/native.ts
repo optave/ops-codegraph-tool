@@ -127,7 +127,7 @@ export function loadNative(): NativeAddon | null {
   }
 
   // 3. Published npm platform package — production path.
-  const pkg = PLATFORM_PACKAGES[platformKey] ?? null;
+  const pkg = resolvePlatformPackage();
   if (pkg) {
     try {
       _cached = _require(pkg) as NativeAddon;
