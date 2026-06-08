@@ -756,16 +756,30 @@ function buildObjectRestParamPostPass(
       symbols.typeMap instanceof Map ? symbols.typeMap : [],
     );
 
-    // Seed typeMap[restName] = { type: argName } for each matching pair.
-    // Mirrors the seeding in buildCallEdgesJS Phase 8.3f.
+    // Seed typeMap[callee::restName] = { type: argName } for each matching pair.
+    // Mirrors the seeding in buildCallEdgesJS Phase 8.3f. Keys are scoped by
+    // callee so two functions with the same rest-param name (e.g. `...rest`) in
+    // the same file don't collide (#1358).
+    // When only one callee uses a given rest name, also seed the unscoped key
+    // as a null-callerName fallback so edges aren't silently dropped if
+    // findCaller can't identify the enclosing function (#1358).
+    const restNameCallees = new Map<string, Set<string>>();
+    for (const orpb of symbols.objectRestParamBindings!) {
+      if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
+      restNameCallees.get(orpb.restName)!.add(orpb.callee);
+    }
     const restNames = new Set<string>();
     for (const orpb of symbols.objectRestParamBindings!) {
       for (const pb of symbols.paramBindings!) {
         if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
-          if (!typeMap.has(orpb.restName)) {
-            typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
-            restNames.add(orpb.restName);
+          const scopedKey = `${orpb.callee}::${orpb.restName}`;
+          if (!typeMap.has(scopedKey)) {
+            typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
+            if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
+              typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+            }
           }
+          restNames.add(orpb.restName);
         }
       }
     }
@@ -777,7 +791,8 @@ function buildObjectRestParamPostPass(
 
       const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
 
-      // Resolve with the enriched typeMap (typeMap[restName] = { type: argName } is seeded above).
+      // Resolve with the enriched typeMap. callerName is passed so
+      // resolveByMethodOrGlobal can look up the scoped key callee::restName (#1358).
       // seenByPair deduplicates edges the native engine already emitted.
       const { targets, importedFrom } = resolveCallTargets(
         lookup,
@@ -785,6 +800,7 @@ function buildObjectRestParamPostPass(
         relPath,
         importedNames,
         typeMap as Map<string, unknown>,
+        caller.callerName,
       );
       for (const t of targets) {
         const edgeKey = `${caller.id}|${t.id}`;
@@ -1019,16 +1035,26 @@ function buildCallEdgesJS(
       symbols.typeMap instanceof Map ? symbols.typeMap : [],
     );
 
-    // Phase 8.3f: seed typeMap[restName] = { type: argName } for each object-destructuring
-    // rest parameter binding cross-referenced with call-site argument bindings.
-    // e.g. function f({ a, ...rest }) called as f(obj) → typeMap['rest'] = { type: 'obj' }
-    // so that `rest.method()` resolves via typeMap['obj.method'].
+    // Phase 8.3f: seed typeMap[callee::restName] = { type: argName } for each
+    // object-destructuring rest parameter binding × call-site argument binding.
+    // Keys are scoped so two functions with the same rest-param name in the same
+    // file don't collide (#1358). When only one callee uses a given rest name,
+    // also seed the unscoped key as a null-callerName fallback.
     if (symbols.objectRestParamBindings?.length && symbols.paramBindings?.length) {
+      const restNameCallees = new Map<string, Set<string>>();
+      for (const orpb of symbols.objectRestParamBindings) {
+        if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
+        restNameCallees.get(orpb.restName)!.add(orpb.callee);
+      }
       for (const orpb of symbols.objectRestParamBindings) {
         for (const pb of symbols.paramBindings) {
           if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
-            if (!typeMap.has(orpb.restName)) {
-              typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+            const scopedKey = `${orpb.callee}::${orpb.restName}`;
+            if (!typeMap.has(scopedKey)) {
+              typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
+              if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
+                typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+              }
             }
           }
         }

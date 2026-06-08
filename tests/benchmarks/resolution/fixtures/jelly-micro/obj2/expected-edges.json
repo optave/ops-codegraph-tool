@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: obj2",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/obj2.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "obj2.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "obj2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "obj2.js"
+      },
+      "target": {
+        "name": "g",
+        "file": "obj2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
