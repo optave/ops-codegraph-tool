@@ -1,7 +1,7 @@
 {
-  "$schema": "../../expected-edges.schema.json",
+  "$schema": "../expected-edges.schema.json",
   "language": "javascript",
-  "description": "Array iteration patterns: for-of, Set, Array.from, spread",
+  "description": "Hand-authored: array iteration patterns (for-of, Set, Array.from, spread) — requires points-to resolution",
   "edges": [
     {
       "source": { "name": "iterPlain", "file": "more1.js" },

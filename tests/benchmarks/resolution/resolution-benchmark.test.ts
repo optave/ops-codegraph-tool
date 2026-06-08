@@ -93,6 +93,10 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'points-to': 'points-to',
   'pts-define-property': 'points-to',
   'pts-create-prototype': 'points-to',
+  'pts-for-of': 'points-to',
+  'pts-set': 'points-to',
+  'pts-array-from': 'points-to',
+  'pts-spread': 'points-to',
   'define-property': 'ts-native',
 };
 
@@ -123,6 +127,10 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
   //   total expected now 35.
   javascript: { precision: 1.0, recall: 0.9 },
+  // javascript-pts: hand-authored fixture for for-of/Set/Array.from/spread patterns.
+  // Codegraph resolves all 10 edges (100% recall) via its array/closure tracking.
+  // Precision is not gated (direct call edges like runFrom→mapCallback are correct but unlisted).
+  'javascript-pts': { precision: 0.0, recall: 1.0 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).

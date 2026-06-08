@@ -1,4 +1,5 @@
-// Jelly micro-test: more1 — array iteration patterns (for-of, Set, Array.from)
+// Hand-authored fixture: array iteration patterns (for-of, Set, Array.from, spread)
+// Tests points-to resolution for higher-order call patterns.
 
 function fn1() {}
 function fn2() {}
@@ -10,7 +11,7 @@ function fn7() {}
 function fn8() {}
 
 // for-of over plain array
-function _iterPlain() {
+function iterPlain() {
   const arr = [fn1, fn2];
   for (const f of arr) {
     f();
@@ -18,7 +19,7 @@ function _iterPlain() {
 }
 
 // for-of over Set constructed from array
-function _iterSet() {
+function iterSet() {
   const arr = [fn3, fn4];
   const s = new Set(arr);
   for (const f of s) {
@@ -30,7 +31,7 @@ function _iterSet() {
 function mapCallback(item) {
   item();
 }
-function _runFrom() {
+function runFrom() {
   const arr = [fn5, fn6];
   Array.from(arr, mapCallback);
 }
@@ -45,7 +46,7 @@ function consumer2(x, y) {
   y();
 }
 
-function _runSpread() {
+function runSpread() {
   const batch1 = [fn7, fn8];
   consumer1(...batch1);
 }
