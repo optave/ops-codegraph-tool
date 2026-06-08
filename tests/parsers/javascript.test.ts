@@ -802,6 +802,136 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('extracts rest binding from object-destructuring function parameter', () => {
+      const symbols = parseJS(`
+        function f3({ e1: eee1, ...eerest }) {
+          eerest.e4();
+        }
+        f3(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'f3',
+        restName: 'eerest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from arrow function with object-destructuring parameter', () => {
+      const symbols = parseJS(`
+        const handler = ({ a, ...rest }) => { rest.b(); };
+        handler(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'handler',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('records correct argIndex when rest param is not the first parameter', () => {
+      const symbols = parseJS(`
+        function g(x, { a, ...rest }) { rest.b(); }
+        g(1, obj);
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'g',
+        restName: 'rest',
+        argIndex: 1,
+      });
+    });
+
+    it('does not emit binding when object pattern has no rest element', () => {
+      const symbols = parseJS(`
+        function h({ a, b }) { a(); }
+        h(obj);
+      `);
+      expect(symbols.objectRestParamBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ callee: 'h' }),
+      );
+    });
+
+    it('seeds composite typeMap keys from object literal with shorthand properties', () => {
+      const symbols = parseJS(`
+        function e4() {}
+        var obj = { e4 };
+      `);
+      expect(symbols.typeMap.get('obj.e4')).toEqual({ type: 'e4', confidence: 0.85 });
+    });
+
+    it('seeds composite typeMap keys from object literal with pair properties', () => {
+      const symbols = parseJS(`
+        function handler() {}
+        var routes = { get: handler };
+      `);
+      expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
+    });
+
+    it('extracts rest binding from a class method', () => {
+      const symbols = parseJS(`
+        class Service {
+          handle({ event, ...rest }) {
+            rest.save();
+          }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'Service.handle',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal shorthand method', () => {
+      const symbols = parseJS(`
+        const api = {
+          process({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal pair with function value', () => {
+      const symbols = parseJS(`
+        const api = {
+          process: function({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('uses unqualified method name for class method with no class name', () => {
+      const symbols = parseJS(`
+        export default class {
+          handle({ a, ...rest }) { rest.b(); }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual(
+        expect.objectContaining({ restName: 'rest', argIndex: 0 }),
+      );
+    });
+  });
+
   describe('prototype method extraction', () => {
     it('extracts Foo.prototype.bar = function() {} as a method definition', () => {
       const symbols = parseJS(`
