@@ -514,7 +514,10 @@ fn resolve_call_targets<'a>(
             let qualified = format!("{}.{}", class_prefix, call.name);
             let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
-                .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
+                .map(|v| v.iter()
+                    .filter(|n| n.kind == "method"
+                        && import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                    .copied().collect())
                 .unwrap_or_default();
             if !class_scoped.is_empty() { return class_scoped; }
         }
