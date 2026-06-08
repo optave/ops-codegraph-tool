@@ -112,6 +112,10 @@ describe('loadNative', () => {
     expect(result).toBe(FAKE_ADDON);
     // npm package require was never attempted
     expect(requireFn).not.toHaveBeenCalledWith(expect.stringContaining('@optave/'));
+    // Result is cached — second call must not invoke require again
+    const callsBefore = requireFn.mock.calls.length;
+    expect(loadNative()).toBe(FAKE_ADDON);
+    expect(requireFn).toHaveBeenCalledTimes(callsBefore);
   });
 
   it('no env var, no local binary, npm package present: loads npm package', async () => {
@@ -123,6 +127,9 @@ describe('loadNative', () => {
     const result = loadNative();
 
     expect(result).toBe(FAKE_ADDON);
+    // local binary was tried first (absolute path), then npm package — two calls total
+    expect(requireFn).toHaveBeenCalledTimes(2);
+    expect(requireFn).toHaveBeenCalledWith(expect.stringMatching(/^(\/|[A-Z]:\\)/));
     expect(requireFn).toHaveBeenCalledWith('@optave/codegraph-darwin-arm64');
   });
 
