@@ -1545,48 +1545,28 @@ export async function tryNativeOrchestrator(
   }
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
-  // `runPostNativeCha` returns the target node IDs of newly inserted edges so we
-  // can re-classify roles for the implementation files.  The Rust orchestrator ran
-  // role classification BEFORE this post-pass, so without a re-run the newly-called
-  // implementor methods stay classified as `dead-ffi` (no incoming edges at Rust time).
+  // The Rust orchestrator ran role classification BEFORE this post-pass, so without
+  // a re-run the newly-called implementor methods stay classified as `dead-ffi`.
+  //
+  // CHA also changes the global fan-out distribution (callee files gain fan_in, and
+  // new edges shift the median). A full re-classification is required — not just the
+  // callee files — because the median shift can change roles in unrelated files whose
+  // fan-out sits near the old median. (Example: a method that called two siblings
+  // pre-CHA might be near the median, but post-CHA the median is higher, changing
+  // its role from utility → core.) Using an incremental pass with a stale median
+  // cache would produce incorrect roles outside the CHA-affected file set.
   const chaTargetIds = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
   if (chaTargetIds.size > 0) {
     try {
       const db = ctx.db as unknown as BetterSqlite3Database;
-      const idArray = Array.from(chaTargetIds);
-      const CHUNK_SIZE = 500;
-      const seenFiles = new Set<string>();
-      const affectedFiles: Array<{ file: string }> = [];
-      for (let i = 0; i < idArray.length; i += CHUNK_SIZE) {
-        const chunk = idArray.slice(i, i + CHUNK_SIZE);
-        const placeholders = chunk.map(() => '?').join(',');
-        const rows = db
-          .prepare(
-            `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
-          )
-          .all(...chunk) as Array<{ file: string }>;
-        for (const row of rows) {
-          if (!seenFiles.has(row.file)) {
-            seenFiles.add(row.file);
-            affectedFiles.push(row);
-          }
-        }
-      }
-      if (affectedFiles.length > 0) {
-        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-          classifyNodeRoles: (
-            db: BetterSqlite3Database,
-            changedFiles?: string[] | null,
-          ) => Record<string, number>;
-        };
-        classifyNodeRoles(
-          db,
-          affectedFiles.map((r) => r.file),
-        );
-        debug(
-          `CHA post-pass: re-classified roles for ${affectedFiles.length} implementation file(s)`,
-        );
-      }
+      const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+        classifyNodeRoles: (
+          db: BetterSqlite3Database,
+          changedFiles?: string[] | null,
+        ) => Record<string, number>;
+      };
+      classifyNodeRoles(db);
+      debug(`CHA post-pass: full role re-classification after ${chaTargetIds.size} new CHA edges`);
     } catch (err) {
       debug(`CHA post-pass role re-classification failed: ${toErrorMessage(err)}`);
     }
