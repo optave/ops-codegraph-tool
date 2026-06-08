@@ -2259,6 +2259,29 @@ function extractSpreadForOfWalk(
         funcStack.push(nameNode.text);
         pushedFunc = true;
       }
+    } else if (node.type === 'assignment_expression') {
+      // `obj.method = function() { ... }` — func-prop assignment.
+      // Mirror handleFuncPropAssignment's logic so for-of loops inside the
+      // body get the correct enclosingFunc (e.g. 'obj.method') instead of
+      // '<module>' or the wrong outer function name.
+      const lhs = node.childForFieldName('left');
+      const rhs = node.childForFieldName('right');
+      if (
+        lhs?.type === 'member_expression' &&
+        (rhs?.type === 'function_expression' || rhs?.type === 'arrow_function')
+      ) {
+        const obj = lhs.childForFieldName('object');
+        const prop = lhs.childForFieldName('property');
+        if (
+          obj?.type === 'identifier' &&
+          (prop?.type === 'property_identifier' || prop?.type === 'identifier') &&
+          !BUILTIN_GLOBALS.has(obj.text) &&
+          prop.text !== 'prototype'
+        ) {
+          funcStack.push(`${obj.text}.${prop.text}`);
+          pushedFunc = true;
+        }
+      }
     }
 
     if (node.type === 'call_expression') {
