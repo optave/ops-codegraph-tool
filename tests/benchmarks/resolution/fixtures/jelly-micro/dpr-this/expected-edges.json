@@ -1,0 +1,56 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: dpr-this",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/dpr-this.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "dpr-this.js"
+      },
+      "target": {
+        "name": "Foo",
+        "file": "dpr-this.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "dpr-this.js"
+      },
+      "target": {
+        "name": "Foo.add",
+        "file": "dpr-this.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "dpr-this.js"
+      },
+      "target": {
+        "name": "Foo.get",
+        "file": "dpr-this.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "dpr-this.js"
+      },
+      "target": {
+        "name": "<anon@13:16>",
+        "file": "dpr-this.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "$schema": "../../expected-edges.schema.json",
+  "$schema": "../../../expected-edges.schema.json",
   "language": "javascript",
   "description": "Spread operator call resolution — named functions spread as arguments",
   "edges": [
