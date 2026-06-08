@@ -94,7 +94,7 @@ function collectSwiftEnumEntries(node: TreeSitterNode): SubDeclaration[] {
   if (!body) return entries;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'enum_entry') continue;
+    if (child?.type !== 'enum_entry') continue;
     const entryName = findChild(child, 'simple_identifier');
     if (entryName) {
       entries.push({
@@ -114,7 +114,7 @@ function collectSwiftProperties(node: TreeSitterNode): SubDeclaration[] {
   if (!body) return props;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'property_declaration') continue;
+    if (child?.type !== 'property_declaration') continue;
     const pattern = findChild(child, 'pattern');
     if (!pattern) continue;
     const propName = findChild(pattern, 'simple_identifier');
@@ -136,7 +136,7 @@ function collectSwiftMethods(node: TreeSitterNode, className: string, ctx: Extra
   if (!body) return;
   for (let i = 0; i < body.childCount; i++) {
     const child = body.child(i);
-    if (!child || child.type !== 'function_declaration') continue;
+    if (child?.type !== 'function_declaration') continue;
     const methName = findChild(child, 'simple_identifier');
     if (methName) {
       ctx.definitions.push({
@@ -159,7 +159,7 @@ function collectSwiftInheritance(
   let first = true;
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (!child || child.type !== 'inheritance_specifier') continue;
+    if (child?.type !== 'inheritance_specifier') continue;
     const userType = findChild(child, 'user_type');
     const typeId = userType ? findChild(userType, 'type_identifier') : null;
     if (!typeId) continue;

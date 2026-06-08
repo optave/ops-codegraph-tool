@@ -818,6 +818,94 @@ function buildObjectRestParamPostPass(
 }
 
 /**
+ * Object.defineProperty accessor post-pass for the native call-edge path.
+ *
+ * When a function is registered as a getter/setter via
+ * `Object.defineProperty(obj, "bar", { get: getter })`, calls to `this.X()`
+ * inside `getter` need to resolve against `obj` (because `this === obj` when
+ * the accessor is invoked). The native Rust engine has no knowledge of
+ * `definePropertyReceivers`, so this JS post-pass adds the missing edges.
+ */
+function buildDefinePropertyPostPass(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  sharedLookup?: CallNodeLookup,
+): void {
+  const filesWithReceivers = [...ctx.fileSymbols].filter(
+    ([, symbols]) => symbols.definePropertyReceivers && symbols.definePropertyReceivers.size > 0,
+  );
+  if (filesWithReceivers.length === 0) return;
+
+  const seenByPair = new Set<string>();
+  for (const [srcId, tgtId] of allEdgeRows) {
+    seenByPair.add(`${srcId}|${tgtId}`);
+  }
+
+  const { barrelOnlyFiles, rootDir } = ctx;
+  const lookup = sharedLookup ?? makeContextLookup(ctx, getNodeIdStmt);
+
+  for (const [relPath, symbols] of filesWithReceivers) {
+    if (barrelOnlyFiles.has(relPath)) continue;
+    const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+
+    const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+    const definePropertyReceivers = symbols.definePropertyReceivers!;
+
+    for (const call of symbols.calls) {
+      if (call.receiver !== 'this') continue;
+
+      const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
+      if (!caller.callerName) continue;
+
+      const receiverVarName = definePropertyReceivers.get(caller.callerName);
+      if (!receiverVarName) continue;
+
+      // Only add edges the native engine missed (no direct target already).
+      const { targets: directTargets } = resolveCallTargets(
+        lookup,
+        call,
+        relPath,
+        importedNames,
+        typeMap as Map<string, unknown>,
+        caller.callerName,
+      );
+      if (directTargets.length > 0) continue;
+
+      // Resolve via receiver type
+      let targets: ReadonlyArray<{ id: number; file: string }> = [];
+      const typeEntry = typeMap.get(receiverVarName);
+      const typeName = typeEntry
+        ? typeof typeEntry === 'string'
+          ? typeEntry
+          : (typeEntry as { type?: string }).type
+        : null;
+      if (typeName) {
+        const qualifiedName = `${typeName}.${call.name}`;
+        targets = lookup.byNameAndFile(qualifiedName, relPath);
+      }
+      // Same-file fallback for plain object-literal methods
+      if (targets.length === 0) {
+        targets = lookup.byNameAndFile(call.name, relPath);
+      }
+
+      for (const t of targets) {
+        const edgeKey = `${caller.id}|${t.id}`;
+        if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
+          const conf = computeConfidence(relPath, t.file, null);
+          if (conf > 0) {
+            seenByPair.add(edgeKey);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'ts-native']);
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
  * Phase 8.5: CHA + RTA post-pass for the native call-edge path.
  *
  * The native Rust engine has no knowledge of the CHA context, so `this.method()`
@@ -1056,7 +1144,17 @@ function buildPointsToMapForFile(
   symbols: ExtractorOutput,
   importedNames: Map<string, string>,
 ): PointsToMap | null {
-  if (!symbols.fnRefBindings?.length && !symbols.paramBindings?.length) return null;
+  if (
+    !symbols.fnRefBindings?.length &&
+    !symbols.paramBindings?.length &&
+    !symbols.arrayElemBindings?.length &&
+    !symbols.spreadArgBindings?.length &&
+    !symbols.forOfBindings?.length &&
+    !symbols.arrayCallbackBindings?.length &&
+    !symbols.objectRestParamBindings?.length &&
+    !symbols.objectPropBindings?.length
+  )
+    return null;
   const defNames = new Set(
     symbols.definitions
       .filter((d) => d.kind === 'function' || d.kind === 'method')
@@ -1069,6 +1167,12 @@ function buildPointsToMapForFile(
     importedNames,
     symbols.paramBindings,
     definitionParams,
+    symbols.arrayElemBindings,
+    symbols.spreadArgBindings,
+    symbols.forOfBindings,
+    symbols.arrayCallbackBindings,
+    symbols.objectRestParamBindings,
+    symbols.objectPropBindings,
   );
 }
 
@@ -1157,6 +1261,50 @@ function buildFileCallEdges(
       }
     }
 
+    // Object.defineProperty accessor fallback: when a function is registered as
+    // a getter/setter via `Object.defineProperty(obj, "bar", { get: getter })`,
+    // calls to `this.X()` inside `getter` resolve against `obj` (this === obj
+    // when the accessor is invoked). If the same-class fallback above found
+    // nothing, try treating `obj` as the receiver and look up `obj.X` in the
+    // typeMap, or fall back to a same-file lookup of any definition named X
+    // that belongs to the object literal or its type.
+    if (
+      targets.length === 0 &&
+      call.receiver === 'this' &&
+      caller.callerName != null &&
+      symbols.definePropertyReceivers
+    ) {
+      const receiverVarName = symbols.definePropertyReceivers.get(caller.callerName);
+      if (receiverVarName) {
+        // Try typeMap lookup for receiver.methodName
+        const typeEntry = typeMap.get(receiverVarName);
+        const typeName = typeEntry
+          ? typeof typeEntry === 'string'
+            ? typeEntry
+            : (typeEntry as { type?: string }).type
+          : null;
+        if (typeName) {
+          const qualifiedName = `${typeName}.${call.name}`;
+          const qualified = lookup.byNameAndFile(qualifiedName, relPath);
+          if (qualified.length > 0) {
+            targets = [...qualified];
+          }
+        }
+        // If still no targets, search for any definition named `call.name` in
+        // the same file — handles plain object literals where the method isn't
+        // qualified (e.g. `const obj = { baz() {} }` defines `baz` directly).
+        // Note: this is intentionally broad — it matches any same-file definition
+        // with the called name, not just members of the receiver object. This is
+        // the same behaviour used by the native post-pass path (buildDefinePropertyPostPass).
+        if (targets.length === 0) {
+          const sameFile = lookup.byNameAndFile(call.name, relPath);
+          if (sameFile.length > 0) {
+            targets = [...sameFile];
+          }
+        }
+      }
+    }
+
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
       if (t.id !== caller.id) {
@@ -1200,21 +1348,33 @@ function buildFileCallEdges(
     // direct call to the same target in the same function body can upgrade confidence
     // rather than being silently dropped by the dedup guard.
     const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+    // Module-level calls (callerName === null) use the '<module>' sentinel emitted by
+    // extractSpreadForOfWalk for top-level for-of loops. Look it up as a fallback so
+    // that `for (const f of arr) { f(); }` at module scope resolves correctly.
+    const modulePtsKey =
+      caller.callerName === null && ptsMap?.has(`<module>::${call.name}`)
+        ? `<module>::${call.name}`
+        : null;
     const flatPtsKey =
       !call.dynamic && fnRefBindingLhs.has(call.name) && ptsMap?.has(call.name) ? call.name : null;
     if (
       targets.length === 0 &&
       !call.receiver &&
       ptsMap &&
-      (call.dynamic || (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) || flatPtsKey != null)
+      (call.dynamic ||
+        (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) ||
+        modulePtsKey != null ||
+        flatPtsKey != null)
     ) {
       const ptsLookupName = call.dynamic
         ? call.name
         : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
           ? scopedPtsKey
-          : // flatPtsKey != null is guaranteed by the outer if condition: if neither
-            // call.dynamic nor scopedPtsKey matched, flatPtsKey != null must be true.
-            flatPtsKey!;
+          : modulePtsKey != null
+            ? modulePtsKey
+            : // flatPtsKey != null is guaranteed by the outer if condition: if neither
+              // call.dynamic nor scopedPtsKey nor modulePtsKey matched, flatPtsKey must be non-null.
+              flatPtsKey!;
       for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
         // Resolve the concrete alias target. Only `name` is needed here — receiver
         // and line are not relevant for alias resolution (we are looking up the
@@ -1234,6 +1394,43 @@ function buildFileCallEdges(
             if (conf > 0) {
               ptsEdgeRows.set(edgeKey, allEdgeRows.length);
               allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+            }
+          }
+        }
+      }
+    }
+
+    // Phase 8.3f: pts fallback for receiver calls via object-rest param bindings.
+    // Fires when `rest.prop()` is encountered and `rest` was seeded as `pts["rest.prop"]`
+    // by the object-rest dispatch chain (ObjectRestParamBinding + paramBinding + ObjectPropBinding).
+    if (
+      targets.length === 0 &&
+      call.receiver &&
+      !BUILTIN_RECEIVERS.has(call.receiver) &&
+      call.receiver !== 'this' &&
+      call.receiver !== 'self' &&
+      call.receiver !== 'super' &&
+      ptsMap
+    ) {
+      const receiverKey = `${call.receiver}.${call.name}`;
+      if (ptsMap.has(receiverKey)) {
+        for (const alias of resolveViaPointsTo(receiverKey, ptsMap)) {
+          const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+            lookup,
+            { name: alias },
+            relPath,
+            importedNames,
+            typeMap as Map<string, unknown>,
+          );
+          for (const t of aliasTargets) {
+            const edgeKey = `${caller.id}|${t.id}`;
+            if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+              const conf =
+                computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+              if (conf > 0) {
+                ptsEdgeRows.set(edgeKey, allEdgeRows.length);
+                allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+              }
             }
           }
         }
@@ -1622,6 +1819,9 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       // Phase 8.3f post-pass: augment native call edges with object rest-param
       // receiver resolution — typeMap[restName] → argName → typeMap[argName.method].
       buildObjectRestParamPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
+      // Object.defineProperty accessor post-pass: resolve this-dispatch inside
+      // getter/setter functions registered via Object.defineProperty.
+      buildDefinePropertyPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
       // Phase 8.5 post-pass: augment native call edges with CHA-resolved dispatch.
       // The native Rust engine has no knowledge of the CHA context, so this/self
       // calls and interface dispatch are not expanded to concrete implementations.

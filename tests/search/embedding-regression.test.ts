@@ -88,7 +88,24 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
     // causing intermittent EBUSY errors. Node's built-in maxRetries handles
     // retrying EBUSY/EMFILE automatically with retryDelay ms between attempts.
     flushDeferredClose();
-    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    // Safety net: if the WAL lock outlasts the retry budget, clean up at process exit.
+    // This prevents leaked codegraph-embed-regression-* directories on Windows CI.
+    const capturedDir = tmpDir;
+    process.once('exit', () => {
+      try {
+        fs.rmSync(capturedDir, { recursive: true, force: true });
+      } catch {
+        // best-effort — OS will eventually reclaim at reboot
+      }
+    });
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (err: unknown) {
+      // Only swallow EBUSY / EPERM — Windows WAL locks that outlast the retry budget.
+      // Any other error (permission denied, quota, path corruption) surfaces normally.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EBUSY' && code !== 'EPERM') throw err;
+    }
   });
 
   describe('smoke tests', () => {

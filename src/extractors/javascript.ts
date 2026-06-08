@@ -1,5 +1,7 @@
 import { debug } from '../infrastructure/logger.js';
 import type {
+  ArrayCallbackBinding,
+  ArrayElemBinding,
   Call,
   CallAssignment,
   ClassRelation,
@@ -7,9 +9,12 @@ import type {
   Export,
   ExtractorOutput,
   FnRefBinding,
+  ForOfBinding,
   Import,
+  ObjectPropBinding,
   ObjectRestParamBinding,
   ParamBinding,
+  SpreadArgBinding,
   SubDeclaration,
   TreeSitterNode,
   TreeSitterQuery,
@@ -311,6 +316,7 @@ function dispatchQueryMatch(
     if (callInfo) calls.push(callInfo);
   } else if (c.assign_node) {
     handleCommonJSAssignment(c.assign_left!, c.assign_right!, c.assign_node, imports);
+    handleFuncPropAssignment(c.assign_left!, c.assign_right!, definitions);
   }
 }
 
@@ -325,6 +331,12 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const callAssignments: CallAssignment[] = [];
   const fnRefBindings: FnRefBinding[] = [];
   const paramBindings: ParamBinding[] = [];
+  const arrayElemBindings: ArrayElemBinding[] = [];
+  const spreadArgBindings: SpreadArgBinding[] = [];
+  const forOfBindings: ForOfBinding[] = [];
+  const arrayCallbackBindings: ArrayCallbackBinding[] = [];
+  const objectRestParamBindings: ObjectRestParamBinding[] = [];
+  const objectPropBindings: ObjectPropBinding[] = [];
 
   const matches = query.matches(tree.rootNode);
 
@@ -353,16 +365,30 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, paramBindings);
 
-  // Phase 8.3f: Extract object-destructuring rest-parameter bindings from function definitions
-  const objectRestParamBindings: ObjectRestParamBinding[] = [];
-  extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindings);
+  // Phase 8.3e: Extract array-element and spread/for-of/Array.from bindings
+  extractArrayElemBindingsWalk(tree.rootNode, arrayElemBindings);
+  extractSpreadForOfWalk(
+    tree.rootNode,
+    spreadArgBindings,
+    forOfBindings,
+    arrayCallbackBindings,
+    fnRefBindings,
+  );
 
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Phase 8.3f: Extract object-rest parameter and object-property bindings
+  extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindings);
+  extractObjectPropBindingsWalk(tree.rootNode, objectPropBindings);
+
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
+
+  // Object.defineProperty accessor receiver bindings
+  const definePropertyReceivers: Map<string, string> = new Map();
+  extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
 
   return {
     definitions,
@@ -375,8 +401,14 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     callAssignments,
     fnRefBindings,
     paramBindings,
-    objectRestParamBindings: objectRestParamBindings.length ? objectRestParamBindings : undefined,
+    arrayElemBindings,
+    spreadArgBindings,
+    forOfBindings,
+    arrayCallbackBindings,
+    objectRestParamBindings,
+    objectPropBindings,
     newExpressions,
+    ...(definePropertyReceivers.size > 0 ? { definePropertyReceivers } : {}),
   };
 }
 
@@ -503,6 +535,14 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
         line: nodeStartLine(declNode),
         endLine: nodeEndLine(declNode),
       });
+      // Phase 8.3f: extract function/arrow properties from object literals.
+      // Scope guard: extractConstDeclarators is only called from extractConstantsWalk, which
+      // already skips const declarations inside function scopes (line ~412). So these definitions
+      // are always top-level. Any new call site must add a hasFunctionScopeAncestor guard
+      // (the walk path at handleVariableDecl does this).
+      if (valueN.type === 'object') {
+        extractObjectLiteralFunctions(valueN, nameN.text, definitions);
+      }
     }
   }
 }
@@ -614,6 +654,12 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     callAssignments: [],
     fnRefBindings: [],
     paramBindings: [],
+    arrayElemBindings: [],
+    spreadArgBindings: [],
+    forOfBindings: [],
+    arrayCallbackBindings: [],
+    objectRestParamBindings: [],
+    objectPropBindings: [],
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
@@ -629,16 +675,30 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   );
   // Prototype-based method definitions: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
   extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
+  // Function-as-object property methods: `fn.method = function() { ... }`
+  extractFuncPropMethodsWalk(tree.rootNode, ctx.definitions);
   // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
   extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
-  // Phase 8.3f: Extract object-destructuring rest-parameter bindings from function definitions
-  const objectRestParamBindingsWalk: ObjectRestParamBinding[] = [];
-  extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindingsWalk);
-  if (objectRestParamBindingsWalk.length) ctx.objectRestParamBindings = objectRestParamBindingsWalk;
+  // Phase 8.3e: Extract array-element and spread/for-of/Array.from bindings
+  extractArrayElemBindingsWalk(tree.rootNode, ctx.arrayElemBindings!);
+  extractSpreadForOfWalk(
+    tree.rootNode,
+    ctx.spreadArgBindings!,
+    ctx.forOfBindings!,
+    ctx.arrayCallbackBindings!,
+    ctx.fnRefBindings!,
+  );
+  // Phase 8.3f: Extract object-rest parameter and object-property bindings
+  extractObjectRestParamBindingsWalk(tree.rootNode, ctx.objectRestParamBindings!);
+  extractObjectPropBindingsWalk(tree.rootNode, ctx.objectPropBindings!);
   // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
   const newExpressions: string[] = [];
   extractNewExpressionsWalk(tree.rootNode, newExpressions);
   ctx.newExpressions = newExpressions;
+  // Object.defineProperty accessor receiver bindings
+  const definePropertyReceivers: Map<string, string> = new Map();
+  extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
+  if (definePropertyReceivers.size > 0) ctx.definePropertyReceivers = definePropertyReceivers;
   return ctx;
 }
 
@@ -837,13 +897,28 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             endLine: nodeEndLine(valueN),
             children: varFnChildren.length > 0 ? varFnChildren : undefined,
           });
-        } else if (isConst && nameN.type === 'identifier' && isConstantValue(valueN)) {
+        } else if (
+          isConst &&
+          nameN.type === 'identifier' &&
+          isConstantValue(valueN) &&
+          !hasFunctionScopeAncestor(node)
+        ) {
           ctx.definitions.push({
             name: nameN.text,
             kind: 'constant',
             line: nodeStartLine(node),
             endLine: nodeEndLine(node),
           });
+          // Phase 8.3f: extract function/arrow properties from object literals so that
+          // this.method() calls inside Object.defineProperty accessors can resolve them.
+          // Scope guard: hasFunctionScopeAncestor mirrors the Rust path's find_parent_of_types
+          // check and the sibling destructured-binding branch below — skips object literals
+          // inside function bodies to avoid polluting the global definition index with
+          // local variable properties (e.g. `localObj.fn` from `const localObj = { fn: ... }`
+          // inside a function).
+          if (valueN.type === 'object') {
+            extractObjectLiteralFunctions(valueN, nameN.text, ctx.definitions);
+          }
         } else if (isConst && nameN.type === 'object_pattern' && !hasFunctionScopeAncestor(node)) {
           // Destructured bindings: const { handleToken, checkPermissions } = initAuth(...)
           // Each destructured property becomes a function definition so it can be
@@ -859,6 +934,59 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             ctx.definitions,
           );
         }
+      }
+    }
+  }
+}
+
+/**
+ * Phase 8.3f: extract function/arrow function properties from an object literal as standalone
+ * definitions so that `this.method()` calls inside Object.defineProperty accessor functions can
+ * resolve them via the same-file definition lookup.
+ *
+ * Definitions are emitted as qualified names (`obj.baz` rather than bare `baz`) to avoid
+ * polluting the global definition index with common property names like `init`, `run`, or
+ * `render`. The typeMap value stored by the caller also uses the qualified name so the resolver
+ * looks up `lookup.byName('obj.baz')` rather than `lookup.byName('baz')`.
+ *
+ * `const obj = { baz: () => {} }` → emits Definition { name: 'obj.baz', kind: 'function' }
+ */
+function extractObjectLiteralFunctions(
+  objNode: TreeSitterNode,
+  varName: string,
+  definitions: Definition[],
+): void {
+  for (let i = 0; i < objNode.childCount; i++) {
+    const child = objNode.child(i);
+    if (!child) continue;
+    if (child.type === 'pair') {
+      const keyNode = child.childForFieldName('key');
+      const valueNode = child.childForFieldName('value');
+      if (!keyNode || !valueNode) continue;
+      const keyName =
+        keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+      if (!keyName) continue;
+      if (
+        valueNode.type === 'arrow_function' ||
+        valueNode.type === 'function_expression' ||
+        valueNode.type === 'function'
+      ) {
+        definitions.push({
+          name: `${varName}.${keyName}`,
+          kind: 'function',
+          line: nodeStartLine(child),
+          endLine: nodeEndLine(valueNode),
+        });
+      }
+    } else if (child.type === 'method_definition') {
+      const nameNode = child.childForFieldName('name');
+      if (nameNode) {
+        definitions.push({
+          name: `${varName}.${nameNode.text}`,
+          kind: 'function',
+          line: nodeStartLine(child),
+          endLine: nodeEndLine(child),
+        });
       }
     }
   }
@@ -1426,6 +1554,79 @@ function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: str
 }
 
 /**
+ * Walk the AST to find `Object.defineProperty(obj, "bar", { get: getter })` patterns
+ * and record which functions are used as getter/setter accessors for which objects.
+ *
+ * Result is stored in the provided map as `funcName → receiverVarName`.
+ */
+function extractDefinePropertyReceiversWalk(
+  rootNode: TreeSitterNode,
+  out: Map<string, string>,
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'call_expression') {
+      const fn = node.childForFieldName('function');
+      // Match `Object.defineProperty`
+      if (fn?.type === 'member_expression') {
+        const obj = fn.childForFieldName('object');
+        const prop = fn.childForFieldName('property');
+        if (
+          obj?.type === 'identifier' &&
+          obj.text === 'Object' &&
+          prop?.text === 'defineProperty'
+        ) {
+          const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
+          if (argsNode) {
+            // Collect non-punctuation children: arg0 (target obj), arg1 (prop name string), arg2 (descriptor)
+            const argChildren: TreeSitterNode[] = [];
+            for (let i = 0; i < argsNode.childCount; i++) {
+              const c = argsNode.child(i);
+              if (!c) continue;
+              if (c.type === ',' || c.type === '(' || c.type === ')') continue;
+              argChildren.push(c);
+            }
+            if (argChildren.length >= 3) {
+              const targetObj = argChildren[0];
+              const descriptor = argChildren[2];
+              if (targetObj?.type === 'identifier' && descriptor?.type === 'object') {
+                const targetName = targetObj.text;
+                // Walk the descriptor object's pair children looking for get/set
+                for (let i = 0; i < descriptor.childCount; i++) {
+                  const pair = descriptor.child(i);
+                  if (pair?.type !== 'pair') continue;
+                  const key = pair.childForFieldName('key');
+                  const val = pair.childForFieldName('value');
+                  if (
+                    key &&
+                    (key.text === 'get' || key.text === 'set') &&
+                    val?.type === 'identifier' &&
+                    !BUILTIN_GLOBALS.has(val.text)
+                  ) {
+                    // Known limitation: if the same function is registered as an
+                    // accessor on multiple objects, last-write-wins — only the
+                    // last target object is retained. This is an unusual pattern
+                    // (sharing one function across multiple defineProperty calls)
+                    // and covering it would require Map<string, string[]> which
+                    // changes the consumer API. Tracked as a known edge case.
+                    out.set(val.text, targetName);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) walk(child, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
  * Extract variable-to-type assignments into a per-file type map.
  *
  * Values are `{ type: string, confidence: number }`:
@@ -1593,12 +1794,54 @@ function handleVarDeclaratorTypeMap(
     }
   }
 
-  // Phase 8.3f: seed composite pts keys for object literals — `var obj = { e4, handler }`
-  // seeds `obj.e4 → e4`, `obj.handler → handler`. Only shorthand properties and
-  // identifier-valued pairs are tracked; literal-valued properties (e.g. `{ x: 42 }`) are skipped.
-  // This enables `eerest.e4()` resolution when `eerest` is a rest binding for an argument `obj`.
-  if (valueN?.type === 'object') {
-    seedProtoProperties(nameN.text, valueN, typeMap);
+  // Phase 8.3f: seed composite pts keys for object literal properties.
+  // `const obj = { baz: () => {} }` → typeMap['obj.baz'] = 'obj.baz'
+  // `const obj = { baz }` (shorthand) → typeMap['obj.baz'] = 'baz'  (bare identifier target)
+  // `const obj = { baz: otherFn }` → typeMap['obj.baz'] = 'otherFn'  (identifier alias)
+  //
+  // For function/arrow values, the value is the qualified name ('obj.baz') because
+  // extractObjectLiteralFunctions now registers definitions under that qualified name to avoid
+  // polluting the global index with bare property names like 'init', 'run', or 'render'.
+  // Enables accessor this-dispatch: when typeMap['getter:this'] = 'obj',
+  // resolving this.baz() inside getter → typeMap['obj.baz'] → 'obj.baz' → lookup.byName('obj.baz').
+  //
+  // Scope guard: mirrors Rust handle_var_decl's find_parent_of_types check — skip object literals
+  // inside function bodies so function-scoped `const localObj = { fn: ... }` never seeds
+  // the typeMap (which would shadow a module-level `const obj` with the same property names).
+  if (valueN.type === 'object' && !hasFunctionScopeAncestor(node)) {
+    for (let i = 0; i < valueN.childCount; i++) {
+      const child = valueN.child(i);
+      if (!child) continue;
+      if (child.type === 'shorthand_property_identifier') {
+        setTypeMapEntry(typeMap, `${nameN.text}.${child.text}`, child.text, 0.85);
+      } else if (child.type === 'pair') {
+        const keyNode = child.childForFieldName('key');
+        const valNode = child.childForFieldName('value');
+        if (!keyNode || !valNode) continue;
+        const keyName =
+          keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+        if (!keyName) continue;
+        const qualifiedKey = `${nameN.text}.${keyName}`;
+        if (
+          valNode.type === 'arrow_function' ||
+          valNode.type === 'function_expression' ||
+          valNode.type === 'function'
+        ) {
+          // Store the qualified name so the resolver finds the qualified definition.
+          setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85);
+        } else if (valNode.type === 'identifier') {
+          setTypeMapEntry(typeMap, qualifiedKey, valNode.text, 0.85);
+        }
+      } else if (child.type === 'method_definition') {
+        // Method shorthand: `const obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
+        // extractObjectLiteralFunctions registers a definition under the qualified name;
+        // seed the matching typeMap entry so the two-step accessor dispatch finds it.
+        const nameNode = child.childForFieldName('name');
+        if (!nameNode) continue;
+        const qualifiedKey = `${nameN.text}.${nameNode.text}`;
+        setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85);
+      }
+    }
   }
 }
 
@@ -1652,10 +1895,11 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
 }
 
 /**
- * Phase 8.3e: seed composite pts keys from Object.defineProperty / defineProperties.
+ * Phase 8.3e/8.3f: seed composite pts keys from Object.defineProperty / defineProperties.
  *
  * `Object.defineProperty(obj, "key", { value: fn })` → typeMap.set('obj.key', fn, 0.85)
  * `Object.defineProperties(obj, { "k1": { value: v1 } })` → typeMap.set('obj.k1', v1, 0.85)
+ * `Object.defineProperty(obj, "key", { get: getter })` → typeMap.set('getter:this', obj, 0.85)
  */
 function handleDefinePropertyTypeMap(
   node: TreeSitterNode,
@@ -1687,9 +1931,17 @@ function handleDefinePropertyTypeMap(
     if (arg1.type !== 'string') return;
     const key = arg1.text.replace(/^['"]|['"]$/g, '');
     if (!key) return;
+    // Phase 8.3e: { value: fn } → obj.key pts to fn
     const target = findDescriptorValue(arg2);
-    if (!target) return;
-    setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
+    if (target) {
+      setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
+    }
+    // Phase 8.3f: { get: getter } and/or { set: setter } → this inside each accessor is arg0 (obj)
+    // Key format: '<accessorName>:this' — colon is a reserved separator used only by this phase.
+    // JS identifiers cannot contain ':', so this key never collides with real variable names.
+    for (const accessor of findDescriptorAccessors(arg2)) {
+      setTypeMapEntry(typeMap, `${accessor}:this`, arg0.text, 0.85);
+    }
   } else {
     // defineProperties
     if (args.length < 2) return;
@@ -1722,6 +1974,26 @@ function findDescriptorValue(desc: TreeSitterNode): string | undefined {
     if (key?.text === 'value' && val?.type === 'identifier') return val.text;
   }
   return undefined;
+}
+
+/**
+ * Phase 8.3f: return the identifier texts of all `get` and `set` accessors in a property
+ * descriptor. `{ get: getter, set: setter }` → ['getter', 'setter'].
+ * Returns all accessors so that each one gets a `callerName:this = obj` typeMap entry.
+ */
+function findDescriptorAccessors(desc: TreeSitterNode): string[] {
+  if (desc.type !== 'object') return [];
+  const result: string[] = [];
+  for (let i = 0; i < desc.childCount; i++) {
+    const pair = desc.child(i);
+    if (pair?.type !== 'pair') continue;
+    const key = pair.childForFieldName('key');
+    const val = pair.childForFieldName('value');
+    if ((key?.text === 'get' || key?.text === 'set') && val?.type === 'identifier') {
+      result.push(val.text);
+    }
+  }
+  return result;
 }
 
 /** Seed composite pts keys for each property in a prototype object literal. */
@@ -1783,11 +2055,248 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
   walk(rootNode, 0);
 }
 
+/** Collection constructors whose argument is treated as an element source. */
+const COLLECTION_CTOR_SET = new Set(['Set', 'Map']);
+
+/**
+ * Phase 8.3e: Extract array-element bindings from `const arr = [fn1, fn2]` patterns.
+ * Emits an ArrayElemBinding for each identifier element in an array literal assigned
+ * to a variable.
+ */
+function extractArrayElemBindingsWalk(
+  rootNode: TreeSitterNode,
+  arrayElemBindings: ArrayElemBinding[],
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN?.type === 'array') {
+        let idx = 0;
+        for (let i = 0; i < valueN.childCount; i++) {
+          const elem = valueN.child(i);
+          if (!elem) continue;
+          if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
+          if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
+            arrayElemBindings.push({ arrayName: nameN.text, index: idx, elemName: elem.text });
+          }
+          idx++;
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+/**
+ * Phase 8.3e: Extract spread-argument, for-of, Array.from, and collection-wrap bindings.
+ *
+ * - Spread: `f(...arr)` → SpreadArgBinding
+ * - Array.from: `Array.from(src, cb)` → ArrayCallbackBinding
+ * - Collection wrap: `new Set(arr)` / `new Map(arr)` → FnRefBinding lhs=s[*] rhs=arr[*]
+ * - For-of: `for (const x of arr)` → ForOfBinding
+ */
+function extractSpreadForOfWalk(
+  rootNode: TreeSitterNode,
+  spreadArgBindings: SpreadArgBinding[],
+  forOfBindings: ForOfBinding[],
+  arrayCallbackBindings: ArrayCallbackBinding[],
+  fnRefBindings: FnRefBinding[],
+): void {
+  const funcStack: string[] = [];
+  // Tracks the enclosing class name so that method_definition nodes push a
+  // qualified name (e.g. 'Foo.bar') matching what findCaller returns from the
+  // definitions array (where class methods are stored as 'Foo.bar').
+  const classStack: string[] = [];
+
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+
+    let pushedFunc = false;
+    let pushedClass = false;
+    if (
+      node.type === 'class_declaration' ||
+      node.type === 'abstract_class_declaration' ||
+      node.type === 'class'
+    ) {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode?.type === 'identifier') {
+        classStack.push(nameNode.text);
+        pushedClass = true;
+      }
+    } else if (
+      node.type === 'function_declaration' ||
+      node.type === 'generator_function_declaration'
+    ) {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode?.type === 'identifier') {
+        funcStack.push(nameNode.text);
+        pushedFunc = true;
+      }
+    } else if (node.type === 'method_definition') {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode) {
+        // Qualify with the enclosing class name so the PTS key matches
+        // callerName from findCaller (which uses def.name = 'ClassName.method').
+        const enclosingClass = classStack.length > 0 ? classStack[classStack.length - 1] : null;
+        const qualifiedName = enclosingClass ? `${enclosingClass}.${nameNode.text}` : nameNode.text;
+        funcStack.push(qualifiedName);
+        pushedFunc = true;
+      }
+    } else if (node.type === 'variable_declarator') {
+      // `const process = (arr) => { ... }` — arrow/expression functions assigned
+      // to a variable have no `name` field on the function node itself.
+      const nameNode = node.childForFieldName('name');
+      const valueNode = node.childForFieldName('value');
+      if (
+        nameNode?.type === 'identifier' &&
+        (valueNode?.type === 'arrow_function' || valueNode?.type === 'function_expression')
+      ) {
+        funcStack.push(nameNode.text);
+        pushedFunc = true;
+      }
+    }
+
+    if (node.type === 'call_expression') {
+      const fn = node.childForFieldName('function');
+      const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
+
+      // Spread: f(...arr)
+      if (fn?.type === 'identifier' && !BUILTIN_GLOBALS.has(fn.text) && argsNode) {
+        let argIdx = 0;
+        for (let i = 0; i < argsNode.childCount; i++) {
+          const child = argsNode.child(i);
+          if (!child) continue;
+          if (child.type === ',' || child.type === '(' || child.type === ')') continue;
+          if (child.type === 'spread_element') {
+            const spreadTarget =
+              child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
+            if (spreadTarget?.type === 'identifier' && !BUILTIN_GLOBALS.has(spreadTarget.text)) {
+              spreadArgBindings.push({
+                callee: fn.text,
+                arrayName: spreadTarget.text,
+                startIndex: argIdx,
+              });
+            }
+          }
+          argIdx++;
+        }
+      }
+
+      // Array.from(source, cb)
+      if (fn?.type === 'member_expression' && argsNode) {
+        const obj = fn.childForFieldName('object');
+        const prop = fn.childForFieldName('property');
+        if (obj?.text === 'Array' && prop?.text === 'from') {
+          const fnArgs: TreeSitterNode[] = [];
+          for (let i = 0; i < argsNode.childCount; i++) {
+            const child = argsNode.child(i);
+            if (!child) continue;
+            if (child.type === ',' || child.type === '(' || child.type === ')') continue;
+            fnArgs.push(child);
+          }
+          if (fnArgs.length >= 2) {
+            const srcArg = fnArgs[0]!;
+            const cbArg = fnArgs[1]!;
+            if (
+              srcArg.type === 'identifier' &&
+              !BUILTIN_GLOBALS.has(srcArg.text) &&
+              cbArg.type === 'identifier' &&
+              !BUILTIN_GLOBALS.has(cbArg.text)
+            ) {
+              arrayCallbackBindings.push({ sourceName: srcArg.text, calleeName: cbArg.text });
+            }
+          }
+        }
+      }
+    }
+
+    // Collection wrap: const s = new Set(arr) or new Map(arr)
+    if (node.type === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN?.type === 'new_expression') {
+        const ctor = valueN.childForFieldName('constructor');
+        const args = valueN.childForFieldName('arguments');
+        if (ctor && COLLECTION_CTOR_SET.has(ctor.text) && args) {
+          for (let i = 0; i < args.childCount; i++) {
+            const arg = args.child(i);
+            if (!arg || arg.type === '(' || arg.type === ')') continue;
+            if (arg.type === 'identifier' && !BUILTIN_GLOBALS.has(arg.text)) {
+              fnRefBindings.push({ lhs: `${nameN.text}[*]`, rhs: `${arg.text}[*]` });
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // For-of: for (const x of arr)
+    if (node.type === 'for_in_statement') {
+      let isForOf = false;
+      for (let i = 0; i < node.childCount; i++) {
+        if (node.child(i)?.text === 'of') {
+          isForOf = true;
+          break;
+        }
+      }
+      if (isForOf) {
+        const right = node.childForFieldName('right');
+        if (right?.type === 'identifier' && !BUILTIN_GLOBALS.has(right.text)) {
+          const left = node.childForFieldName('left');
+          let varName: string | null = null;
+          if (left?.type === 'identifier') {
+            varName = left.text;
+          } else if (left) {
+            for (let i = 0; i < left.childCount; i++) {
+              const lc = left.child(i);
+              if (lc?.type === 'variable_declarator') {
+                const nc = lc.childForFieldName('name');
+                if (nc?.type === 'identifier') {
+                  varName = nc.text;
+                  break;
+                }
+              } else if (
+                lc?.type === 'identifier' &&
+                lc.text !== 'const' &&
+                lc.text !== 'let' &&
+                lc.text !== 'var'
+              ) {
+                varName = lc.text;
+                break;
+              }
+            }
+          }
+          // Use '<module>' as sentinel for top-level for-of outside any function.
+          const enclosingFunc =
+            funcStack.length > 0 ? funcStack[funcStack.length - 1]! : '<module>';
+          if (varName && !BUILTIN_GLOBALS.has(varName)) {
+            forOfBindings.push({ varName, sourceName: right.text, enclosingFunc });
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+
+    if (pushedFunc) funcStack.pop();
+    if (pushedClass) classStack.pop();
+  }
+
+  walk(rootNode, 0);
+}
+
 /**
  * Phase 8.3f: record object-destructuring rest-parameter bindings from function definitions.
  *
  * For each `function f({ a, ...rest })` (or arrow/function-expression equivalent),
- * records { callee: 'f', argIndex: N, restName: 'rest' }. Also covers class methods
+ * records { callee: 'f', restName: 'rest', argIndex: N }. Also covers class methods
  * (`callee: 'ClassName.method'`) and object-literal methods (`callee: 'method'`).
  * The edge builder uses these to seed typeMap[rest] = { type: argName } when f(obj)
  * is called with an identifier, enabling `rest.method()` calls to resolve.
@@ -1831,16 +2340,18 @@ function extractObjectRestParamBindingsWalk(
       }
     } else if (t === 'pair') {
       // object-literal method: `{ bar: function({ a, ...rest }) {} }`
+      // Skip computed property keys (e.g. `{ [Symbol.iterator]: function({ ...rest }) {} }`)
+      // because `callee: '[Symbol.iterator]'` can never match a paramBinding callee.
       const keyN = node.childForFieldName('key');
       const valueN = node.childForFieldName('value');
-      if (keyN && valueN) {
+      if (keyN && valueN && keyN.type !== 'computed_property_name') {
         const vt = valueN.type;
         if (
           vt === 'arrow_function' ||
           vt === 'function_expression' ||
           vt === 'generator_function'
         ) {
-          fnName = keyN.type === 'string' ? keyN.text.replace(/['"]/g, '') : keyN.text;
+          fnName = keyN.type === 'string' ? keyN.text.slice(1, -1) : keyN.text;
           paramsNode =
             valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
         }
@@ -1862,7 +2373,7 @@ function extractObjectRestParamBindingsWalk(
               // rest_pattern node: `...identifier` — the identifier is at child index 1
               const restId = inner.child(1) ?? inner.childForFieldName('name');
               if (restId?.type === 'identifier') {
-                bindings.push({ callee: fnName, argIndex: paramIdx, restName: restId.text });
+                bindings.push({ callee: fnName, restName: restId.text, argIndex: paramIdx });
               }
             }
           }
@@ -1885,6 +2396,52 @@ function extractObjectRestParamBindingsWalk(
   }
   walk(rootNode, 0, null);
 }
+
+/**
+ * Phase 8.3f: collect object-property bindings from object literals.
+ *
+ * `const obj = { e4 }` → `{ objectName: "obj", propName: "e4", valueName: "e4" }`
+ * `const obj = { e1: fn }` → `{ objectName: "obj", propName: "e1", valueName: "fn" }`
+ *
+ * Only tracks shorthand and `key: identifier` pairs; skips function literals.
+ */
+function extractObjectPropBindingsWalk(
+  rootNode: TreeSitterNode,
+  bindings: ObjectPropBinding[],
+): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN?.type === 'object') {
+        const objectName = nameN.text;
+        for (let i = 0; i < valueN.childCount; i++) {
+          const child = valueN.child(i);
+          if (!child) continue;
+          if (child.type === 'shorthand_property_identifier') {
+            bindings.push({ objectName, propName: child.text, valueName: child.text });
+          } else if (child.type === 'pair') {
+            const keyN = child.childForFieldName('key');
+            const valN = child.childForFieldName('value');
+            if (
+              keyN?.type === 'property_identifier' &&
+              valN?.type === 'identifier' &&
+              !BUILTIN_GLOBALS.has(valN.text)
+            ) {
+              bindings.push({ objectName, propName: keyN.text, valueName: valN.text });
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
 
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
   if (!objNode) return undefined;
@@ -2462,6 +3019,60 @@ function emitPrototypeMethod(
   }
 }
 
+/**
+ * Extract function-as-object property method definitions.
+ *
+ * Handles `fn.method = function() {}` and `fn.method = () => {}` patterns.
+ * Emits a `method` definition named `fn.method` so that:
+ *   1. `findCaller` attributes calls inside the body to `fn.method`
+ *   2. `resolveByMethodOrGlobal` resolves `this.other()` inside `fn.method` to `fn.other`
+ *
+ * Excludes BUILTIN_GLOBALS objects and `.prototype` (handled by extractPrototypeMethodsWalk).
+ */
+function extractFuncPropMethodsWalk(rootNode: TreeSitterNode, definitions: Definition[]): void {
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'expression_statement') {
+      const expr = node.child(0);
+      if (expr?.type === 'assignment_expression') {
+        const lhs = expr.childForFieldName('left');
+        const rhs = expr.childForFieldName('right');
+        if (lhs && rhs) handleFuncPropAssignment(lhs, rhs, definitions);
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  }
+  walk(rootNode, 0);
+}
+
+function handleFuncPropAssignment(
+  lhs: TreeSitterNode,
+  rhs: TreeSitterNode,
+  definitions: Definition[],
+): void {
+  if (lhs.type !== 'member_expression') return;
+  if (rhs.type !== 'function_expression' && rhs.type !== 'arrow_function') return;
+
+  const obj = lhs.childForFieldName('object');
+  const prop = lhs.childForFieldName('property');
+  if (!obj || !prop) return;
+  if (obj.type !== 'identifier') return;
+  if (prop.type !== 'property_identifier' && prop.type !== 'identifier') return;
+  if (BUILTIN_GLOBALS.has(obj.text)) return;
+  if (prop.text === 'prototype') return;
+
+  const params = extractParameters(rhs);
+  definitions.push({
+    name: `${obj.text}.${prop.text}`,
+    kind: 'method',
+    line: nodeStartLine(rhs),
+    endLine: nodeEndLine(rhs),
+    children: params.length > 0 ? params : undefined,
+  });
+}
+
 /** Iterate over an object literal assigned to `Foo.prototype` and emit defs/aliases. */
 function extractPrototypeObjectLiteral(
   className: string,
@@ -2483,6 +3094,14 @@ function extractPrototypeObjectLiteral(
           line: nodeStartLine(child),
           endLine: nodeEndLine(child),
         });
+      }
+      continue;
+    }
+
+    if (child.type === 'shorthand_property_identifier') {
+      // ES6 shorthand: `Foo.prototype = { bar }` → alias typeMap['Foo.bar'] = { type: 'bar' }
+      if (!BUILTIN_GLOBALS.has(child.text)) {
+        setTypeMapEntry(typeMap, `${className}.${child.text}`, child.text, 0.9);
       }
       continue;
     }

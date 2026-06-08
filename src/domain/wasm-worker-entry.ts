@@ -805,15 +805,30 @@ function serializeExtractorOutput(
     dataflow: symbols.dataflow,
     astNodes,
     ...(symbols.fnRefBindings?.length ? { fnRefBindings: symbols.fnRefBindings } : {}),
+    ...(symbols.paramBindings?.length ? { paramBindings: symbols.paramBindings } : {}),
+    ...(symbols.arrayElemBindings?.length ? { arrayElemBindings: symbols.arrayElemBindings } : {}),
+    ...(symbols.spreadArgBindings?.length ? { spreadArgBindings: symbols.spreadArgBindings } : {}),
+    ...(symbols.forOfBindings?.length ? { forOfBindings: symbols.forOfBindings } : {}),
+    ...(symbols.arrayCallbackBindings?.length
+      ? { arrayCallbackBindings: symbols.arrayCallbackBindings }
+      : {}),
+    ...(symbols.objectRestParamBindings?.length
+      ? { objectRestParamBindings: symbols.objectRestParamBindings }
+      : {}),
+    ...(symbols.objectPropBindings?.length
+      ? { objectPropBindings: symbols.objectPropBindings }
+      : {}),
     ...(symbols.newExpressions?.length ? { newExpressions: symbols.newExpressions } : {}),
     ...(symbols.objectRestParamBindings?.length
       ? { objectRestParamBindings: symbols.objectRestParamBindings }
+      : {}),
+    ...(symbols.definePropertyReceivers?.size
+      ? { definePropertyReceivers: Array.from(symbols.definePropertyReceivers.entries()) }
       : {}),
     ...(symbols.returnTypeMap?.size
       ? { returnTypeMap: Array.from(symbols.returnTypeMap.entries()) }
       : {}),
     ...(symbols.callAssignments?.length ? { callAssignments: symbols.callAssignments } : {}),
-    ...(symbols.paramBindings?.length ? { paramBindings: symbols.paramBindings } : {}),
   };
 }
 

@@ -565,17 +565,69 @@ export interface ParamBinding {
 }
 
 /**
- * Object-destructuring rest-parameter binding, recorded for Phase 8.3f
- * rest-receiver resolution. Captures `function f({ a, ...rest })` patterns
- * so the edge builder can seed typeMap[rest] = argName when `f(obj)` is called.
+ * An array-element binding: `const arr = [fn1, fn2]` records each named function
+ * stored at a specific index. Phase 8.3e: array-element pts tracking.
+ */
+export interface ArrayElemBinding {
+  arrayName: string;
+  index: number;
+  elemName: string;
+}
+
+/**
+ * A spread-argument binding: `f(...arr)` records that `arr` is spread into `f`'s
+ * parameter list starting at `startIndex`. Phase 8.3e.
+ */
+export interface SpreadArgBinding {
+  callee: string;
+  arrayName: string;
+  startIndex: number;
+}
+
+/**
+ * A for-of iteration binding: `for (const x of arr)` records that `x` receives
+ * each element of `arr` within `enclosingFunc`. Phase 8.3e.
+ */
+export interface ForOfBinding {
+  varName: string;
+  sourceName: string;
+  enclosingFunc: string;
+}
+
+/**
+ * An array-callback binding: `Array.from(arr, cb)` records that `cb`'s first
+ * parameter receives each element of `arr`. Phase 8.3e.
+ */
+export interface ArrayCallbackBinding {
+  sourceName: string;
+  calleeName: string;
+}
+
+/**
+ * An object-rest parameter binding: `function f({ a, ...rest })` records that
+ * `rest` is the rest of the object passed as argument `argIndex` to `f`.
+ * Phase 8.3f: object destructuring rest dispatch.
  */
 export interface ObjectRestParamBinding {
-  /** Function whose formal parameter uses object destructuring with a rest element. */
+  /** Function that owns this rest parameter, e.g. "f3" */
   callee: string;
-  /** Zero-based index of the destructured parameter in the formal parameter list. */
-  argIndex: number;
-  /** The rest-binding identifier name (the `rest` in `{ a, ...rest }`). */
+  /** Name of the rest binding, e.g. "eerest" */
   restName: string;
+  /** Zero-based index of the argument whose rest is bound, e.g. 0 */
+  argIndex: number;
+}
+
+/**
+ * An object-property binding: `const obj = { e4 }` or `const obj = { e4: fn }` records
+ * that `obj.e4` points to the named function `fn`. Phase 8.3f.
+ */
+export interface ObjectPropBinding {
+  /** Variable holding the object, e.g. "obj" */
+  objectName: string;
+  /** Property name, e.g. "e4" */
+  propName: string;
+  /** Named function value, e.g. "e4" or "fn" */
+  valueName: string;
 }
 
 /** The normalized output shape returned by every language extractor. */
@@ -609,19 +661,34 @@ export interface ExtractorOutput {
    * to propagate function references through function parameters.
    */
   paramBindings?: ParamBinding[];
-  /**
-   * Object-destructuring rest-parameter bindings (Phase 8.3f).
-   * Records `function f({ a, ...rest })` patterns so the edge builder can seed
-   * typeMap[rest] = { type: argName } when `f(obj)` is called with an identifier,
-   * enabling `rest.method()` calls to resolve via the seeded object's typeMap entries.
-   */
+  /** Phase 8.3e: array-element bindings from `const arr = [fn1, fn2]` patterns. */
+  arrayElemBindings?: ArrayElemBinding[];
+  /** Phase 8.3e: spread-argument bindings from `f(...arr)` call sites. */
+  spreadArgBindings?: SpreadArgBinding[];
+  /** Phase 8.3e: for-of iteration variable bindings. */
+  forOfBindings?: ForOfBinding[];
+  /** Phase 8.3e: array callback bindings from Array.from/forEach/etc. */
+  arrayCallbackBindings?: ArrayCallbackBinding[];
+  /** Phase 8.3f: object-rest parameter bindings from `function f({ ...rest })` patterns. */
   objectRestParamBindings?: ObjectRestParamBinding[];
+  /** Phase 8.3f: object-property bindings from `const obj = { fn }` patterns. */
+  objectPropBindings?: ObjectPropBinding[];
   /**
    * Phase 8.5 (RTA): constructor names from all `new X()` expressions in the file,
    * including unassigned ones (e.g. `doSomething(new Foo())`). Used to build the
    * project-wide instantiated-types set for Rapid Type Analysis filtering.
    */
   newExpressions?: readonly string[];
+  /**
+   * Object.defineProperty receiver bindings: maps function name → target object name.
+   * Records `Object.defineProperty(obj, "bar", { get: getter })` so the edge builder
+   * can resolve `this.X()` calls inside `getter` as `obj.X()` (this === obj when the
+   * accessor is invoked through the property).
+   *
+   * Example: `Object.defineProperty(obj, "bar", { get: getter })` emits
+   * `definePropertyReceivers.set("getter", "obj")`.
+   */
+  definePropertyReceivers?: Map<string, string>;
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */
@@ -1183,6 +1250,8 @@ export interface BuildResult {
     edgesMs: number;
     structureMs: number;
     rolesMs: number;
+    /** Wall-clock time for the this/super dispatch WASM post-pass (native path only). */
+    thisDispatchMs?: number;
     astMs: number;
     complexityMs: number;
     cfgMs: number;
