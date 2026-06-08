@@ -24,6 +24,8 @@ function makeMockRequire({
   npmPackageOk: boolean;
 }) {
   return vi.fn((path: string) => {
+    // Pass-through for Node built-ins (e.g. node:fs used by detectLibc on Linux)
+    if (path.startsWith('node:')) return require(path);
     const isAbsolute = path.startsWith('/') || /^[A-Z]:\\/.test(path);
     if (isAbsolute) {
       if (localBinaryOk) return FAKE_ADDON;
@@ -52,7 +54,6 @@ describe('loadNative', () => {
   });
 
   afterEach(() => {
-    stderrSpy.mockRestore();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
@@ -95,6 +96,9 @@ describe('loadNative', () => {
     // A warning mentioning the env var name was emitted to stderr
     const stderr = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(stderr).toContain('NAPI_RS_NATIVE_LIBRARY_PATH');
+    // Null result is cached — second call must not invoke require again
+    expect(loadNative()).toBeNull();
+    expect(requireFn).toHaveBeenCalledTimes(1);
   });
 
   it('no env var, local binary present: loads local binary, skips npm package', async () => {
