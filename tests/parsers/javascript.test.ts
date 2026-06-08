@@ -810,11 +810,9 @@ describe('JavaScript parser', () => {
       expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'collection' }));
     });
 
-    it('emits identifier args after the this-context for .apply()', () => {
+    it('emits nothing for .apply() — second arg is an arguments array, not a callback', () => {
       const symbols = parseJS(`fn.apply(ctx, handler);`);
-      expect(symbols.calls).toContainEqual(
-        expect.objectContaining({ name: 'handler', dynamic: true }),
-      );
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'handler' }));
       expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'ctx' }));
     });
 

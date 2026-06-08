@@ -2727,11 +2727,14 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  * literal route path — matching Express/router shape and skipping
  * `cache.get(user.id)`-style calls.
  *
- * `.call()`/`.apply()`: the first argument is the `this` context (not a
- * callback). Subsequent identifier arguments are genuine callbacks of the
- * enclosing scope — e.g. `Array.prototype.forEach.call(arr, handler)` emits
- * `handler`. `.bind()` returns a new partially-applied function; all
- * arguments are absorbed and none are direct callbacks.
+ * `.call()`: the first argument is the `this` context (not a callback).
+ * Subsequent identifier arguments are genuine callbacks of the enclosing
+ * scope — e.g. `Array.prototype.forEach.call(arr, handler)` emits `handler`.
+ * `.bind()` returns a new partially-applied function; all arguments are
+ * absorbed and none are direct callbacks.
+ * `.apply()` takes exactly two arguments: `thisArg` and a single `argsArray`.
+ * The array is never a direct callback, so `.apply()` is treated like `.bind()`
+ * and returns immediately with no edges.
  */
 function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
@@ -2739,10 +2742,11 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 
   const calleeName = extractCalleeName(callNode);
 
-  // .bind() absorbs all arguments into a partially-applied function — no direct callbacks.
-  if (calleeName === 'bind') return [];
+  // .bind() and .apply() absorb all arguments — no direct callbacks.
+  // .apply(thisArg, argsArray): argsArray is a single array, never a callback.
+  if (calleeName === 'bind' || calleeName === 'apply') return [];
 
-  const skipFirstArg = calleeName === 'call' || calleeName === 'apply';
+  const skipFirstArg = calleeName === 'call';
 
   let memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
   if (memberExprArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
