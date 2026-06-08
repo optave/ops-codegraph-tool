@@ -130,35 +130,35 @@
       "notes": "new UserService() — class instantiation tracked as consumption"
     },
     {
-      "source": { "name": "defProp", "file": "define-property.js" },
+      "source": { "name": "_defProp", "file": "define-property.js" },
       "target": { "name": "f1", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-define-property",
       "notes": "obj.f() — resolved via Object.defineProperty(obj, \"f\", { value: f1 })"
     },
     {
-      "source": { "name": "defProps", "file": "define-property.js" },
+      "source": { "name": "_defProps", "file": "define-property.js" },
       "target": { "name": "f1", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-define-property",
       "notes": "obj.f1() — resolved via Object.defineProperties(obj, { \"f1\": { value: f1 } })"
     },
     {
-      "source": { "name": "defProps", "file": "define-property.js" },
+      "source": { "name": "_defProps", "file": "define-property.js" },
       "target": { "name": "f2", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-define-property",
       "notes": "obj.f2() — resolved via Object.defineProperties(obj, { \"f2\": { value: f2 } })"
     },
     {
-      "source": { "name": "create", "file": "define-property.js" },
+      "source": { "name": "_create", "file": "define-property.js" },
       "target": { "name": "f1", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-create-prototype",
       "notes": "obj.f1() — resolved via Object.create({ f1, f2 })"
     },
     {
-      "source": { "name": "create", "file": "define-property.js" },
+      "source": { "name": "_create", "file": "define-property.js" },
       "target": { "name": "f2", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-create-prototype",
@@ -240,6 +240,13 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "new A().t() — A.prototype.t = f alias; inline new receiver resolved to type A, typeMap['A.t'] = f"
+    },
+    {
+      "source": { "name": "accessorGetter", "file": "define-property-accessor.js" },
+      "target": { "name": "accessorTarget.accessMethod", "file": "define-property-accessor.js" },
+      "kind": "calls",
+      "mode": "defineProperty-accessor",
+      "notes": "this.accessMethod() inside accessorGetter — this === accessorTarget (get accessor via Object.defineProperty); accessorTarget.accessMethod is the qualified node name for the arrow function property of accessorTarget"
     }
   ]
 }

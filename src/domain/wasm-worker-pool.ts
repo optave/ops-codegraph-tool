@@ -107,6 +107,14 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
   // visitor output is cast the same way.
   if (ser.astNodes !== undefined) out.astNodes = ser.astNodes as unknown as ASTNodeRow[];
   if (ser.fnRefBindings?.length) out.fnRefBindings = ser.fnRefBindings;
+  if (ser.paramBindings?.length) out.paramBindings = ser.paramBindings;
+  if (ser.arrayElemBindings?.length) out.arrayElemBindings = ser.arrayElemBindings;
+  if (ser.spreadArgBindings?.length) out.spreadArgBindings = ser.spreadArgBindings;
+  if (ser.forOfBindings?.length) out.forOfBindings = ser.forOfBindings;
+  if (ser.arrayCallbackBindings?.length) out.arrayCallbackBindings = ser.arrayCallbackBindings;
+  if (ser.objectRestParamBindings?.length)
+    out.objectRestParamBindings = ser.objectRestParamBindings;
+  if (ser.objectPropBindings?.length) out.objectPropBindings = ser.objectPropBindings;
   if (ser.newExpressions?.length) out.newExpressions = ser.newExpressions;
   if (ser.definePropertyReceivers?.length) {
     const m = new Map<string, string>();
@@ -119,7 +127,6 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
     out.returnTypeMap = returnTypeMap;
   }
   if (ser.callAssignments?.length) out.callAssignments = ser.callAssignments;
-  if (ser.paramBindings?.length) out.paramBindings = ser.paramBindings;
   return out;
 }
 

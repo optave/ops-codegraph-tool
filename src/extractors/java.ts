@@ -330,7 +330,7 @@ function extractClassFields(classNode: TreeSitterNode): SubDeclaration[] {
   if (!body) return fields;
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
-    if (!member || member.type !== 'field_declaration') continue;
+    if (member?.type !== 'field_declaration') continue;
     extractFieldDeclarators(member, fields);
   }
   return fields;
@@ -341,7 +341,7 @@ function extractFieldDeclarators(member: TreeSitterNode, fields: SubDeclaration[
   const vis = extractModifierVisibility(member);
   for (let j = 0; j < member.childCount; j++) {
     const child = member.child(j);
-    if (!child || child.type !== 'variable_declarator') continue;
+    if (child?.type !== 'variable_declarator') continue;
     const nameNode = child.childForFieldName('name');
     if (nameNode) {
       fields.push({

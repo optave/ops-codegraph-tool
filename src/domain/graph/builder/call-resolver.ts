@@ -82,6 +82,9 @@ export function resolveByMethodOrGlobal(
     // Handle inline new-expression receivers: `(new Foo).bar()` or `(new Foo()).bar()`.
     // extractReceiverName returns the raw node text for non-identifier nodes, so `(new A).t()`
     // produces receiver='(new A)'. Extract the constructor name directly.
+    // The regex intentionally restricts to uppercase-initial names ([A-Z_$]) as a heuristic
+    // to distinguish constructors (PascalCase) from regular functions — avoiding false positives
+    // on `(new xmlParser()).parse()` style calls which are rare in practice.
     if (!typeName && call.receiver) {
       const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
       if (m?.[1]) typeName = m[1];
@@ -107,6 +110,18 @@ export function resolveByMethodOrGlobal(
       }
     }
 
+    // Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
+    // when the receiver is a class name with no typeMap entry. Handles static method calls
+    // like `C6.staticMethod()` or `D.d()` where the receiver IS the class.
+    // Matches both 'method' and 'function' kinds to cover field-initializer synthetic defs.
+    if (!typeName) {
+      const qualifiedName = `${effectiveReceiver}.${call.name}`;
+      const direct = lookup
+        .byName(qualifiedName)
+        .filter((n) => n.kind === 'method' || n.kind === 'function');
+      if (direct.length > 0) return direct;
+    }
+
     // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
     // When a call site references `obj.prop` as a callback, resolve directly to the target fn.
     const compositeEntry = typeMap.get(`${call.receiver}.${call.name}`);
@@ -128,6 +143,35 @@ export function resolveByMethodOrGlobal(
     call.receiver === 'self' ||
     call.receiver === 'super'
   ) {
+    // Phase 8.3f: accessor this-dispatch via Object.defineProperty.
+    // When a plain function (no class prefix) is registered as a get/set accessor for `obj`
+    // via Object.defineProperty, typeMap seeds 'callerName:this' = 'obj'.
+    // We then resolve this.method() → typeMap['obj.method'] → the concrete definition.
+    // This runs before the broad exact-name lookup to avoid false positives from
+    // unrelated same-file definitions.
+    if (call.receiver === 'this' && callerName && !callerName.includes('.')) {
+      const accessorThisEntry = typeMap.get(`${callerName}:this`);
+      const objName = accessorThisEntry
+        ? typeof accessorThisEntry === 'string'
+          ? accessorThisEntry
+          : (accessorThisEntry as { type?: string }).type
+        : null;
+      if (objName) {
+        const objMethodEntry = typeMap.get(`${objName}.${call.name}`);
+        const targetFn = objMethodEntry
+          ? typeof objMethodEntry === 'string'
+            ? objMethodEntry
+            : (objMethodEntry as { type?: string }).type
+          : null;
+        if (targetFn) {
+          const resolved = lookup
+            .byName(targetFn)
+            .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+          if (resolved.length > 0) return resolved;
+        }
+      }
+    }
+
     const exact = lookup
       .byName(call.name)
       .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);

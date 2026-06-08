@@ -111,7 +111,7 @@ function extractGoReceiverType(receiver: TreeSitterNode): string | null {
 function handleGoTypeDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const spec = node.child(i);
-    if (!spec || spec.type !== 'type_spec') continue;
+    if (spec?.type !== 'type_spec') continue;
     const nameNode = spec.childForFieldName('name');
     const typeNode = spec.childForFieldName('type');
     if (!nameNode || !typeNode) continue;
@@ -213,7 +213,7 @@ function extractGoImportSpec(spec: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleGoConstDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const spec = node.child(i);
-    if (!spec || spec.type !== 'const_spec') continue;
+    if (spec?.type !== 'const_spec') continue;
     const constName = spec.childForFieldName('name');
     if (constName) {
       ctx.definitions.push({
@@ -288,7 +288,7 @@ function inferAddressOfComposite(
 ): boolean {
   if (rhs.type !== 'unary_expression') return false;
   const operand = rhs.childForFieldName('operand');
-  if (!operand || operand.type !== 'composite_literal') return false;
+  if (operand?.type !== 'composite_literal') return false;
   const typeNode = operand.childForFieldName('type');
   if (!typeNode) return false;
   const typeName = extractGoTypeName(typeNode);
@@ -409,7 +409,7 @@ function extractGoParameters(paramListNode: TreeSitterNode | null): SubDeclarati
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
-    if (!param || param.type !== 'parameter_declaration') continue;
+    if (param?.type !== 'parameter_declaration') continue;
     // A parameter_declaration may have multiple identifiers (e.g., `a, b int`)
     for (let j = 0; j < param.childCount; j++) {
       const child = param.child(j);
@@ -494,7 +494,7 @@ function extractStructFields(structTypeNode: TreeSitterNode): SubDeclaration[] {
   if (!fieldList) return fields;
   for (let i = 0; i < fieldList.childCount; i++) {
     const field = fieldList.child(i);
-    if (!field || field.type !== 'field_declaration') continue;
+    if (field?.type !== 'field_declaration') continue;
     const nameNode = field.childForFieldName('name');
     if (nameNode) {
       fields.push({ name: nameNode.text, kind: 'property', line: field.startPosition.row + 1 });
