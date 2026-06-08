@@ -74,7 +74,7 @@ function readEdges(dbPath: string) {
 
 describe('C# static receiver call resolution (#1372)', () => {
   let tmpDir: string;
-  let edges: Array<{ src: string; tgt: string; kind: string }>;
+  let edges: Array<{ src: string; tgt: string; kind: string }> = [];
 
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1372-'));
