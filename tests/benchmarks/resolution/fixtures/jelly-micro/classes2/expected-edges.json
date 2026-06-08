@@ -1,0 +1,392 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: classes2",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/classes2.js",
+  "edges": [
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "F2",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@2:15>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@6:15>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@4:9>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@8:9>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "D",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@29:5>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@31:19>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "D.b",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "D.c",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "D.d",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "G",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@74:5>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@75:5>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "E.m1",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "G.m2",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@47:19>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@64:19>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "E.n1",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "G.n2",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "E2",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@95:19>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "G2",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@102:19>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "a1",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "a2",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@111:11>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "a4",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "<anon@114:20>",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "E10",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "E10.m1",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "F1",
+        "file": "classes2.js"
+      },
+      "target": {
+        "name": "E10.m2",
+        "file": "classes2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

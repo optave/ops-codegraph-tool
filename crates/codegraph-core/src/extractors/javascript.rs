@@ -763,14 +763,10 @@ fn match_js_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbo
 fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_declaration" | "generator_function_declaration" => handle_function_decl(node, source, symbols),
-        "class_declaration" | "abstract_class_declaration"
-        // class expressions: `return class Foo extends Bar { ... }` or `const X = class Foo { ... }`
-        | "class" => {
+        "class_declaration" | "abstract_class_declaration" => {
             handle_class_decl(node, source, symbols)
         }
-        "class_static_block" => handle_static_block(node, source, symbols),
         "method_definition" => handle_method_def(node, source, symbols),
-        "field_definition" | "public_field_definition" => handle_field_def(node, source, symbols),
         "interface_declaration" => handle_interface_decl(node, source, symbols),
         "type_alias_declaration" => handle_type_alias(node, source, symbols),
         "enum_declaration" => handle_enum_decl(node, source, symbols),
@@ -780,6 +776,11 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "import_statement" => handle_import_stmt(node, source, symbols),
         "export_statement" => handle_export_stmt(node, source, symbols),
         "expression_statement" => handle_expr_stmt(node, source, symbols),
+        // Synthetic definitions for class field initializers and static blocks.
+        // These give `findCaller` a narrower span with a kind that passes the SQL
+        // call-edge filter (`kind IN ('function','method')`), matching WASM behaviour.
+        "field_definition" | "public_field_definition" => handle_field_def(node, source, symbols),
+        "class_static_block" => handle_static_block(node, source, symbols),
         _ => {}
     }
 }
@@ -863,13 +864,29 @@ fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
-/// Create a synthetic `ClassName.<static>` definition for a class static block
-/// so that calls inside the block are attributed to a method-kind node and
-/// `super.method()` dispatch can walk up to the parent class.
-fn handle_static_block(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+/// Emit a `ClassName.fieldName` synthetic definition for each `class { field = ... }` node.
+/// Only fired when a value node is present (skips bare `x;` declarations), mirroring the WASM
+/// `handleFieldDef` guard.  The synthetic definition has `kind = "method"` so that the SQL
+/// call-edge filter (`kind IN ('function','method')`) accepts edges rooted here.
+fn handle_field_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("property"))
+        .or_else(|| find_child(node, "property_identifier"));
+    let Some(name_node) = name_node else { return };
+    // Skip computed property names (`class C { [expr] = ... }`).
+    // Allow property_identifier (regular names), identifier, private_property_identifier (#foo),
+    // and string (e.g. `"method" = () => {}`) to match the TypeScript path which only denies
+    // computed_property_name.
+    if !matches!(name_node.kind(), "property_identifier" | "identifier" | "private_property_identifier" | "string") {
+        return;
+    }
+    // Skip uninitialised fields (`class C { x; }`) — must have a value node.
+    let Some(_value_node) = node.child_by_field_name("value") else { return };
+    let field_name = node_text(&name_node, source);
+    if field_name.is_empty() { return; }
     let Some(class_name) = find_parent_class(node, source) else { return };
     symbols.definitions.push(Definition {
-        name: format!("{}.<static>", class_name),
+        name: format!("{}.{}", class_name, field_name),
         kind: "method".to_string(),
         line: start_line(node),
         end_line: Some(end_line(node)),
@@ -880,27 +897,16 @@ fn handle_static_block(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     });
 }
 
-/// Extract a class field definition with a function/arrow-function value as a
-/// top-level `ClassName.fieldName` method definition so it is a resolvable call
-/// target (e.g. `static f = () => { ... }` becomes callable as `A.f`).
-///
-/// JS `field_definition` stores the name under the `"property"` field;
-/// TS `public_field_definition` uses `"name"`.
-fn handle_field_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    let value_node = node.child_by_field_name("value");
-    let Some(value_node) = value_node else { return };
-    let kind = value_node.kind();
-    if kind != "arrow_function" && kind != "function_expression" { return; }
-    let name_node = node.child_by_field_name("property")
-        .or_else(|| node.child_by_field_name("name"))
-        .or_else(|| find_child(node, "property_identifier"));
-    let Some(name_node) = name_node else { return };
+/// Emit a `ClassName.<static>` synthetic definition for each `static { }` block.
+/// Enables `findCaller` to attribute calls inside static initializer blocks to this
+/// synthetic node rather than to the enclosing class node, matching WASM behaviour.
+fn handle_static_block(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(class_name) = find_parent_class(node, source) else { return };
     symbols.definitions.push(Definition {
-        name: format!("{}.{}", class_name, node_text(&name_node, source)),
-        kind: "method".to_string(),
+        name: format!("{}.<static>", class_name),
+        kind: "function".to_string(),
         line: start_line(node),
-        end_line: Some(end_line(&value_node)),
+        end_line: Some(end_line(node)),
         decorators: None,
         complexity: None,
         cfg: None,
