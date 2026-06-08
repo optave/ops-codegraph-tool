@@ -12,6 +12,7 @@
 
 import { directInstantiation, main } from './index.js';
 import { Logger } from './logger.js';
+import { ClassA, ClassB } from './multi-class.js';
 import { buildService } from './service.js';
 import { normalize, validate } from './validators.js';
 
@@ -38,6 +39,10 @@ try {
   const svc = buildService();
   svc.createUser({ name: 'Direct' });
   svc.deleteUser(99);
+
+  // Multi-class fixture — exercises class-scoped this.prop typeMap (issue #1323)
+  new ClassA().runA();
+  new ClassB().runB();
 
   globalThis.__tracer.popCall();
 } catch {
