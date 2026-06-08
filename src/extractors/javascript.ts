@@ -2726,12 +2726,24 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  * member-expr args are only emitted when the first argument is a string
  * literal route path — matching Express/router shape and skipping
  * `cache.get(user.id)`-style calls.
+ *
+ * `.call()`/`.apply()`: the first argument is the `this` context (not a
+ * callback). Subsequent identifier arguments are genuine callbacks of the
+ * enclosing scope — e.g. `Array.prototype.forEach.call(arr, handler)` emits
+ * `handler`. `.bind()` returns a new partially-applied function; all
+ * arguments are absorbed and none are direct callbacks.
  */
 function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
   if (!args) return [];
 
   const calleeName = extractCalleeName(callNode);
+
+  // .bind() absorbs all arguments into a partially-applied function — no direct callbacks.
+  if (calleeName === 'bind') return [];
+
+  const skipFirstArg = calleeName === 'call' || calleeName === 'apply';
+
   let memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
   if (memberExprArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
     // HTTP verbs require a string-literal route path to be treated as a
@@ -2742,10 +2754,18 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 
   const result: Call[] = [];
   const callLine = nodeStartLine(callNode);
+  let realArgIndex = 0;
 
   for (let i = 0; i < args.childCount; i++) {
     const child = args.child(i);
     if (!child) continue;
+    if (child.type === '(' || child.type === ')' || child.type === ',') continue;
+
+    if (skipFirstArg && realArgIndex === 0) {
+      realArgIndex++;
+      continue;
+    }
+    realArgIndex++;
 
     if (child.type === 'identifier') {
       result.push({ name: child.text, line: callLine, dynamic: true });

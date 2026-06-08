@@ -800,6 +800,35 @@ describe('JavaScript parser', () => {
       expect(def.line).toBe(2);
       expect(def.endLine).toBe(4);
     });
+
+    // .call/.apply/.bind narrowing (#1406)
+    it('emits identifier args after the this-context for .call()', () => {
+      const symbols = parseJS(`Array.prototype.forEach.call(collection, handler);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'handler', dynamic: true }),
+      );
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'collection' }));
+    });
+
+    it('emits identifier args after the this-context for .apply()', () => {
+      const symbols = parseJS(`fn.apply(ctx, handler);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'handler', dynamic: true }),
+      );
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'ctx' }));
+    });
+
+    it('emits nothing for .call() with only the this-context arg', () => {
+      const symbols = parseJS(`fn.call(ctx);`);
+      const callbackCalls = symbols.calls.filter((c) => c.name === 'ctx');
+      expect(callbackCalls).toHaveLength(0);
+    });
+
+    it('emits nothing for .bind() — all args are absorbed into the partial application', () => {
+      const symbols = parseJS(`Promise.resolve.bind(null, transform);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'transform' }));
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'null' }));
+    });
   });
 
   describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {

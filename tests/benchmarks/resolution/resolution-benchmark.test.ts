@@ -121,7 +121,8 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   adds bind/call/apply resolution (3 new edges in bind-call-apply.js), total expected now 33.
   //   Phase 8.3f adds Object.defineProperty accessor this-dispatch (#1335): getter→baz in
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
-  //   total expected now 35.
+  //   total expected now 35. #1406 adds runCallWithCallback→processItem (forEach.call callback),
+  //   total expected now 36.
   javascript: { precision: 1.0, recall: 0.9 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked

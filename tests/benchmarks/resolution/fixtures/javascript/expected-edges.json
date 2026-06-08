@@ -193,6 +193,13 @@
       "notes": "greet.apply(user, ['Hey']) — .apply() extracts greet as the callee"
     },
     {
+      "source": { "name": "runCallWithCallback", "file": "bind-call-apply.js" },
+      "target": { "name": "processItem", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "forEach.call(items, processItem) — processItem is a genuine callback after the this-context; items is NOT emitted as a call"
+    },
+    {
       "source": { "name": "Dog.speak", "file": "inheritance.js" },
       "target": { "name": "Animal.speak", "file": "inheritance.js" },
       "kind": "calls",

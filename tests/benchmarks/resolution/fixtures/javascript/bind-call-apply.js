@@ -22,3 +22,13 @@ export function runCall() {
 export function runApply() {
   return greet.apply(user, ['Hey']);
 }
+
+// .call() with a callback identifier after the this-context
+function processItem(item) {
+  return item;
+}
+var items = [1, 2, 3];
+
+export function runCallWithCallback() {
+  items.forEach.call(items, processItem);
+}
