@@ -1,5 +1,5 @@
 {
-  "$schema": "../../../expected-edges.schema.json",
+  "$schema": "../../expected-edges.schema.json",
   "language": "javascript",
   "description": "Hand-annotated call edges for generator function resolution benchmark",
   "edges": [
