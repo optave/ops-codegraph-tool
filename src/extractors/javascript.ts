@@ -378,6 +378,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Extract class field definitions and static blocks (query patterns don't cover these)
+  extractClassMembersWalk(tree.rootNode, definitions);
+
   // Phase 8.3f: Extract object-rest parameter and object-property bindings
   extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindings);
   extractObjectPropBindingsWalk(tree.rootNode, objectPropBindings);
@@ -463,6 +466,27 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
       extractConstantsWalk(child, definitions);
     }
   }
+}
+
+/**
+ * Walk the AST to extract class field definitions and static initializer blocks.
+ * Query patterns capture method_definition but not field_definition or class_static_block.
+ * Called by the query-based fast path (extractSymbolsQuery); the walk-based path
+ * (extractSymbolsWalk) handles these same node types via walkJavaScriptNode's switch cases.
+ */
+function extractClassMembersWalk(node: TreeSitterNode, definitions: Definition[]): void {
+  function walk(n: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (n.type === 'field_definition' || n.type === 'public_field_definition') {
+      handleFieldDef(n, definitions);
+    } else if (n.type === 'class_static_block') {
+      handleStaticBlock(n, definitions);
+    }
+    for (let i = 0; i < n.childCount; i++) {
+      walk(n.child(i)!, depth + 1);
+    }
+  }
+  walk(node, 0);
 }
 
 /**
@@ -743,6 +767,13 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'expression_statement':
       handleExpressionStmt(node, ctx);
       break;
+    case 'field_definition':
+    case 'public_field_definition':
+      handleFieldDef(node, ctx.definitions);
+      break;
+    case 'class_static_block':
+      handleStaticBlock(node, ctx.definitions);
+      break;
   }
 
   for (let i = 0; i < node.childCount; i++) {
@@ -808,6 +839,45 @@ function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
       visibility: methVis,
     });
   }
+}
+
+/**
+ * Emit a `ClassName.fieldName` definition for class fields that have an initializer.
+ * This lets `findCaller` attribute calls inside field initializers (e.g. static field
+ * side-effects) to the field rather than the enclosing class.
+ */
+function handleFieldDef(node: TreeSitterNode, definitions: Definition[]): void {
+  // JS field_definition uses 'property' field; TS public_field_definition uses 'name' field
+  const nameNode = node.childForFieldName('name') || node.childForFieldName('property');
+  const valueNode = node.childForFieldName('value');
+  if (!nameNode || !valueNode) return;
+  if (nameNode.type === 'computed_property_name') return;
+  const fieldName = nameNode.text;
+  if (!fieldName) return;
+  const className = findParentClass(node);
+  if (!className) return;
+  definitions.push({
+    name: `${className}.${fieldName}`,
+    kind: 'method',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(node),
+  });
+}
+
+/**
+ * Emit a `ClassName.<static>` definition for each `static { }` block.
+ * Enables `findCaller` to attribute calls inside static initializer blocks to
+ * this synthetic node rather than to the enclosing class node.
+ */
+function handleStaticBlock(node: TreeSitterNode, definitions: Definition[]): void {
+  const className = findParentClass(node);
+  if (!className) return;
+  definitions.push({
+    name: `${className}.<static>`,
+    kind: 'function',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(node),
+  });
 }
 
 function handleInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
