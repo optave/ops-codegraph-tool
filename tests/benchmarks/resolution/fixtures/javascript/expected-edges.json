@@ -275,6 +275,13 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "this.service.doB() — receiver-typed via ClassB.service = new ServiceB() (class-scoped typeMap key prevents collision with ClassA.service)"
+    },
+    {
+      "source": { "name": "Processor.run", "file": "class-scope.js" },
+      "target": { "name": "processData", "file": "class-scope.js" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Bare call to same-file module-level function — regression guard: bare flush() in run() must NOT resolve to Processor.flush (class-scoped lookup must be receiver-gated)"
     }
   ]
 }
