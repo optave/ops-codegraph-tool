@@ -19,7 +19,6 @@ import type {
   Export,
   Import,
   LanguageId,
-  ParamBinding,
   TypeMapEntry,
 } from '../types.js';
 
@@ -65,10 +64,18 @@ export interface SerializedExtractorOutput {
     receiver?: string;
   }>;
   fnRefBindings?: import('../types.js').FnRefBinding[];
+  arrayElemBindings?: import('../types.js').ArrayElemBinding[];
+  spreadArgBindings?: import('../types.js').SpreadArgBinding[];
+  forOfBindings?: import('../types.js').ForOfBinding[];
+  arrayCallbackBindings?: import('../types.js').ArrayCallbackBinding[];
+  objectRestParamBindings?: import('../types.js').ObjectRestParamBinding[];
+  objectPropBindings?: import('../types.js').ObjectPropBinding[];
+  paramBindings?: import('../types.js').ParamBinding[];
   newExpressions?: readonly string[];
+  /** Serialized definePropertyReceivers map (funcName → receiverVarName) as tuple array. */
+  definePropertyReceivers?: Array<[string, string]>;
   returnTypeMap?: Array<[string, TypeMapEntry]>;
   callAssignments?: CallAssignment[];
-  paramBindings?: ParamBinding[];
 }
 
 export interface WorkerParseResponseOk {

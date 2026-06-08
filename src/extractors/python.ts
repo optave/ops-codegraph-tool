@@ -291,7 +291,7 @@ function extractClassAssignment(
   const assignment = findChild(child, 'assignment');
   if (!assignment) return;
   const left = assignment.childForFieldName('left');
-  if (!left || left.type !== 'identifier' || seen.has(left.text)) return;
+  if (left?.type !== 'identifier' || seen.has(left.text)) return;
   seen.add(left.text);
   props.push({
     name: left.text,
@@ -308,7 +308,7 @@ function extractInitProperties(
   props: SubDeclaration[],
 ): void {
   const fnName = node.childForFieldName('name');
-  if (!fnName || fnName.text !== '__init__') return;
+  if (fnName?.text !== '__init__') return;
   const initBody = node.childForFieldName('body') || findChild(node, 'block');
   if (initBody) walkInitBody(initBody, seen, props);
 }
@@ -342,11 +342,11 @@ function extractPythonClassProperties(classNode: TreeSitterNode): SubDeclaration
 function walkInitBody(bodyNode: TreeSitterNode, seen: Set<string>, props: SubDeclaration[]): void {
   for (let i = 0; i < bodyNode.childCount; i++) {
     const stmt = bodyNode.child(i);
-    if (!stmt || stmt.type !== 'expression_statement') continue;
+    if (stmt?.type !== 'expression_statement') continue;
     const assignment = findChild(stmt, 'assignment');
     if (!assignment) continue;
     const left = assignment.childForFieldName('left');
-    if (!left || left.type !== 'attribute') continue;
+    if (left?.type !== 'attribute') continue;
     const obj = left.childForFieldName('object');
     const attr = left.childForFieldName('attribute');
     if (obj && obj.text === 'self' && attr && attr.type === 'identifier' && !seen.has(attr.text)) {
@@ -370,7 +370,7 @@ function handlePyTypedParam(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const isDefault = node.type === 'typed_default_parameter';
   const nameNode = isDefault ? node.childForFieldName('name') : node.child(0);
   const typeNode = node.childForFieldName('type');
-  if (!nameNode || nameNode.type !== 'identifier' || !typeNode) return;
+  if (nameNode?.type !== 'identifier' || !typeNode) return;
   if (nameNode.text === 'self' || nameNode.text === 'cls') return;
   const typeName = extractPythonTypeName(typeNode);
   if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
@@ -380,7 +380,7 @@ function handlePyTypedParam(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handlePyAssignmentType(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const left = node.childForFieldName('left');
   const right = node.childForFieldName('right');
-  if (!left || left.type !== 'identifier' || !right || right.type !== 'call') return;
+  if (left?.type !== 'identifier' || !right || right.type !== 'call') return;
 
   const fn = right.childForFieldName('function');
   if (!fn) return;
@@ -391,7 +391,7 @@ function handlePyAssignmentType(node: TreeSitterNode, ctx: ExtractorOutput): voi
     }
   } else if (fn.type === 'attribute') {
     const obj = fn.childForFieldName('object');
-    if (!obj || obj.type !== 'identifier') return;
+    if (obj?.type !== 'identifier') return;
     const objName = obj.text;
     if (objName[0] && objName[0] !== objName[0].toLowerCase() && !BUILTIN_GLOBALS_PY.has(objName)) {
       if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, left.text, objName, 0.7);

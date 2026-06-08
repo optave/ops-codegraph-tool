@@ -166,7 +166,7 @@ function extractContractMember(child: TreeSitterNode): SubDeclaration | null {
 function extractInheritance(node: TreeSitterNode, name: string, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const inheritance = node.child(i);
-    if (!inheritance || inheritance.type !== 'inheritance_specifier') continue;
+    if (inheritance?.type !== 'inheritance_specifier') continue;
     for (let j = 0; j < inheritance.childCount; j++) {
       const child = inheritance.child(j);
       if (!child) continue;
