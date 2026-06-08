@@ -2452,7 +2452,25 @@ function extractObjectRestParamBindingsWalk(
       }
     }
 
-    // Thread class name into class_body children; reset for all other contexts.
+    // Recurse into function/method bodies with null currentClass so nested
+    // declarations don't inherit the enclosing class context (mirrors
+    // extractReturnTypeMapWalk's pattern).
+    if (
+      t === 'function_declaration' ||
+      t === 'generator_function_declaration' ||
+      t === 'method_definition'
+    ) {
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
+    }
+
+    // class_declaration / class: propagate class name so constructor/method
+    // assignments inside the class body are keyed as "ClassName.prop".
+    // class_body: thread currentClass through so method_definition children
+    // (handled above) can prefix their fnName correctly before their own reset.
+    // All other node types fall through with null, which is already the default.
     let childClass: string | null = null;
     if (t === 'class_declaration' || t === 'class') {
       childClass = node.childForFieldName('name')?.text ?? null;
