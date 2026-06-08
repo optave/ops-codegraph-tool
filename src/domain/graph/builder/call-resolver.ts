@@ -129,9 +129,11 @@ export function resolveByMethodOrGlobal(
     // Handles `Validators.IsValidEmail(...)` in C# where `Validators` is a static class —
     // it never appears in a variable declaration, so typeMap has no entry for it, but the
     // method `Validators.IsValidEmail` exists in the symbol DB under its full qualified name.
+    // Use effectiveReceiver (this.-stripped) to correctly handle any `this.ClassName.method()`
+    // variants that an extractor might emit.
     if (!typeName) {
       const staticCandidates = lookup
-        .byName(`${call.receiver}.${call.name}`)
+        .byName(`${effectiveReceiver}.${call.name}`)
         .filter((n) => n.kind === 'method');
       if (staticCandidates.length > 0) return staticCandidates;
     }
