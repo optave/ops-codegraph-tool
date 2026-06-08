@@ -72,7 +72,10 @@ export function resolveByMethodOrGlobal(
     const effectiveReceiver = call.receiver.startsWith('this.')
       ? call.receiver.slice('this.'.length)
       : call.receiver;
-    const typeEntry = typeMap.get(effectiveReceiver) ?? typeMap.get(call.receiver);
+    const typeEntry =
+      typeMap.get(effectiveReceiver) ??
+      typeMap.get(call.receiver) ??
+      (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry

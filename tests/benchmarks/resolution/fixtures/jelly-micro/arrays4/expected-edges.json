@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: arrays4",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/arrays4.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "arrays4.js"
+      },
+      "target": {
+        "name": "doit",
+        "file": "arrays4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@7:6>",
+        "file": "arrays4.js"
+      },
+      "target": {
+        "name": "<anon@3:6>",
+        "file": "arrays4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@8:6>",
+        "file": "arrays4.js"
+      },
+      "target": {
+        "name": "<anon@3:6>",
+        "file": "arrays4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: spawn-cwd — spawns a subprocess with a different cwd; cross-process edges are outside codegraph's model",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/spawn-cwd.js",
+  "edges": []
+}
