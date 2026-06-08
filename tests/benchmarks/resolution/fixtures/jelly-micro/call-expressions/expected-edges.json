@@ -1,0 +1,128 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: call-expressions",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/call-expressions.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "<anon@1:2>",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "x",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "y",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "<anon@4:2>",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "<anon@5:4>",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "<anon@6:5>",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "<anon@7:5>",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "<anon@8:3>",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "<anon@9:4>",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "call-expressions.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "call-expressions.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

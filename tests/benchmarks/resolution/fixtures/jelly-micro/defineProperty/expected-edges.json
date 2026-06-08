@@ -1,0 +1,80 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: defineProperty",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/defineProperty.js",
+  "edges": [
+    {
+      "source": {
+        "name": "f1",
+        "file": "defineProperty.js"
+      },
+      "target": {
+        "name": "defProp",
+        "file": "defineProperty.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "defineProperty.js"
+      },
+      "target": {
+        "name": "defProps",
+        "file": "defineProperty.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "defineProperty.js"
+      },
+      "target": {
+        "name": "create",
+        "file": "defineProperty.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "defProp",
+        "file": "defineProperty.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "defineProperty.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "defProps",
+        "file": "defineProperty.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "defineProperty.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "create",
+        "file": "defineProperty.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "defineProperty.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

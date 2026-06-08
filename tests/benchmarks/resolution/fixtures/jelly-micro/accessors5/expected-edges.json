@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: accessors5",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/accessors5.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "accessors5.js"
+      },
+      "target": {
+        "name": "<anon@13:11>",
+        "file": "accessors5.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

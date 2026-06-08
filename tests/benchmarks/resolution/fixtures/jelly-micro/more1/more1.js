@@ -30,7 +30,7 @@ function iterSet() {
 function mapCallback(item) {
   item();
 }
-function _runFrom() {
+function runFrom() {
   const arr = [fn5, fn6];
   Array.from(arr, mapCallback);
 }
@@ -45,7 +45,7 @@ function consumer2(x, y) {
   y();
 }
 
-function _runSpread() {
+function runSpread() {
   const batch1 = [fn7, fn8];
   consumer1(...batch1);
 }

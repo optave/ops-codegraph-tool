@@ -1,0 +1,116 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: super4",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/super4.js",
+  "edges": [
+    {
+      "source": {
+        "name": "A",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "postMixin",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "<anon@8:12>",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "m",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "<anon@18:16>",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@21:9>",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "A.s",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@24:16>",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "A.s",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@15:9>",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "A.m",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "m",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "A.m",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@18:16>",
+        "file": "super4.js"
+      },
+      "target": {
+        "name": "A.s",
+        "file": "super4.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: assign2",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/assign2.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "assign2.js"
+      },
+      "target": {
+        "name": "bar",
+        "file": "assign2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
