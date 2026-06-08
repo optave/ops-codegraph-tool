@@ -54,8 +54,6 @@ function discoverTests(): string[] {
     .sort();
 }
 
-const tests = discoverTests();
-
 /**
  * Per-fixture minimum recall floors based on the baseline measured on origin/main
  * (commit 784951d, June 2026).  Fixtures not listed here default to 0 — they
@@ -83,6 +81,25 @@ const RECALL_FLOORS: Record<string, number> = {
   super3: 1.0, // 3/3
   this: 1.0, // 1/1
 };
+
+const tests = discoverTests();
+
+// Sanity-check: every RECALL_FLOORS key must match a discovered fixture name.
+// A mismatch means either a fixture was renamed or the key was mistyped, and
+// the regression floor would silently degrade to 0 without this guard.
+// Only enforce when the fixture directory is present (CI skips the whole suite
+// when fixtures are absent).
+if (tests.length > 0) {
+  const testSet = new Set(tests);
+  for (const key of Object.keys(RECALL_FLOORS)) {
+    if (!testSet.has(key)) {
+      throw new Error(
+        `RECALL_FLOORS key "${key}" does not match any discovered fixture in ${FIXTURES_DIR}. ` +
+          'Update the key or remove the stale entry.',
+      );
+    }
+  }
+}
 
 // Per-test results collected for summary
 const allResults: Record<
