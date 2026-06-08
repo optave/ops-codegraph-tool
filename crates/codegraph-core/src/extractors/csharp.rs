@@ -438,6 +438,29 @@ fn extract_csharp_base_types(
 
 // ── Type map extraction ─────────────────────────────────────────────────────
 
+fn extract_var_init_type(declarator: &Node, source: &[u8]) -> Option<String> {
+    for i in 0..declarator.child_count() {
+        let child = declarator.child(i)?;
+        if child.kind() == "object_creation_expression" {
+            if let Some(t) = child.child_by_field_name("type") {
+                return extract_csharp_type_name(&t, source).map(|s| s.to_string());
+            }
+        }
+        if child.kind() == "equals_value_clause" {
+            for j in 0..child.child_count() {
+                if let Some(expr) = child.child(j) {
+                    if expr.kind() == "object_creation_expression" {
+                        if let Some(t) = expr.child_by_field_name("type") {
+                            return extract_csharp_type_name(&t, source).map(|s| s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn extract_csharp_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
     match type_node.kind() {
         "identifier" | "qualified_name" => Some(node_text(type_node, source)),
@@ -455,18 +478,29 @@ fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, 
         "variable_declaration" => {
             let type_node = node.child_by_field_name("type").or_else(|| node.child(0));
             if let Some(type_node) = type_node {
-                if type_node.kind() != "var_keyword" && type_node.kind() != "implicit_type" {
-                    if let Some(type_name) = extract_csharp_type_name(&type_node, source) {
-                        for i in 0..node.child_count() {
-                            if let Some(child) = node.child(i) {
-                                if child.kind() == "variable_declarator" {
-                                    let name_node = child.child_by_field_name("name")
-                                        .or_else(|| child.child(0));
-                                    if let Some(name_node) = name_node {
-                                        if name_node.kind() == "identifier" {
+                let is_var = type_node.kind() == "implicit_type" || type_node.kind() == "var_keyword";
+                let explicit_type_name: Option<String> = if is_var {
+                    None
+                } else {
+                    extract_csharp_type_name(&type_node, source).map(|s| s.to_string())
+                };
+                if is_var || explicit_type_name.is_some() {
+                    for i in 0..node.child_count() {
+                        if let Some(child) = node.child(i) {
+                            if child.kind() == "variable_declarator" {
+                                let name_node = child.child_by_field_name("name")
+                                    .or_else(|| child.child(0));
+                                if let Some(name_node) = name_node {
+                                    if name_node.kind() == "identifier" {
+                                        let type_name = if is_var {
+                                            extract_var_init_type(&child, source)
+                                        } else {
+                                            explicit_type_name.clone()
+                                        };
+                                        if let Some(type_name) = type_name {
                                             symbols.type_map.push(TypeMapEntry {
                                                 name: node_text(&name_node, source).to_string(),
-                                                type_name: type_name.to_string(),
+                                                type_name,
                                                 confidence: 0.9,
                                             });
                                         }
