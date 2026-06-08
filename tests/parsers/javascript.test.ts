@@ -351,7 +351,7 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.has('b.c')).toBe(false);
     });
 
-    it('seeds typeMap for this.prop = new ClassName() with confidence 1.0', () => {
+    it('seeds typeMap for this.prop = new ClassName() using class-scoped key', () => {
       const symbols = parseJS(`
         class UserService {
           constructor() {
@@ -359,7 +359,47 @@ describe('JavaScript parser', () => {
           }
         }
       `);
+      expect(symbols.typeMap.get('UserService.logger')).toEqual({
+        type: 'Logger',
+        confidence: 1.0,
+      });
+      expect(symbols.typeMap.has('this.logger')).toBe(false);
+    });
+
+    it('uses this.prop key when no enclosing class is present', () => {
+      const symbols = parseJS(`
+        function setup() {
+          this.logger = new Logger();
+        }
+      `);
       expect(symbols.typeMap.get('this.logger')).toEqual({ type: 'Logger', confidence: 1.0 });
+    });
+
+    it('scopes this.prop typeMap key to enclosing class — no collision across classes', () => {
+      const symbols = parseJS(`
+        class ClassA {
+          constructor() { this.service = new ServiceA(); }
+        }
+        class ClassB {
+          constructor() { this.service = new ServiceB(); }
+        }
+      `);
+      expect(symbols.typeMap.get('ClassA.service')).toEqual({ type: 'ServiceA', confidence: 1.0 });
+      expect(symbols.typeMap.get('ClassB.service')).toEqual({ type: 'ServiceB', confidence: 1.0 });
+      expect(symbols.typeMap.has('this.service')).toBe(false);
+    });
+
+    it('uses this.prop fallback for named class expressions (expression name not resolver-visible)', () => {
+      // `const Foo = class Bar { ... }` — the resolver derives callerClass from the
+      // binding name `Foo`, never from the expression name `Bar`. Storing as `Bar.x`
+      // would produce an unreachable key, so we fall back to `this.x` instead.
+      const symbols = parseJS(`
+        const Foo = class Bar {
+          constructor() { this.x = new X(); }
+        };
+      `);
+      expect(symbols.typeMap.get('this.x')).toEqual({ type: 'X', confidence: 1.0 });
+      expect(symbols.typeMap.has('Bar.x')).toBe(false);
     });
 
     it('does not seed typeMap for this.prop = identifier (only new expressions)', () => {
@@ -369,6 +409,7 @@ describe('JavaScript parser', () => {
         }
       `);
       expect(symbols.typeMap.has('this.logger')).toBe(false);
+      expect(symbols.typeMap.has('Foo.logger')).toBe(false);
     });
 
     it('ignores non-identifier RHS (a.prop = obj.method)', () => {
