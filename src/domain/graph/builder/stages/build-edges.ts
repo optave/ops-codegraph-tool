@@ -1261,6 +1261,25 @@ function buildFileCallEdges(
       }
     }
 
+    // Same-class bare-call fallback: when a no-receiver call can't be resolved
+    // globally, try the caller's own class as a qualifier. Handles C# static
+    // sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
+    // to `Validators.IsValidEmail`. Safe for JS/TS: only fires when byName()
+    // already returned nothing (so module-level functions are found first).
+    if (targets.length === 0 && !call.receiver && caller.callerName != null) {
+      const dotIdx = caller.callerName.indexOf('.');
+      if (dotIdx > 0) {
+        const className = caller.callerName.slice(0, dotIdx);
+        const qualifiedName = `${className}.${call.name}`;
+        const qualified = lookup
+          .byNameAndFile(qualifiedName, relPath)
+          .filter((n) => n.kind === 'method');
+        if (qualified.length > 0) {
+          targets = qualified;
+        }
+      }
+    }
+
     // Object.defineProperty accessor fallback: when a function is registered as
     // a getter/setter via `Object.defineProperty(obj, "bar", { get: getter })`,
     // calls to `this.X()` inside `getter` resolve against `obj` (this === obj

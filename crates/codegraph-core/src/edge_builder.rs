@@ -503,6 +503,26 @@ fn resolve_call_targets<'a>(
             .unwrap_or_default();
         if !exact.is_empty() { return exact; }
 
+        // Bare-call same-class fallback: mirrors the WASM buildFileCallEdges same-class
+        // bare-call fallback. When a no-receiver call can't be resolved globally, try the
+        // caller's own class prefix: `IsValidEmail()` in `Validators.ValidateUser` →
+        // `Validators.IsValidEmail`. Safe: only fires after the global exact lookup fails,
+        // so module-level functions always take priority.
+        if call.receiver.is_none() {
+            if let Some(dot_pos) = caller_name.find('.') {
+                let class_prefix = &caller_name[..dot_pos];
+                let qualified = format!("{}.{}", class_prefix, call.name);
+                let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
+                    .get(qualified.as_str())
+                    .map(|v| v.iter()
+                        .filter(|n| n.kind == "method" && n.file == rel_path)
+                        .copied()
+                        .collect())
+                    .unwrap_or_default();
+                if !class_scoped.is_empty() { return class_scoped; }
+            }
+        }
+
         // For this/self/super: prefer class-scoped exact lookup (e.g. `this.area()` in
         // `Shape.describe` → try `Shape.area` first).  This avoids false edges to unrelated
         // classes that happen to have a method with the same name in the same file.

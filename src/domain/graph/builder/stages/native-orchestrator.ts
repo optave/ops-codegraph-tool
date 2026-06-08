@@ -1660,6 +1660,26 @@ export async function tryNativeOrchestrator(
     }
   }
 
+  // Full role re-classification after JS edge-writing post-passes.
+  // The Rust orchestrator classifies roles before these post-passes (CHA,
+  // this-dispatch) add edges, so the Rust-computed roles and the cached
+  // fan-out medians are stale. A full re-classification ensures the final
+  // roles reflect the true fan-in/out with all edges in place.
+  if (chaTargetIds.size > 0 || thisDispatchTargetIds.size > 0) {
+    try {
+      const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+        classifyNodeRoles: (
+          db: BetterSqlite3Database,
+          changedFiles?: string[] | null,
+        ) => Record<string, number>;
+      };
+      classifyNodeRoles(ctx.db as unknown as BetterSqlite3Database, null);
+      debug(`Post-pass full role re-classification complete`);
+    } catch (err) {
+      debug(`Post-pass full role re-classification failed: ${toErrorMessage(err)}`);
+    }
+  }
+
   // Backfill the `technique` column on `calls` edges written by the Rust
   // orchestrator, which does not write the column. Runs after all edge-writing
   // phases (including the WASM dropped-language backfill, CHA post-pass, and
