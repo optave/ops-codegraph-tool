@@ -1,5 +1,5 @@
-Object.defineProperty(exports, "__esModule", {
-    value: true
+Object.defineProperty(exports, '__esModule', {
+  value: true,
 });
 
-exports.default = function foo() {}
+exports.default = function foo() {};

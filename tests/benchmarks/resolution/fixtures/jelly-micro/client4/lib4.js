@@ -1,4 +1,4 @@
-Object.defineProperty(exports, "__esModule", { value: true });
+Object.defineProperty(exports, '__esModule', { value: true });
 class Timer {
   constructor() {
     this.startTime = new Date();
