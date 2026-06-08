@@ -11,7 +11,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { EngineError, toErrorMessage } from '../shared/errors.js';
 import type { NativeAddon } from '../types.js';
-import { debug } from './logger.js';
+import { debug, warn } from './logger.js';
 
 let _cached: NativeAddon | null | undefined; // undefined = not yet tried, null = failed, NativeAddon = module
 let _loadError: Error | null = null;
@@ -47,8 +47,8 @@ const PLATFORM_PACKAGES: Record<string, string> = {
 
 /**
  * Map of (platform-arch[-libc]) → locally compiled binary filename.
- * Used as a dev-mode fallback when the npm package is not installed,
- * e.g. when working with Rust changes that haven't been published yet.
+ * Checked before the npm package so that locally compiled Rust changes
+ * are picked up immediately in development without publishing a new release.
  */
 const PLATFORM_LOCAL_BINARIES: Record<string, string> = {
   'linux-x64-gnu': 'codegraph-core.linux-x64-gnu.node',
@@ -91,7 +91,9 @@ export function loadNative(): NativeAddon | null {
 
   const platformKey = resolvePlatformKey();
 
-  // 1. Explicit path override — highest priority.
+  // 1. Explicit path override — highest priority. Failure is fatal: if the
+  //    operator set this variable, silently loading a different binary would
+  //    be harder to diagnose than an explicit error.
   const envPath = process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
   if (envPath) {
     try {
@@ -100,7 +102,11 @@ export function loadNative(): NativeAddon | null {
       return _cached;
     } catch (err) {
       _loadError = err as Error;
-      debug(`loadNative: NAPI_RS_NATIVE_LIBRARY_PATH load failed: ${toErrorMessage(err as Error)}`);
+      warn(
+        `loadNative: NAPI_RS_NATIVE_LIBRARY_PATH is set but failed to load "${envPath}": ${toErrorMessage(err as Error)}`,
+      );
+      _cached = null;
+      return null;
     }
   }
 
