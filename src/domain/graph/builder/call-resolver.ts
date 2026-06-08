@@ -121,7 +121,11 @@ export function resolveByMethodOrGlobal(
       const qualifiedName = `${effectiveReceiver}.${call.name}`;
       const direct = lookup
         .byName(qualifiedName)
-        .filter((n) => n.kind === 'method' || n.kind === 'function');
+        .filter(
+          (n) =>
+            (n.kind === 'method' || n.kind === 'function') &&
+            computeConfidence(relPath, n.file, null) >= 0.5,
+        );
       if (direct.length > 0) return direct;
     }
 
