@@ -763,10 +763,14 @@ fn match_js_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbo
 fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_declaration" | "generator_function_declaration" => handle_function_decl(node, source, symbols),
-        "class_declaration" | "abstract_class_declaration" => {
+        "class_declaration" | "abstract_class_declaration"
+        // class expressions: `return class Foo extends Bar { ... }` or `const X = class Foo { ... }`
+        | "class" => {
             handle_class_decl(node, source, symbols)
         }
+        "class_static_block" => handle_static_block(node, source, symbols),
         "method_definition" => handle_method_def(node, source, symbols),
+        "field_definition" | "public_field_definition" => handle_field_def(node, source, symbols),
         "interface_declaration" => handle_interface_decl(node, source, symbols),
         "type_alias_declaration" => handle_type_alias(node, source, symbols),
         "enum_declaration" => handle_enum_decl(node, source, symbols),
@@ -857,6 +861,51 @@ fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             children: opt_children(children),
         });
     }
+}
+
+/// Create a synthetic `ClassName.<static>` definition for a class static block
+/// so that calls inside the block are attributed to a method-kind node and
+/// `super.method()` dispatch can walk up to the parent class.
+fn handle_static_block(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(class_name) = find_parent_class(node, source) else { return };
+    symbols.definitions.push(Definition {
+        name: format!("{}.<static>", class_name),
+        kind: "method".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: None,
+    });
+}
+
+/// Extract a class field definition with a function/arrow-function value as a
+/// top-level `ClassName.fieldName` method definition so it is a resolvable call
+/// target (e.g. `static f = () => { ... }` becomes callable as `A.f`).
+///
+/// JS `field_definition` stores the name under the `"property"` field;
+/// TS `public_field_definition` uses `"name"`.
+fn handle_field_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let value_node = node.child_by_field_name("value");
+    let Some(value_node) = value_node else { return };
+    let kind = value_node.kind();
+    if kind != "arrow_function" && kind != "function_expression" { return; }
+    let name_node = node.child_by_field_name("property")
+        .or_else(|| node.child_by_field_name("name"))
+        .or_else(|| find_child(node, "property_identifier"));
+    let Some(name_node) = name_node else { return };
+    let Some(class_name) = find_parent_class(node, source) else { return };
+    symbols.definitions.push(Definition {
+        name: format!("{}.{}", class_name, node_text(&name_node, source)),
+        kind: "method".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(&value_node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: None,
+    });
 }
 
 fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
