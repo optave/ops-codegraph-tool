@@ -78,7 +78,7 @@
     },
     {
       "source": {
-        "name": "B.<static>",
+        "name": "B.<static:36:2>",
         "file": "super.js"
       },
       "target": {

@@ -91,6 +91,31 @@ describe('JavaScript parser', () => {
     );
   });
 
+  it('extracts class field definitions with initializers as method definitions', () => {
+    const symbols = parseJS(`class C1 { f8 = () => { return 1; } }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C1.f8', kind: 'method' }),
+    );
+  });
+
+  it('extracts static class field definitions as method definitions', () => {
+    const symbols = parseJS(`class C6 { static staticProperty = (f1(), function() {}); }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C6.staticProperty', kind: 'method' }),
+    );
+  });
+
+  it('extracts static blocks as method definitions with unique names', () => {
+    const symbols = parseJS(`class C6 { static { f1(); } static { f2(); } }`);
+    // Each static block gets a unique name with line:column suffix to avoid collisions
+    const staticDefs = symbols.definitions.filter((d) => d.name.startsWith('C6.<static:'));
+    expect(staticDefs).toHaveLength(2);
+    expect(staticDefs[0]).toMatchObject({ kind: 'method' });
+    expect(staticDefs[1]).toMatchObject({ kind: 'method' });
+    // Names must be distinct even on the same line
+    expect(staticDefs[0].name).not.toBe(staticDefs[1].name);
+  });
+
   it('extracts import statements', () => {
     const symbols = parseJS(`import { foo, bar } from './baz';`);
     expect(symbols.imports).toHaveLength(1);
@@ -1087,16 +1112,17 @@ describe('JavaScript parser', () => {
       expect(superCall).toBeDefined();
     });
 
-    it('creates ClassName.<static> definition for class static block', () => {
+    it('creates ClassName.<static:L:C> definition for class static block', () => {
       const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
-      expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: 'A.<static>', kind: 'method' }),
-      );
+      // Name includes line:column suffix for uniqueness
+      const staticDef = symbols.definitions.find((d) => d.name.startsWith('A.<static:'));
+      expect(staticDef).toBeDefined();
+      expect(staticDef).toMatchObject({ kind: 'method' });
     });
 
-    it('attributes super.method() call inside static block to ClassName.<static>', () => {
+    it('attributes super.method() call inside static block to ClassName.<static:L:C>', () => {
       const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
-      const staticDef = symbols.definitions.find((d) => d.name === 'A.<static>');
+      const staticDef = symbols.definitions.find((d) => d.name.startsWith('A.<static:'));
       expect(staticDef).toBeDefined();
       const superCall = symbols.calls.find((c) => c.name === 'init' && c.receiver === 'super');
       expect(superCall).toBeDefined();
