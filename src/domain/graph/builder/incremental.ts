@@ -516,6 +516,7 @@ function buildCallEdges(
       relPath,
       importedNames,
       typeMap,
+      caller.callerName,
     );
 
     for (const t of targets) {
