@@ -10,7 +10,7 @@ function fn7() {}
 function fn8() {}
 
 // for-of over plain array
-function _iterPlain() {
+function iterPlain() {
   const arr = [fn1, fn2];
   for (const f of arr) {
     f();
@@ -18,7 +18,7 @@ function _iterPlain() {
 }
 
 // for-of over Set constructed from array
-function _iterSet() {
+function iterSet() {
   const arr = [fn3, fn4];
   const s = new Set(arr);
   for (const f of s) {
