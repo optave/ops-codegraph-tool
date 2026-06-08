@@ -8,6 +8,7 @@
 
 import { createRequire } from 'node:module';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { EngineError, toErrorMessage } from '../shared/errors.js';
 import type { NativeAddon } from '../types.js';
 import { debug } from './logger.js';
@@ -45,30 +46,89 @@ const PLATFORM_PACKAGES: Record<string, string> = {
 };
 
 /**
+ * Map of (platform-arch[-libc]) → locally compiled binary filename.
+ * Used as a dev-mode fallback when the npm package is not installed,
+ * e.g. when working with Rust changes that haven't been published yet.
+ */
+const PLATFORM_LOCAL_BINARIES: Record<string, string> = {
+  'linux-x64-gnu': 'codegraph-core.linux-x64-gnu.node',
+  'linux-x64-musl': 'codegraph-core.linux-x64-musl.node',
+  'linux-arm64-gnu': 'codegraph-core.linux-arm64-gnu.node',
+  'linux-arm64-musl': 'codegraph-core.linux-arm64-musl.node',
+  'darwin-arm64': 'codegraph-core.darwin-arm64.node',
+  'darwin-x64': 'codegraph-core.darwin-x64.node',
+  'win32-x64': 'codegraph-core.win32-x64-msvc.node',
+};
+
+/** Compute the platform key used to index PLATFORM_PACKAGES / PLATFORM_LOCAL_BINARIES. */
+function resolvePlatformKey(): string {
+  const platform = os.platform();
+  const arch = os.arch();
+  return platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
+}
+
+/**
  * Resolve the platform-specific npm package name for the native addon.
  * Returns null if the current platform is not supported.
  */
 function resolvePlatformPackage(): string | null {
-  const platform = os.platform();
-  const arch = os.arch();
-  const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
-  return PLATFORM_PACKAGES[key] || null;
+  return PLATFORM_PACKAGES[resolvePlatformKey()] ?? null;
 }
 
 /**
  * Try to load the native napi addon.
  * Returns the module on success, null on failure.
+ *
+ * Load order:
+ *   1. NAPI_RS_NATIVE_LIBRARY_PATH env var (explicit override)
+ *   2. locally compiled binary in crates/codegraph-core/ (dev mode — preferred
+ *      over the npm package so that Rust changes are picked up immediately
+ *      without publishing a new release)
+ *   3. npm platform package (production path)
  */
 export function loadNative(): NativeAddon | null {
   if (_cached !== undefined) return _cached;
 
-  const pkg = resolvePlatformPackage();
+  const platformKey = resolvePlatformKey();
+
+  // 1. Explicit path override — highest priority.
+  const envPath = process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
+  if (envPath) {
+    try {
+      _cached = _require(envPath) as NativeAddon;
+      debug(`loadNative: loaded from NAPI_RS_NATIVE_LIBRARY_PATH: ${envPath}`);
+      return _cached;
+    } catch (err) {
+      _loadError = err as Error;
+      debug(`loadNative: NAPI_RS_NATIVE_LIBRARY_PATH load failed: ${toErrorMessage(err as Error)}`);
+    }
+  }
+
+  // 2. Locally compiled dev binary — preferred over npm package so that Rust
+  //    changes are visible without publishing. Only used when the file exists.
+  const localFile = PLATFORM_LOCAL_BINARIES[platformKey];
+  if (localFile) {
+    try {
+      const localPath = fileURLToPath(
+        new URL(`../../crates/codegraph-core/${localFile}`, import.meta.url),
+      );
+      _cached = _require(localPath) as NativeAddon;
+      debug(`loadNative: loaded local dev binary: ${localPath}`);
+      return _cached;
+    } catch (err) {
+      debug(`loadNative: local dev binary not available: ${toErrorMessage(err as Error)}`);
+    }
+  }
+
+  // 3. Published npm platform package — production path.
+  const pkg = PLATFORM_PACKAGES[platformKey] ?? null;
   if (pkg) {
     try {
       _cached = _require(pkg) as NativeAddon;
       return _cached;
     } catch (err) {
       _loadError = err as Error;
+      debug(`loadNative: npm package ${pkg} not available: ${toErrorMessage(err as Error)}`);
     }
   } else {
     _loadError = new Error(`Unsupported platform: ${os.platform()}-${os.arch()}`);
