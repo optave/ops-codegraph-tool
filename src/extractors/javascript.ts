@@ -378,6 +378,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
+  // Extract class field definitions and static blocks (query patterns don't cover these)
+  extractClassMembersWalk(tree.rootNode, definitions);
+
   // Phase 8.3f: Extract object-rest parameter and object-property bindings
   extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindings);
   extractObjectPropBindingsWalk(tree.rootNode, objectPropBindings);
@@ -463,6 +466,27 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
       extractConstantsWalk(child, definitions);
     }
   }
+}
+
+/**
+ * Walk the AST to extract class field definitions and static initializer blocks.
+ * Query patterns capture method_definition but not field_definition or class_static_block.
+ * Called by the query-based fast path (extractSymbolsQuery); the walk-based path
+ * (extractSymbolsWalk) handles these same node types via walkJavaScriptNode's switch cases.
+ */
+function extractClassMembersWalk(node: TreeSitterNode, definitions: Definition[]): void {
+  function walk(n: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (n.type === 'field_definition' || n.type === 'public_field_definition') {
+      handleFieldDef(n, definitions);
+    } else if (n.type === 'class_static_block') {
+      handleStaticBlock(n, definitions);
+    }
+    for (let i = 0; i < n.childCount; i++) {
+      walk(n.child(i)!, depth + 1);
+    }
+  }
+  walk(node, 0);
 }
 
 /**
@@ -743,6 +767,13 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'expression_statement':
       handleExpressionStmt(node, ctx);
       break;
+    case 'field_definition':
+    case 'public_field_definition':
+      handleFieldDef(node, ctx.definitions);
+      break;
+    case 'class_static_block':
+      handleStaticBlock(node, ctx.definitions);
+      break;
   }
 
   for (let i = 0; i < node.childCount; i++) {
@@ -808,6 +839,45 @@ function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
       visibility: methVis,
     });
   }
+}
+
+/**
+ * Emit a `ClassName.fieldName` definition for class fields that have an initializer.
+ * This lets `findCaller` attribute calls inside field initializers (e.g. static field
+ * side-effects) to the field rather than the enclosing class.
+ */
+function handleFieldDef(node: TreeSitterNode, definitions: Definition[]): void {
+  // JS field_definition uses 'property' field; TS public_field_definition uses 'name' field
+  const nameNode = node.childForFieldName('name') || node.childForFieldName('property');
+  const valueNode = node.childForFieldName('value');
+  if (!nameNode || !valueNode) return;
+  if (nameNode.type === 'computed_property_name') return;
+  const fieldName = nameNode.text;
+  if (!fieldName) return;
+  const className = findParentClass(node);
+  if (!className) return;
+  definitions.push({
+    name: `${className}.${fieldName}`,
+    kind: 'method',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(node),
+  });
+}
+
+/**
+ * Emit a `ClassName.<static>` definition for each `static { }` block.
+ * Enables `findCaller` to attribute calls inside static initializer blocks to
+ * this synthetic node rather than to the enclosing class node.
+ */
+function handleStaticBlock(node: TreeSitterNode, definitions: Definition[]): void {
+  const className = findParentClass(node);
+  if (!className) return;
+  definitions.push({
+    name: `${className}.<static>`,
+    kind: 'function',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(node),
+  });
 }
 
 function handleInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -2321,60 +2391,108 @@ function extractSpreadForOfWalk(
 }
 
 /**
- * Phase 8.3f: collect object-rest parameter bindings.
+ * Phase 8.3f: record object-destructuring rest-parameter bindings from function definitions.
  *
- * `function f({ a, ...rest }) {}` → `{ callee: "f", restName: "rest", argIndex: 0 }`
- *
- * Enables resolving `rest.prop()` when a known object is passed as that parameter.
+ * For each `function f({ a, ...rest })` (or arrow/function-expression equivalent),
+ * records { callee: 'f', restName: 'rest', argIndex: N }. Also covers class methods
+ * (`callee: 'ClassName.method'`) and object-literal methods (`callee: 'method'`).
+ * The edge builder uses these to seed typeMap[rest] = { type: argName } when f(obj)
+ * is called with an identifier, enabling `rest.method()` calls to resolve.
  */
 function extractObjectRestParamBindingsWalk(
   rootNode: TreeSitterNode,
   bindings: ObjectRestParamBinding[],
 ): void {
-  function walk(node: TreeSitterNode, depth: number): void {
+  function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
-    if (t === 'function_declaration' || t === 'function_expression' || t === 'arrow_function') {
-      // `function_declaration` has a `name` field; `arrow_function` and
-      // `function_expression` do not — get the name from the enclosing
-      // `variable_declarator` instead (e.g. `const f3 = ({ ...rest }) => {}`).
-      const nameNode =
-        node.childForFieldName('name') ??
-        (node.parent?.type === 'variable_declarator'
-          ? node.parent.childForFieldName('name')
-          : null);
-      const funcName = nameNode?.text;
-      if (funcName) {
-        const paramsNode =
-          node.childForFieldName('parameters') || findChild(node, 'formal_parameters');
-        if (paramsNode) {
-          let argIndex = 0;
-          for (let i = 0; i < paramsNode.childCount; i++) {
-            const param = paramsNode.child(i);
-            if (!param) continue;
-            const pt = param.type;
-            if (pt === ',' || pt === '(' || pt === ')') continue;
-            if (pt === 'object_pattern') {
-              for (let j = 0; j < param.childCount; j++) {
-                const child = param.child(j);
-                if (!child) continue;
-                if (child.type !== 'rest_pattern' && child.type !== 'rest_element') continue;
-                const restNameNode = child.child(1) ?? child.childForFieldName('name');
-                if (restNameNode?.type === 'identifier') {
-                  bindings.push({ callee: funcName, restName: restNameNode.text, argIndex });
-                }
-              }
-            }
-            argIndex++;
-          }
+    let fnName: string | null = null;
+    let paramsNode: TreeSitterNode | null = null;
+
+    if (t === 'function_declaration' || t === 'generator_function_declaration') {
+      const nameN = node.childForFieldName('name');
+      if (nameN?.type === 'identifier') fnName = nameN.text;
+      paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
+    } else if (t === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      const valueN = node.childForFieldName('value');
+      if (nameN?.type === 'identifier' && valueN) {
+        const vt = valueN.type;
+        if (
+          vt === 'arrow_function' ||
+          vt === 'function_expression' ||
+          vt === 'generator_function'
+        ) {
+          fnName = nameN.text;
+          paramsNode =
+            valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
+        }
+      }
+    } else if (t === 'method_definition') {
+      // class method: `class Foo { bar({ a, ...rest }) {} }`
+      // object-literal shorthand method: `{ bar({ a, ...rest }) {} }`
+      const nameN = node.childForFieldName('name');
+      if (nameN) {
+        fnName = currentClass ? `${currentClass}.${nameN.text}` : nameN.text;
+        paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
+      }
+    } else if (t === 'pair') {
+      // object-literal method: `{ bar: function({ a, ...rest }) {} }`
+      // Skip computed property keys (e.g. `{ [Symbol.iterator]: function({ ...rest }) {} }`)
+      // because `callee: '[Symbol.iterator]'` can never match a paramBinding callee.
+      const keyN = node.childForFieldName('key');
+      const valueN = node.childForFieldName('value');
+      if (keyN && valueN && keyN.type !== 'computed_property_name') {
+        const vt = valueN.type;
+        if (
+          vt === 'arrow_function' ||
+          vt === 'function_expression' ||
+          vt === 'generator_function'
+        ) {
+          fnName = keyN.type === 'string' ? keyN.text.slice(1, -1) : keyN.text;
+          paramsNode =
+            valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
         }
       }
     }
+
+    if (fnName && paramsNode) {
+      let paramIdx = 0;
+      for (let i = 0; i < paramsNode.childCount; i++) {
+        const child = paramsNode.child(i);
+        if (!child) continue;
+        const ct = child.type;
+        if (ct === ',' || ct === '(' || ct === ')') continue;
+        if (ct === 'object_pattern') {
+          for (let j = 0; j < child.childCount; j++) {
+            const inner = child.child(j);
+            if (!inner) continue;
+            if (inner.type === 'rest_pattern' || inner.type === 'rest_element') {
+              // rest_pattern node: `...identifier` — the identifier is at child index 1
+              const restId = inner.child(1) ?? inner.childForFieldName('name');
+              if (restId?.type === 'identifier') {
+                bindings.push({ callee: fnName, restName: restId.text, argIndex: paramIdx });
+              }
+            }
+          }
+        }
+        paramIdx++;
+      }
+    }
+
+    // Thread class name into class_body children; reset for all other contexts.
+    let childClass: string | null = null;
+    if (t === 'class_declaration' || t === 'class') {
+      childClass = node.childForFieldName('name')?.text ?? null;
+    } else if (t === 'class_body') {
+      childClass = currentClass;
+    }
+
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
+      walk(node.child(i)!, depth + 1, childClass);
     }
   }
-  walk(rootNode, 0);
+  walk(rootNode, 0, null);
 }
 
 /**
