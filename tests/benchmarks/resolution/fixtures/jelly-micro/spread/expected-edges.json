@@ -68,6 +68,12 @@
       "target": { "name": "d", "file": "spread.js" },
       "kind": "calls",
       "mode": "pts-param"
+    },
+    {
+      "source": { "name": "r", "file": "spread.js" },
+      "target": { "name": "e", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
     }
   ]
 }

@@ -23,6 +23,9 @@ function q(x, y, z) {
   y();
   z();
 }
+function r(x) {
+  x();
+}
 
 const arr1 = [a, b];
 f(...arr1); // f→a, f→b
@@ -33,3 +36,4 @@ g(...arr2); // g→c, g→d
 p(...[e]); // p→e  (inline single-element array)
 q(...[a, b, c]); // q→a, q→b, q→c  (inline multi-element array)
 q(e, ...[h, d]); // q→e (pos 0), q→h (pos 1), q→d (pos 2)  (mixed: identifier + inline spread)
+r(...[], e); // r→e (pos 0): empty spread consumes 0 slots, so e lands at index 0

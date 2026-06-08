@@ -2062,8 +2062,11 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
                 }
                 elemCount++;
               }
-              // argIdx++ below accounts for 1 slot; pre-advance for the remaining elements.
-              argIdx += Math.max(0, elemCount - 1);
+              // Advance by the exact number of slots this spread occupies and skip
+              // the unconditional argIdx++ below so that zero-element spreads (...[])
+              // do not shift subsequent argument indices.
+              argIdx += elemCount;
+              continue;
             }
           }
           argIdx++;
