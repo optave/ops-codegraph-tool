@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: defineProperties",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/defineProperties.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "defineProperties.js"
+      },
+      "target": {
+        "name": "o",
+        "file": "defineProperties.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: private",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/private.js",
+  "edges": [
+    {
+      "source": {
+        "name": "C",
+        "file": "private.js"
+      },
+      "target": {
+        "name": "<anon@2:12>",
+        "file": "private.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C",
+        "file": "private.js"
+      },
+      "target": {
+        "name": "<anon@16:21>",
+        "file": "private.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C",
+        "file": "private.js"
+      },
+      "target": {
+        "name": "<anon@4:5>",
+        "file": "private.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C",
+        "file": "private.js"
+      },
+      "target": {
+        "name": "<anon@8:19>",
+        "file": "private.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C",
+        "file": "private.js"
+      },
+      "target": {
+        "name": "<anon@10:12>",
+        "file": "private.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

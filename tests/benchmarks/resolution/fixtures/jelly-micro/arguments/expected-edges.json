@@ -1,0 +1,92 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: arguments",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/arguments.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "arguments.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "arguments.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<root>",
+        "file": "arguments.js"
+      },
+      "target": {
+        "name": "f2",
+        "file": "arguments.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "arguments.js"
+      },
+      "target": {
+        "name": "<anon@12:4>",
+        "file": "arguments.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "arguments.js"
+      },
+      "target": {
+        "name": "<anon@12:30>",
+        "file": "arguments.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "arguments.js"
+      },
+      "target": {
+        "name": "<anon@8:20>",
+        "file": "arguments.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f2",
+        "file": "arguments.js"
+      },
+      "target": {
+        "name": "f",
+        "file": "arguments.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f2",
+        "file": "arguments.js"
+      },
+      "target": {
+        "name": "<anon@18:4>",
+        "file": "arguments.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

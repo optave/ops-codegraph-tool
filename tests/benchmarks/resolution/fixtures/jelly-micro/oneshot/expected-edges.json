@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: oneshot",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/oneshot.js",
+  "edges": [
+    {
+      "source": {
+        "name": "f1",
+        "file": "oneshot.js"
+      },
+      "target": {
+        "name": "t",
+        "file": "oneshot.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
