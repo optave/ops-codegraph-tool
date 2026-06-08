@@ -1,5 +1,5 @@
 {
-  "$schema": "../../expected-edges.schema.json",
+  "$schema": "../../../expected-edges.schema.json",
   "language": "javascript",
   "description": "Object destructuring rest parameter dispatch — eerest.e4() → e4",
   "edges": [
