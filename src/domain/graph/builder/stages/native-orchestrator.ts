@@ -690,9 +690,10 @@ async function runPostNativePrototypeMethods(
       if (protoFileSet.has(relPath)) continue; // already parsed in first pass
       try {
         const content = readFileSafe(path.join(rootDir, relPath));
-        const matchesAny = [...newMethodSuffixes].some((m) =>
-          new RegExp(`\\.${m}\\s*\\(`).test(content),
-        );
+        const matchesAny = [...newMethodSuffixes].some((m) => {
+          const escaped = m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp(`\\.${escaped}\\s*\\(`).test(content);
+        });
         if (matchesAny) callerCandidateAbs.push(path.join(rootDir, relPath));
       } catch {
         /* skip unreadable files */
