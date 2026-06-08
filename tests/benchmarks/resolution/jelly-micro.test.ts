@@ -56,6 +56,34 @@ function discoverTests(): string[] {
 
 const tests = discoverTests();
 
+/**
+ * Per-fixture minimum recall floors based on the baseline measured on origin/main
+ * (commit 784951d, June 2026).  Fixtures not listed here default to 0 — they
+ * produce 0% recall and can only improve, never regress below zero.
+ *
+ * Format: fixture-name → minimum recall fraction in [0, 1].
+ * Exact fractions shown in comments; stored as the corresponding percentage
+ * value so a single lost TP triggers a failure.
+ *
+ * Baseline summary: precision=65.3%  recall=40.9%  TP=47  FP=25  FN=68
+ */
+const RECALL_FLOORS: Record<string, number> = {
+  accessors3: 1.0, // 1/1
+  arguments: 1.0, // 1/1
+  classes: 0.2, // 6/30
+  defineProperty: 0.5, // 3/6
+  fun: 1.0, // 4/4
+  generators: 1.0, // 9/9
+  more1: 1.0, // 10/10
+  'receiver-callee-mixup': 1.0, // 1/1
+  rest: 1.0, // 1/1
+  spread: 1.0, // 4/4
+  super: 0.38, // 5/13
+  super2: 0.4, // 2/5
+  super3: 1.0, // 3/3
+  this: 1.0, // 1/1
+};
+
 // Per-test results collected for summary
 const allResults: Record<
   string,
@@ -194,8 +222,8 @@ describe.skipIf(tests.length === 0)('Jelly Micro-Test Benchmark', () => {
           for (const e of fn) console.log(`    FN: ${e}`);
         }
 
-        // Soft gate: recall must be ≥ 0% (we don't gate yet — this benchmark is diagnostic)
-        expect(recall).toBeGreaterThanOrEqual(0);
+        const floor = RECALL_FLOORS[testName] ?? 0;
+        expect(recall).toBeGreaterThanOrEqual(floor);
       });
     });
   }
