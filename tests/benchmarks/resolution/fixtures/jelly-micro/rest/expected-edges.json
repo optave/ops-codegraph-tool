@@ -7,7 +7,8 @@
       "source": { "name": "f3", "file": "rest.js" },
       "target": { "name": "e4", "file": "rest.js" },
       "kind": "calls",
-      "mode": "pts-obj-rest"
+      "mode": "pts-obj-rest",
+      "notes": "eerest.e4() where eerest is the rest binding of f3's first param; arg obj has e4 as a shorthand property"
     }
   ]
 }
