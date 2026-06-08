@@ -105,12 +105,12 @@ describe('JavaScript parser', () => {
     );
   });
 
-  it('extracts static blocks as function definitions', () => {
+  it('extracts static blocks as method definitions', () => {
     const symbols = parseJS(`class C6 { static { f1(); } static { f2(); } }`);
     const staticDefs = symbols.definitions.filter((d) => d.name === 'C6.<static>');
     expect(staticDefs).toHaveLength(2);
-    expect(staticDefs[0]).toMatchObject({ kind: 'function' });
-    expect(staticDefs[1]).toMatchObject({ kind: 'function' });
+    expect(staticDefs[0]).toMatchObject({ kind: 'method' });
+    expect(staticDefs[1]).toMatchObject({ kind: 'method' });
   });
 
   it('extracts import statements', () => {
