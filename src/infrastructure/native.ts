@@ -154,6 +154,10 @@ export function isNativeAvailable(): boolean {
 /**
  * Read the version from the platform-specific npm package.json.
  * Returns null if the package is not installed or has no version.
+ *
+ * Note: always reports the npm package version. When the local dev binary or
+ * NAPI_RS_NATIVE_LIBRARY_PATH is loaded instead, this version may not match
+ * the running binary.
  */
 export function getNativePackageVersion(): string | null {
   const pkg = resolvePlatformPackage();
