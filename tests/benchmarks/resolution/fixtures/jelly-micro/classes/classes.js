@@ -92,6 +92,7 @@ class C {
 let t7 = new C() + 'bar'; // implicit call toString
 
 const obj = {
+  // biome-ignore lint/suspicious/useGetterReturn: intentional empty getter for extraction testing
   get property1() {},
   set property2(value) {},
   property3(parameters) {},
@@ -99,6 +100,7 @@ const obj = {
   async property5(parameters) {},
   async *generator6(parameters) {},
 
+  // biome-ignore lint/suspicious/useGetterReturn: intentional empty getter for extraction testing
   get ['property7']() {},
   set ['property8'](value) {},
   ['property9'](parameters) {},
