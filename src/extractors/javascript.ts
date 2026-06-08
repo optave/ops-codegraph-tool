@@ -2516,6 +2516,21 @@ function extractReceiverName(objNode: TreeSitterNode | null): string | undefined
   if (!objNode) return undefined;
   const t = objNode.type;
   if (t === 'identifier' || t === 'this' || t === 'super') return objNode.text;
+  // `(new Foo(...)).method()` — extract the constructor name so the resolver can
+  // look up `Foo.method` directly without relying on a text-based regex heuristic.
+  if (t === 'new_expression') {
+    const name = extractNewExprTypeName(objNode);
+    if (name) return name;
+  }
+  if (t === 'parenthesized_expression') {
+    for (let i = 0; i < objNode.childCount; i++) {
+      const child = objNode.child(i);
+      if (child?.type === 'new_expression') {
+        const name = extractNewExprTypeName(child);
+        if (name) return name;
+      }
+    }
+  }
   return objNode.text;
 }
 
