@@ -45,11 +45,14 @@ let tmpNative: string;
 beforeAll(async () => {
   tmpWasm = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1317-wasm-'));
   fs.writeFileSync(path.join(tmpWasm, 'proto.js'), FIXTURE_CODE);
-  await buildGraph(tmpWasm, { incremental: false, skipRegistry: true, engine: 'wasm' });
 
   tmpNative = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1317-native-'));
   fs.writeFileSync(path.join(tmpNative, 'proto.js'), FIXTURE_CODE);
-  await buildGraph(tmpNative, { incremental: false, skipRegistry: true, engine: 'native' });
+
+  await Promise.all([
+    buildGraph(tmpWasm, { incremental: false, skipRegistry: true, engine: 'wasm' }),
+    buildGraph(tmpNative, { incremental: false, skipRegistry: true, engine: 'native' }),
+  ]);
 });
 
 afterAll(() => {
@@ -95,7 +98,7 @@ describe('prototype method resolution (#1317)', () => {
 
   it('WASM: resolves d.bark() call to Dog.bark via typeMap receiver type', () => {
     const edges = readCallEdges(path.join(tmpWasm, '.codegraph', 'graph.db'));
-    expect(edges.find((e) => e.tgt === 'Dog.bark')).toBeDefined();
+    expect(edges.find((e) => e.src === 'proto.js' && e.tgt === 'Dog.bark')).toBeDefined();
   });
 
   it('WASM: resolves (new Dog(...)).bark() inline-new receiver call to Dog.bark', () => {
@@ -111,7 +114,7 @@ describe('prototype method resolution (#1317)', () => {
 
   it('Native: resolves d.bark() call to Dog.bark via typeMap receiver type', () => {
     const edges = readCallEdges(path.join(tmpNative, '.codegraph', 'graph.db'));
-    expect(edges.find((e) => e.tgt === 'Dog.bark')).toBeDefined();
+    expect(edges.find((e) => e.src === 'proto.js' && e.tgt === 'Dog.bark')).toBeDefined();
   });
 
   it('Native: resolves (new Dog(...)).bark() inline-new receiver call to Dog.bark', () => {
