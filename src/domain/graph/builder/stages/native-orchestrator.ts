@@ -406,12 +406,12 @@ async function runPostNativeAnalysis(
  * can re-classify roles for the affected implementation files.  An empty set
  * means no edges were added and role re-classification is unnecessary.
  */
-function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
+function runPostNativeCha(db: BetterSqlite3Database): number {
   // Fast guard: no hierarchy edges → no CHA work
   const hasHierarchy = db
     .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
     .get();
-  if (!hasHierarchy) return new Set();
+  if (!hasHierarchy) return 0;
 
   // Build implementors map: parent/interface name → [child/implementing class names]
   const hierarchyRows = db
@@ -433,7 +433,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     }
     if (!list.includes(row.child_name)) list.push(row.child_name);
   }
-  if (implementors.size === 0) return new Set();
+  if (implementors.size === 0) return 0;
 
   // RTA: collect class names that are actually instantiated via `new X()`.
   // Primary query targets `class`-kind nodes (the canonical schema).
@@ -506,7 +506,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     `SELECT id, file AS method_file FROM nodes WHERE name = ? AND kind = 'method'`,
   );
   const newEdges: Array<[number, number, string, number, number, string]> = [];
-  const newTargetIds = new Set<number>();
+  let newEdgeCount = 0;
 
   for (const { source_id, method_name, caller_file } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
@@ -545,7 +545,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
               CHA_DISPATCH_PENALTY;
             if (conf <= 0) continue;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
-            newTargetIds.add(methodNode.id);
+            newEdgeCount++;
           }
         }
 
@@ -558,7 +558,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
   if (newEdges.length > 0) {
     db.transaction(() => batchInsertEdges(db, newEdges))();
   }
-  return newTargetIds;
+  return newEdgeCount;
 }
 
 /**
@@ -1622,8 +1622,8 @@ export async function tryNativeOrchestrator(
   // on very large codebases (100k+ nodes) it may add a few hundred ms per build.
   // If this becomes a bottleneck, consider a two-pass strategy: incremental first
   // (fast, slightly inaccurate), then full only when the median shifts by >N%.
-  const chaTargetIds = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
-  if (chaTargetIds.size > 0) {
+  const chaEdgeCount = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
+  if (chaEdgeCount > 0) {
     try {
       const db = ctx.db as unknown as BetterSqlite3Database;
       const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
@@ -1633,7 +1633,7 @@ export async function tryNativeOrchestrator(
         ) => Record<string, number>;
       };
       classifyNodeRoles(db);
-      debug(`CHA post-pass: full role re-classification after ${chaTargetIds.size} new CHA edges`);
+      debug(`CHA post-pass: full role re-classification after ${chaEdgeCount} new CHA edges`);
     } catch (err) {
       debug(`CHA post-pass role re-classification failed: ${toErrorMessage(err)}`);
     }
