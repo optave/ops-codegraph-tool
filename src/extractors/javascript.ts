@@ -16,6 +16,7 @@ import type {
   ParamBinding,
   SpreadArgBinding,
   SubDeclaration,
+  ThisCallBinding,
   TreeSitterNode,
   TreeSitterQuery,
   TreeSitterTree,
@@ -337,6 +338,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const arrayCallbackBindings: ArrayCallbackBinding[] = [];
   const objectRestParamBindings: ObjectRestParamBinding[] = [];
   const objectPropBindings: ObjectPropBinding[] = [];
+  const thisCallBindings: ThisCallBinding[] = [];
 
   const matches = query.matches(tree.rootNode);
 
@@ -393,6 +395,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const definePropertyReceivers: Map<string, string> = new Map();
   extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
 
+  // this() calls + this-call bindings in a single pass (fn.call(ctx,...) / fn.apply(ctx,...))
+  extractThisCallAndBindingsWalk(tree.rootNode, calls, thisCallBindings);
+
   return {
     definitions,
     calls,
@@ -410,6 +415,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     arrayCallbackBindings,
     objectRestParamBindings,
     objectPropBindings,
+    thisCallBindings,
     newExpressions,
     ...(definePropertyReceivers.size > 0 ? { definePropertyReceivers } : {}),
   };
@@ -684,6 +690,7 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     arrayCallbackBindings: [],
     objectRestParamBindings: [],
     objectPropBindings: [],
+    thisCallBindings: [],
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
@@ -1124,11 +1131,44 @@ function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (fn.type === 'import') {
     handleDynamicImportCall(node, ctx.imports);
   } else {
+    // this() calls: `this` used as a function (not as a receiver).
+    if (fn.type === 'this') {
+      ctx.calls.push({ name: 'this', line: nodeStartLine(node) });
+      return; // no further processing needed for this()-style calls
+    }
     const callInfo = extractCallInfo(fn, node);
     if (callInfo) ctx.calls.push(callInfo);
     if (fn.type === 'member_expression') {
       const cbDef = extractCallbackDefinition(node, fn);
       if (cbDef) ctx.definitions.push(cbDef);
+      // this-call bindings: `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)`
+      const obj = fn.childForFieldName('object');
+      const prop = fn.childForFieldName('property');
+      if (
+        obj?.type === 'identifier' &&
+        prop &&
+        (prop.text === 'call' || prop.text === 'apply') &&
+        !BUILTIN_GLOBALS.has(obj.text)
+      ) {
+        const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+        if (args) {
+          for (let i = 0; i < args.childCount; i++) {
+            const child = args.child(i);
+            if (!child) continue;
+            const t = child.type;
+            if (t === '(' || t === ')' || t === ',') continue;
+            if (
+              t === 'identifier' &&
+              !BUILTIN_GLOBALS.has(child.text) &&
+              child.text !== 'undefined' &&
+              child.text !== 'null'
+            ) {
+              ctx.thisCallBindings!.push({ callee: obj.text, thisArg: child.text });
+            }
+            break;
+          }
+        }
+      }
     }
     ctx.calls.push(...extractCallbackReferenceCalls(node));
   }
@@ -2554,7 +2594,25 @@ function extractObjectRestParamBindingsWalk(
       }
     }
 
-    // Thread class name into class_body children; reset for all other contexts.
+    // Recurse into function/method bodies with null currentClass so nested
+    // declarations don't inherit the enclosing class context (mirrors
+    // extractReturnTypeMapWalk's pattern).
+    if (
+      t === 'function_declaration' ||
+      t === 'generator_function_declaration' ||
+      t === 'method_definition'
+    ) {
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
+    }
+
+    // class_declaration / class: propagate class name so constructor/method
+    // assignments inside the class body are keyed as "ClassName.prop".
+    // class_body: thread currentClass through so method_definition children
+    // (handled above) can prefix their fnName correctly before their own reset.
+    // All other node types fall through with null, which is already the default.
     let childClass: string | null = null;
     if (t === 'class_declaration' || t === 'class') {
       childClass = node.childForFieldName('name')?.text ?? null;
@@ -2853,6 +2911,11 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   if (!args) return [];
 
   const calleeName = extractCalleeName(callNode);
+  // .call() / .apply() / .bind() — the first arg is the `this` context (not a callback of
+  // the enclosing function) and subsequent args flow into the delegated function's parameters.
+  // Emitting them here would produce false-positive edges from the *calling* function.
+  // This-rebinding (fn::this → ctx) is handled separately by extractThisCallBindingsWalk.
+  if (calleeName === 'call' || calleeName === 'apply' || calleeName === 'bind') return [];
   let memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
   if (memberExprArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
     // HTTP verbs require a string-literal route path to be treated as a
@@ -2881,6 +2944,62 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   }
 
   return result;
+}
+
+/**
+ * Single-pass walk to collect both:
+ * - `this(args)` call expressions → `{name: 'this', ...}` entries in `calls`
+ *   (where `this` is used as a function, not as a receiver)
+ * - `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)` bindings →
+ *   `{ callee: 'fn', thisArg: 'namedCtx' }` entries in `thisCallBindings`
+ *
+ * Combining both into one traversal halves the AST walk cost compared to
+ * running two separate recursive passes.
+ */
+function extractThisCallAndBindingsWalk(
+  node: TreeSitterNode,
+  calls: Call[],
+  thisCallBindings: ThisCallBinding[],
+): void {
+  if (node.type === 'call_expression') {
+    const fn = node.childForFieldName('function');
+    if (fn?.type === 'this') {
+      calls.push({ name: 'this', line: nodeStartLine(node) });
+    } else if (fn?.type === 'member_expression') {
+      const obj = fn.childForFieldName('object');
+      const prop = fn.childForFieldName('property');
+      if (
+        obj?.type === 'identifier' &&
+        prop &&
+        (prop.text === 'call' || prop.text === 'apply') &&
+        !BUILTIN_GLOBALS.has(obj.text)
+      ) {
+        const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+        if (args) {
+          for (let i = 0; i < args.childCount; i++) {
+            const child = args.child(i);
+            if (!child) continue;
+            const t = child.type;
+            if (t === '(' || t === ')' || t === ',') continue;
+            // First real argument: only bind if it's a plain identifier
+            if (
+              t === 'identifier' &&
+              !BUILTIN_GLOBALS.has(child.text) &&
+              child.text !== 'undefined' &&
+              child.text !== 'null'
+            ) {
+              thisCallBindings.push({ callee: obj.text, thisArg: child.text });
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractThisCallAndBindingsWalk(child, calls, thisCallBindings);
+  }
 }
 
 function findAnonymousCallback(argsNode: TreeSitterNode): TreeSitterNode | null {

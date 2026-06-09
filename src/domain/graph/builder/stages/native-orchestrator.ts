@@ -1617,6 +1617,11 @@ export async function tryNativeOrchestrator(
   // pre-CHA might be near the median, but post-CHA the median is higher, changing
   // its role from utility → core.) Using an incremental pass with a stale median
   // cache would produce incorrect roles outside the CHA-affected file set.
+  //
+  // Performance: classifyNodeRoles is O(all_nodes). For most repos this is sub-100ms;
+  // on very large codebases (100k+ nodes) it may add a few hundred ms per build.
+  // If this becomes a bottleneck, consider a two-pass strategy: incremental first
+  // (fast, slightly inaccurate), then full only when the median shifts by >N%.
   const chaEdgeCount = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
   if (chaEdgeCount > 0) {
     try {

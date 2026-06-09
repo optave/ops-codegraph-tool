@@ -22,3 +22,17 @@ export function runCall() {
 export function runApply() {
   return greet.apply(user, ['Hey']);
 }
+
+// call with this as a callable: fn.call(namedFn, args) where namedFn is the 'this' context.
+// Inside invoker, calling this(x) should resolve to the function passed as ctx.
+function invoker(x) {
+  return this(x);
+}
+
+function handler(n) {
+  return n * 2;
+}
+
+export function runCallThis() {
+  return invoker.call(handler, 10);
+}
