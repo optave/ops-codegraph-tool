@@ -1607,52 +1607,9 @@ export async function tryNativeOrchestrator(
   }
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
-  // `runPostNativeCha` returns the target node IDs of newly inserted edges so we
-  // can re-classify roles for the implementation files.  The Rust orchestrator ran
-  // role classification BEFORE this post-pass, so without a re-run the newly-called
-  // implementor methods stay classified as `dead-ffi` (no incoming edges at Rust time).
+  // Returns the target node IDs of newly inserted edges; used to determine whether
+  // a full role re-classification is needed after all edge-writing post-passes complete.
   const chaTargetIds = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
-  if (chaTargetIds.size > 0) {
-    try {
-      const db = ctx.db as unknown as BetterSqlite3Database;
-      const idArray = Array.from(chaTargetIds);
-      const CHUNK_SIZE = 500;
-      const seenFiles = new Set<string>();
-      const affectedFiles: Array<{ file: string }> = [];
-      for (let i = 0; i < idArray.length; i += CHUNK_SIZE) {
-        const chunk = idArray.slice(i, i + CHUNK_SIZE);
-        const placeholders = chunk.map(() => '?').join(',');
-        const rows = db
-          .prepare(
-            `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
-          )
-          .all(...chunk) as Array<{ file: string }>;
-        for (const row of rows) {
-          if (!seenFiles.has(row.file)) {
-            seenFiles.add(row.file);
-            affectedFiles.push(row);
-          }
-        }
-      }
-      if (affectedFiles.length > 0) {
-        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-          classifyNodeRoles: (
-            db: BetterSqlite3Database,
-            changedFiles?: string[] | null,
-          ) => Record<string, number>;
-        };
-        classifyNodeRoles(
-          db,
-          affectedFiles.map((r) => r.file),
-        );
-        debug(
-          `CHA post-pass: re-classified roles for ${affectedFiles.length} implementation file(s)`,
-        );
-      }
-    } catch (err) {
-      debug(`CHA post-pass role re-classification failed: ${toErrorMessage(err)}`);
-    }
-  }
 
   // Function-as-object-property post-pass: the Rust engine does not yet recognise
   // `fn.method = function() {}` patterns. Re-parse only those JS/TS files via
@@ -1673,54 +1630,6 @@ export async function tryNativeOrchestrator(
       result.changedFiles,
       !!result.isFullBuild,
     );
-
-  // Re-classify roles for methods that gained incoming this/super dispatch edges.
-  // The Rust orchestrator classifies roles BEFORE this post-pass, so target methods
-  // (e.g. Animal.speak, ConcreteWorker.prepare) that had no callers at Rust time
-  // are classified `dead` or `dead-ffi`.  Inserting the new call edges does not
-  // automatically update those role labels — without a re-run the stale labels
-  // propagate to dead-code detection and API boundary analysis.
-  if (thisDispatchTargetIds.size > 0) {
-    try {
-      const db = ctx.db as unknown as BetterSqlite3Database;
-      const idArray = Array.from(thisDispatchTargetIds);
-      const CHUNK_SIZE = 500;
-      const seenFiles = new Set<string>();
-      const affectedFiles: Array<{ file: string }> = [];
-      for (let i = 0; i < idArray.length; i += CHUNK_SIZE) {
-        const chunk = idArray.slice(i, i + CHUNK_SIZE);
-        const placeholders = chunk.map(() => '?').join(',');
-        const rows = db
-          .prepare(
-            `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
-          )
-          .all(...chunk) as Array<{ file: string }>;
-        for (const row of rows) {
-          if (!seenFiles.has(row.file)) {
-            seenFiles.add(row.file);
-            affectedFiles.push(row);
-          }
-        }
-      }
-      if (affectedFiles.length > 0) {
-        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-          classifyNodeRoles: (
-            db: BetterSqlite3Database,
-            changedFiles?: string[] | null,
-          ) => Record<string, number>;
-        };
-        classifyNodeRoles(
-          db,
-          affectedFiles.map((r) => r.file),
-        );
-        debug(
-          `this/super dispatch post-pass: re-classified roles for ${affectedFiles.length} target file(s)`,
-        );
-      }
-    } catch (err) {
-      debug(`this/super dispatch post-pass role re-classification failed: ${toErrorMessage(err)}`);
-    }
-  }
 
   // Full role re-classification after JS edge-writing post-passes.
   // The Rust orchestrator classifies roles before these post-passes (CHA,
