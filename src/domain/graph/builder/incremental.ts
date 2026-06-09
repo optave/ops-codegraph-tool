@@ -538,7 +538,7 @@ function buildCallEdges(
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
-    let { targets, importedFrom } = resolveCallTargets(
+    const { targets: initialTargets, importedFrom } = resolveCallTargets(
       lookup,
       call,
       relPath,
@@ -546,6 +546,7 @@ function buildCallEdges(
       typeMap,
       caller.callerName,
     );
+    let targets = initialTargets;
 
     if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
       const dotIdx = caller.callerName.indexOf('.');

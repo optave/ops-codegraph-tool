@@ -105,12 +105,12 @@ describe('JavaScript parser', () => {
     );
   });
 
-  it('extracts static blocks as function definitions', () => {
+  it('extracts static blocks as method definitions', () => {
     const symbols = parseJS(`class C6 { static { f1(); } static { f2(); } }`);
     const staticDefs = symbols.definitions.filter((d) => d.name === 'C6.<static>');
     expect(staticDefs).toHaveLength(2);
-    expect(staticDefs[0]).toMatchObject({ kind: 'function' });
-    expect(staticDefs[1]).toMatchObject({ kind: 'function' });
+    expect(staticDefs[0]).toMatchObject({ kind: 'method' });
+    expect(staticDefs[1]).toMatchObject({ kind: 'method' });
   });
 
   it('extracts import statements', () => {
@@ -1108,6 +1108,22 @@ describe('JavaScript parser', () => {
       expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
     });
 
+    it('tracks func-prop assignment on funcStack for for-of loop (#1373)', () => {
+      const symbols = parseJS(`
+        const obj = {};
+        obj.run = function(callbacks) {
+          for (const cb of callbacks) cb();
+        };
+      `);
+      expect(symbols.forOfBindings).toContainEqual(
+        expect.objectContaining({
+          varName: 'cb',
+          sourceName: 'callbacks',
+          enclosingFunc: 'obj.run',
+        }),
+      );
+    });
+
     it('tracks exported const arrow function on funcStack for for-of loop', () => {
       const symbols = parseJS(`export const f = (arr) => { for (const x of arr) x(); };`);
       expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
@@ -1123,6 +1139,54 @@ describe('JavaScript parser', () => {
           sourceName: 'items',
           enclosingFunc: 'handleItems',
         }),
+      );
+    });
+  });
+
+  describe('class expression extends + static block + field def extraction', () => {
+    it('extracts extends relationship from named class expression', () => {
+      const symbols = parseJS(
+        `function make() { return class Child extends Parent { m() { super.m(); } } }`,
+      );
+      expect(symbols.classes).toContainEqual(
+        expect.objectContaining({ name: 'Child', extends: 'Parent' }),
+      );
+    });
+
+    it('extracts methods from named class expression', () => {
+      const symbols = parseJS(`const X = class Foo extends Base { bar() { return 1; } }`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'Foo.bar', kind: 'method' }),
+      );
+    });
+
+    it('records super.method() call with receiver=super from class expression method', () => {
+      const symbols = parseJS(`const X = class Child extends Parent { m() { super.m(); } }`);
+      const superCall = symbols.calls.find((c) => c.name === 'm' && c.receiver === 'super');
+      expect(superCall).toBeDefined();
+    });
+
+    it('creates ClassName.<static> definition for class static block', () => {
+      const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'A.<static>', kind: 'method' }),
+      );
+    });
+
+    it('attributes super.method() call inside static block to ClassName.<static>', () => {
+      const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
+      const staticDef = symbols.definitions.find((d) => d.name === 'A.<static>');
+      expect(staticDef).toBeDefined();
+      const superCall = symbols.calls.find((c) => c.name === 'init' && c.receiver === 'super');
+      expect(superCall).toBeDefined();
+      expect(superCall!.line).toBeGreaterThanOrEqual(staticDef!.line);
+      expect(superCall!.line).toBeLessThanOrEqual(staticDef!.endLine!);
+    });
+
+    it('extracts class field arrow function as callable ClassName.fieldName method', () => {
+      const symbols = parseJS(`class A {\n  static f = () => {\n    doSomething();\n  };\n}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'A.f', kind: 'method' }),
       );
     });
   });
