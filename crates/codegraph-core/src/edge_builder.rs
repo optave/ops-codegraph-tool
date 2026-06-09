@@ -503,28 +503,31 @@ fn resolve_call_targets<'a>(
             .unwrap_or_default();
         if !exact.is_empty() { return exact; }
 
-        // For this/self/super: prefer class-scoped exact lookup (e.g. `this.area()` in
-        // `Shape.describe` → try `Shape.area` first).  This avoids false edges to unrelated
-        // classes that happen to have a method with the same name in the same file.
-        // Fall back to the broader same-file suffix scan only when the class-scoped lookup
-        // finds nothing (e.g. when the caller is at module scope or the name is unknown).
-        if call.receiver.is_some() {
-            // Extract the class prefix from the enclosing caller name (e.g. "Shape" from "Shape.describe").
-            if let Some(dot_pos) = caller_name.find('.') {
-                let class_prefix = &caller_name[..dot_pos];
-                let qualified = format!("{}.{}", class_prefix, call.name);
-                let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
-                    .get(qualified.as_str())
-                    .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
-                    .unwrap_or_default();
-                if !class_scoped.is_empty() { return class_scoped; }
-            }
+        // Class-scoped exact lookup: prefer `ClassName.method` when the caller is a qualified
+        // method (e.g. `this.area()` or plain `area()` in `Shape.describe` → try `Shape.area`).
+        // Covers both this/self/super dispatch AND no-receiver static sibling calls (e.g.
+        // `IsValidEmail()` inside `Validators.ValidateUser` → `Validators.IsValidEmail`).
+        // This avoids false edges to unrelated classes that happen to have a method with the
+        // same name in the same file.
+        if let Some(dot_pos) = caller_name.find('.') {
+            let class_prefix = &caller_name[..dot_pos];
+            let qualified = format!("{}.{}", class_prefix, call.name);
+            let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
+                .get(qualified.as_str())
+                .map(|v| v.iter()
+                    .filter(|n| n.kind == "method"
+                        && import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                    .copied().collect())
+                .unwrap_or_default();
+            if !class_scoped.is_empty() { return class_scoped; }
+        }
 
-            // Broader fallback: same-file suffix scan.  Always restrict to the caller's
-            // own class prefix — regardless of how many matches are found — to avoid
-            // false-positive edges to unrelated classes in the same file.
-            // (e.g. this.area() inside Shape.describe must never yield Calculator.area,
-            // even when Calculator.area is the only method with that name in the file.)
+        // Broader fallback: same-file suffix scan.  Only for this/self/super (not no-receiver
+        // plain calls) to avoid false positives on global function calls inside class methods.
+        // Always restricts to the caller's own class prefix to avoid false edges to unrelated
+        // classes in the same file (e.g. this.area() inside Shape.describe must never yield
+        // Calculator.area, even when Calculator.area is the only method with that name).
+        if call.receiver.is_some() {
             let suffix = format!(".{}", call.name);
             if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
                 let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
