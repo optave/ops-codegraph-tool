@@ -68,7 +68,7 @@ function discoverTests(): string[] {
 const RECALL_FLOORS: Record<string, number> = {
   accessors3: 1.0, // 1/1
   arguments: 1.0, // 1/1
-  classes: 0.2, // 6/30
+  classes: 0.19, // 6/31
   defineProperty: 0.5, // 3/6
   fun: 1.0, // 4/4
   generators: 1.0, // 9/9
