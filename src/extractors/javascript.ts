@@ -734,6 +734,8 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'class_declaration':
     case 'abstract_class_declaration':
+    // class expressions: `return class Foo extends Bar { ... }` or `const X = class Foo { ... }`
+    case 'class':
       handleClassDecl(node, ctx);
       break;
     case 'method_definition':
@@ -874,7 +876,7 @@ function handleStaticBlock(node: TreeSitterNode, definitions: Definition[]): voi
   if (!className) return;
   definitions.push({
     name: `${className}.<static>`,
-    kind: 'function',
+    kind: 'method',
     line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
@@ -2141,6 +2143,31 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
           if (ct === ',' || ct === '(' || ct === ')') continue;
           if (ct === 'identifier' && !BUILTIN_GLOBALS.has(child.text)) {
             paramBindings.push({ callee: fn.text, argIndex: argIdx, argName: child.text });
+          } else if (ct === 'spread_element') {
+            // f(...[a, b]) — inline array literal: expand each element as a direct param binding.
+            const inner =
+              child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
+            if (inner?.type === 'array') {
+              let elemCount = 0;
+              for (let j = 0; j < inner.childCount; j++) {
+                const elem = inner.child(j);
+                if (!elem) continue;
+                if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
+                if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
+                  paramBindings.push({
+                    callee: fn.text,
+                    argIndex: argIdx + elemCount,
+                    argName: elem.text,
+                  });
+                }
+                elemCount++;
+              }
+              // Advance by the exact number of slots this spread occupies and skip
+              // the unconditional argIdx++ below so that zero-element spreads (...[])
+              // do not shift subsequent argument indices.
+              argIdx += elemCount;
+              continue;
+            }
           }
           argIdx++;
         }
