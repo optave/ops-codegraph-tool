@@ -402,16 +402,16 @@ async function runPostNativeAnalysis(
  * Note: `this`/`super` dispatch is handled separately by `runPostNativeThisDispatch`,
  * which WASM-re-parses JS/TS files to obtain raw call site receiver info.
  *
- * Returns the set of target node IDs for newly inserted CHA edges so the caller
- * can re-classify roles for the affected implementation files.  An empty set
- * means no edges were added and role re-classification is unnecessary.
+ * Returns the count of newly inserted CHA edges so the caller can determine
+ * whether a full role re-classification is needed.  Zero means no edges were
+ * added and role re-classification is unnecessary.
  */
-function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
+function runPostNativeCha(db: BetterSqlite3Database): number {
   // Fast guard: no hierarchy edges → no CHA work
   const hasHierarchy = db
     .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
     .get();
-  if (!hasHierarchy) return new Set();
+  if (!hasHierarchy) return 0;
 
   // Build implementors map: parent/interface name → [child/implementing class names]
   const hierarchyRows = db
@@ -433,7 +433,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     }
     if (!list.includes(row.child_name)) list.push(row.child_name);
   }
-  if (implementors.size === 0) return new Set();
+  if (implementors.size === 0) return 0;
 
   // RTA: collect class names that are actually instantiated via `new X()`.
   // Primary query targets `class`-kind nodes (the canonical schema).
@@ -506,7 +506,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
     `SELECT id, file AS method_file FROM nodes WHERE name = ? AND kind = 'method'`,
   );
   const newEdges: Array<[number, number, string, number, number, string]> = [];
-  const newTargetIds = new Set<number>();
+  let newEdgeCount = 0;
 
   for (const { source_id, method_name, caller_file } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
@@ -545,7 +545,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
               CHA_DISPATCH_PENALTY;
             if (conf <= 0) continue;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
-            newTargetIds.add(methodNode.id);
+            newEdgeCount++;
           }
         }
 
@@ -558,7 +558,7 @@ function runPostNativeCha(db: BetterSqlite3Database): Set<number> {
   if (newEdges.length > 0) {
     db.transaction(() => batchInsertEdges(db, newEdges))();
   }
-  return newTargetIds;
+  return newEdgeCount;
 }
 
 /**
@@ -1607,9 +1607,9 @@ export async function tryNativeOrchestrator(
   }
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
-  // Returns the target node IDs of newly inserted edges; used to determine whether
+  // Returns the count of newly inserted edges; used to determine whether
   // a full role re-classification is needed after all edge-writing post-passes complete.
-  const chaTargetIds = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
+  const chaEdgeCount = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
 
   // Function-as-object-property post-pass: the Rust engine does not yet recognise
   // `fn.method = function() {}` patterns. Re-parse only those JS/TS files via
@@ -1636,7 +1636,7 @@ export async function tryNativeOrchestrator(
   // this-dispatch) add edges, so the Rust-computed roles and the cached
   // fan-out medians are stale. A full re-classification ensures the final
   // roles reflect the true fan-in/out with all edges in place.
-  if (chaTargetIds.size > 0 || thisDispatchTargetIds.size > 0) {
+  if (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0) {
     try {
       const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
         classifyNodeRoles: (
