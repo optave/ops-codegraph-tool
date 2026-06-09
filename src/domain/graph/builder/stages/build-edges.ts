@@ -17,6 +17,7 @@ import type {
   ClassRelation,
   Definition,
   ExtractorOutput,
+  FnRefBinding,
   Import,
   NativeAddon,
   NodeRow,
@@ -710,6 +711,78 @@ function buildFnRefBindingsPtsPostPass(
 }
 
 /**
+ * this-rebinding post-pass for the native call-edge path.
+ *
+ * When `fn.call(namedCtx, ...)` or `fn.apply(namedCtx, ...)` is extracted by the
+ * WASM layer, `thisCallBindings` records `{ callee: 'fn', thisArg: 'namedCtx' }`.
+ * The native Rust engine has no knowledge of these bindings, so `this()` calls
+ * inside `fn` remain unresolved. This JS post-pass adds the missing edges by
+ * resolving `this()` calls inside each `fn` that has a thisCallBinding.
+ */
+function buildThisCallBindingsPtsPostPass(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  sharedLookup?: CallNodeLookup,
+): void {
+  const filesWithBindings = [...ctx.fileSymbols].filter(
+    ([, symbols]) => symbols.thisCallBindings && symbols.thisCallBindings.length > 0,
+  );
+  if (filesWithBindings.length === 0) return;
+
+  const seenByPair = new Set<string>();
+  for (const [srcId, tgtId] of allEdgeRows) {
+    seenByPair.add(`${srcId}|${tgtId}`);
+  }
+
+  const { barrelOnlyFiles, rootDir } = ctx;
+  const lookup = sharedLookup ?? makeContextLookup(ctx, getNodeIdStmt);
+
+  for (const [relPath, symbols] of filesWithBindings) {
+    if (barrelOnlyFiles.has(relPath)) continue;
+    const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+
+    const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+    const ptsMap = buildPointsToMapForFile(symbols, importedNames);
+    if (!ptsMap) continue;
+
+    // Only process calls named 'this' (callee-not-receiver usage)
+    for (const call of symbols.calls) {
+      if (call.name !== 'this' || call.receiver) continue;
+
+      const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
+      if (caller.callerName == null) continue;
+
+      const scopedKey = `${caller.callerName}::this`;
+      if (!ptsMap.has(scopedKey)) continue;
+
+      for (const alias of resolveViaPointsTo(scopedKey, ptsMap)) {
+        const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+          lookup,
+          { name: alias },
+          relPath,
+          importedNames,
+          typeMap as Map<string, unknown>,
+        );
+        for (const t of aliasTargets) {
+          const edgeKey = `${caller.id}|${t.id}`;
+          if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
+            const conf =
+              computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+            if (conf > 0) {
+              seenByPair.add(edgeKey);
+              allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'points-to']);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
  * Phase 8.3f post-pass for the native call-edge path.
  *
  * The native Rust engine builds call edges without knowledge of
@@ -1144,6 +1217,7 @@ function buildPointsToMapForFile(
   symbols: ExtractorOutput,
   importedNames: Map<string, string>,
 ): PointsToMap | null {
+  const hasThisCallBindings = !!symbols.thisCallBindings?.length;
   if (
     !symbols.fnRefBindings?.length &&
     !symbols.paramBindings?.length &&
@@ -1152,7 +1226,8 @@ function buildPointsToMapForFile(
     !symbols.forOfBindings?.length &&
     !symbols.arrayCallbackBindings?.length &&
     !symbols.objectRestParamBindings?.length &&
-    !symbols.objectPropBindings?.length
+    !symbols.objectPropBindings?.length &&
+    !hasThisCallBindings
   )
     return null;
   const defNames = new Set(
@@ -1161,8 +1236,21 @@ function buildPointsToMapForFile(
       .map((d) => d.name),
   );
   const definitionParams = buildDefinitionParamsMap(symbols.definitions);
+
+  // Convert thisCallBindings into scoped fnRefBindings: `fn::this → namedCtx`.
+  // The scoped key `fn::this` is looked up when `this()` calls are resolved inside
+  // function `fn` — caller.callerName='fn', call.name='this' → scopedPtsKey='fn::this'.
+  let allFnRefBindings: readonly FnRefBinding[] = symbols.fnRefBindings ?? [];
+  if (hasThisCallBindings) {
+    const extra: FnRefBinding[] = (symbols.thisCallBindings ?? []).map((b) => ({
+      lhs: `${b.callee}::this`,
+      rhs: b.thisArg,
+    }));
+    allFnRefBindings = [...allFnRefBindings, ...extra];
+  }
+
   return buildPointsToMap(
-    symbols.fnRefBindings ?? [],
+    allFnRefBindings,
     defNames,
     importedNames,
     symbols.paramBindings,
@@ -1816,6 +1904,9 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       // (e.g. `const f = fn.bind(ctx)`), so calls to bind-created aliases are
       // not resolved to their original function on the native path.
       buildFnRefBindingsPtsPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
+      // this-rebinding post-pass: resolve `this()` calls inside functions that
+      // were invoked via `.call(namedCtx, ...)` / `.apply(namedCtx, ...)`.
+      buildThisCallBindingsPtsPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
       // Phase 8.3f post-pass: augment native call edges with object rest-param
       // receiver resolution — typeMap[restName] → argName → typeMap[argName.method].
       buildObjectRestParamPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);

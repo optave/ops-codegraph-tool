@@ -192,10 +192,12 @@ export function resolveByMethodOrGlobal(
       .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
     if (exact.length > 0) return exact;
 
-    // For this/self/super receiver: try same-class method lookup via callerName.
+    // Try same-class method lookup via callerName.
     // e.g. `this.area()` inside `Shape.describe` → try `Shape.area`.
+    // Also covers no-receiver calls inside class methods, e.g. `IsValidEmail(x)` inside
+    // `Validators.ValidateUser` → try `Validators.IsValidEmail` (C#/Java static siblings).
     // This seeds the initial edge that runChaPostPass later expands to subclass overrides.
-    if (call.receiver && callerName) {
+    if (callerName) {
       const dotIdx = callerName.lastIndexOf('.');
       if (dotIdx > -1) {
         // Extract only the segment immediately before the method name so that
