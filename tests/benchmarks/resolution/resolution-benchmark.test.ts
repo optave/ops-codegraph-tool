@@ -97,6 +97,7 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'pts-set': 'points-to',
   'pts-array-from': 'points-to',
   'pts-spread': 'points-to',
+  'pts-param': 'points-to',
   'define-property': 'ts-native',
 };
 
