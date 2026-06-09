@@ -1,0 +1,56 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: promises2",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/promises2.js",
+  "edges": [
+    {
+      "source": {
+        "name": "<root>",
+        "file": "promises2.js"
+      },
+      "target": {
+        "name": "<anon@2:2>",
+        "file": "promises2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@2:2>",
+        "file": "promises2.js"
+      },
+      "target": {
+        "name": "<anon@4:17>",
+        "file": "promises2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "promises2.js"
+      },
+      "target": {
+        "name": "resolveWithFun",
+        "file": "promises2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f2",
+        "file": "promises2.js"
+      },
+      "target": {
+        "name": "resolveWithFun",
+        "file": "promises2.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

@@ -734,7 +734,16 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'class_declaration':
     case 'abstract_class_declaration':
+    // class expressions: `return class Foo extends Bar { ... }` or `const X = class Foo { ... }`
+    case 'class':
       handleClassDecl(node, ctx);
+      break;
+    case 'class_static_block':
+      handleStaticBlock(node, ctx.definitions);
+      break;
+    case 'field_definition':
+    case 'public_field_definition':
+      handleFieldDef(node, ctx.definitions);
       break;
     case 'method_definition':
       handleMethodDef(node, ctx);
@@ -766,13 +775,6 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'expression_statement':
       handleExpressionStmt(node, ctx);
-      break;
-    case 'field_definition':
-    case 'public_field_definition':
-      handleFieldDef(node, ctx.definitions);
-      break;
-    case 'class_static_block':
-      handleStaticBlock(node, ctx.definitions);
       break;
   }
 
@@ -842,39 +844,63 @@ function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 /**
- * Emit a `ClassName.fieldName` definition for class fields that have an initializer.
- * This lets `findCaller` attribute calls inside field initializers (e.g. static field
- * side-effects) to the field rather than the enclosing class.
+ * Create a synthetic `ClassName.<static:L:C>` definition for a class static block
+ * so that calls inside the block can be attributed to a method-kind node and
+ * `resolveThisDispatch` can walk up to the parent class for `super.method()`.
+ *
+ * The start line and column are appended to the name to ensure uniqueness when a
+ * class has multiple `static { }` blocks (each has a distinct start position even
+ * if on the same line).
+ *
+ * Tree-sitter uses `class_static_block` (not `static_block`) for `static { ... }`.
  */
-function handleFieldDef(node: TreeSitterNode, definitions: Definition[]): void {
-  // JS field_definition uses 'property' field; TS public_field_definition uses 'name' field
-  const nameNode = node.childForFieldName('name') || node.childForFieldName('property');
-  const valueNode = node.childForFieldName('value');
-  if (!nameNode || !valueNode) return;
-  if (nameNode.type === 'computed_property_name') return;
-  const fieldName = nameNode.text;
-  if (!fieldName) return;
-  const className = findParentClass(node);
-  if (!className) return;
+function handleStaticBlock(node: TreeSitterNode, definitions: Definition[]): void {
+  const parentClass = findParentClass(node);
+  if (!parentClass) return;
+  const line = nodeStartLine(node);
+  const col = node.startPosition.column;
   definitions.push({
-    name: `${className}.${fieldName}`,
+    name: `${parentClass}.<static:${line}:${col}>`,
     kind: 'method',
-    line: nodeStartLine(node),
+    line,
     endLine: nodeEndLine(node),
   });
 }
 
 /**
- * Emit a `ClassName.<static>` definition for each `static { }` block.
- * Enables `findCaller` to attribute calls inside static initializer blocks to
- * this synthetic node rather than to the enclosing class node.
+ * Emit a `ClassName.fieldName` definition for class fields that have an initializer.
+ * This lets `findCaller` attribute calls inside field initializers (e.g. static field
+ * side-effects) to the field rather than the enclosing class.
+ *
+ * JS `field_definition` uses the `'property'` field name; TS
+ * `public_field_definition` uses `'name'`. As a third fallback (Rust/TS parity) we
+ * also check for a positional `property_identifier` child.
  */
-function handleStaticBlock(node: TreeSitterNode, definitions: Definition[]): void {
-  const className = findParentClass(node);
-  if (!className) return;
+const CALLABLE_FIELD_TYPES = new Set([
+  'arrow_function',
+  'function_expression',
+  'generator_function',
+]);
+
+function handleFieldDef(node: TreeSitterNode, definitions: Definition[]): void {
+  // JS field_definition uses 'property' field; TS public_field_definition uses 'name' field
+  const nameNode =
+    node.childForFieldName('name') ||
+    node.childForFieldName('property') ||
+    findChild(node, 'property_identifier');
+  const valueNode = node.childForFieldName('value');
+  if (!nameNode || !valueNode) return;
+  if (nameNode.type === 'computed_property_name') return;
+  // Only emit a callable definition when the initializer is a function/arrow expression.
+  // Scalar fields like `static x = 42` should not appear as method-kind nodes.
+  if (!CALLABLE_FIELD_TYPES.has(valueNode.type)) return;
+  const fieldName = nameNode.text;
+  if (!fieldName) return;
+  const parentClass = findParentClass(node);
+  if (!parentClass) return;
   definitions.push({
-    name: `${className}.<static>`,
-    kind: 'function',
+    name: `${parentClass}.${fieldName}`,
+    kind: 'method',
     line: nodeStartLine(node),
     endLine: nodeEndLine(node),
   });
@@ -1715,23 +1741,41 @@ function extractTypeMapWalk(
   callAssignments?: CallAssignment[],
   fnRefBindings?: FnRefBinding[],
 ): void {
-  function walk(node: TreeSitterNode, depth: number): void {
+  function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
+    if (t === 'class_declaration' || t === 'abstract_class_declaration') {
+      const nameNode = node.childForFieldName('name');
+      const className = nameNode?.text ?? null;
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, className);
+      }
+      return;
+    }
+    // Class expressions (e.g. `const Foo = class Bar { ... }`): the expression-internal
+    // name (`Bar`) is never visible to the resolver, which derives callerClass from the
+    // binding name (`Foo`). Walking with null preserves the pre-fix `this.prop` fallback
+    // so the second lookup in resolveByMethodOrGlobal still finds the entry.
+    if (t === 'class') {
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i)!, depth + 1, null);
+      }
+      return;
+    }
     if (t === 'variable_declarator') {
       handleVarDeclaratorTypeMap(node, typeMap, returnTypeMap, callAssignments, fnRefBindings);
     } else if (t === 'required_parameter' || t === 'optional_parameter') {
       handleParamTypeMap(node, typeMap);
     } else if (t === 'assignment_expression') {
-      handlePropWriteTypeMap(node, typeMap);
+      handlePropWriteTypeMap(node, typeMap, currentClass);
     } else if (t === 'call_expression') {
       handleDefinePropertyTypeMap(node, typeMap);
     }
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
+      walk(node.child(i)!, depth + 1, currentClass);
     }
   }
-  walk(rootNode, 0);
+  walk(rootNode, 0, null);
 }
 
 /** Extract type info from a variable_declarator: type annotation, constructor, or factory. */
@@ -1931,12 +1975,17 @@ function handleParamTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEn
  * Phase 8.3d: seed the pts map from object property writes.
  *
  * `handlers.auth = authMiddleware` → typeMap.set('handlers.auth', { type: 'authMiddleware', confidence: 0.85 })
- * `this.logger = new Logger(...)` → typeMap.set('this.logger', { type: 'Logger', confidence: 1.0 })
+ * `this.logger = new Logger(...)` → typeMap.set('UserService.logger', { type: 'Logger', confidence: 1.0 })
+ *   (keyed as ClassName.prop when currentClass is known, to avoid collisions across classes)
  *
  * Only simple `obj.prop = identifier` and `this.prop = new Ctor()` writes are tracked
  * (not chained `a.b.c = x`). BUILTIN_GLOBALS are skipped (e.g. `console.log = fn`).
  */
-function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+function handlePropWriteTypeMap(
+  node: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+  currentClass: string | null,
+): void {
   const lhsN = node.childForFieldName('left');
   const rhsN = node.childForFieldName('right');
   if (!lhsN || !rhsN) return;
@@ -1949,10 +1998,15 @@ function handlePropWriteTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeM
   // computed subscript expressions — consistent with the adjacent fnRefBindings block.
   if (prop.type !== 'property_identifier' && prop.type !== 'identifier') return;
 
-  // this.prop = new ClassName(...) — constructor-assigned property type
+  // this.prop = new ClassName(...) — constructor-assigned property type.
+  // Key as ClassName.prop (class-scoped) so two classes with identically-named
+  // properties don't overwrite each other's typeMap entry.
   if (obj.type === 'this' && rhsN.type === 'new_expression') {
     const ctorType = extractNewExprTypeName(rhsN);
-    if (ctorType) setTypeMapEntry(typeMap, `this.${prop.text}`, ctorType, 1.0);
+    if (ctorType) {
+      const key = currentClass ? `${currentClass}.${prop.text}` : `this.${prop.text}`;
+      setTypeMapEntry(typeMap, key, ctorType, 1.0);
+    }
     return;
   }
 
@@ -2113,6 +2167,31 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
           if (ct === ',' || ct === '(' || ct === ')') continue;
           if (ct === 'identifier' && !BUILTIN_GLOBALS.has(child.text)) {
             paramBindings.push({ callee: fn.text, argIndex: argIdx, argName: child.text });
+          } else if (ct === 'spread_element') {
+            // f(...[a, b]) — inline array literal: expand each element as a direct param binding.
+            const inner =
+              child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
+            if (inner?.type === 'array') {
+              let elemCount = 0;
+              for (let j = 0; j < inner.childCount; j++) {
+                const elem = inner.child(j);
+                if (!elem) continue;
+                if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
+                if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
+                  paramBindings.push({
+                    callee: fn.text,
+                    argIndex: argIdx + elemCount,
+                    argName: elem.text,
+                  });
+                }
+                elemCount++;
+              }
+              // Advance by the exact number of slots this spread occupies and skip
+              // the unconditional argIdx++ below so that zero-element spreads (...[])
+              // do not shift subsequent argument indices.
+              argIdx += elemCount;
+              continue;
+            }
           }
           argIdx++;
         }
@@ -2228,6 +2307,29 @@ function extractSpreadForOfWalk(
       ) {
         funcStack.push(nameNode.text);
         pushedFunc = true;
+      }
+    } else if (node.type === 'assignment_expression') {
+      // `obj.method = function() { ... }` — func-prop assignment.
+      // Mirror handleFuncPropAssignment's logic so for-of loops inside the
+      // body get the correct enclosingFunc (e.g. 'obj.method') instead of
+      // '<module>' or the wrong outer function name.
+      const lhs = node.childForFieldName('left');
+      const rhs = node.childForFieldName('right');
+      if (
+        lhs?.type === 'member_expression' &&
+        (rhs?.type === 'function_expression' || rhs?.type === 'arrow_function')
+      ) {
+        const obj = lhs.childForFieldName('object');
+        const prop = lhs.childForFieldName('property');
+        if (
+          obj?.type === 'identifier' &&
+          (prop?.type === 'property_identifier' || prop?.type === 'identifier') &&
+          !BUILTIN_GLOBALS.has(obj.text) &&
+          prop.text !== 'prototype'
+        ) {
+          funcStack.push(`${obj.text}.${prop.text}`);
+          pushedFunc = true;
+        }
       }
     }
 

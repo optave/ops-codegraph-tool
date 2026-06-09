@@ -13,8 +13,12 @@
  *   1. Extractor seeds typeMap['obj.e4'] = { type: 'e4' } from `var obj = { e4 }`.
  *   2. Extractor records objectRestParamBinding { callee: 'f3', argIndex: 0, restName: 'eerest' }.
  *   3. Extractor records paramBinding { callee: 'f3', argIndex: 0, argName: 'obj' } from f3(obj).
- *   4. Phase 8.3f seeds typeMap['eerest'] = { type: 'obj' }.
- *   5. resolveByMethodOrGlobal: typeMap['eerest'] → obj; typeMap['obj.e4'] → e4 → resolved.
+ *   4. Phase 8.3f seeds typeMap['f3::eerest'] = { type: 'obj' } (scoped by callee, #1358).
+ *      Because f3 is the only callee using 'eerest', the unscoped key typeMap['eerest'] is
+ *      also seeded as a null-callerName fallback (single-callee shortcut, #1358).
+ *   5. resolveByMethodOrGlobal: typeMap['eerest'] (unscoped, single-callee fallback) → obj;
+ *      typeMap['obj.e4'] → e4 → resolved. The scoped key 'f3::eerest' is a no-op here but
+ *      would be the active path if a second function also declared '...eerest'.
  *
  * WASM: resolved via Phase 8.3f typeMap chain in buildCallEdgesJS.
  * Native: resolved via same-file name lookup (step 2 in Rust resolve_call_targets);

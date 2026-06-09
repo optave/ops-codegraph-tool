@@ -669,6 +669,51 @@ async function runPostNativePrototypeMethods(
 
   db.transaction(() => batchInsertNodes(db, newNodeRows))();
 
+  // ── Caller-only second pass (#1371) ──────────────────────────────────────
+  // `wasmResults` only covers `protoFiles` (definition files). A file that
+  // only *calls* a newly-inserted method (e.g. `f.method()`) was excluded from
+  // the pre-filter, so its call edges to the new nodes are silently dropped.
+  // After node insertion we know the method name suffixes; text-search the
+  // remaining JS/TS files and WASM-parse any that contain a matching call.
+  const newMethodSuffixes = new Set(
+    newDefs.map((d) => {
+      const dotIdx = d.name.indexOf('.');
+      return dotIdx !== -1 ? d.name.slice(dotIdx + 1) : d.name;
+    }),
+  );
+
+  let mergedWasmResults = wasmResults;
+  if (newMethodSuffixes.size > 0) {
+    // Pre-compile patterns once — avoids re-compiling up to newMethodSuffixes.size
+    // regexes on every file in the scan loop.
+    const suffixPatterns = [...newMethodSuffixes].map((m) => {
+      const escaped = m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`\\.${escaped}\\s*\\(`);
+    });
+    const protoFileSet = new Set(protoFiles);
+    const callerCandidateAbs: string[] = [];
+    for (const relPath of jsFiles) {
+      if (protoFileSet.has(relPath)) continue; // already parsed in first pass
+      try {
+        const content = readFileSafe(path.join(rootDir, relPath));
+        const matchesAny = suffixPatterns.some((re) => re.test(content));
+        if (matchesAny) callerCandidateAbs.push(path.join(rootDir, relPath));
+      } catch {
+        /* skip unreadable files */
+      }
+    }
+    if (callerCandidateAbs.length > 0) {
+      try {
+        const callerWasmResults = await parseFilesWasmForBackfill(callerCandidateAbs, rootDir);
+        if (callerWasmResults.size > 0) {
+          mergedWasmResults = new Map([...wasmResults, ...callerWasmResults]);
+        }
+      } catch (e) {
+        debug(`runPostNativePrototypeMethods: caller-only WASM parse failed: ${toErrorMessage(e)}`);
+      }
+    }
+  }
+
   // Build a name → node lookup from all DB nodes (including newly inserted ones).
   type NodeEntry = { id: number; file: string; kind: string };
   const byNameMap = new Map<string, NodeEntry[]>();
@@ -716,14 +761,13 @@ async function runPostNativePrototypeMethods(
   // zero benefit and could OOM on large repositories.
   const seenByPair = new Set<string>();
 
-  // Resolve call edges in every file — not just those that define new func-prop
-  // methods. A caller in app.js calling a method defined in lib.js
-  // would be silently missed if we only scanned definition files.
-  // The newNodeIds guard inside the loop already prevents duplicate edges.
+  // Resolve call edges across all parsed files (definition files + caller-only
+  // files discovered in the second WASM pass above). The newNodeIds guard inside
+  // the loop prevents emitting duplicate edges for nodes the Rust engine already built.
   const newEdgeRows: unknown[][] = [];
   const fileNodeStmt = db.prepare(`SELECT id FROM nodes WHERE kind = 'file' AND file = ?`);
 
-  for (const [relPath, symbols] of wasmResults) {
+  for (const [relPath, symbols] of mergedWasmResults) {
     const fileNodeRow = fileNodeStmt.get(relPath) as { id: number } | undefined;
     if (!fileNodeRow) continue;
 
@@ -734,13 +778,31 @@ async function runPostNativePrototypeMethods(
 
       const caller = findCaller(lookup, call, symbols.definitions ?? [], relPath, fileNodeRow);
 
-      const targets = resolveByMethodOrGlobal(
+      let targets = resolveByMethodOrGlobal(
         lookup,
         call,
         relPath,
         typeMap as Map<string, unknown>,
         caller.callerName,
       );
+
+      // Direct receiver.method fallback: caller-only files often lack typeMap entries
+      // for the receiver (e.g. `f.process()` where `f` isn't declared in the file).
+      // Try qualified-name lookup scoped to newly-inserted nodes to avoid false positives.
+      // Note: `call.receiver` is always truthy here — the `if (!call.receiver) continue`
+      // guard above ensures we never reach this point with a falsy receiver.
+      if (
+        targets.length === 0 &&
+        call.receiver !== 'this' &&
+        call.receiver !== 'super' &&
+        call.receiver !== 'self'
+      ) {
+        const qualifiedName = `${call.receiver}.${call.name}`;
+        const direct = lookup
+          .byName(qualifiedName)
+          .filter((n) => n.kind === 'method' && newNodeIds.has(n.id));
+        if (direct.length > 0) targets = direct;
+      }
 
       for (const t of targets) {
         // Only emit edges to newly-inserted func-prop nodes to avoid

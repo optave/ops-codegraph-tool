@@ -1,0 +1,80 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: super5",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/super5.js",
+  "edges": [
+    {
+      "source": {
+        "name": "A",
+        "file": "super5.js"
+      },
+      "target": {
+        "name": "b",
+        "file": "super5.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super5.js"
+      },
+      "target": {
+        "name": "<anon@11:12>",
+        "file": "super5.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super5.js"
+      },
+      "target": {
+        "name": "<anon@3:20>",
+        "file": "super5.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A",
+        "file": "super5.js"
+      },
+      "target": {
+        "name": "<anon@6:20>",
+        "file": "super5.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@11:12>",
+        "file": "super5.js"
+      },
+      "target": {
+        "name": "<anon@14:14>",
+        "file": "super5.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "<anon@14:14>",
+        "file": "super5.js"
+      },
+      "target": {
+        "name": "A.m",
+        "file": "super5.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}
