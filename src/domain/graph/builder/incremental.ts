@@ -584,7 +584,11 @@ function buildCallEdges(
           }
         }
         if (targets.length === 0) {
-          const sameFile = lookup.byNameAndFile(call.name, relPath);
+          // Narrow to function/method kinds only to avoid matching unrelated
+          // variables or classes that share a name in the same file.
+          const sameFile = lookup
+            .byNameAndFile(call.name, relPath)
+            .filter((n) => n.kind === 'function' || n.kind === 'method');
           if (sameFile.length > 0) {
             targets = [...sameFile];
           }
