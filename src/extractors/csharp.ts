@@ -332,7 +332,26 @@ function extractCSharpTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void 
 /** Extract type info from a variable_declaration node (local vars with explicit types). */
 function handleCSharpVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const typeNode = node.childForFieldName('type') || node.child(0);
-  if (!typeNode || typeNode.type === 'var_keyword') return;
+  if (!typeNode) return;
+
+  if (typeNode.type === 'implicit_type') {
+    // var x = new Foo() — infer type from object_creation_expression initializer
+    if (!ctx.typeMap) return;
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child?.type !== 'variable_declarator') continue;
+      const nameNode = child.childForFieldName('name') || child.child(0);
+      if (!nameNode || nameNode.type !== 'identifier') continue;
+      const objCreation = findChild(child, 'object_creation_expression');
+      if (!objCreation) continue;
+      const ctorTypeNode = objCreation.childForFieldName('type');
+      if (!ctorTypeNode) continue;
+      const ctorType = extractCSharpTypeName(ctorTypeNode);
+      if (ctorType) setTypeMapEntry(ctx.typeMap, nameNode.text, ctorType, 1.0);
+    }
+    return;
+  }
+
   const typeName = extractCSharpTypeName(typeNode);
   if (!typeName) return;
   for (let i = 0; i < node.childCount; i++) {
