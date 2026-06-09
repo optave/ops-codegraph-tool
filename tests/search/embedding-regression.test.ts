@@ -68,12 +68,21 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
     dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
 
     // Build embeddings with the smallest/fastest model.
-    // Skip gracefully when HuggingFace rate-limits the model download (HTTP 429).
+    // Skip gracefully when HuggingFace rate-limits the model download (HTTP 429)
+    // or when the network is unavailable (ECONNRESET, ETIMEDOUT, ENOTFOUND, etc.).
     try {
       await buildEmbeddings(tmpDir, 'minilm', dbPath);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('429')) {
+      const code = (err as NodeJS.ErrnoException).code ?? '';
+      const isNetworkError =
+        msg.includes('429') ||
+        msg.includes('terminated') ||
+        code === 'ECONNRESET' ||
+        code === 'ETIMEDOUT' ||
+        code === 'ENOTFOUND' ||
+        code === 'ECONNREFUSED';
+      if (isNetworkError) {
         rateLimited = true;
         return;
       }
