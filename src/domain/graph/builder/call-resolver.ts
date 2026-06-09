@@ -72,10 +72,22 @@ export function resolveByMethodOrGlobal(
     const effectiveReceiver = call.receiver.startsWith('this.')
       ? call.receiver.slice('this.'.length)
       : call.receiver;
-    const typeEntry =
+    // For this.prop receivers, also try the class-scoped key (ClassName.prop) seeded by
+    // handlePropWriteTypeMap — prevents false edges when multiple classes define the same
+    // property name (issue #1323).
+    let typeEntry =
       typeMap.get(effectiveReceiver) ??
       typeMap.get(call.receiver) ??
+      // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) to avoid
+      // same-name rest-binding collision across functions in the same file (#1358).
       (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
+    if (!typeEntry && call.receiver.startsWith('this.') && callerName) {
+      const dotIdx = callerName.lastIndexOf('.');
+      if (dotIdx > -1) {
+        const callerClass = callerName.slice(0, dotIdx);
+        typeEntry = typeMap.get(`${callerClass}.${effectiveReceiver}`);
+      }
+    }
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
@@ -183,13 +195,19 @@ export function resolveByMethodOrGlobal(
       .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
     if (exact.length > 0) return exact;
 
-    // For this/self/super receiver: try same-class method lookup via callerName.
+    // Try same-class method lookup via callerName.
     // e.g. `this.area()` inside `Shape.describe` → try `Shape.area`.
+    // Also covers no-receiver calls inside class methods, e.g. `IsValidEmail(x)` inside
+    // `Validators.ValidateUser` → try `Validators.IsValidEmail` (C#/Java static siblings).
     // This seeds the initial edge that runChaPostPass later expands to subclass overrides.
-    if (call.receiver && callerName) {
+    if (callerName) {
       const dotIdx = callerName.lastIndexOf('.');
       if (dotIdx > -1) {
-        const callerClass = callerName.slice(0, dotIdx);
+        // Extract only the segment immediately before the method name so that
+        // 'Namespace.ClassName.method' yields 'ClassName', not 'Namespace.ClassName'.
+        // Symbols are stored under their bare class name, not their qualified path.
+        const prevDot = callerName.lastIndexOf('.', dotIdx - 1);
+        const callerClass = callerName.slice(prevDot + 1, dotIdx);
         const qualifiedName = `${callerClass}.${call.name}`;
         const sameClass = lookup
           .byName(qualifiedName)
