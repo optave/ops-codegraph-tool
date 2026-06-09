@@ -2143,6 +2143,31 @@ function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: Param
           if (ct === ',' || ct === '(' || ct === ')') continue;
           if (ct === 'identifier' && !BUILTIN_GLOBALS.has(child.text)) {
             paramBindings.push({ callee: fn.text, argIndex: argIdx, argName: child.text });
+          } else if (ct === 'spread_element') {
+            // f(...[a, b]) — inline array literal: expand each element as a direct param binding.
+            const inner =
+              child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
+            if (inner?.type === 'array') {
+              let elemCount = 0;
+              for (let j = 0; j < inner.childCount; j++) {
+                const elem = inner.child(j);
+                if (!elem) continue;
+                if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
+                if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
+                  paramBindings.push({
+                    callee: fn.text,
+                    argIndex: argIdx + elemCount,
+                    argName: elem.text,
+                  });
+                }
+                elemCount++;
+              }
+              // Advance by the exact number of slots this spread occupies and skip
+              // the unconditional argIdx++ below so that zero-element spreads (...[])
+              // do not shift subsequent argument indices.
+              argIdx += elemCount;
+              continue;
+            }
           }
           argIdx++;
         }
@@ -2258,6 +2283,29 @@ function extractSpreadForOfWalk(
       ) {
         funcStack.push(nameNode.text);
         pushedFunc = true;
+      }
+    } else if (node.type === 'assignment_expression') {
+      // `obj.method = function() { ... }` — func-prop assignment.
+      // Mirror handleFuncPropAssignment's logic so for-of loops inside the
+      // body get the correct enclosingFunc (e.g. 'obj.method') instead of
+      // '<module>' or the wrong outer function name.
+      const lhs = node.childForFieldName('left');
+      const rhs = node.childForFieldName('right');
+      if (
+        lhs?.type === 'member_expression' &&
+        (rhs?.type === 'function_expression' || rhs?.type === 'arrow_function')
+      ) {
+        const obj = lhs.childForFieldName('object');
+        const prop = lhs.childForFieldName('property');
+        if (
+          obj?.type === 'identifier' &&
+          (prop?.type === 'property_identifier' || prop?.type === 'identifier') &&
+          !BUILTIN_GLOBALS.has(obj.text) &&
+          prop.text !== 'prototype'
+        ) {
+          funcStack.push(`${obj.text}.${prop.text}`);
+          pushedFunc = true;
+        }
       }
     }
 

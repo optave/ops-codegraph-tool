@@ -198,7 +198,11 @@ export function resolveByMethodOrGlobal(
     if (call.receiver && callerName) {
       const dotIdx = callerName.lastIndexOf('.');
       if (dotIdx > -1) {
-        const callerClass = callerName.slice(0, dotIdx);
+        // Extract only the segment immediately before the method name so that
+        // 'Namespace.ClassName.method' yields 'ClassName', not 'Namespace.ClassName'.
+        // Symbols are stored under their bare class name, not their qualified path.
+        const prevDot = callerName.lastIndexOf('.', dotIdx - 1);
+        const callerClass = callerName.slice(prevDot + 1, dotIdx);
         const qualifiedName = `${callerClass}.${call.name}`;
         const sameClass = lookup
           .byName(qualifiedName)

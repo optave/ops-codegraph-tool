@@ -1108,6 +1108,22 @@ describe('JavaScript parser', () => {
       expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
     });
 
+    it('tracks func-prop assignment on funcStack for for-of loop (#1373)', () => {
+      const symbols = parseJS(`
+        const obj = {};
+        obj.run = function(callbacks) {
+          for (const cb of callbacks) cb();
+        };
+      `);
+      expect(symbols.forOfBindings).toContainEqual(
+        expect.objectContaining({
+          varName: 'cb',
+          sourceName: 'callbacks',
+          enclosingFunc: 'obj.run',
+        }),
+      );
+    });
+
     it('tracks exported const arrow function on funcStack for for-of loop', () => {
       const symbols = parseJS(`export const f = (arr) => { for (const x of arr) x(); };`);
       expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
