@@ -148,7 +148,9 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   python: { precision: 0.7, recall: 0.3 },
   go: { precision: 0.7, recall: 0.3 },
   java: { precision: 0.7, recall: 0.3 },
-  csharp: { precision: 1.0, recall: 0.8 },
+  // csharp 1.0/0.9: static receiver fix (#1395) ensures precision; var-declared instance typeMap
+  //   (implicit_type) lifts receiver-typed recall from 0/4 → 4/4 (#1396).
+  csharp: { precision: 1.0, recall: 0.9 },
   kotlin: { precision: 0.6, recall: 0.2 },
   // Lower bars — resolution still maturing
   rust: { precision: 0.6, recall: 0.2 },
