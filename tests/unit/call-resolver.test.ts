@@ -5,6 +5,10 @@
  * one dot segment (e.g. 'Namespace.ClassName.method'), the same-class dispatch
  * must use only the segment immediately before the method name ('ClassName'),
  * not the full qualified prefix ('Namespace.ClassName').
+ *
+ * Also covers the static receiver confidence filter (#1398): the direct qualified
+ * method fallback must apply computeConfidence >= 0.5 to avoid false edges from
+ * distant files in a polyglot project.
  */
 import { describe, expect, it } from 'vitest';
 import type { CallNodeLookup } from '../../src/domain/graph/builder/call-resolver.js';
@@ -85,6 +89,32 @@ describe('resolveByMethodOrGlobal — same-class this-dispatch with qualified ca
       'Namespace.Shape.describe',
     );
     // callerClass should be 'Shape', so 'Shape.area' is tried — which is absent.
+    expect(result).toEqual([]);
+  });
+});
+
+describe('resolveByMethodOrGlobal — static receiver confidence filter (#1398)', () => {
+  it('returns same-directory static target (confidence 0.7 >= 0.5)', () => {
+    const target = { id: 1, file: 'app/Validators.cs', kind: 'method' };
+    const lookup = makeLookup({ 'Validators.IsValidEmail': [target] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'IsValidEmail', receiver: 'Validators' },
+      'app/Program.cs',
+      new Map(),
+    );
+    expect(result).toEqual([target]);
+  });
+
+  it('filters out distant static target (confidence 0.3 < 0.5)', () => {
+    const target = { id: 2, file: 'lib/util/Validators.cs', kind: 'method' };
+    const lookup = makeLookup({ 'Validators.IsValidEmail': [target] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'IsValidEmail', receiver: 'Validators' },
+      'app/main/Program.cs',
+      new Map(),
+    );
     expect(result).toEqual([]);
   });
 });
