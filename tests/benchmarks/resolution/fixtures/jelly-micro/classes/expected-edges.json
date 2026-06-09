@@ -366,7 +366,7 @@
     },
     {
       "source": {
-        "name": "C6.<static>",
+        "name": "C6.<static:75:2>",
         "file": "classes.js"
       },
       "target": {
@@ -378,7 +378,7 @@
     },
     {
       "source": {
-        "name": "C6.<static>",
+        "name": "C6.<static:78:2>",
         "file": "classes.js"
       },
       "target": {

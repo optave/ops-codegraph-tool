@@ -48,7 +48,10 @@ beforeAll(async () => {
   for (const [rel, content] of Object.entries(FIXTURE)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
-  await buildGraph(tmpDir, { incremental: false, skipRegistry: true });
+  // TODO(#1381): pinned to WASM because the published native binary predates the
+  // prototype-method fixes landed in #1331. Remove the pin (or add a dual-engine
+  // variant) once the native binary ships the corresponding Rust-side extraction.
+  await buildGraph(tmpDir, { incremental: false, skipRegistry: true, engine: 'wasm' });
 });
 
 afterAll(() => {

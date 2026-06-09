@@ -1,7 +1,7 @@
 /**
  * Jelly Micro-Test Benchmark (imported from github.com/cs-au-dk/jelly/tests/micro)
  *
- * Runs codegraph on each of Jelly's 65 hand-authored micro-test programs
+ * Runs codegraph on each of Jelly's 64 micro-test programs
  * (imported from github.com/cs-au-dk/jelly/tests/micro) and measures how many
  * of Jelly's ground-truth call edges codegraph resolves.
  *
