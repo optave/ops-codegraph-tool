@@ -69,7 +69,8 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
 
     // Build embeddings with the smallest/fastest model.
     // Skip gracefully when HuggingFace rate-limits the model download (HTTP 429)
-    // or when the network is unavailable (ECONNRESET, ETIMEDOUT, ENOTFOUND, etc.).
+    // or when the network is unavailable (ECONNRESET, ETIMEDOUT, ENOTFOUND,
+    // ECONNREFUSED, ERR_HTTP2_STREAM_CANCEL, ERR_HTTP2_SESSION_ERROR).
     try {
       await buildEmbeddings(tmpDir, 'minilm', dbPath);
     } catch (err: unknown) {
@@ -77,11 +78,12 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
       const code = (err as NodeJS.ErrnoException).code ?? '';
       const isNetworkError =
         msg.includes('429') ||
-        msg.includes('terminated') ||
         code === 'ECONNRESET' ||
         code === 'ETIMEDOUT' ||
         code === 'ENOTFOUND' ||
-        code === 'ECONNREFUSED';
+        code === 'ECONNREFUSED' ||
+        code === 'ERR_HTTP2_STREAM_CANCEL' ||
+        code === 'ERR_HTTP2_SESSION_ERROR';
       if (isNetworkError) {
         rateLimited = true;
         return;

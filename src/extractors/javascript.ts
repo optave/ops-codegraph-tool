@@ -2625,6 +2625,10 @@ function extractReceiverName(objNode: TreeSitterNode | null): string | undefined
     if (name) return name;
   }
   if (t === 'parenthesized_expression') {
+    // Only one level of parentheses is unwrapped here. Doubly-nested parens
+    // (e.g. `((new Dog())).bark()`) and cast expressions inside parens
+    // (e.g. `(new Dog() as Animal).bark()`) fall through to raw-text handling
+    // below and are caught by the regex fallback in call-resolver.ts.
     for (let i = 0; i < objNode.childCount; i++) {
       const child = objNode.child(i);
       if (child?.type === 'new_expression') {
