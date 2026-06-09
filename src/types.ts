@@ -565,6 +565,18 @@ export interface ParamBinding {
 }
 
 /**
+ * A this-context binding recorded when `fn.call(namedCtx, ...)` or
+ * `fn.apply(namedCtx, ...)` is seen. Seeds `fn::this → namedCtx` in the
+ * points-to map so that `this()` calls inside `fn` resolve to `namedCtx`.
+ */
+export interface ThisCallBinding {
+  /** The function being invoked via .call() or .apply(). */
+  callee: string;
+  /** The identifier passed as the `this` context (first argument). */
+  thisArg: string;
+}
+
+/**
  * An array-element binding: `const arr = [fn1, fn2]` records each named function
  * stored at a specific index. Phase 8.3e: array-element pts tracking.
  */
@@ -673,6 +685,12 @@ export interface ExtractorOutput {
   objectRestParamBindings?: ObjectRestParamBinding[];
   /** Phase 8.3f: object-property bindings from `const obj = { fn }` patterns. */
   objectPropBindings?: ObjectPropBinding[];
+  /**
+   * This-context bindings from `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)`.
+   * Seeds `fn::this → namedCtx` in the points-to map so that `this()` calls inside
+   * `fn` resolve to `namedCtx` when `fn` is invoked via `.call()`/`.apply()`.
+   */
+  thisCallBindings?: ThisCallBinding[];
   /**
    * Phase 8.5 (RTA): constructor names from all `new X()` expressions in the file,
    * including unassigned ones (e.g. `doSomething(new Foo())`). Used to build the

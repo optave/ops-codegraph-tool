@@ -93,6 +93,10 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'points-to': 'points-to',
   'pts-define-property': 'points-to',
   'pts-create-prototype': 'points-to',
+  'pts-for-of': 'points-to',
+  'pts-set': 'points-to',
+  'pts-array-from': 'points-to',
+  'pts-spread': 'points-to',
   'define-property': 'ts-native',
 };
 
@@ -121,9 +125,14 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   adds bind/call/apply resolution (3 new edges in bind-call-apply.js), total expected now 33.
   //   Phase 8.3f adds Object.defineProperty accessor this-dispatch (#1335): getter→baz in
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
-  //   total expected now 35. #1406 adds runCallWithCallback→processItem (forEach.call callback),
-  //   total expected now 36.
+  //   total expected now 35. call/apply this-rebinding adds 2 edges (runCallThis→invoker,
+  //   invoker→handler) and removes the false-positive from handler being extracted as a callback
+  //   arg of .call() — total expected now 37.
   javascript: { precision: 1.0, recall: 0.9 },
+  // pts-javascript: hand-authored points-to JS fixture (for-of, Set, Array.from, spread) — patterns
+  //   too broad for the main JS fixture. Patterns split per file to prevent intra-fixture FPs.
+  //   Currently resolves all 13 expected edges (100% recall, 100% precision).
+  'pts-javascript': { precision: 1.0, recall: 0.9 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
@@ -138,7 +147,7 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   python: { precision: 0.7, recall: 0.3 },
   go: { precision: 0.7, recall: 0.3 },
   java: { precision: 0.7, recall: 0.3 },
-  csharp: { precision: 0.5, recall: 0.2 },
+  csharp: { precision: 1.0, recall: 0.8 },
   kotlin: { precision: 0.6, recall: 0.2 },
   // Lower bars — resolution still maturing
   rust: { precision: 0.6, recall: 0.2 },

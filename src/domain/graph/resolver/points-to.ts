@@ -185,11 +185,29 @@ export function buildPointsToMap(
   // `function f({ ...rest }) {}` + `f(obj)` + `const obj = { prop: fn }` →
   // seed pts["rest.prop"] = {"fn"} so that `rest.prop()` resolves to `fn`.
   if (objectRestParamBindings && objectPropBindings && paramBindings) {
+    // Index paramBindings: "callee::argIndex" → argName[] (O(|paramBindings|) build,
+    // O(1) lookup — avoids scanning paramBindings for each rest binding).
+    const paramByCalleeIdx = new Map<string, string[]>();
+    for (const { callee, argIndex, argName } of paramBindings) {
+      const k = `${callee}::${argIndex}`;
+      const list = paramByCalleeIdx.get(k);
+      if (list) list.push(argName);
+      else paramByCalleeIdx.set(k, [argName]);
+    }
+
+    // Index objectPropBindings: objectName → {propName, valueName}[]
+    const propsByObject = new Map<string, Array<{ propName: string; valueName: string }>>();
+    for (const { objectName, propName, valueName } of objectPropBindings) {
+      const list = propsByObject.get(objectName);
+      if (list) list.push({ propName, valueName });
+      else propsByObject.set(objectName, [{ propName, valueName }]);
+    }
+
     for (const { callee, restName, argIndex } of objectRestParamBindings) {
-      for (const { callee: pbCallee, argIndex: pbArgIdx, argName } of paramBindings) {
-        if (pbCallee !== callee || pbArgIdx !== argIndex) continue;
-        for (const { objectName, propName, valueName } of objectPropBindings) {
-          if (objectName !== argName) continue;
+      const argNames = paramByCalleeIdx.get(`${callee}::${argIndex}`) ?? [];
+      for (const argName of argNames) {
+        const props = propsByObject.get(argName) ?? [];
+        for (const { propName, valueName } of props) {
           if (!definitionNames.has(valueName) && !importedNames.has(valueName)) continue;
           const key = `${restName}.${propName}`;
           if (!pts.has(key)) pts.set(key, new Set());
