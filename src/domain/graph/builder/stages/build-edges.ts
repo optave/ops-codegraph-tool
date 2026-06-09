@@ -1340,9 +1340,10 @@ function buildFileCallEdges(
     // not the enclosing class, so qualifying with the child class name would
     // produce a false edge when the child also defines a same-named method.
     if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
-      const dotIdx = caller.callerName.indexOf('.');
-      if (dotIdx > 0) {
-        const className = caller.callerName.slice(0, dotIdx);
+      const lastDot = caller.callerName.lastIndexOf('.');
+      if (lastDot > 0) {
+        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
+        const className = caller.callerName.slice(prevDot + 1, lastDot);
         const qualifiedName = `${className}.${call.name}`;
         const qualified = lookup
           .byNameAndFile(qualifiedName, relPath)
@@ -1359,9 +1360,10 @@ function buildFileCallEdges(
     // to `Validators.IsValidEmail`. Safe for JS/TS: only fires when byName()
     // already returned nothing (so module-level functions are found first).
     if (targets.length === 0 && !call.receiver && caller.callerName != null) {
-      const dotIdx = caller.callerName.indexOf('.');
-      if (dotIdx > 0) {
-        const className = caller.callerName.slice(0, dotIdx);
+      const lastDot = caller.callerName.lastIndexOf('.');
+      if (lastDot > 0) {
+        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
+        const className = caller.callerName.slice(prevDot + 1, lastDot);
         const qualifiedName = `${className}.${call.name}`;
         const qualified = lookup
           .byNameAndFile(qualifiedName, relPath)
