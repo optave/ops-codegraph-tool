@@ -6,6 +6,7 @@
  * to the existing WASM pipeline.
  */
 
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -112,17 +113,27 @@ export function loadNative(): NativeAddon | null {
 
   // 2. Locally compiled dev binary — preferred over npm package so that Rust
   //    changes are visible without publishing. Only used when the file exists.
+  //    If the file exists but fails to load (e.g. stale ABI), we warn and halt
+  //    rather than silently falling through to the npm package — that would
+  //    defeat the purpose of this priority order.
   const localFile = PLATFORM_LOCAL_BINARIES[platformKey];
   if (localFile) {
-    try {
-      const localPath = fileURLToPath(
-        new URL(`../../crates/codegraph-core/${localFile}`, import.meta.url),
-      );
-      _cached = _require(localPath) as NativeAddon;
-      debug(`loadNative: loaded local dev binary: ${localPath}`);
-      return _cached;
-    } catch (err) {
-      debug(`loadNative: local dev binary not available: ${toErrorMessage(err as Error)}`);
+    const localPath = fileURLToPath(
+      new URL(`../../crates/codegraph-core/${localFile}`, import.meta.url),
+    );
+    if (existsSync(localPath)) {
+      try {
+        _cached = _require(localPath) as NativeAddon;
+        debug(`loadNative: loaded local dev binary: ${localPath}`);
+        return _cached;
+      } catch (err) {
+        _loadError = err as Error;
+        warn(
+          `loadNative: local dev binary exists but failed to load "${localPath}": ${toErrorMessage(err as Error)}`,
+        );
+        _cached = null;
+        return null;
+      }
     }
   }
 
@@ -131,6 +142,7 @@ export function loadNative(): NativeAddon | null {
   if (pkg) {
     try {
       _cached = _require(pkg) as NativeAddon;
+      debug(`loadNative: loaded npm package: ${pkg}`);
       return _cached;
     } catch (err) {
       _loadError = err as Error;

@@ -39,9 +39,22 @@ function makeMockRequire({
   });
 }
 
-function mockDeps(requireFn: ReturnType<typeof vi.fn>, platform = 'darwin', arch = 'arm64') {
+function mockDeps(
+  requireFn: ReturnType<typeof vi.fn>,
+  platform = 'darwin',
+  arch = 'arm64',
+  localBinaryExists = true,
+) {
   vi.doMock('node:module', () => ({ createRequire: () => requireFn }));
   vi.doMock('node:os', () => ({ default: { platform: () => platform, arch: () => arch } }));
+  vi.doMock('node:fs', () => ({
+    existsSync: (p: string) => {
+      // existsSync is used for the local dev binary path (absolute filesystem path)
+      const isAbsolute = p.startsWith('/') || /^[A-Z]:\\/.test(p);
+      if (isAbsolute) return localBinaryExists;
+      return false;
+    },
+  }));
 }
 
 describe('loadNative', () => {
@@ -103,7 +116,8 @@ describe('loadNative', () => {
 
   it('no env var, local binary present: loads local binary, skips npm package', async () => {
     const requireFn = makeMockRequire({ localBinaryOk: true, npmPackageOk: true });
-    mockDeps(requireFn);
+    // existsSync returns true for local binary path → require is called for local binary
+    mockDeps(requireFn, 'darwin', 'arm64', true);
 
     const { loadNative } = await import('../../src/infrastructure/native.js');
 
@@ -120,16 +134,16 @@ describe('loadNative', () => {
 
   it('no env var, no local binary, npm package present: loads npm package', async () => {
     const requireFn = makeMockRequire({ localBinaryOk: false, npmPackageOk: true });
-    mockDeps(requireFn);
+    // existsSync returns false → local binary require is skipped, falls through to npm package
+    mockDeps(requireFn, 'darwin', 'arm64', false);
 
     const { loadNative } = await import('../../src/infrastructure/native.js');
 
     const result = loadNative();
 
     expect(result).toBe(FAKE_ADDON);
-    // local binary was tried first (absolute path), then npm package — two calls total
-    expect(requireFn).toHaveBeenCalledTimes(2);
-    expect(requireFn).toHaveBeenCalledWith(expect.stringMatching(/^(\/|[A-Z]:\\)/));
+    // local binary was skipped (existsSync returned false), only npm package require was called
+    expect(requireFn).toHaveBeenCalledTimes(1);
     expect(requireFn).toHaveBeenCalledWith('@optave/codegraph-darwin-arm64');
   });
 
