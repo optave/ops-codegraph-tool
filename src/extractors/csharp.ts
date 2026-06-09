@@ -333,6 +333,9 @@ function extractCSharpTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void 
 function extractVarInitType(declarator: TreeSitterNode): string | null {
   for (let i = 0; i < declarator.childCount; i++) {
     const child = declarator.child(i);
+    // Defensive: handle object_creation_expression as a direct child of variable_declarator.
+    // The standard grammar always wraps it in equals_value_clause, but this guard is kept
+    // as a belt-and-suspenders fallback for edge cases or future grammar changes.
     if (child?.type === 'object_creation_expression') {
       const tNode = child.childForFieldName('type');
       if (tNode) return extractCSharpTypeName(tNode);

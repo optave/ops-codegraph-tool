@@ -72,20 +72,20 @@ const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild', 'fnDep
  * than native and dominated by interpreter + GC overhead. The same ±10–20ms
  * of shared-runner jitter therefore lands as a much larger *percentage* swing
  * than on native. Empirically, WASM timing metrics on the publish runner swing
- * run-to-run by +27–67% on byte-identical code (No-op rebuild 15→25 = +67%,
+ * run-to-run by +27–71% on byte-identical code (No-op rebuild 15→25 = +67%,
  * Query time 32.5→44.2 = +36%, fnDeps depth 3/5 ~+31%, Full build 7664→9833
- * = +28%), which previously required a per-version KNOWN_REGRESSIONS entry for
- * each metric on every release — an endless whack-a-mole.
+ * = +28%, Build ms/file 18.7→32 = +71%), which previously required a
+ * per-version KNOWN_REGRESSIONS entry for each metric on every release — an
+ * endless whack-a-mole.
  *
  * Why this is safe: the native engine shares all extraction, resolution, and
  * query logic with WASM (the WASM path only swaps the parser/runtime), so any
  * *real* algorithmic regression shows up on the native numbers too — and native
  * keeps the strict 25% / 50% thresholds. Native is the canary. WASM timing only
  * needs to catch gross WASM-specific catastrophes (the 100–220% blowups seen in
- * v3.0.1–3.4.0), which 75% still flags, while absorbing observed shared-runner
- * jitter (measured up to 72% on sub-30ms WASM metrics). Size metrics (DB
- * bytes/file) are engine-independent and excluded from this widening via
- * SIZE_METRICS below — they keep the strict threshold.
+ * v3.0.1–3.4.0), which 75% still flags, while absorbing the ≤71% shared-runner
+ * jitter. Size metrics (DB bytes/file) are engine-independent and excluded from
+ * this widening via SIZE_METRICS below — they keep the strict threshold.
  */
 const WASM_TIMING_THRESHOLD = 0.75;
 
