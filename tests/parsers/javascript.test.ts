@@ -868,8 +868,7 @@ describe('JavaScript parser', () => {
 
     it('emits nothing for .call() with only the this-context arg', () => {
       const symbols = parseJS(`fn.call(ctx);`);
-      const callbackCalls = symbols.calls.filter((c) => c.name === 'ctx');
-      expect(callbackCalls).toHaveLength(0);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'ctx' }));
     });
 
     it('emits nothing for .bind() — all args are absorbed into the partial application', () => {
