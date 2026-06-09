@@ -852,6 +852,10 @@ function buildObjectRestParamPostPass(
               typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
             }
           }
+          // restNames tracks every rest-parameter name found, regardless of whether the
+          // scoped key was already in typeMap.  This ensures the post-pass (below) processes
+          // all calls whose receiver matches a known rest binding — not just those whose
+          // typeMap entry was seeded in this iteration.
           restNames.add(orpb.restName);
         }
       }
