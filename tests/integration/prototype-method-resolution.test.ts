@@ -48,7 +48,7 @@ beforeAll(async () => {
   for (const [rel, content] of Object.entries(FIXTURE)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
-  await buildGraph(tmpDir, { incremental: false, skipRegistry: true });
+  await buildGraph(tmpDir, { incremental: false, skipRegistry: true, engine: 'wasm' });
 });
 
 afterAll(() => {
