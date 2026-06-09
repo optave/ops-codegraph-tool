@@ -1,7 +1,7 @@
 /**
  * Jelly Micro-Test Benchmark (imported from github.com/cs-au-dk/jelly/tests/micro)
  *
- * Runs codegraph on each of Jelly's 65 hand-authored micro-test programs
+ * Runs codegraph on each of Jelly's 64 micro-test programs
  * (imported from github.com/cs-au-dk/jelly/tests/micro) and measures how many
  * of Jelly's ground-truth call edges codegraph resolves.
  *
@@ -63,7 +63,8 @@ function discoverTests(): string[] {
  * Exact fractions shown in comments; stored as the corresponding percentage
  * value so a single lost TP triggers a failure.
  *
- * Baseline summary: precision=65.3%  recall=40.9%  TP=47  FP=25  FN=68
+ * Note: more1 was moved to the pts-javascript fixture set in #1383 and is
+ * no longer part of jelly-micro.
  */
 const RECALL_FLOORS: Record<string, number> = {
   accessors3: 1.0, // 1/1
@@ -72,7 +73,6 @@ const RECALL_FLOORS: Record<string, number> = {
   defineProperty: 0.5, // 3/6
   fun: 1.0, // 4/4
   generators: 1.0, // 9/9
-  more1: 1.0, // 10/10
   'receiver-callee-mixup': 1.0, // 1/1
   rest: 1.0, // 1/1
   spread: 1.0, // 4/4
