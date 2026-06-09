@@ -438,9 +438,13 @@ fn extract_csharp_base_types(
 
 // ── Type map extraction ─────────────────────────────────────────────────────
 
+/// Extract the constructor type from a `var x = new Foo()` initializer.
 fn extract_var_init_type(declarator: &Node, source: &[u8]) -> Option<String> {
     for i in 0..declarator.child_count() {
         let Some(child) = declarator.child(i) else { continue };
+        // Defensive: handle object_creation_expression as a direct child of variable_declarator.
+        // The standard grammar always wraps it in equals_value_clause, but this guard is kept
+        // as a belt-and-suspenders fallback for edge cases or future grammar changes.
         if child.kind() == "object_creation_expression" {
             if let Some(t) = child.child_by_field_name("type") {
                 return extract_csharp_type_name(&t, source).map(|s| s.to_string());
@@ -471,32 +475,6 @@ fn extract_csharp_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Optio
         }
         _ => None,
     }
-}
-
-/// Extract the constructor type from a `var x = new Foo()` initializer.
-fn extract_var_init_type<'a>(declarator: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
-    for i in 0..declarator.child_count() {
-        let Some(child) = declarator.child(i) else { continue };
-        // Defensive: handle object_creation_expression as a direct child of variable_declarator.
-        // The standard grammar always wraps it in equals_value_clause, but this guard is kept
-        // as a belt-and-suspenders fallback for edge cases or future grammar changes.
-        if child.kind() == "object_creation_expression" {
-            if let Some(t) = child.child_by_field_name("type") {
-                return extract_csharp_type_name(&t, source);
-            }
-        }
-        if child.kind() == "equals_value_clause" {
-            for j in 0..child.child_count() {
-                let Some(expr) = child.child(j) else { continue };
-                if expr.kind() == "object_creation_expression" {
-                    if let Some(t) = expr.child_by_field_name("type") {
-                        return extract_csharp_type_name(&t, source);
-                    }
-                }
-            }
-        }
-    }
-    None
 }
 
 fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
