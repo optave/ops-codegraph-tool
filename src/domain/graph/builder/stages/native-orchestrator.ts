@@ -402,9 +402,9 @@ async function runPostNativeAnalysis(
  * Note: `this`/`super` dispatch is handled separately by `runPostNativeThisDispatch`,
  * which WASM-re-parses JS/TS files to obtain raw call site receiver info.
  *
- * Returns the set of target node IDs for newly inserted CHA edges so the caller
- * can re-classify roles for the affected implementation files.  An empty set
- * means no edges were added and role re-classification is unnecessary.
+ * Returns the count of newly inserted CHA edges so the caller can determine
+ * whether a full role re-classification is needed.  Zero means no edges were
+ * added and role re-classification is unnecessary.
  */
 function runPostNativeCha(db: BetterSqlite3Database): number {
   // Fast guard: no hierarchy edges → no CHA work
@@ -1607,37 +1607,9 @@ export async function tryNativeOrchestrator(
   }
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
-  // The Rust orchestrator ran role classification BEFORE this post-pass, so without
-  // a re-run the newly-called implementor methods stay classified as `dead-ffi`.
-  //
-  // CHA also changes the global fan-out distribution (callee files gain fan_in, and
-  // new edges shift the median). A full re-classification is required — not just the
-  // callee files — because the median shift can change roles in unrelated files whose
-  // fan-out sits near the old median. (Example: a method that called two siblings
-  // pre-CHA might be near the median, but post-CHA the median is higher, changing
-  // its role from utility → core.) Using an incremental pass with a stale median
-  // cache would produce incorrect roles outside the CHA-affected file set.
-  //
-  // Performance: classifyNodeRoles is O(all_nodes). For most repos this is sub-100ms;
-  // on very large codebases (100k+ nodes) it may add a few hundred ms per build.
-  // If this becomes a bottleneck, consider a two-pass strategy: incremental first
-  // (fast, slightly inaccurate), then full only when the median shifts by >N%.
+  // Returns the count of newly inserted edges; used to determine whether
+  // a full role re-classification is needed after all edge-writing post-passes complete.
   const chaEdgeCount = runPostNativeCha(ctx.db as unknown as BetterSqlite3Database);
-  if (chaEdgeCount > 0) {
-    try {
-      const db = ctx.db as unknown as BetterSqlite3Database;
-      const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-        classifyNodeRoles: (
-          db: BetterSqlite3Database,
-          changedFiles?: string[] | null,
-        ) => Record<string, number>;
-      };
-      classifyNodeRoles(db);
-      debug(`CHA post-pass: full role re-classification after ${chaEdgeCount} new CHA edges`);
-    } catch (err) {
-      debug(`CHA post-pass role re-classification failed: ${toErrorMessage(err)}`);
-    }
-  }
 
   // Function-as-object-property post-pass: the Rust engine does not yet recognise
   // `fn.method = function() {}` patterns. Re-parse only those JS/TS files via
@@ -1659,51 +1631,23 @@ export async function tryNativeOrchestrator(
       !!result.isFullBuild,
     );
 
-  // Re-classify roles for methods that gained incoming this/super dispatch edges.
-  // The Rust orchestrator classifies roles BEFORE this post-pass, so target methods
-  // (e.g. Animal.speak, ConcreteWorker.prepare) that had no callers at Rust time
-  // are classified `dead` or `dead-ffi`.  Inserting the new call edges does not
-  // automatically update those role labels — without a re-run the stale labels
-  // propagate to dead-code detection and API boundary analysis.
-  if (thisDispatchTargetIds.size > 0) {
+  // Full role re-classification after JS edge-writing post-passes.
+  // The Rust orchestrator classifies roles before these post-passes (CHA,
+  // this-dispatch) add edges, so the Rust-computed roles and the cached
+  // fan-out medians are stale. A full re-classification ensures the final
+  // roles reflect the true fan-in/out with all edges in place.
+  if (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0) {
     try {
-      const db = ctx.db as unknown as BetterSqlite3Database;
-      const idArray = Array.from(thisDispatchTargetIds);
-      const CHUNK_SIZE = 500;
-      const seenFiles = new Set<string>();
-      const affectedFiles: Array<{ file: string }> = [];
-      for (let i = 0; i < idArray.length; i += CHUNK_SIZE) {
-        const chunk = idArray.slice(i, i + CHUNK_SIZE);
-        const placeholders = chunk.map(() => '?').join(',');
-        const rows = db
-          .prepare(
-            `SELECT DISTINCT file FROM nodes WHERE id IN (${placeholders}) AND file IS NOT NULL`,
-          )
-          .all(...chunk) as Array<{ file: string }>;
-        for (const row of rows) {
-          if (!seenFiles.has(row.file)) {
-            seenFiles.add(row.file);
-            affectedFiles.push(row);
-          }
-        }
-      }
-      if (affectedFiles.length > 0) {
-        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-          classifyNodeRoles: (
-            db: BetterSqlite3Database,
-            changedFiles?: string[] | null,
-          ) => Record<string, number>;
-        };
-        classifyNodeRoles(
-          db,
-          affectedFiles.map((r) => r.file),
-        );
-        debug(
-          `this/super dispatch post-pass: re-classified roles for ${affectedFiles.length} target file(s)`,
-        );
-      }
+      const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+        classifyNodeRoles: (
+          db: BetterSqlite3Database,
+          changedFiles?: string[] | null,
+        ) => Record<string, number>;
+      };
+      classifyNodeRoles(ctx.db as unknown as BetterSqlite3Database, null);
+      debug(`Post-pass full role re-classification complete`);
     } catch (err) {
-      debug(`this/super dispatch post-pass role re-classification failed: ${toErrorMessage(err)}`);
+      debug(`Post-pass full role re-classification failed: ${toErrorMessage(err)}`);
     }
   }
 

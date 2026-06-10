@@ -40,7 +40,7 @@ const MODULE_SCOPED_BARE_CALL_EXTENSIONS = new Set([
   '.cts',
 ]);
 
-function isModuleScopedLanguage(relPath: string): boolean {
+export function isModuleScopedLanguage(relPath: string): boolean {
   const ext = relPath.slice(relPath.lastIndexOf('.'));
   return MODULE_SCOPED_BARE_CALL_EXTENSIONS.has(ext);
 }
@@ -158,7 +158,11 @@ export function resolveByMethodOrGlobal(
       const qualifiedName = `${effectiveReceiver}.${call.name}`;
       const direct = lookup
         .byName(qualifiedName)
-        .filter((n) => n.kind === 'method' || n.kind === 'function');
+        .filter(
+          (n) =>
+            (n.kind === 'method' || n.kind === 'function') &&
+            computeConfidence(relPath, n.file, null) >= 0.5,
+        );
       if (direct.length > 0) return direct;
     }
 

@@ -126,9 +126,10 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   adds bind/call/apply resolution (3 new edges in bind-call-apply.js), total expected now 33.
   //   Phase 8.3f adds Object.defineProperty accessor this-dispatch (#1335): getter→baz in
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
-  //   total expected now 35. call/apply this-rebinding adds 2 edges (runCallThis→invoker,
-  //   invoker→handler) → 37. multi-class.js adds 4 class-scoped typeMap edges → 41.
-  //   #1424 adds class-scope.js (bare-call guard), +1 → total 42.
+  //   total expected now 35. multi-class.js adds 4 class-scoped typeMap edges (#1382) → 39.
+  //   call/apply this-rebinding adds 2 edges (runCallThis→invoker, invoker→handler) and removes
+  //   the false-positive from handler being extracted as a callback arg of .call() (#1405) → 41.
+  //   #1407 adds class-scope.js (bare-call guard), +1 → total 42.
   javascript: { precision: 1.0, recall: 0.9 },
   // pts-javascript: hand-authored points-to JS fixture (for-of, Set, Array.from, spread) — patterns
   //   too broad for the main JS fixture. Patterns split per file to prevent intra-fixture FPs.

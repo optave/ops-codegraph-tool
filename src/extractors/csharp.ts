@@ -329,40 +329,36 @@ function extractCSharpTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void 
   extractCSharpTypeMapDepth(node, ctx, 0);
 }
 
-/** Extract the constructor type from a `var x = new Foo()` initializer. */
-function extractVarInitType(declarator: TreeSitterNode): string | null {
-  for (let i = 0; i < declarator.childCount; i++) {
-    const child = declarator.child(i);
-    if (child?.type === 'object_creation_expression') {
-      const tNode = child.childForFieldName('type');
-      if (tNode) return extractCSharpTypeName(tNode);
-    }
-    if (child?.type === 'equals_value_clause') {
-      for (let j = 0; j < child.childCount; j++) {
-        const expr = child.child(j);
-        if (expr?.type === 'object_creation_expression') {
-          const tNode = expr.childForFieldName('type');
-          if (tNode) return extractCSharpTypeName(tNode);
-        }
-      }
-    }
-  }
-  return null;
-}
-
-/** Extract type info from a variable_declaration node (local vars with explicit or inferred types). */
+/** Extract type info from a variable_declaration node (local vars with explicit types). */
 function handleCSharpVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const typeNode = node.childForFieldName('type') || node.child(0);
   if (!typeNode) return;
-  const isVar = typeNode.type === 'implicit_type' || typeNode.type === 'var_keyword';
-  const explicitTypeName = isVar ? null : extractCSharpTypeName(typeNode);
-  if (!isVar && !explicitTypeName) return;
+
+  if (typeNode.type === 'implicit_type') {
+    // var x = new Foo() — infer type from object_creation_expression initializer
+    if (!ctx.typeMap) return;
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child?.type !== 'variable_declarator') continue;
+      const nameNode = child.childForFieldName('name') || child.child(0);
+      if (nameNode?.type !== 'identifier') continue;
+      const objCreation = findChild(child, 'object_creation_expression');
+      if (!objCreation) continue;
+      const ctorTypeNode = objCreation.childForFieldName('type');
+      if (!ctorTypeNode) continue;
+      const ctorType = extractCSharpTypeName(ctorTypeNode);
+      if (ctorType) setTypeMapEntry(ctx.typeMap, nameNode.text, ctorType, 1.0);
+    }
+    return;
+  }
+
+  const typeName = extractCSharpTypeName(typeNode);
+  if (!typeName) return;
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child?.type !== 'variable_declarator') continue;
     const nameNode = child.childForFieldName('name') || child.child(0);
     if (nameNode?.type !== 'identifier' || !ctx.typeMap) continue;
-    const typeName = isVar ? extractVarInitType(child) : explicitTypeName;
     if (typeName) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
   }
 }

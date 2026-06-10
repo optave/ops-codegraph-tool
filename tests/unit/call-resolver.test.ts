@@ -5,6 +5,14 @@
  * one dot segment (e.g. 'Namespace.ClassName.method'), the same-class dispatch
  * must use only the segment immediately before the method name ('ClassName'),
  * not the full qualified prefix ('Namespace.ClassName').
+ *
+ * Also covers the static receiver confidence filter (#1398): the direct qualified
+ * method fallback must apply computeConfidence >= 0.5 to avoid false edges from
+ * distant files in a polyglot project.
+ *
+ * Also covers the bare-call JS/TS module-scope guard (#1407/#1424): bare `foo()` calls
+ * (no receiver) inside a JS/TS class method must NOT fall through to the same-class
+ * lookup, because bare calls in those languages are module-scoped, not class-scoped.
  */
 import { describe, expect, it } from 'vitest';
 import type { CallNodeLookup } from '../../src/domain/graph/builder/call-resolver.js';
@@ -86,5 +94,89 @@ describe('resolveByMethodOrGlobal — same-class this-dispatch with qualified ca
     );
     // callerClass should be 'Shape', so 'Shape.area' is tried — which is absent.
     expect(result).toEqual([]);
+  });
+});
+
+describe('resolveByMethodOrGlobal — static receiver confidence filter (#1398)', () => {
+  it('returns same-directory static target (confidence 0.7 >= 0.5)', () => {
+    const target = { id: 1, file: 'app/Validators.cs', kind: 'method' };
+    const lookup = makeLookup({ 'Validators.IsValidEmail': [target] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'IsValidEmail', receiver: 'Validators' },
+      'app/Program.cs',
+      new Map(),
+    );
+    expect(result).toEqual([target]);
+  });
+
+  it('filters out distant static target (confidence 0.3 < 0.5)', () => {
+    const target = { id: 2, file: 'lib/util/Validators.cs', kind: 'method' };
+    const lookup = makeLookup({ 'Validators.IsValidEmail': [target] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'IsValidEmail', receiver: 'Validators' },
+      'app/main/Program.cs',
+      new Map(),
+    );
+    expect(result).toEqual([]);
+  });
+});
+
+describe('resolveByMethodOrGlobal — bare-call JS/TS module-scope guard (#1407)', () => {
+  // `flush()` inside `Processor.run` — no receiver, JS/TS file.
+  // Must NOT resolve to `Processor.flush` (class-scoped lookup is incorrect for JS/TS).
+  const flushMethod = { id: 10, file: 'processor.ts', kind: 'method' };
+
+  it('does NOT resolve bare call to same-class method in a .ts file', () => {
+    const lookup = makeLookup({ 'Processor.flush': [flushMethod] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'flush', receiver: null },
+      'processor.ts',
+      new Map(),
+      'Processor.run',
+    );
+    // bare call + .ts → module-scoped language → same-class fallback skipped
+    expect(result).toEqual([]);
+  });
+
+  it('does NOT resolve bare call to same-class method in a .js file', () => {
+    const lookup = makeLookup({ 'Processor.flush': [flushMethod] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'flush', receiver: null },
+      'processor.js',
+      new Map(),
+      'Processor.run',
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('DOES resolve this.flush() in a .ts file (receiver present — not a bare call)', () => {
+    const lookup = makeLookup({ 'Processor.flush': [flushMethod] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'flush', receiver: 'this' },
+      'processor.ts',
+      new Map(),
+      'Processor.run',
+    );
+    // this.flush() has a receiver → not a bare call → same-class fallback runs
+    expect(result).toEqual([flushMethod]);
+  });
+
+  it('DOES resolve bare call to same-class method in a .cs file (C# is not module-scoped)', () => {
+    const csMethod = { id: 20, file: 'Processor.cs', kind: 'method' };
+    const lookup = makeLookup({ 'Processor.Flush': [csMethod] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'Flush', receiver: null },
+      'Processor.cs',
+      new Map(),
+      'Processor.Run',
+    );
+    // C# is not module-scoped → same-class fallback runs → Processor.Flush found
+    expect(result).toEqual([csMethod]);
   });
 });
