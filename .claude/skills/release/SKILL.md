@@ -202,12 +202,14 @@ gh api --method PATCH repos/optave/ops-codegraph-tool \
   -f description="NEW DESCRIPTION" \
   -f homepage="https://..."
 
-# Update topics (replaces the full list — include all desired topics)
+# Update topics — start from the fetched list above, then add/remove as needed.
+# This PUT replaces ALL topics atomically; do NOT copy the example below verbatim —
+# build the full list from the currently active topics first, then adjust.
 gh api --method PUT repos/optave/ops-codegraph-tool/topics \
   -f "names[]=cli" -f "names[]=code-analysis" -f "names[]=dependency-graph" -f "names[]=tree-sitter"
 ```
 
-Note: "about" text changes are applied directly to GitHub — they don't require a commit or a PR entry. Record any changes made in the PR description so reviewers know what was updated.
+Note: "about" text changes are applied directly to GitHub — they don't require a commit. Record any changes made in the PR description so reviewers know what was updated.
 
 ## Step 6: Verify `libc` fields in package-lock.json
 
@@ -240,6 +242,7 @@ gh pr create --title "docs: prepare release notes for vVERSION" --body "$(cat <<
 - Add CHANGELOG entry for vVERSION (all commits since previous release)
 - Update ROADMAP progress
 - Review README and repo "about" text for accuracy
+- Repo "about" updated: <!-- describe what changed (description / homepage / topics), or "no changes needed" -->
 
 **After merging:** create a GitHub Release with tag `vVERSION` to trigger the publish workflow, which handles version bumping, native binary builds, and npm publishing.
 
