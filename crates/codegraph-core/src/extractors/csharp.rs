@@ -438,9 +438,13 @@ fn extract_csharp_base_types(
 
 // ── Type map extraction ─────────────────────────────────────────────────────
 
+/// Extract the constructor type from a `var x = new Foo()` initializer.
 fn extract_var_init_type(declarator: &Node, source: &[u8]) -> Option<String> {
     for i in 0..declarator.child_count() {
         let Some(child) = declarator.child(i) else { continue };
+        // Defensive: handle object_creation_expression as a direct child of variable_declarator.
+        // The standard grammar always wraps it in equals_value_clause, but this guard is kept
+        // as a belt-and-suspenders fallback for edge cases or future grammar changes.
         if child.kind() == "object_creation_expression" {
             if let Some(t) = child.child_by_field_name("type") {
                 return extract_csharp_type_name(&t, source).map(|s| s.to_string());
