@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.11.2 | **Status:** Active development | **Updated:** 2026-06-01
+> **Current version:** 3.12.0 | **Status:** Active development | **Updated:** 2026-06-10
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -21,7 +21,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **Complete** (v3.4.0) |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Rust extraction for AST/CFG/dataflow/complexity; batch SQLite inserts; incremental rebuilds; native DB write pipeline; full rusqlite migration so native engine never touches better-sqlite3 | **Complete** (v3.5.0) |
 | [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support — all 4 batches shipped across v3.6.0–v3.8.0 | **Complete** (v3.8.0) |
-| [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates, language-specific analysis reference map (34 languages, Jelly-equivalents, fixture acquisition guide) | Planned |
+| [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates, language-specific analysis reference map (34 languages, Jelly-equivalents, fixture acquisition guide) | In Progress |
 | [**9**](#phase-9--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
 | [**10**](#phase-10--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | In Progress |
 | [**11**](#phase-11--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
@@ -1404,6 +1404,11 @@ The single highest-ROI improvement. Currently codegraph treats TypeScript as "Ja
 
 **Affected files:** new `src/domain/graph/resolver/ts-resolver.ts`, `src/domain/graph/builder/stages/build-edges.ts`, `src/infrastructure/config.ts`
 
+**Progress (v3.12.0):**
+- ✅ `src/domain/graph/resolver/ts-resolver.ts` — build-time enrichment pass using `ts.createProgram` + `getTypeChecker`; heuristic typeMap entries replaced with compiler-verified confidence 1.0 values ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
+- ✅ Gated on `config.build.typescriptResolver` (default: `false`) — set to `true` in `.codegraphrc.json` to enable ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
+- ✅ Native Rust engine: `returnTypeMap` and `callAssignments` extracted in Rust, closing the enrichment gap ([#1283](https://github.com/optave/ops-codegraph-tool/pull/1283))
+
 ### 8.2 -- Inter-Procedural Type Propagation
 
 Extend type tracking beyond single-function scope. Currently, type information from Phase 4.2 (receiver type tracking) is purely intra-procedural — if `createUser()` returns a `User` object and the caller assigns it to a variable, the type is lost at the call boundary.
@@ -1419,6 +1424,13 @@ Extend type tracking beyond single-function scope. Currently, type information f
 
 **Affected files:** `src/extractors/*.ts` (return type extraction), `src/domain/graph/builder/stages/build-edges.ts` (propagation during edge construction)
 
+**Progress (v3.12.0):**
+- ✅ `extractReturnTypeMapWalk` added to JS/TS extractor — explicit TS annotations at confidence 1.0, `return new Constructor()` at 0.85 ([#1279](https://github.com/optave/ops-codegraph-tool/pull/1279))
+- ✅ Intra-file propagation: `const x = createUser()` → `x` gets type `User`; chain resolution up to 3 hops with decaying confidence ([#1279](https://github.com/optave/ops-codegraph-tool/pull/1279))
+- ✅ Cross-file propagation in `build-edges.ts`: unresolved call assignments resolved against imported files' `returnTypeMap`s before native and JS call-edge paths run ([#1279](https://github.com/optave/ops-codegraph-tool/pull/1279))
+- ✅ `analysis.typePropagationDepth: 3` added to `DEFAULTS` for future tunability ([#1279](https://github.com/optave/ops-codegraph-tool/pull/1279))
+- ✅ WASM worker protocol: `returnTypeMap`, `paramBindings`, `callAssignments` wired through `SerializedExtractorOutput` ([#1352](https://github.com/optave/ops-codegraph-tool/pull/1352))
+
 ### 8.3 -- Field-Based Points-To Analysis
 
 Implement a lightweight field-based points-to analysis inspired by [ACG](https://arxiv.org/abs/2405.07206) and [Jelly](https://github.com/cs-au-dk/jelly). This resolves higher-order function calls (callbacks, event handlers, strategy patterns) that syntactic analysis completely misses.
@@ -1427,7 +1439,23 @@ Implement a lightweight field-based points-to analysis inspired by [ACG](https:/
 
 **Progress (v3.9.4):**
 - ✅ Lightweight name-based callback resolution for JS/TS — identifier and member_expression arguments of call expressions emit dynamic call edges; destructured bindings from factory calls emit function definitions so the edge resolver can match them as call targets ([#947](https://github.com/optave/ops-codegraph-tool/pull/947))
-- 🔲 Full points-to analysis with allocation-site abstraction and constraint solver (the proper Phase 8.3 deliverable — the v3.9.4 heuristic covers the common named-reference case but misses function literals, method references, and cross-module flows)
+
+**Progress (v3.12.0):**
+- ✅ Field-based points-to analysis for higher-order calls (Phase 8.3) — callback assignments, event-handler registrations, strategy-pattern wiring ([#1289](https://github.com/optave/ops-codegraph-tool/pull/1289))
+- ✅ Cross-module points-to propagation (Phase 8.3 + 8.3b) — WASM + native parity; inter-module flows through import edges ([#1296](https://github.com/optave/ops-codegraph-tool/pull/1296))
+- ✅ Parameter-flow tracking (Phase 8.3c) — typed parameters seed the receiver typeMap for downstream method resolution ([#1294](https://github.com/optave/ops-codegraph-tool/pull/1294), [#1308](https://github.com/optave/ops-codegraph-tool/pull/1308))
+- ✅ Object property write tracking (Phase 8.3d) — `obj.handler = fn` tracked so `obj.handler()` resolves ([#1295](https://github.com/optave/ops-codegraph-tool/pull/1295))
+- ✅ Object destructuring rest parameter resolution (Phase 8.3f) — `const { a, ...rest } = obj; rest.method()` resolved via the rest binding's source type; WASM + native ([#1355](https://github.com/optave/ops-codegraph-tool/pull/1355))
+- ✅ Prototype-based method calls, func-prop this-dispatch, spread/iteration callbacks ([#1331](https://github.com/optave/ops-codegraph-tool/pull/1331))
+- ✅ Constructor-assigned property types for receiver-typed resolution (JS/TS) ([#1314](https://github.com/optave/ops-codegraph-tool/pull/1314))
+- ✅ `Object.defineProperty` accessor this-dispatch ([#1346](https://github.com/optave/ops-codegraph-tool/pull/1346), [#1351](https://github.com/optave/ops-codegraph-tool/pull/1351))
+- ✅ Calls through `Object.defineProperty` / `defineProperties` / `Object.create` ([#1328](https://github.com/optave/ops-codegraph-tool/pull/1328))
+- ✅ Generator functions extracted as definitions (JS/TS) ([#1333](https://github.com/optave/ops-codegraph-tool/pull/1333))
+- ✅ `.call()/.apply()` this-rebinding ([#1405](https://github.com/optave/ops-codegraph-tool/pull/1405))
+- ✅ `Function.bind/call/apply` receiver-typed resolution ([#1330](https://github.com/optave/ops-codegraph-tool/pull/1330))
+- ✅ `for-of`, `Set`, and `Array.from` iteration-callback edges ([#1397](https://github.com/optave/ops-codegraph-tool/pull/1397))
+- ✅ Inline-array spread call edges `fn(...[a, b, c])` ([#1394](https://github.com/optave/ops-codegraph-tool/pull/1394))
+- 🔲 Full allocation-site abstraction and constraint solver (fixed-point iteration over points-to constraints)
 
 **Approach:**
 - **Field-based** (not field-sensitive): treat all instances of `obj.field` as the same abstract location regardless of which `obj` instance. This is the sweet spot between precision and scalability — ACG achieves 99% precision with this approach
@@ -1455,6 +1483,11 @@ Barrel files (`index.ts` that re-export from sub-modules) are the #1 source of r
 
 **Affected files:** `src/domain/graph/resolve.ts`, `src/domain/graph/builder/stages/build-edges.ts`
 
+**Progress (v3.12.0):**
+- ✅ `buildImportedNamesMap` traces through barrel re-exports to actual declaration files — symbols imported via `components/index.ts` now resolve to their source module ([#1302](https://github.com/optave/ops-codegraph-tool/pull/1302))
+- ✅ `buildBarrelEdges` uses cached `resolveBarrelExportCached` to avoid repeated DFS traversal ([#1302](https://github.com/optave/ops-codegraph-tool/pull/1302))
+- ✅ Barrel-through `imports` edges emitted on WASM full builds ([#1298](https://github.com/optave/ops-codegraph-tool/pull/1298), [#1302](https://github.com/optave/ops-codegraph-tool/pull/1302))
+
 ### 8.5 -- Enhanced Dynamic Dispatch Resolution
 
 Extend Phase 4.2's receiver type tracking with class hierarchy analysis (CHA) and rapid type analysis (RTA) for virtual/interface method dispatch.
@@ -1468,6 +1501,13 @@ Extend Phase 4.2's receiver type tracking with class hierarchy analysis (CHA) an
 **Expected impact:** +3–5 percentage points on caller coverage. Primarily benefits OOP-heavy codebases (Java, C#, TypeScript with class hierarchies).
 
 **Affected files:** `src/domain/graph/builder/stages/build-edges.ts`, `src/extractors/*.ts` (instantiation tracking)
+
+**Progress (v3.12.0):**
+- ✅ CHA interface dispatch — when a call targets an interface method, emit edges to all concrete implementations reachable via `implements`/`extends` hierarchy ([#1302](https://github.com/optave/ops-codegraph-tool/pull/1302))
+- ✅ RTA filter — CHA targets narrowed to types actually instantiated via `new X()`; `extractNewExpressionsWalk` captures unassigned `new` calls ([#1302](https://github.com/optave/ops-codegraph-tool/pull/1302))
+- ✅ `this`/`super` dispatch inside method bodies resolved through the class's own method table and parent hierarchy ([#1302](https://github.com/optave/ops-codegraph-tool/pull/1302))
+- ✅ `super.method()` dispatch via class expression, static block, and field def (extends Phase 8.5 coverage) ([#1399](https://github.com/optave/ops-codegraph-tool/pull/1399))
+- ✅ Native orchestrator CHA expansion post-pass reads `implements`/`extends` edges from SQLite after native parse ([#1302](https://github.com/optave/ops-codegraph-tool/pull/1302))
 
 ### 8.6 -- Precision/Recall CI Gate Upgrade
 
@@ -1484,9 +1524,13 @@ Upgrade the Phase 4.4 benchmark suite to enforce regression gates on the new res
 - ✅ Resolution benchmark v2 — dynamic call tracing across 14 languages, per-mode categories ([#878](https://github.com/optave/ops-codegraph-tool/pull/878))
 - ✅ Dynamic call tracing extended to all language fixtures ([#883](https://github.com/optave/ops-codegraph-tool/pull/883))
 - ✅ Release workflow gated on resolution precision/recall thresholds ([#886](https://github.com/optave/ops-codegraph-tool/pull/886))
-- 🔲 Per-technique breakdown (edges contributed by each resolver)
-- 🔲 Coverage dashboard in `codegraph stats`
-- 🔲 Benchmark against Jelly and ACG on shared fixture projects (JS/TS); extend to per-language reference tools for all 34 languages (see 8.8 for the full reference map and fixture acquisition guide)
+
+**Progress (v3.12.0):**
+- ✅ Per-technique breakdown in `codegraph stats` — DB migration v17 adds `technique` column; edges tagged `ts-native` or `points-to` at insertion; `byTechnique` counts in `codegraph stats --json` and human-readable output ([#1303](https://github.com/optave/ops-codegraph-tool/pull/1303))
+- ✅ Coverage dashboard in `codegraph stats` — `caller_coverage.percentage` included in both JS and native stat paths ([#1299](https://github.com/optave/ops-codegraph-tool/pull/1299))
+- ✅ Jelly micro-test fixtures imported (59 fixtures) and per-fixture recall floors wired — JS/TS comparison fixtures with per-fixture precision/recall baselines ([#1376](https://github.com/optave/ops-codegraph-tool/pull/1376), [#1409](https://github.com/optave/ops-codegraph-tool/pull/1409))
+- ✅ Research comparison of Jelly vs codegraph on shared JS/TS fixtures ([#1304](https://github.com/optave/ops-codegraph-tool/pull/1304))
+- 🔲 Full Jelly/ACG benchmark with statistical parity tables (see 8.8 for reference map and fixture acquisition guide)
 
 **Affected files:** `tests/benchmarks/resolution/`, `src/domain/analysis/symbol-lookup.ts`, `src/presentation/queries-cli/overview.ts`
 
