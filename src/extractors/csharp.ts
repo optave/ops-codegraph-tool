@@ -341,7 +341,7 @@ function handleCSharpVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
       const child = node.child(i);
       if (child?.type !== 'variable_declarator') continue;
       const nameNode = child.childForFieldName('name') || child.child(0);
-      if (!nameNode || nameNode.type !== 'identifier') continue;
+      if (nameNode?.type !== 'identifier') continue;
       const objCreation = findChild(child, 'object_creation_expression');
       if (!objCreation) continue;
       const ctorTypeNode = objCreation.childForFieldName('type');
@@ -358,9 +358,8 @@ function handleCSharpVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     const child = node.child(i);
     if (child?.type !== 'variable_declarator') continue;
     const nameNode = child.childForFieldName('name') || child.child(0);
-    if (nameNode && nameNode.type === 'identifier' && ctx.typeMap) {
-      setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
-    }
+    if (nameNode?.type !== 'identifier' || !ctx.typeMap) continue;
+    if (typeName) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
   }
 }
 

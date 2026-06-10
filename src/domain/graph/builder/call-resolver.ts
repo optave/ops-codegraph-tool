@@ -94,12 +94,15 @@ export function resolveByMethodOrGlobal(
         : (typeEntry as { type?: string }).type
       : null;
 
-    // Handle inline new-expression receivers: `(new Foo).bar()` or `(new Foo()).bar()`.
-    // extractReceiverName returns the raw node text for non-identifier nodes, so `(new A).t()`
-    // produces receiver='(new A)'. Extract the constructor name directly.
-    // The regex intentionally restricts to uppercase-initial names ([A-Z_$]) as a heuristic
-    // to distinguish constructors (PascalCase) from regular functions — avoiding false positives
-    // on `(new xmlParser()).parse()` style calls which are rare in practice.
+    // Belt-and-suspenders fallback for inline new-expression receivers that
+    // extractReceiverName did not normalise (e.g. raw text leaked from an
+    // unhandled AST node type).  extractReceiverName already handles the common
+    // `new_expression` / `parenthesized_expression(new_expression)` shapes by
+    // returning the constructor name directly, so this branch is exercised only
+    // by future node types or constructs that fall through to the raw-text path.
+    // The uppercase-initial restriction ([A-Z_$]) is a heuristic to distinguish
+    // constructors (PascalCase) from regular functions and avoids false positives
+    // on `(new xmlParser()).parse()` style calls.
     if (!typeName && call.receiver) {
       const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
       if (m?.[1]) typeName = m[1];
