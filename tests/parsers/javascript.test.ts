@@ -850,6 +850,32 @@ describe('JavaScript parser', () => {
       expect(def.line).toBe(2);
       expect(def.endLine).toBe(4);
     });
+
+    // .call/.apply/.bind narrowing (#1406)
+    // All args flow into the delegated function, not as callbacks for the current scope.
+    // This-rebinding (fn::this → ctx) is handled by extractThisCallBindingsWalk instead.
+    it('emits nothing for .call() — args flow into the delegated function, not the current scope', () => {
+      const symbols = parseJS(`Array.prototype.forEach.call(collection, handler);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'handler' }));
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'collection' }));
+    });
+
+    it('emits nothing for .apply() — second arg is an arguments array, not a callback', () => {
+      const symbols = parseJS(`fn.apply(ctx, handler);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'handler' }));
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'ctx' }));
+    });
+
+    it('emits nothing for .call() with only the this-context arg', () => {
+      const symbols = parseJS(`fn.call(ctx);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'ctx' }));
+    });
+
+    it('emits nothing for .bind() — all args are absorbed into the partial application', () => {
+      const symbols = parseJS(`Promise.resolve.bind(null, transform);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'transform' }));
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'null' }));
+    });
   });
 
   describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
