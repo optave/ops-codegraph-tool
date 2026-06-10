@@ -77,17 +77,31 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
     try {
       await buildEmbeddings(tmpDir, 'minilm', dbPath);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const code = (err as NodeJS.ErrnoException).code ?? '';
-      const isNetworkError =
-        msg.includes('429') ||
-        msg.toLowerCase().includes('timeout') ||
-        code === 'ECONNRESET' ||
-        code === 'ETIMEDOUT' ||
-        code === 'ENOTFOUND' ||
-        code === 'ECONNREFUSED' ||
-        code === 'ERR_HTTP2_STREAM_CANCEL' ||
-        code === 'ERR_HTTP2_SESSION_ERROR';
+      // Walk the full error cause chain to detect network/timeout failures that
+      // may be wrapped by EngineError (e.g. ConnectTimeoutError with code
+      // UND_ERR_CONNECT_TIMEOUT wrapped as "fetch failed" wrapped as EngineError).
+      const isNetworkError = (function checkChain(e: unknown): boolean {
+        if (!e) return false;
+        const msg = e instanceof Error ? e.message : String(e);
+        const code = (e as NodeJS.ErrnoException).code ?? '';
+        if (
+          msg.includes('429') ||
+          msg.toLowerCase().includes('timeout') ||
+          msg.toLowerCase().includes('fetch failed') ||
+          code === 'ECONNRESET' ||
+          code === 'ETIMEDOUT' ||
+          code === 'ENOTFOUND' ||
+          code === 'ECONNREFUSED' ||
+          code === 'ERR_HTTP2_STREAM_CANCEL' ||
+          code === 'ERR_HTTP2_SESSION_ERROR' ||
+          code === 'UND_ERR_CONNECT_TIMEOUT' ||
+          code === 'UND_ERR_SOCKET' ||
+          code === 'UND_ERR_HEADERS_TIMEOUT'
+        )
+          return true;
+        const cause = (e as { cause?: unknown }).cause;
+        return cause !== undefined && cause !== e ? checkChain(cause) : false;
+      })(err);
       if (isNetworkError) {
         rateLimited = true;
         return;
