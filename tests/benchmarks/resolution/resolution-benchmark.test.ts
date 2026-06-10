@@ -126,9 +126,10 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   adds bind/call/apply resolution (3 new edges in bind-call-apply.js), total expected now 33.
   //   Phase 8.3f adds Object.defineProperty accessor this-dispatch (#1335): getter→baz in
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
-  //   total expected now 35. call/apply this-rebinding adds 2 edges (runCallThis→invoker,
-  //   invoker→handler) and removes the false-positive from handler being extracted as a callback
-  //   arg of .call() — total expected now 37.
+  //   total expected now 35. multi-class.js adds 4 class-scoped typeMap edges (#1382) → 39.
+  //   call/apply this-rebinding adds 2 edges (runCallThis→invoker, invoker→handler) and removes
+  //   the false-positive from handler being extracted as a callback arg of .call() (#1405) → 41.
+  //   #1407 adds class-scope.js (bare-call guard), +1 → total 42.
   javascript: { precision: 1.0, recall: 0.9 },
   // pts-javascript: hand-authored points-to JS fixture (for-of, Set, Array.from, spread) — patterns
   //   too broad for the main JS fixture. Patterns split per file to prevent intra-fixture FPs.
@@ -148,7 +149,9 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   python: { precision: 0.7, recall: 0.3 },
   go: { precision: 0.7, recall: 0.3 },
   java: { precision: 0.7, recall: 0.3 },
-  csharp: { precision: 1.0, recall: 0.8 },
+  // csharp 1.0/0.9: static receiver fix (#1395) ensures precision; var-declared instance typeMap
+  //   (implicit_type) lifts receiver-typed recall from 0/4 → 4/4 (#1396).
+  csharp: { precision: 1.0, recall: 0.9 },
   kotlin: { precision: 0.6, recall: 0.2 },
   // Lower bars — resolution still maturing
   rust: { precision: 0.6, recall: 0.2 },

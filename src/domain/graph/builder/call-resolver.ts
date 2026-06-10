@@ -23,6 +23,28 @@ export interface CallNodeLookup {
 
 export const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', 'module']);
 
+/**
+ * Languages where bare `foo()` calls inside a class method are lexically scoped
+ * to the module, not the class — there is no implicit this/class binding.
+ * For these languages, the same-class fallback must not run for bare (no-receiver)
+ * calls that found no exact same-file match.
+ */
+const MODULE_SCOPED_BARE_CALL_EXTENSIONS = new Set([
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.jsx',
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+]);
+
+export function isModuleScopedLanguage(relPath: string): boolean {
+  const ext = relPath.slice(relPath.lastIndexOf('.'));
+  return MODULE_SCOPED_BARE_CALL_EXTENSIONS.has(ext);
+}
+
 // ── Shared resolution functions ──────────────────────────────────────────
 
 export function findCaller(
@@ -94,12 +116,15 @@ export function resolveByMethodOrGlobal(
         : (typeEntry as { type?: string }).type
       : null;
 
-    // Handle inline new-expression receivers: `(new Foo).bar()` or `(new Foo()).bar()`.
-    // extractReceiverName returns the raw node text for non-identifier nodes, so `(new A).t()`
-    // produces receiver='(new A)'. Extract the constructor name directly.
-    // The regex intentionally restricts to uppercase-initial names ([A-Z_$]) as a heuristic
-    // to distinguish constructors (PascalCase) from regular functions — avoiding false positives
-    // on `(new xmlParser()).parse()` style calls which are rare in practice.
+    // Belt-and-suspenders fallback for inline new-expression receivers that
+    // extractReceiverName did not normalise (e.g. raw text leaked from an
+    // unhandled AST node type).  extractReceiverName already handles the common
+    // `new_expression` / `parenthesized_expression(new_expression)` shapes by
+    // returning the constructor name directly, so this branch is exercised only
+    // by future node types or constructs that fall through to the raw-text path.
+    // The uppercase-initial restriction ([A-Z_$]) is a heuristic to distinguish
+    // constructors (PascalCase) from regular functions and avoids false positives
+    // on `(new xmlParser()).parse()` style calls.
     if (!typeName && call.receiver) {
       const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
       if (m?.[1]) typeName = m[1];
@@ -203,7 +228,14 @@ export function resolveByMethodOrGlobal(
     // Also covers no-receiver calls inside class methods, e.g. `IsValidEmail(x)` inside
     // `Validators.ValidateUser` → try `Validators.IsValidEmail` (C#/Java static siblings).
     // This seeds the initial edge that runChaPostPass later expands to subclass overrides.
-    if (callerName) {
+    //
+    // For JS/TS, bare (no-receiver) calls are module-scoped — there is no implicit class
+    // binding. Skip the same-class fallback for bare calls in those languages to prevent
+    // false positives (e.g. `flush()` inside `Processor.run` must not resolve to
+    // `Processor.flush`). this.method() calls are unaffected: they still reach the fallback
+    // because `call.receiver === 'this'` is truthy, not a bare call.
+    const isBareCall = !call.receiver;
+    if (callerName && !(isBareCall && isModuleScopedLanguage(relPath))) {
       const dotIdx = callerName.lastIndexOf('.');
       if (dotIdx > -1) {
         // Extract only the segment immediately before the method name so that
