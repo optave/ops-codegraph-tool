@@ -1445,6 +1445,7 @@ Implement a lightweight field-based points-to analysis inspired by [ACG](https:/
 - ✅ Cross-module points-to propagation (Phase 8.3 + 8.3b) — WASM + native parity; inter-module flows through import edges ([#1296](https://github.com/optave/ops-codegraph-tool/pull/1296))
 - ✅ Parameter-flow tracking (Phase 8.3c) — typed parameters seed the receiver typeMap for downstream method resolution ([#1294](https://github.com/optave/ops-codegraph-tool/pull/1294), [#1308](https://github.com/optave/ops-codegraph-tool/pull/1308))
 - ✅ Object property write tracking (Phase 8.3d) — `obj.handler = fn` tracked so `obj.handler()` resolves ([#1295](https://github.com/optave/ops-codegraph-tool/pull/1295))
+- ✅ Constructor-assigned property types (Phase 8.3e scope folded into 8.3 family without a separate label) — `this.svc = new Service()` seeds the typeMap so `this.svc.call()` resolves; landed in ([#1314](https://github.com/optave/ops-codegraph-tool/pull/1314)) alongside the 8.3d work
 - ✅ Object destructuring rest parameter resolution (Phase 8.3f) — `const { a, ...rest } = obj; rest.method()` resolved via the rest binding's source type; WASM + native ([#1355](https://github.com/optave/ops-codegraph-tool/pull/1355))
 - ✅ Prototype-based method calls, func-prop this-dispatch, spread/iteration callbacks ([#1331](https://github.com/optave/ops-codegraph-tool/pull/1331))
 - ✅ Constructor-assigned property types for receiver-typed resolution (JS/TS) ([#1314](https://github.com/optave/ops-codegraph-tool/pull/1314))
