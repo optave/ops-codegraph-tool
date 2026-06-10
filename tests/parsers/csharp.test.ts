@@ -160,8 +160,8 @@ public class Service : BaseService, IDisposable {
     service.AddUser(null);
   }
 }`);
-    expect(symbols.typeMap.get('service')).toEqual({ type: 'UserService', confidence: 0.9 });
-    expect(symbols.typeMap.get('repo')).toEqual({ type: 'UserRepository', confidence: 0.9 });
+    expect(symbols.typeMap.get('service')).toEqual({ type: 'UserService', confidence: 1.0 });
+    expect(symbols.typeMap.get('repo')).toEqual({ type: 'UserRepository', confidence: 1.0 });
   });
 
   it('populates typeMap for explicitly-typed local variables', () => {
