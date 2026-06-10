@@ -1,7 +1,7 @@
 /**
  * Integration test for #1317: prototype-based method call resolution.
  *
- * Verifies that the call-resolver correctly builds edges for:
+ * Verifies that both WASM and native engines correctly build edges for:
  *   1. `Foo.prototype.bar = function(){}` — direct method definition
  *   2. `(new Foo).bar()` — inline new-expression receiver
  */
@@ -13,8 +13,7 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildGraph } from '../../src/domain/graph/builder.js';
 
-const FIXTURE = {
-  'proto.js': `
+const FIXTURE_CODE = `
 function Animal(name) {
   this.name = name;
 }
@@ -38,24 +37,27 @@ function makeAndBark() {
 const d = new Dog('Buddy');
 d.speak();
 d.bark();
-`,
-};
+`;
 
-let tmpDir: string;
+let tmpWasm: string;
+let tmpNative: string;
 
 beforeAll(async () => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1317-'));
-  for (const [rel, content] of Object.entries(FIXTURE)) {
-    fs.writeFileSync(path.join(tmpDir, rel), content);
-  }
-  // TODO(#1381): pinned to WASM because the published native binary predates the
-  // prototype-method fixes landed in #1331. Remove the pin (or add a dual-engine
-  // variant) once the native binary ships the corresponding Rust-side extraction.
-  await buildGraph(tmpDir, { incremental: false, skipRegistry: true, engine: 'wasm' });
+  tmpWasm = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1317-wasm-'));
+  fs.writeFileSync(path.join(tmpWasm, 'proto.js'), FIXTURE_CODE);
+
+  tmpNative = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1317-native-'));
+  fs.writeFileSync(path.join(tmpNative, 'proto.js'), FIXTURE_CODE);
+
+  await Promise.all([
+    buildGraph(tmpWasm, { incremental: false, skipRegistry: true, engine: 'wasm' }),
+    buildGraph(tmpNative, { incremental: false, skipRegistry: true, engine: 'native' }),
+  ]);
 });
 
 afterAll(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(tmpWasm, { recursive: true, force: true });
+  fs.rmSync(tmpNative, { recursive: true, force: true });
 });
 
 function readCallEdges(dbPath: string) {
@@ -76,33 +78,47 @@ function readCallEdges(dbPath: string) {
   }
 }
 
+function getNode(dbPath: string, name: string) {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return db.prepare(`SELECT name, kind FROM nodes WHERE name = ?`).get(name) as
+      | { name: string; kind: string }
+      | undefined;
+  } finally {
+    db.close();
+  }
+}
+
 describe('prototype method resolution (#1317)', () => {
-  it('emits Dog.bark as a method definition', () => {
-    const dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
-    const db = new Database(dbPath, { readonly: true });
-    try {
-      const node = db.prepare(`SELECT name, kind FROM nodes WHERE name = 'Dog.bark'`).get() as
-        | { name: string; kind: string }
-        | undefined;
-      expect(node).toBeDefined();
-      expect(node?.kind).toBe('method');
-    } finally {
-      db.close();
-    }
+  it('WASM: emits Dog.bark as a method definition', () => {
+    const node = getNode(path.join(tmpWasm, '.codegraph', 'graph.db'), 'Dog.bark');
+    expect(node).toBeDefined();
+    expect(node?.kind).toBe('method');
   });
 
-  it('resolves d.bark() call to Dog.bark via typeMap receiver type', () => {
-    const dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
-    const edges = readCallEdges(dbPath);
-    const barkEdge = edges.find((e) => e.tgt === 'Dog.bark');
-    expect(barkEdge).toBeDefined();
+  it('WASM: resolves d.bark() call to Dog.bark via typeMap receiver type', () => {
+    const edges = readCallEdges(path.join(tmpWasm, '.codegraph', 'graph.db'));
+    expect(edges.find((e) => e.src === 'proto.js' && e.tgt === 'Dog.bark')).toBeDefined();
   });
 
-  it('resolves (new Dog(...)).bark() inline-new receiver call to Dog.bark', () => {
-    const dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
-    const edges = readCallEdges(dbPath);
-    // makeAndBark calls (new Dog('Rex')).bark() — inline new receiver
-    const inlineNewEdge = edges.find((e) => e.src === 'makeAndBark' && e.tgt === 'Dog.bark');
-    expect(inlineNewEdge).toBeDefined();
+  it('WASM: resolves (new Dog(...)).bark() inline-new receiver call to Dog.bark', () => {
+    const edges = readCallEdges(path.join(tmpWasm, '.codegraph', 'graph.db'));
+    expect(edges.find((e) => e.src === 'makeAndBark' && e.tgt === 'Dog.bark')).toBeDefined();
+  });
+
+  it('Native: emits Dog.bark as a method definition', () => {
+    const node = getNode(path.join(tmpNative, '.codegraph', 'graph.db'), 'Dog.bark');
+    expect(node).toBeDefined();
+    expect(node?.kind).toBe('method');
+  });
+
+  it('Native: resolves d.bark() call to Dog.bark via typeMap receiver type', () => {
+    const edges = readCallEdges(path.join(tmpNative, '.codegraph', 'graph.db'));
+    expect(edges.find((e) => e.src === 'proto.js' && e.tgt === 'Dog.bark')).toBeDefined();
+  });
+
+  it('Native: resolves (new Dog(...)).bark() inline-new receiver call to Dog.bark', () => {
+    const edges = readCallEdges(path.join(tmpNative, '.codegraph', 'graph.db'));
+    expect(edges.find((e) => e.src === 'makeAndBark' && e.tgt === 'Dog.bark')).toBeDefined();
   });
 });
