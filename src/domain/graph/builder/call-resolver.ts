@@ -131,7 +131,9 @@ export function resolveByMethodOrGlobal(
     }
 
     if (typeName) {
-      const typed = lookup.byName(`${typeName}.${call.name}`).filter((n) => n.kind === 'method');
+      const typed = lookup
+        .byName(`${typeName}.${call.name}`)
+        .filter((n) => n.kind === 'method' && computeConfidence(relPath, n.file, null) >= 0.5);
       if (typed.length > 0) return typed;
 
       // Prototype alias: `Foo.prototype.bar = identifier` seeds typeMap['Foo.bar'] = { type: identifier }.

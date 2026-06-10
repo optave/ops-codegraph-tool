@@ -123,6 +123,34 @@ describe('resolveByMethodOrGlobal — static receiver confidence filter (#1398)'
   });
 });
 
+describe('resolveByMethodOrGlobal — typeName branch confidence filter (#1398)', () => {
+  it('returns same-directory typed method target (confidence 0.7 >= 0.5)', () => {
+    const target = { id: 3, file: 'app/Foo.cs', kind: 'method' };
+    const lookup = makeLookup({ 'Foo.bar': [target] });
+    // typeMap entry: 'f' -> 'Foo' (e.g. from `let f = new Foo()`)
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'bar', receiver: 'f' },
+      'app/Main.cs',
+      new Map([['f', 'Foo']]),
+    );
+    expect(result).toEqual([target]);
+  });
+
+  it('filters out distant typed method target (confidence 0.3 < 0.5)', () => {
+    const target = { id: 4, file: 'lib/util/Foo.cs', kind: 'method' };
+    const lookup = makeLookup({ 'Foo.bar': [target] });
+    // typeMap entry: 'f' -> 'Foo' — but the definition lives in a distant subtree
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'bar', receiver: 'f' },
+      'app/main/Main.cs',
+      new Map([['f', 'Foo']]),
+    );
+    expect(result).toEqual([]);
+  });
+});
+
 describe('resolveByMethodOrGlobal — bare-call JS/TS module-scope guard (#1407)', () => {
   // `flush()` inside `Processor.run` — no receiver, JS/TS file.
   // Must NOT resolve to `Processor.flush` (class-scoped lookup is incorrect for JS/TS).
