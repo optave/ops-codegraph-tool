@@ -68,9 +68,12 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
     dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
 
     // Build embeddings with the smallest/fastest model.
-    // Skip gracefully when HuggingFace rate-limits the model download (HTTP 429)
-    // or when the network is unavailable (ECONNRESET, ETIMEDOUT, ENOTFOUND,
-    // ECONNREFUSED, ERR_HTTP2_STREAM_CANCEL, ERR_HTTP2_SESSION_ERROR).
+    // Skip gracefully when HuggingFace rate-limits the model download (HTTP 429),
+    // when the network is unavailable (ECONNRESET, ETIMEDOUT, ENOTFOUND,
+    // ECONNREFUSED, ERR_HTTP2_STREAM_CANCEL, ERR_HTTP2_SESSION_ERROR), or when
+    // HF's fetch layer times out. buildEmbeddings wraps HF failures as EngineError
+    // (code: ENGINE_UNAVAILABLE), losing the original errno, so we also match the
+    // "timeout" substring from HF's "Request timeout error occurred" message.
     try {
       await buildEmbeddings(tmpDir, 'minilm', dbPath);
     } catch (err: unknown) {
@@ -78,6 +81,7 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
       const code = (err as NodeJS.ErrnoException).code ?? '';
       const isNetworkError =
         msg.includes('429') ||
+        msg.toLowerCase().includes('timeout') ||
         code === 'ECONNRESET' ||
         code === 'ETIMEDOUT' ||
         code === 'ENOTFOUND' ||
