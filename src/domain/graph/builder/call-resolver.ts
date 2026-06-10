@@ -40,7 +40,7 @@ const MODULE_SCOPED_BARE_CALL_EXTENSIONS = new Set([
   '.cts',
 ]);
 
-function isModuleScopedLanguage(relPath: string): boolean {
+export function isModuleScopedLanguage(relPath: string): boolean {
   const ext = relPath.slice(relPath.lastIndexOf('.'));
   return MODULE_SCOPED_BARE_CALL_EXTENSIONS.has(ext);
 }

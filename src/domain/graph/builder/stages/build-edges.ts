@@ -30,6 +30,7 @@ import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
   type CallNodeLookup,
   findCaller,
+  isModuleScopedLanguage,
   resolveCallTargets,
   resolveReceiverEdge,
 } from '../call-resolver.js';
@@ -1340,9 +1341,35 @@ function buildFileCallEdges(
     // not the enclosing class, so qualifying with the child class name would
     // produce a false edge when the child also defines a same-named method.
     if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
-      const dotIdx = caller.callerName.indexOf('.');
-      if (dotIdx > 0) {
-        const className = caller.callerName.slice(0, dotIdx);
+      const lastDot = caller.callerName.lastIndexOf('.');
+      if (lastDot > 0) {
+        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
+        const className = caller.callerName.slice(prevDot + 1, lastDot);
+        const qualifiedName = `${className}.${call.name}`;
+        const qualified = lookup
+          .byNameAndFile(qualifiedName, relPath)
+          .filter((n) => n.kind === 'method');
+        if (qualified.length > 0) {
+          targets = qualified;
+        }
+      }
+    }
+
+    // Same-class bare-call fallback: when a no-receiver call can't be resolved
+    // globally, try the caller's own class as a qualifier. Handles C# static
+    // sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
+    // to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
+    // module-scoped, not class-scoped.
+    if (
+      targets.length === 0 &&
+      !call.receiver &&
+      caller.callerName != null &&
+      !isModuleScopedLanguage(relPath)
+    ) {
+      const lastDot = caller.callerName.lastIndexOf('.');
+      if (lastDot > 0) {
+        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
+        const className = caller.callerName.slice(prevDot + 1, lastDot);
         const qualifiedName = `${className}.${call.name}`;
         const qualified = lookup
           .byNameAndFile(qualifiedName, relPath)
