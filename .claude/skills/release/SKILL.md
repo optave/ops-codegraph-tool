@@ -161,7 +161,11 @@ Read `docs/roadmap/BACKLOG.md` and check if any backlog items were completed or 
   - Check the "Depends on" column of other items — if they depended on the newly completed item, note that they are now unblocked
 - Update the `Last updated` date at the top of the file
 
-## Step 5: Update README.md
+## Step 5: Update README.md and repo "about" text
+
+This step runs every release regardless of whether features changed.
+
+### README.md
 
 Read `README.md` and check if any new user-facing features from this release need to be documented:
 
@@ -175,7 +179,35 @@ Read `README.md` and check if any new user-facing features from this release nee
    - Completed phases should keep their historical version markers (e.g., "Complete (v3.0.0)")
    - This check runs every release, not only when phase status changes — drift accumulates silently
 6. **Version references** — only update version-specific references (e.g., install commands). Historical milestone markers like "Complete (v3.0.0)" should stay as-is
-7. If nothing user-facing changed (pure refactors, bug fixes, internal improvements), no README update is needed — **but still run the roadmap ordering cross-check (item 5)**
+7. If nothing user-facing changed (pure refactors, bug fixes, internal improvements), no README content update is needed — **but still run the roadmap ordering cross-check (item 5)**
+
+### Repo "about" text
+
+Fetch the current GitHub repository metadata and review whether it still accurately describes the project:
+
+```bash
+gh api repos/optave/ops-codegraph-tool --jq '{description: .description, homepage: .homepage, topics: .topics}'
+```
+
+Check:
+- **Description** — does the one-line repo description match what codegraph actually is and does today? Update if it's stale, vague, or missing newly supported languages/capabilities.
+- **Topics/tags** — are the labels current? For example, if a new language was added this release, add it. Common topics to keep in sync: language names, `cli`, `code-analysis`, `dependency-graph`, `tree-sitter`, `sqlite`, `mcp`.
+- **Homepage** — is the URL still correct?
+
+If any field needs updating, apply it **directly via the API** (no file change needed — this is a GitHub metadata update, not a committed file):
+
+```bash
+# Update description and/or homepage
+gh api --method PATCH repos/optave/ops-codegraph-tool \
+  -f description="NEW DESCRIPTION" \
+  -f homepage="https://..."
+
+# Update topics (replaces the full list — include all desired topics)
+gh api --method PUT repos/optave/ops-codegraph-tool/topics \
+  -f "names[]=cli" -f "names[]=code-analysis" -f "names[]=dependency-graph" -f "names[]=tree-sitter"
+```
+
+Note: "about" text changes are applied directly to GitHub — they don't require a commit or a PR entry. Record any changes made in the PR description so reviewers know what was updated.
 
 ## Step 6: Verify `libc` fields in package-lock.json
 
@@ -200,19 +232,22 @@ Place the `libc` array after the `cpu` array in each entry.
 2. Stage only the files you changed: `CHANGELOG.md`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed, `package-lock.json` if libc fields were fixed
 3. Commit: `docs: prepare release notes for vVERSION`
 4. Push: `git push -u origin release/VERSION`
-5. Create PR:
+5. Create PR (include a note if repo "about" text was updated directly on GitHub):
 
 ```
 gh pr create --title "docs: prepare release notes for vVERSION" --body "$(cat <<'EOF'
 ## Summary
 - Add CHANGELOG entry for vVERSION (all commits since previous release)
 - Update ROADMAP progress
+- Review README and repo "about" text for accuracy
 
 **After merging:** create a GitHub Release with tag `vVERSION` to trigger the publish workflow, which handles version bumping, native binary builds, and npm publishing.
 
 ## Test plan
 - [ ] CHANGELOG renders correctly on GitHub
 - [ ] ROADMAP checklist items match actual codebase state
+- [ ] README roadmap order matches ROADMAP.md
+- [ ] Repo "about" description and topics are current
 EOF
 )"
 ```
