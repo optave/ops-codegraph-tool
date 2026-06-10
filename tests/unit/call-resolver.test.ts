@@ -10,7 +10,7 @@
  * method fallback must apply computeConfidence >= 0.5 to avoid false edges from
  * distant files in a polyglot project.
  *
- * Also covers the bare-call JS/TS module-scope guard (#1407): bare `foo()` calls
+ * Also covers the bare-call JS/TS module-scope guard (#1422/#1424): bare `foo()` calls
  * (no receiver) inside a JS/TS class method must NOT fall through to the same-class
  * lookup, because bare calls in those languages are module-scoped, not class-scoped.
  */

@@ -2905,6 +2905,11 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  * member-expr args are only emitted when the first argument is a string
  * literal route path — matching Express/router shape and skipping
  * `cache.get(user.id)`-style calls.
+ *
+ * `.call()` / `.apply()` / `.bind()` — the first arg is the `this` context (not a callback of
+ * the enclosing function) and subsequent args flow into the delegated function's parameters.
+ * Emitting them here would produce false-positive edges from the *calling* function.
+ * This-rebinding (fn::this → ctx) is handled separately by extractThisCallBindingsWalk.
  */
 function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
@@ -2916,6 +2921,7 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   // Emitting them here would produce false-positive edges from the *calling* function.
   // This-rebinding (fn::this → ctx) is handled separately by extractThisCallBindingsWalk.
   if (calleeName === 'call' || calleeName === 'apply' || calleeName === 'bind') return [];
+
   let memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
   if (memberExprArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
     // HTTP verbs require a string-literal route path to be treated as a
