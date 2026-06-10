@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        os: [ubuntu-latest, macos-latest, windows-2022]  # pinned: node-gyp cannot detect VS2026 on windows-latest; revert once node-gyp supports VS ≥ 18
     runs-on: ${{ matrix.os }}
     name: Native host build (${{ matrix.os }})
     steps:
@@ -97,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        os: [ubuntu-latest, macos-latest, windows-2022]  # pinned: node-gyp cannot detect VS2026 on windows-latest; revert once node-gyp supports VS ≥ 18
         node-version: [22]
 
     runs-on: ${{ matrix.os }}
@@ -215,7 +215,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        os: [ubuntu-latest, macos-latest, windows-2022]  # pinned: node-gyp cannot detect VS2026 on windows-latest; revert once node-gyp supports VS ≥ 18
 
     runs-on: ${{ matrix.os }}
     name: Engine parity (${{ matrix.os }})
