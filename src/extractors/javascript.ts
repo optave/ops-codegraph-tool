@@ -352,51 +352,47 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract top-level constants via targeted walk (query patterns don't cover these)
   extractConstantsWalk(tree.rootNode, definitions);
 
-  // Extract dynamic import() calls via targeted walk (query patterns don't match `import` function type)
-  extractDynamicImportsWalk(tree.rootNode, imports);
-
-  // Phase 8.2: Extract function return types first so propagation can use them
+  // Phase 8.2: Extract function return types first — runContextCollectorWalk's
+  // declarator handler reads the *complete* per-file map for inter-procedural
+  // propagation, so this cannot be folded into that pass.
   extractReturnTypeMapWalk(tree.rootNode, returnTypeMap);
 
-  // Extract typeMap with intra-file return-type propagation
-  extractTypeMapWalk(tree.rootNode, typeMap, returnTypeMap, callAssignments, fnRefBindings);
-
-  // Prototype-based method definitions: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
-  extractPrototypeMethodsWalk(tree.rootNode, definitions, typeMap);
-
-  // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
-  extractParamBindingsWalk(tree.rootNode, paramBindings);
-
-  // Phase 8.3e: Extract array-element and spread/for-of/Array.from bindings
-  extractArrayElemBindingsWalk(tree.rootNode, arrayElemBindings);
-  extractSpreadForOfWalk(
-    tree.rootNode,
+  // Context-tracking collector pass: typeMap (with return-type propagation),
+  // object-rest param bindings, and spread/for-of/Array.from bindings.
+  runContextCollectorWalk(tree.rootNode, {
+    typeMap,
+    returnTypeMap,
+    callAssignments,
+    fnRefBindings,
+    objectRestParamBindings,
     spreadArgBindings,
     forOfBindings,
     arrayCallbackBindings,
-    fnRefBindings,
-  );
+  });
 
   // Extract definitions from destructured bindings (query patterns don't match object_pattern)
   extractDestructuredBindingsWalk(tree.rootNode, definitions);
 
-  // Extract class field definitions and static blocks (query patterns don't cover these)
-  extractClassMembersWalk(tree.rootNode, definitions);
-
-  // Phase 8.3f: Extract object-rest parameter and object-property bindings
-  extractObjectRestParamBindingsWalk(tree.rootNode, objectRestParamBindings);
-  extractObjectPropBindingsWalk(tree.rootNode, objectPropBindings);
-
-  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  // Everything without bespoke traversal semantics is collected in ONE pass:
+  // dynamic import() calls, prototype-method definitions, param bindings,
+  // array-element bindings, object-prop bindings, `new X()` names,
+  // Object.defineProperty receivers, class members (fields/static blocks,
+  // which query patterns don't capture), and this()/call/apply bindings.
   const newExpressions: string[] = [];
-  extractNewExpressionsWalk(tree.rootNode, newExpressions);
-
-  // Object.defineProperty accessor receiver bindings
   const definePropertyReceivers: Map<string, string> = new Map();
-  extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
-
-  // this() calls + this-call bindings in a single pass (fn.call(ctx,...) / fn.apply(ctx,...))
-  extractThisCallAndBindingsWalk(tree.rootNode, calls, thisCallBindings);
+  runCollectorWalk(tree.rootNode, {
+    definitions,
+    typeMap,
+    paramBindings,
+    arrayElemBindings,
+    objectPropBindings,
+    newExpressions,
+    definePropertyReceivers,
+    imports,
+    calls,
+    thisCallBindings,
+    classMemberDefs: definitions,
+  });
 
   return {
     definitions,
@@ -474,26 +470,10 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
   }
 }
 
-/**
- * Walk the AST to extract class field definitions and static initializer blocks.
- * Query patterns capture method_definition but not field_definition or class_static_block.
- * Called by the query-based fast path (extractSymbolsQuery); the walk-based path
- * (extractSymbolsWalk) handles these same node types via walkJavaScriptNode's switch cases.
- */
-function extractClassMembersWalk(node: TreeSitterNode, definitions: Definition[]): void {
-  function walk(n: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (n.type === 'field_definition' || n.type === 'public_field_definition') {
-      handleFieldDef(n, definitions);
-    } else if (n.type === 'class_static_block') {
-      handleStaticBlock(n, definitions);
-    }
-    for (let i = 0; i < n.childCount; i++) {
-      walk(n.child(i)!, depth + 1);
-    }
-  }
-  walk(node, 0);
-}
+// Class field definitions and static initializer blocks (which query patterns
+// don't capture) are collected inline in runCollectorWalk's field_definition /
+// class_static_block cases when `classMemberDefs` is set. The walk-based path
+// (extractSymbolsWalk) handles these node types via walkJavaScriptNode instead.
 
 /**
  * Walk the AST to find destructured const bindings (query patterns don't match object_pattern).
@@ -582,34 +562,36 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
  * Query patterns match call_expression with identifier/member_expression/subscript_expression
  * functions, but import() has function type `import` which none of those patterns cover.
  */
-function extractDynamicImportsWalk(node: TreeSitterNode, imports: Import[]): void {
-  if (node.type === 'call_expression') {
-    const fn = node.childForFieldName('function');
-    if (fn && fn.type === 'import') {
-      const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
-      if (args) {
-        const strArg = findChild(args, 'string');
-        if (strArg) {
-          const modPath = strArg.text.replace(/['"]/g, '');
-          const names = extractDynamicImportNames(node);
-          imports.push({
-            source: modPath,
-            names,
-            line: nodeStartLine(node),
-            dynamicImport: true,
-          });
-        } else {
-          debug(
-            `Skipping non-static dynamic import() at line ${nodeStartLine(node)} (template literal or variable)`,
-          );
-        }
-      }
-      return; // no need to recurse into import() children
+/**
+ * Collect a dynamic `import()` call at `node` (a call_expression).
+ * Returns true when the node *is* an import() call — the collector walk uses
+ * this to suppress dynamic-import collection inside the import's own argument
+ * subtree, preserving the former standalone walk's "don't recurse into
+ * import() children" behaviour without hiding those children from the other
+ * collectors.
+ */
+function collectDynamicImport(node: TreeSitterNode, imports: Import[]): boolean {
+  const fn = node.childForFieldName('function');
+  if (fn?.type !== 'import') return false;
+  const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+  if (args) {
+    const strArg = findChild(args, 'string');
+    if (strArg) {
+      const modPath = strArg.text.replace(/['"]/g, '');
+      const names = extractDynamicImportNames(node);
+      imports.push({
+        source: modPath,
+        names,
+        line: nodeStartLine(node),
+        dynamicImport: true,
+      });
+    } else {
+      debug(
+        `Skipping non-static dynamic import() at line ${nodeStartLine(node)} (template literal or variable)`,
+      );
     }
   }
-  for (let i = 0; i < node.childCount; i++) {
-    extractDynamicImportsWalk(node.child(i)!, imports);
-  }
+  return true;
 }
 
 function handleCommonJSAssignment(
@@ -694,41 +676,40 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
-  // Phase 8.2: Extract function return types first so propagation can use them
+  // Phase 8.2: Extract function return types first — runContextCollectorWalk's
+  // declarator handler reads the *complete* per-file map for inter-procedural
+  // propagation, so this cannot be folded into that pass.
   extractReturnTypeMapWalk(tree.rootNode, ctx.returnTypeMap!);
-  // Populate typeMap with type annotations and intra-file return-type propagation
-  extractTypeMapWalk(
-    tree.rootNode,
-    ctx.typeMap!,
-    ctx.returnTypeMap,
-    ctx.callAssignments,
-    ctx.fnRefBindings,
-  );
-  // Prototype-based method definitions: `Foo.prototype.bar = fn` and `Foo.prototype = { bar: fn }`
-  extractPrototypeMethodsWalk(tree.rootNode, ctx.definitions, ctx.typeMap!);
-  // Function-as-object property methods: `fn.method = function() { ... }`
-  extractFuncPropMethodsWalk(tree.rootNode, ctx.definitions);
-  // Phase 8.3c: Extract call-site argument bindings for parameter-flow pts analysis
-  extractParamBindingsWalk(tree.rootNode, ctx.paramBindings!);
-  // Phase 8.3e: Extract array-element and spread/for-of/Array.from bindings
-  extractArrayElemBindingsWalk(tree.rootNode, ctx.arrayElemBindings!);
-  extractSpreadForOfWalk(
-    tree.rootNode,
-    ctx.spreadArgBindings!,
-    ctx.forOfBindings!,
-    ctx.arrayCallbackBindings!,
-    ctx.fnRefBindings!,
-  );
-  // Phase 8.3f: Extract object-rest parameter and object-property bindings
-  extractObjectRestParamBindingsWalk(tree.rootNode, ctx.objectRestParamBindings!);
-  extractObjectPropBindingsWalk(tree.rootNode, ctx.objectPropBindings!);
-  // Phase 8.5: collect all `new X()` constructor names for RTA instantiation tracking
+  // Context-tracking collector pass: typeMap (with return-type propagation),
+  // object-rest param bindings, and spread/for-of/Array.from bindings.
+  runContextCollectorWalk(tree.rootNode, {
+    typeMap: ctx.typeMap!,
+    returnTypeMap: ctx.returnTypeMap,
+    callAssignments: ctx.callAssignments,
+    fnRefBindings: ctx.fnRefBindings!,
+    objectRestParamBindings: ctx.objectRestParamBindings!,
+    spreadArgBindings: ctx.spreadArgBindings!,
+    forOfBindings: ctx.forOfBindings!,
+    arrayCallbackBindings: ctx.arrayCallbackBindings!,
+  });
+  // Single collector pass for everything else: prototype-method and func-prop
+  // definitions, param bindings, array-element bindings, object-prop bindings,
+  // `new X()` names, and Object.defineProperty receivers. Dynamic imports,
+  // this()/call/apply bindings, and class members are omitted here —
+  // walkJavaScriptNode already covers those node types on this path.
   const newExpressions: string[] = [];
-  extractNewExpressionsWalk(tree.rootNode, newExpressions);
-  ctx.newExpressions = newExpressions;
-  // Object.defineProperty accessor receiver bindings
   const definePropertyReceivers: Map<string, string> = new Map();
-  extractDefinePropertyReceiversWalk(tree.rootNode, definePropertyReceivers);
+  runCollectorWalk(tree.rootNode, {
+    definitions: ctx.definitions,
+    typeMap: ctx.typeMap!,
+    paramBindings: ctx.paramBindings!,
+    arrayElemBindings: ctx.arrayElemBindings!,
+    objectPropBindings: ctx.objectPropBindings!,
+    newExpressions,
+    definePropertyReceivers,
+    funcPropDefs: ctx.definitions,
+  });
+  ctx.newExpressions = newExpressions;
   if (definePropertyReceivers.size > 0) ctx.definePropertyReceivers = definePropertyReceivers;
   return ctx;
 }
@@ -1675,19 +1656,8 @@ function recordCallAssignment(
  * in the file. Captures both assigned (`const x = new Foo()`) and unassigned
  * (`doSomething(new Foo())`) usages that the typeMap-based approach would miss.
  */
-function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: string[]): void {
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (node.type === 'new_expression') {
-      const name = extractNewExprTypeName(node);
-      if (name) newExpressions.push(name);
-    }
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
-    }
-  }
-  walk(rootNode, 0);
-}
+// `new X()` constructor-name collection (Phase 8.5 RTA instantiation tracking)
+// happens inline in runCollectorWalk's new_expression case.
 
 /**
  * Walk the AST to find `Object.defineProperty(obj, "bar", { get: getter })` patterns
@@ -1695,127 +1665,236 @@ function extractNewExpressionsWalk(rootNode: TreeSitterNode, newExpressions: str
  *
  * Result is stored in the provided map as `funcName → receiverVarName`.
  */
-function extractDefinePropertyReceiversWalk(
-  rootNode: TreeSitterNode,
-  out: Map<string, string>,
-): void {
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (node.type === 'call_expression') {
-      const fn = node.childForFieldName('function');
-      // Match `Object.defineProperty`
-      if (fn?.type === 'member_expression') {
-        const obj = fn.childForFieldName('object');
-        const prop = fn.childForFieldName('property');
-        if (
-          obj?.type === 'identifier' &&
-          obj.text === 'Object' &&
-          prop?.text === 'defineProperty'
-        ) {
-          const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
-          if (argsNode) {
-            // Collect non-punctuation children: arg0 (target obj), arg1 (prop name string), arg2 (descriptor)
-            const argChildren: TreeSitterNode[] = [];
-            for (let i = 0; i < argsNode.childCount; i++) {
-              const c = argsNode.child(i);
-              if (!c) continue;
-              if (c.type === ',' || c.type === '(' || c.type === ')') continue;
-              argChildren.push(c);
-            }
-            if (argChildren.length >= 3) {
-              const targetObj = argChildren[0];
-              const descriptor = argChildren[2];
-              if (targetObj?.type === 'identifier' && descriptor?.type === 'object') {
-                const targetName = targetObj.text;
-                // Walk the descriptor object's pair children looking for get/set
-                for (let i = 0; i < descriptor.childCount; i++) {
-                  const pair = descriptor.child(i);
-                  if (pair?.type !== 'pair') continue;
-                  const key = pair.childForFieldName('key');
-                  const val = pair.childForFieldName('value');
-                  if (
-                    key &&
-                    (key.text === 'get' || key.text === 'set') &&
-                    val?.type === 'identifier' &&
-                    !BUILTIN_GLOBALS.has(val.text)
-                  ) {
-                    // Known limitation: if the same function is registered as an
-                    // accessor on multiple objects, last-write-wins — only the
-                    // last target object is retained. This is an unusual pattern
-                    // (sharing one function across multiple defineProperty calls)
-                    // and covering it would require Map<string, string[]> which
-                    // changes the consumer API. Tracked as a known edge case.
-                    out.set(val.text, targetName);
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child) walk(child, depth + 1);
+function collectDefinePropertyReceiver(node: TreeSitterNode, out: Map<string, string>): void {
+  const fn = node.childForFieldName('function');
+  // Match `Object.defineProperty`
+  if (fn?.type !== 'member_expression') return;
+  const obj = fn.childForFieldName('object');
+  const prop = fn.childForFieldName('property');
+  if (obj?.type !== 'identifier' || obj.text !== 'Object' || prop?.text !== 'defineProperty') {
+    return;
+  }
+  const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
+  if (!argsNode) return;
+  // Collect non-punctuation children: arg0 (target obj), arg1 (prop name string), arg2 (descriptor)
+  const argChildren: TreeSitterNode[] = [];
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const c = argsNode.child(i);
+    if (!c) continue;
+    if (c.type === ',' || c.type === '(' || c.type === ')') continue;
+    argChildren.push(c);
+  }
+  if (argChildren.length < 3) return;
+  const targetObj = argChildren[0];
+  const descriptor = argChildren[2];
+  if (targetObj?.type !== 'identifier' || descriptor?.type !== 'object') return;
+  const targetName = targetObj.text;
+  // Walk the descriptor object's pair children looking for get/set
+  for (let i = 0; i < descriptor.childCount; i++) {
+    const pair = descriptor.child(i);
+    if (pair?.type !== 'pair') continue;
+    const key = pair.childForFieldName('key');
+    const val = pair.childForFieldName('value');
+    if (
+      key &&
+      (key.text === 'get' || key.text === 'set') &&
+      val?.type === 'identifier' &&
+      !BUILTIN_GLOBALS.has(val.text)
+    ) {
+      // Known limitation: if the same function is registered as an
+      // accessor on multiple objects, last-write-wins — only the
+      // last target object is retained. This is an unusual pattern
+      // (sharing one function across multiple defineProperty calls)
+      // and covering it would require Map<string, string[]> which
+      // changes the consumer API. Tracked as a known edge case.
+      out.set(val.text, targetName);
     }
   }
-  walk(rootNode, 0);
+}
+
+/** Outputs for {@link runContextCollectorWalk}. */
+interface ContextCollectorOutputs {
+  typeMap: Map<string, TypeMapEntry>;
+  returnTypeMap?: Map<string, TypeMapEntry>;
+  callAssignments?: CallAssignment[];
+  fnRefBindings: FnRefBinding[];
+  objectRestParamBindings: ObjectRestParamBinding[];
+  spreadArgBindings: SpreadArgBinding[];
+  forOfBindings: ForOfBinding[];
+  arrayCallbackBindings: ArrayCallbackBinding[];
 }
 
 /**
- * Extract variable-to-type assignments into a per-file type map.
+ * Single context-tracking pass combining what were three separate full-tree
+ * walks (typeMap, object-rest params, spread/for-of) — see runCollectorWalk
+ * for why traversal count dominates extraction cost on WASM trees.
  *
- * Values are `{ type: string, confidence: number }`:
- *   - 1.0: explicit constructor (`new Foo()`)
- *   - 0.9: type annotation (`: Foo`) or typed parameter
- *   - 0.85: property write (`obj.prop = fn` — Phase 8.3d pts tracking)
- *   - 0.7–0.9: inter-procedural propagation from return-type map (Phase 8.2)
- *   - 0.7: factory method call (`Foo.create()` — uppercase-first heuristic)
+ * Each concern keeps its own enclosing-class register because their reset
+ * rules intentionally differ:
  *
- * Higher-confidence entries take priority when the same variable is seen twice.
+ * - typeMap (`typeMapClass`): extracts variable-to-type assignments.
+ *   Values are `{ type: string, confidence: number }`:
+ *     - 1.0: explicit constructor (`new Foo()`)
+ *     - 0.9: type annotation (`: Foo`) or typed parameter
+ *     - 0.85: property write (`obj.prop = fn` — Phase 8.3d pts tracking)
+ *     - 0.7–0.9: inter-procedural propagation from return-type map (Phase 8.2)
+ *     - 0.7: factory method call (`Foo.create()` — uppercase-first heuristic)
+ *   Higher-confidence entries take priority when the same variable is seen
+ *   twice. Class declarations propagate their name into the subtree; class
+ *   *expressions* (`const Foo = class Bar { … }`) propagate null because the
+ *   expression-internal name is never visible to the resolver, preserving the
+ *   `this.prop` fallback in resolveByMethodOrGlobal. No reset at function
+ *   boundaries.
+ *
+ * - object-rest params (`objectRestClass`, Phase 8.3f): context flows only
+ *   class_declaration/class → class_body → method_definition so methods are
+ *   keyed "ClassName.method"; every other node type resets to null, and
+ *   function/method bodies recurse with null so nested declarations don't
+ *   inherit the class context.
+ *
+ * - spread/for-of (`funcStack`/`classStack`, Phase 8.3e): tracks the
+ *   enclosing *function* (not just class) via push/pop so for-of bindings
+ *   record the qualified enclosing callable (e.g. 'Foo.bar', 'obj.method',
+ *   or '<module>' at top level).
+ *
+ * NOTE: returnTypeMap population stays a separate, earlier pass
+ * (extractReturnTypeMapWalk) — handleVarDeclaratorTypeMap reads it for
+ * inter-procedural propagation, so it must be complete for the whole file
+ * before any declarator is processed (a function declared *after* its first
+ * use would otherwise be missed).
  */
-function extractTypeMapWalk(
-  rootNode: TreeSitterNode,
-  typeMap: Map<string, TypeMapEntry>,
-  returnTypeMap?: Map<string, TypeMapEntry>,
-  callAssignments?: CallAssignment[],
-  fnRefBindings?: FnRefBinding[],
-): void {
-  function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
+function runContextCollectorWalk(rootNode: TreeSitterNode, out: ContextCollectorOutputs): void {
+  const funcStack: string[] = [];
+  const classStack: string[] = [];
+
+  const walk = (
+    node: TreeSitterNode,
+    depth: number,
+    typeMapClass: string | null,
+    objectRestClass: string | null,
+  ): void => {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
-    if (t === 'class_declaration' || t === 'abstract_class_declaration') {
+
+    const isClassDecl = t === 'class_declaration' || t === 'abstract_class_declaration';
+    const isClassExpr = t === 'class';
+    const isFnDecl = t === 'function_declaration' || t === 'generator_function_declaration';
+
+    // Class name read once, shared by every concern that needs it below.
+    let className: string | null = null;
+    let classNameIsIdentifier = false;
+    if (isClassDecl || isClassExpr) {
       const nameNode = node.childForFieldName('name');
-      const className = nameNode?.text ?? null;
-      for (let i = 0; i < node.childCount; i++) {
-        walk(node.child(i)!, depth + 1, className);
-      }
-      return;
+      className = nameNode?.text ?? null;
+      classNameIsIdentifier = nameNode?.type === 'identifier';
     }
-    // Class expressions (e.g. `const Foo = class Bar { ... }`): the expression-internal
-    // name (`Bar`) is never visible to the resolver, which derives callerClass from the
-    // binding name (`Foo`). Walking with null preserves the pre-fix `this.prop` fallback
-    // so the second lookup in resolveByMethodOrGlobal still finds the entry.
-    if (t === 'class') {
-      for (let i = 0; i < node.childCount; i++) {
-        walk(node.child(i)!, depth + 1, null);
+
+    // ── spread/for-of enclosing-context stacks (push on enter, pop after children) ──
+    let pushedFunc = false;
+    let pushedClass = false;
+    if (isClassDecl || isClassExpr) {
+      // The stack push keeps the original walk's `identifier`-only check (TS
+      // class names parse as type_identifier and were never pushed), while
+      // typeMapClass/objectRestClass below use the bare text like their
+      // original walks did.
+      if (className && classNameIsIdentifier) {
+        classStack.push(className);
+        pushedClass = true;
       }
-      return;
-    }
-    if (t === 'variable_declarator') {
-      handleVarDeclaratorTypeMap(node, typeMap, returnTypeMap, callAssignments, fnRefBindings);
-    } else if (t === 'required_parameter' || t === 'optional_parameter') {
-      handleParamTypeMap(node, typeMap);
+    } else if (isFnDecl) {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode?.type === 'identifier') {
+        funcStack.push(nameNode.text);
+        pushedFunc = true;
+      }
+    } else if (t === 'method_definition') {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode) {
+        // Qualify with the enclosing class name so the PTS key matches
+        // callerName from findCaller (which uses def.name = 'ClassName.method').
+        const enclosingClass = classStack.length > 0 ? classStack[classStack.length - 1] : null;
+        const qualifiedName = enclosingClass ? `${enclosingClass}.${nameNode.text}` : nameNode.text;
+        funcStack.push(qualifiedName);
+        pushedFunc = true;
+      }
+    } else if (t === 'variable_declarator') {
+      // `const process = (arr) => { ... }` — arrow/expression functions assigned
+      // to a variable have no `name` field on the function node itself.
+      const nameNode = node.childForFieldName('name');
+      const valueNode = node.childForFieldName('value');
+      if (
+        nameNode?.type === 'identifier' &&
+        (valueNode?.type === 'arrow_function' || valueNode?.type === 'function_expression')
+      ) {
+        funcStack.push(nameNode.text);
+        pushedFunc = true;
+      }
     } else if (t === 'assignment_expression') {
-      handlePropWriteTypeMap(node, typeMap, currentClass);
+      // `obj.method = function() { ... }` — func-prop assignment.
+      // Mirror handleFuncPropAssignment's logic so for-of loops inside the
+      // body get the correct enclosingFunc (e.g. 'obj.method') instead of
+      // '<module>' or the wrong outer function name.
+      const lhs = node.childForFieldName('left');
+      const rhs = node.childForFieldName('right');
+      if (
+        lhs?.type === 'member_expression' &&
+        (rhs?.type === 'function_expression' || rhs?.type === 'arrow_function')
+      ) {
+        const obj = lhs.childForFieldName('object');
+        const prop = lhs.childForFieldName('property');
+        if (
+          obj?.type === 'identifier' &&
+          (prop?.type === 'property_identifier' || prop?.type === 'identifier') &&
+          !BUILTIN_GLOBALS.has(obj.text) &&
+          prop.text !== 'prototype'
+        ) {
+          funcStack.push(`${obj.text}.${prop.text}`);
+          pushedFunc = true;
+        }
+      }
+    }
+
+    // ── per-node collectors (class nodes match none of these types) ──
+    if (t === 'variable_declarator') {
+      handleVarDeclaratorTypeMap(
+        node,
+        out.typeMap,
+        out.returnTypeMap,
+        out.callAssignments,
+        out.fnRefBindings,
+      );
+      collectCollectionWrapBinding(node, out.fnRefBindings);
+    } else if (t === 'required_parameter' || t === 'optional_parameter') {
+      handleParamTypeMap(node, out.typeMap);
+    } else if (t === 'assignment_expression') {
+      handlePropWriteTypeMap(node, out.typeMap, typeMapClass);
     } else if (t === 'call_expression') {
-      handleDefinePropertyTypeMap(node, typeMap);
+      handleDefinePropertyTypeMap(node, out.typeMap);
+      collectSpreadAndArrayFromBindings(node, out.spreadArgBindings, out.arrayCallbackBindings);
+    } else if (t === 'for_in_statement') {
+      const enclosingFunc = funcStack.length > 0 ? funcStack[funcStack.length - 1]! : '<module>';
+      collectForOfBinding(node, enclosingFunc, out.forOfBindings);
     }
+    collectObjectRestParams(node, t, objectRestClass, out.objectRestParamBindings);
+
+    // ── child context per concern ──
+    const childTypeMapClass = isClassDecl ? className : isClassExpr ? null : typeMapClass;
+    let childObjectRestClass: string | null = null;
+    if (t === 'class_declaration' || t === 'class') {
+      childObjectRestClass = className;
+    } else if (t === 'class_body') {
+      childObjectRestClass = objectRestClass;
+    }
+
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1, currentClass);
+      walk(node.child(i)!, depth + 1, childTypeMapClass, childObjectRestClass);
     }
-  }
-  walk(rootNode, 0, null);
+
+    if (pushedFunc) funcStack.pop();
+    if (pushedClass) classStack.pop();
+  };
+
+  walk(rootNode, 0, null, null);
 }
 
 /** Extract type info from a variable_declarator: type annotation, constructor, or factory. */
@@ -2192,56 +2271,47 @@ function seedProtoProperties(
  * Scope: intra-module only (the solver only materialises constraints for
  * locally-defined callees, so cross-module calls produce no spurious flow).
  */
-function extractParamBindingsWalk(rootNode: TreeSitterNode, paramBindings: ParamBinding[]): void {
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (node.type === 'call_expression') {
-      const fn = node.childForFieldName('function');
-      const args = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
-      if (fn?.type === 'identifier' && !BUILTIN_GLOBALS.has(fn.text) && args) {
-        let argIdx = 0;
-        for (let i = 0; i < args.childCount; i++) {
-          const child = args.child(i);
-          if (!child) continue;
-          const ct = child.type;
-          if (ct === ',' || ct === '(' || ct === ')') continue;
-          if (ct === 'identifier' && !BUILTIN_GLOBALS.has(child.text)) {
-            paramBindings.push({ callee: fn.text, argIndex: argIdx, argName: child.text });
-          } else if (ct === 'spread_element') {
-            // f(...[a, b]) — inline array literal: expand each element as a direct param binding.
-            const inner =
-              child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
-            if (inner?.type === 'array') {
-              let elemCount = 0;
-              for (let j = 0; j < inner.childCount; j++) {
-                const elem = inner.child(j);
-                if (!elem) continue;
-                if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
-                if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
-                  paramBindings.push({
-                    callee: fn.text,
-                    argIndex: argIdx + elemCount,
-                    argName: elem.text,
-                  });
-                }
-                elemCount++;
-              }
-              // Advance by the exact number of slots this spread occupies and skip
-              // the unconditional argIdx++ below so that zero-element spreads (...[])
-              // do not shift subsequent argument indices.
-              argIdx += elemCount;
-              continue;
+function collectParamBindings(node: TreeSitterNode, paramBindings: ParamBinding[]): void {
+  const fn = node.childForFieldName('function');
+  const args = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
+  if (fn?.type === 'identifier' && !BUILTIN_GLOBALS.has(fn.text) && args) {
+    let argIdx = 0;
+    for (let i = 0; i < args.childCount; i++) {
+      const child = args.child(i);
+      if (!child) continue;
+      const ct = child.type;
+      if (ct === ',' || ct === '(' || ct === ')') continue;
+      if (ct === 'identifier' && !BUILTIN_GLOBALS.has(child.text)) {
+        paramBindings.push({ callee: fn.text, argIndex: argIdx, argName: child.text });
+      } else if (ct === 'spread_element') {
+        // f(...[a, b]) — inline array literal: expand each element as a direct param binding.
+        const inner =
+          child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
+        if (inner?.type === 'array') {
+          let elemCount = 0;
+          for (let j = 0; j < inner.childCount; j++) {
+            const elem = inner.child(j);
+            if (!elem) continue;
+            if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
+            if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
+              paramBindings.push({
+                callee: fn.text,
+                argIndex: argIdx + elemCount,
+                argName: elem.text,
+              });
             }
+            elemCount++;
           }
-          argIdx++;
+          // Advance by the exact number of slots this spread occupies and skip
+          // the unconditional argIdx++ below so that zero-element spreads (...[])
+          // do not shift subsequent argument indices.
+          argIdx += elemCount;
+          continue;
         }
       }
-    }
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
+      argIdx++;
     }
   }
-  walk(rootNode, 0);
 }
 
 /** Collection constructors whose argument is treated as an element source. */
@@ -2252,256 +2322,156 @@ const COLLECTION_CTOR_SET = new Set(['Set', 'Map']);
  * Emits an ArrayElemBinding for each identifier element in an array literal assigned
  * to a variable.
  */
-function extractArrayElemBindingsWalk(
-  rootNode: TreeSitterNode,
+function collectArrayElemBindings(
+  node: TreeSitterNode,
   arrayElemBindings: ArrayElemBinding[],
 ): void {
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (node.type === 'variable_declarator') {
-      const nameN = node.childForFieldName('name');
-      const valueN = node.childForFieldName('value');
-      if (nameN?.type === 'identifier' && valueN?.type === 'array') {
-        let idx = 0;
-        for (let i = 0; i < valueN.childCount; i++) {
-          const elem = valueN.child(i);
-          if (!elem) continue;
-          if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
-          if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
-            arrayElemBindings.push({ arrayName: nameN.text, index: idx, elemName: elem.text });
-          }
-          idx++;
-        }
+  const nameN = node.childForFieldName('name');
+  const valueN = node.childForFieldName('value');
+  if (nameN?.type === 'identifier' && valueN?.type === 'array') {
+    let idx = 0;
+    for (let i = 0; i < valueN.childCount; i++) {
+      const elem = valueN.child(i);
+      if (!elem) continue;
+      if (elem.type === ',' || elem.type === '[' || elem.type === ']') continue;
+      if (elem.type === 'identifier' && !BUILTIN_GLOBALS.has(elem.text)) {
+        arrayElemBindings.push({ arrayName: nameN.text, index: idx, elemName: elem.text });
       }
-    }
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
+      idx++;
     }
   }
-  walk(rootNode, 0);
 }
 
 /**
- * Phase 8.3e: Extract spread-argument, for-of, Array.from, and collection-wrap bindings.
+ * Phase 8.3e collectors (spread-argument, Array.from, collection-wrap, for-of
+ * bindings), invoked from runContextCollectorWalk:
  *
  * - Spread: `f(...arr)` → SpreadArgBinding
  * - Array.from: `Array.from(src, cb)` → ArrayCallbackBinding
  * - Collection wrap: `new Set(arr)` / `new Map(arr)` → FnRefBinding lhs=s[*] rhs=arr[*]
  * - For-of: `for (const x of arr)` → ForOfBinding
  */
-function extractSpreadForOfWalk(
-  rootNode: TreeSitterNode,
+function collectSpreadAndArrayFromBindings(
+  node: TreeSitterNode,
   spreadArgBindings: SpreadArgBinding[],
-  forOfBindings: ForOfBinding[],
   arrayCallbackBindings: ArrayCallbackBinding[],
-  fnRefBindings: FnRefBinding[],
 ): void {
-  const funcStack: string[] = [];
-  // Tracks the enclosing class name so that method_definition nodes push a
-  // qualified name (e.g. 'Foo.bar') matching what findCaller returns from the
-  // definitions array (where class methods are stored as 'Foo.bar').
-  const classStack: string[] = [];
+  const fn = node.childForFieldName('function');
+  const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
 
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
+  // Spread: f(...arr)
+  if (fn?.type === 'identifier' && !BUILTIN_GLOBALS.has(fn.text) && argsNode) {
+    let argIdx = 0;
+    for (let i = 0; i < argsNode.childCount; i++) {
+      const child = argsNode.child(i);
+      if (!child) continue;
+      if (child.type === ',' || child.type === '(' || child.type === ')') continue;
+      if (child.type === 'spread_element') {
+        const spreadTarget =
+          child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
+        if (spreadTarget?.type === 'identifier' && !BUILTIN_GLOBALS.has(spreadTarget.text)) {
+          spreadArgBindings.push({
+            callee: fn.text,
+            arrayName: spreadTarget.text,
+            startIndex: argIdx,
+          });
+        }
+      }
+      argIdx++;
+    }
+  }
 
-    let pushedFunc = false;
-    let pushedClass = false;
-    if (
-      node.type === 'class_declaration' ||
-      node.type === 'abstract_class_declaration' ||
-      node.type === 'class'
-    ) {
-      const nameNode = node.childForFieldName('name');
-      if (nameNode?.type === 'identifier') {
-        classStack.push(nameNode.text);
-        pushedClass = true;
+  // Array.from(source, cb)
+  if (fn?.type === 'member_expression' && argsNode) {
+    const obj = fn.childForFieldName('object');
+    const prop = fn.childForFieldName('property');
+    if (obj?.text === 'Array' && prop?.text === 'from') {
+      const fnArgs: TreeSitterNode[] = [];
+      for (let i = 0; i < argsNode.childCount; i++) {
+        const child = argsNode.child(i);
+        if (!child) continue;
+        if (child.type === ',' || child.type === '(' || child.type === ')') continue;
+        fnArgs.push(child);
       }
-    } else if (
-      node.type === 'function_declaration' ||
-      node.type === 'generator_function_declaration'
-    ) {
-      const nameNode = node.childForFieldName('name');
-      if (nameNode?.type === 'identifier') {
-        funcStack.push(nameNode.text);
-        pushedFunc = true;
-      }
-    } else if (node.type === 'method_definition') {
-      const nameNode = node.childForFieldName('name');
-      if (nameNode) {
-        // Qualify with the enclosing class name so the PTS key matches
-        // callerName from findCaller (which uses def.name = 'ClassName.method').
-        const enclosingClass = classStack.length > 0 ? classStack[classStack.length - 1] : null;
-        const qualifiedName = enclosingClass ? `${enclosingClass}.${nameNode.text}` : nameNode.text;
-        funcStack.push(qualifiedName);
-        pushedFunc = true;
-      }
-    } else if (node.type === 'variable_declarator') {
-      // `const process = (arr) => { ... }` — arrow/expression functions assigned
-      // to a variable have no `name` field on the function node itself.
-      const nameNode = node.childForFieldName('name');
-      const valueNode = node.childForFieldName('value');
-      if (
-        nameNode?.type === 'identifier' &&
-        (valueNode?.type === 'arrow_function' || valueNode?.type === 'function_expression')
-      ) {
-        funcStack.push(nameNode.text);
-        pushedFunc = true;
-      }
-    } else if (node.type === 'assignment_expression') {
-      // `obj.method = function() { ... }` — func-prop assignment.
-      // Mirror handleFuncPropAssignment's logic so for-of loops inside the
-      // body get the correct enclosingFunc (e.g. 'obj.method') instead of
-      // '<module>' or the wrong outer function name.
-      const lhs = node.childForFieldName('left');
-      const rhs = node.childForFieldName('right');
-      if (
-        lhs?.type === 'member_expression' &&
-        (rhs?.type === 'function_expression' || rhs?.type === 'arrow_function')
-      ) {
-        const obj = lhs.childForFieldName('object');
-        const prop = lhs.childForFieldName('property');
+      if (fnArgs.length >= 2) {
+        const srcArg = fnArgs[0]!;
+        const cbArg = fnArgs[1]!;
         if (
-          obj?.type === 'identifier' &&
-          (prop?.type === 'property_identifier' || prop?.type === 'identifier') &&
-          !BUILTIN_GLOBALS.has(obj.text) &&
-          prop.text !== 'prototype'
+          srcArg.type === 'identifier' &&
+          !BUILTIN_GLOBALS.has(srcArg.text) &&
+          cbArg.type === 'identifier' &&
+          !BUILTIN_GLOBALS.has(cbArg.text)
         ) {
-          funcStack.push(`${obj.text}.${prop.text}`);
-          pushedFunc = true;
+          arrayCallbackBindings.push({ sourceName: srcArg.text, calleeName: cbArg.text });
         }
       }
     }
+  }
+}
 
-    if (node.type === 'call_expression') {
-      const fn = node.childForFieldName('function');
-      const argsNode = node.childForFieldName('arguments') ?? findChild(node, 'arguments');
-
-      // Spread: f(...arr)
-      if (fn?.type === 'identifier' && !BUILTIN_GLOBALS.has(fn.text) && argsNode) {
-        let argIdx = 0;
-        for (let i = 0; i < argsNode.childCount; i++) {
-          const child = argsNode.child(i);
-          if (!child) continue;
-          if (child.type === ',' || child.type === '(' || child.type === ')') continue;
-          if (child.type === 'spread_element') {
-            const spreadTarget =
-              child.childForFieldName('argument') ?? (child.childCount > 1 ? child.child(1) : null);
-            if (spreadTarget?.type === 'identifier' && !BUILTIN_GLOBALS.has(spreadTarget.text)) {
-              spreadArgBindings.push({
-                callee: fn.text,
-                arrayName: spreadTarget.text,
-                startIndex: argIdx,
-              });
-            }
-          }
-          argIdx++;
-        }
-      }
-
-      // Array.from(source, cb)
-      if (fn?.type === 'member_expression' && argsNode) {
-        const obj = fn.childForFieldName('object');
-        const prop = fn.childForFieldName('property');
-        if (obj?.text === 'Array' && prop?.text === 'from') {
-          const fnArgs: TreeSitterNode[] = [];
-          for (let i = 0; i < argsNode.childCount; i++) {
-            const child = argsNode.child(i);
-            if (!child) continue;
-            if (child.type === ',' || child.type === '(' || child.type === ')') continue;
-            fnArgs.push(child);
-          }
-          if (fnArgs.length >= 2) {
-            const srcArg = fnArgs[0]!;
-            const cbArg = fnArgs[1]!;
-            if (
-              srcArg.type === 'identifier' &&
-              !BUILTIN_GLOBALS.has(srcArg.text) &&
-              cbArg.type === 'identifier' &&
-              !BUILTIN_GLOBALS.has(cbArg.text)
-            ) {
-              arrayCallbackBindings.push({ sourceName: srcArg.text, calleeName: cbArg.text });
-            }
-          }
-        }
-      }
-    }
-
-    // Collection wrap: const s = new Set(arr) or new Map(arr)
-    if (node.type === 'variable_declarator') {
-      const nameN = node.childForFieldName('name');
-      const valueN = node.childForFieldName('value');
-      if (nameN?.type === 'identifier' && valueN?.type === 'new_expression') {
-        const ctor = valueN.childForFieldName('constructor');
-        const args = valueN.childForFieldName('arguments');
-        if (ctor && COLLECTION_CTOR_SET.has(ctor.text) && args) {
-          for (let i = 0; i < args.childCount; i++) {
-            const arg = args.child(i);
-            if (!arg || arg.type === '(' || arg.type === ')') continue;
-            if (arg.type === 'identifier' && !BUILTIN_GLOBALS.has(arg.text)) {
-              fnRefBindings.push({ lhs: `${nameN.text}[*]`, rhs: `${arg.text}[*]` });
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // For-of: for (const x of arr)
-    if (node.type === 'for_in_statement') {
-      let isForOf = false;
-      for (let i = 0; i < node.childCount; i++) {
-        if (node.child(i)?.text === 'of') {
-          isForOf = true;
+/** Collection wrap: `const s = new Set(arr)` or `new Map(arr)` (variable_declarator). */
+function collectCollectionWrapBinding(node: TreeSitterNode, fnRefBindings: FnRefBinding[]): void {
+  const nameN = node.childForFieldName('name');
+  const valueN = node.childForFieldName('value');
+  if (nameN?.type === 'identifier' && valueN?.type === 'new_expression') {
+    const ctor = valueN.childForFieldName('constructor');
+    const args = valueN.childForFieldName('arguments');
+    if (ctor && COLLECTION_CTOR_SET.has(ctor.text) && args) {
+      for (let i = 0; i < args.childCount; i++) {
+        const arg = args.child(i);
+        if (!arg || arg.type === '(' || arg.type === ')') continue;
+        if (arg.type === 'identifier' && !BUILTIN_GLOBALS.has(arg.text)) {
+          fnRefBindings.push({ lhs: `${nameN.text}[*]`, rhs: `${arg.text}[*]` });
           break;
         }
       }
-      if (isForOf) {
-        const right = node.childForFieldName('right');
-        if (right?.type === 'identifier' && !BUILTIN_GLOBALS.has(right.text)) {
-          const left = node.childForFieldName('left');
-          let varName: string | null = null;
-          if (left?.type === 'identifier') {
-            varName = left.text;
-          } else if (left) {
-            for (let i = 0; i < left.childCount; i++) {
-              const lc = left.child(i);
-              if (lc?.type === 'variable_declarator') {
-                const nc = lc.childForFieldName('name');
-                if (nc?.type === 'identifier') {
-                  varName = nc.text;
-                  break;
-                }
-              } else if (
-                lc?.type === 'identifier' &&
-                lc.text !== 'const' &&
-                lc.text !== 'let' &&
-                lc.text !== 'var'
-              ) {
-                varName = lc.text;
-                break;
-              }
-            }
-          }
-          // Use '<module>' as sentinel for top-level for-of outside any function.
-          const enclosingFunc =
-            funcStack.length > 0 ? funcStack[funcStack.length - 1]! : '<module>';
-          if (varName && !BUILTIN_GLOBALS.has(varName)) {
-            forOfBindings.push({ varName, sourceName: right.text, enclosingFunc });
-          }
+    }
+  }
+}
+
+/** For-of: `for (const x of arr)` (for_in_statement with an `of` keyword). */
+function collectForOfBinding(
+  node: TreeSitterNode,
+  enclosingFunc: string,
+  forOfBindings: ForOfBinding[],
+): void {
+  let isForOf = false;
+  for (let i = 0; i < node.childCount; i++) {
+    if (node.child(i)?.text === 'of') {
+      isForOf = true;
+      break;
+    }
+  }
+  if (!isForOf) return;
+  const right = node.childForFieldName('right');
+  if (right?.type !== 'identifier' || BUILTIN_GLOBALS.has(right.text)) return;
+  const left = node.childForFieldName('left');
+  let varName: string | null = null;
+  if (left?.type === 'identifier') {
+    varName = left.text;
+  } else if (left) {
+    for (let i = 0; i < left.childCount; i++) {
+      const lc = left.child(i);
+      if (lc?.type === 'variable_declarator') {
+        const nc = lc.childForFieldName('name');
+        if (nc?.type === 'identifier') {
+          varName = nc.text;
+          break;
         }
+      } else if (
+        lc?.type === 'identifier' &&
+        lc.text !== 'const' &&
+        lc.text !== 'let' &&
+        lc.text !== 'var'
+      ) {
+        varName = lc.text;
+        break;
       }
     }
-
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
-    }
-
-    if (pushedFunc) funcStack.pop();
-    if (pushedClass) classStack.pop();
   }
-
-  walk(rootNode, 0);
+  if (varName && !BUILTIN_GLOBALS.has(varName)) {
+    forOfBindings.push({ varName, sourceName: right.text, enclosingFunc });
+  }
 }
 
 /**
@@ -2513,118 +2483,77 @@ function extractSpreadForOfWalk(
  * The edge builder uses these to seed typeMap[rest] = { type: argName } when f(obj)
  * is called with an identifier, enabling `rest.method()` calls to resolve.
  */
-function extractObjectRestParamBindingsWalk(
-  rootNode: TreeSitterNode,
+function collectObjectRestParams(
+  node: TreeSitterNode,
+  t: string,
+  currentClass: string | null,
   bindings: ObjectRestParamBinding[],
 ): void {
-  function walk(node: TreeSitterNode, depth: number, currentClass: string | null): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    const t = node.type;
-    let fnName: string | null = null;
-    let paramsNode: TreeSitterNode | null = null;
+  let fnName: string | null = null;
+  let paramsNode: TreeSitterNode | null = null;
 
-    if (t === 'function_declaration' || t === 'generator_function_declaration') {
-      const nameN = node.childForFieldName('name');
-      if (nameN?.type === 'identifier') fnName = nameN.text;
-      paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
-    } else if (t === 'variable_declarator') {
-      const nameN = node.childForFieldName('name');
-      const valueN = node.childForFieldName('value');
-      if (nameN?.type === 'identifier' && valueN) {
-        const vt = valueN.type;
-        if (
-          vt === 'arrow_function' ||
-          vt === 'function_expression' ||
-          vt === 'generator_function'
-        ) {
-          fnName = nameN.text;
-          paramsNode =
-            valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
-        }
-      }
-    } else if (t === 'method_definition') {
-      // class method: `class Foo { bar({ a, ...rest }) {} }`
-      // object-literal shorthand method: `{ bar({ a, ...rest }) {} }`
-      const nameN = node.childForFieldName('name');
-      if (nameN) {
-        fnName = currentClass ? `${currentClass}.${nameN.text}` : nameN.text;
-        paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
-      }
-    } else if (t === 'pair') {
-      // object-literal method: `{ bar: function({ a, ...rest }) {} }`
-      // Skip computed property keys (e.g. `{ [Symbol.iterator]: function({ ...rest }) {} }`)
-      // because `callee: '[Symbol.iterator]'` can never match a paramBinding callee.
-      const keyN = node.childForFieldName('key');
-      const valueN = node.childForFieldName('value');
-      if (keyN && valueN && keyN.type !== 'computed_property_name') {
-        const vt = valueN.type;
-        if (
-          vt === 'arrow_function' ||
-          vt === 'function_expression' ||
-          vt === 'generator_function'
-        ) {
-          fnName = keyN.type === 'string' ? keyN.text.slice(1, -1) : keyN.text;
-          paramsNode =
-            valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
-        }
+  if (t === 'function_declaration' || t === 'generator_function_declaration') {
+    const nameN = node.childForFieldName('name');
+    if (nameN?.type === 'identifier') fnName = nameN.text;
+    paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
+  } else if (t === 'variable_declarator') {
+    const nameN = node.childForFieldName('name');
+    const valueN = node.childForFieldName('value');
+    if (nameN?.type === 'identifier' && valueN) {
+      const vt = valueN.type;
+      if (vt === 'arrow_function' || vt === 'function_expression' || vt === 'generator_function') {
+        fnName = nameN.text;
+        paramsNode =
+          valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
       }
     }
+  } else if (t === 'method_definition') {
+    // class method: `class Foo { bar({ a, ...rest }) {} }`
+    // object-literal shorthand method: `{ bar({ a, ...rest }) {} }`
+    const nameN = node.childForFieldName('name');
+    if (nameN) {
+      fnName = currentClass ? `${currentClass}.${nameN.text}` : nameN.text;
+      paramsNode = node.childForFieldName('parameters') ?? findChild(node, 'formal_parameters');
+    }
+  } else if (t === 'pair') {
+    // object-literal method: `{ bar: function({ a, ...rest }) {} }`
+    // Skip computed property keys (e.g. `{ [Symbol.iterator]: function({ ...rest }) {} }`)
+    // because `callee: '[Symbol.iterator]'` can never match a paramBinding callee.
+    const keyN = node.childForFieldName('key');
+    const valueN = node.childForFieldName('value');
+    if (keyN && valueN && keyN.type !== 'computed_property_name') {
+      const vt = valueN.type;
+      if (vt === 'arrow_function' || vt === 'function_expression' || vt === 'generator_function') {
+        fnName = keyN.type === 'string' ? keyN.text.slice(1, -1) : keyN.text;
+        paramsNode =
+          valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
+      }
+    }
+  }
 
-    if (fnName && paramsNode) {
-      let paramIdx = 0;
-      for (let i = 0; i < paramsNode.childCount; i++) {
-        const child = paramsNode.child(i);
-        if (!child) continue;
-        const ct = child.type;
-        if (ct === ',' || ct === '(' || ct === ')') continue;
-        if (ct === 'object_pattern') {
-          for (let j = 0; j < child.childCount; j++) {
-            const inner = child.child(j);
-            if (!inner) continue;
-            if (inner.type === 'rest_pattern' || inner.type === 'rest_element') {
-              // rest_pattern node: `...identifier` — the identifier is at child index 1
-              const restId = inner.child(1) ?? inner.childForFieldName('name');
-              if (restId?.type === 'identifier') {
-                bindings.push({ callee: fnName, restName: restId.text, argIndex: paramIdx });
-              }
+  if (fnName && paramsNode) {
+    let paramIdx = 0;
+    for (let i = 0; i < paramsNode.childCount; i++) {
+      const child = paramsNode.child(i);
+      if (!child) continue;
+      const ct = child.type;
+      if (ct === ',' || ct === '(' || ct === ')') continue;
+      if (ct === 'object_pattern') {
+        for (let j = 0; j < child.childCount; j++) {
+          const inner = child.child(j);
+          if (!inner) continue;
+          if (inner.type === 'rest_pattern' || inner.type === 'rest_element') {
+            // rest_pattern node: `...identifier` — the identifier is at child index 1
+            const restId = inner.child(1) ?? inner.childForFieldName('name');
+            if (restId?.type === 'identifier') {
+              bindings.push({ callee: fnName, restName: restId.text, argIndex: paramIdx });
             }
           }
         }
-        paramIdx++;
       }
-    }
-
-    // Recurse into function/method bodies with null currentClass so nested
-    // declarations don't inherit the enclosing class context (mirrors
-    // extractReturnTypeMapWalk's pattern).
-    if (
-      t === 'function_declaration' ||
-      t === 'generator_function_declaration' ||
-      t === 'method_definition'
-    ) {
-      for (let i = 0; i < node.childCount; i++) {
-        walk(node.child(i)!, depth + 1, null);
-      }
-      return;
-    }
-
-    // class_declaration / class: propagate class name so constructor/method
-    // assignments inside the class body are keyed as "ClassName.prop".
-    // class_body: thread currentClass through so method_definition children
-    // (handled above) can prefix their fnName correctly before their own reset.
-    // All other node types fall through with null, which is already the default.
-    let childClass: string | null = null;
-    if (t === 'class_declaration' || t === 'class') {
-      childClass = node.childForFieldName('name')?.text ?? null;
-    } else if (t === 'class_body') {
-      childClass = currentClass;
-    }
-
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1, childClass);
+      paramIdx++;
     }
   }
-  walk(rootNode, 0, null);
 }
 
 /**
@@ -2635,41 +2564,29 @@ function extractObjectRestParamBindingsWalk(
  *
  * Only tracks shorthand and `key: identifier` pairs; skips function literals.
  */
-function extractObjectPropBindingsWalk(
-  rootNode: TreeSitterNode,
-  bindings: ObjectPropBinding[],
-): void {
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (node.type === 'variable_declarator') {
-      const nameN = node.childForFieldName('name');
-      const valueN = node.childForFieldName('value');
-      if (nameN?.type === 'identifier' && valueN?.type === 'object') {
-        const objectName = nameN.text;
-        for (let i = 0; i < valueN.childCount; i++) {
-          const child = valueN.child(i);
-          if (!child) continue;
-          if (child.type === 'shorthand_property_identifier') {
-            bindings.push({ objectName, propName: child.text, valueName: child.text });
-          } else if (child.type === 'pair') {
-            const keyN = child.childForFieldName('key');
-            const valN = child.childForFieldName('value');
-            if (
-              keyN?.type === 'property_identifier' &&
-              valN?.type === 'identifier' &&
-              !BUILTIN_GLOBALS.has(valN.text)
-            ) {
-              bindings.push({ objectName, propName: keyN.text, valueName: valN.text });
-            }
-          }
+function collectObjectPropBindings(node: TreeSitterNode, bindings: ObjectPropBinding[]): void {
+  const nameN = node.childForFieldName('name');
+  const valueN = node.childForFieldName('value');
+  if (nameN?.type === 'identifier' && valueN?.type === 'object') {
+    const objectName = nameN.text;
+    for (let i = 0; i < valueN.childCount; i++) {
+      const child = valueN.child(i);
+      if (!child) continue;
+      if (child.type === 'shorthand_property_identifier') {
+        bindings.push({ objectName, propName: child.text, valueName: child.text });
+      } else if (child.type === 'pair') {
+        const keyN = child.childForFieldName('key');
+        const valN = child.childForFieldName('value');
+        if (
+          keyN?.type === 'property_identifier' &&
+          valN?.type === 'identifier' &&
+          !BUILTIN_GLOBALS.has(valN.text)
+        ) {
+          bindings.push({ objectName, propName: keyN.text, valueName: valN.text });
         }
       }
     }
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
-    }
   }
-  walk(rootNode, 0);
 }
 
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
@@ -2953,59 +2870,148 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 }
 
 /**
- * Single-pass walk to collect both:
+ * Collect, from a call_expression node:
  * - `this(args)` call expressions → `{name: 'this', ...}` entries in `calls`
  *   (where `this` is used as a function, not as a receiver)
  * - `fn.call(namedCtx, ...)` / `fn.apply(namedCtx, ...)` bindings →
  *   `{ callee: 'fn', thisArg: 'namedCtx' }` entries in `thisCallBindings`
- *
- * Combining both into one traversal halves the AST walk cost compared to
- * running two separate recursive passes.
  */
-function extractThisCallAndBindingsWalk(
+function collectThisCallAndBindings(
   node: TreeSitterNode,
   calls: Call[],
   thisCallBindings: ThisCallBinding[],
 ): void {
-  if (node.type === 'call_expression') {
-    const fn = node.childForFieldName('function');
-    if (fn?.type === 'this') {
-      calls.push({ name: 'this', line: nodeStartLine(node) });
-    } else if (fn?.type === 'member_expression') {
-      const obj = fn.childForFieldName('object');
-      const prop = fn.childForFieldName('property');
-      if (
-        obj?.type === 'identifier' &&
-        prop &&
-        (prop.text === 'call' || prop.text === 'apply') &&
-        !BUILTIN_GLOBALS.has(obj.text)
-      ) {
-        const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
-        if (args) {
-          for (let i = 0; i < args.childCount; i++) {
-            const child = args.child(i);
-            if (!child) continue;
-            const t = child.type;
-            if (t === '(' || t === ')' || t === ',') continue;
-            // First real argument: only bind if it's a plain identifier
-            if (
-              t === 'identifier' &&
-              !BUILTIN_GLOBALS.has(child.text) &&
-              child.text !== 'undefined' &&
-              child.text !== 'null'
-            ) {
-              thisCallBindings.push({ callee: obj.text, thisArg: child.text });
-            }
-            break;
+  const fn = node.childForFieldName('function');
+  if (fn?.type === 'this') {
+    calls.push({ name: 'this', line: nodeStartLine(node) });
+  } else if (fn?.type === 'member_expression') {
+    const obj = fn.childForFieldName('object');
+    const prop = fn.childForFieldName('property');
+    if (
+      obj?.type === 'identifier' &&
+      prop &&
+      (prop.text === 'call' || prop.text === 'apply') &&
+      !BUILTIN_GLOBALS.has(obj.text)
+    ) {
+      const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+      if (args) {
+        for (let i = 0; i < args.childCount; i++) {
+          const child = args.child(i);
+          if (!child) continue;
+          const t = child.type;
+          if (t === '(' || t === ')' || t === ',') continue;
+          // First real argument: only bind if it's a plain identifier
+          if (
+            t === 'identifier' &&
+            !BUILTIN_GLOBALS.has(child.text) &&
+            child.text !== 'undefined' &&
+            child.text !== 'null'
+          ) {
+            thisCallBindings.push({ callee: obj.text, thisArg: child.text });
           }
+          break;
         }
       }
     }
   }
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (child) extractThisCallAndBindingsWalk(child, calls, thisCallBindings);
-  }
+}
+
+/**
+ * Outputs for {@link runCollectorWalk}. Required targets are collected on both
+ * extraction paths; optional targets are path-specific:
+ * - `imports` / `calls`+`thisCallBindings` / `classMemberDefs` — query path only
+ *   (the walk path's walkJavaScriptNode covers those node types itself).
+ * - `funcPropDefs` — walk path only (the query path captures `fn.method = …`
+ *   assignments via the `assign_left`/`assign_right` query pattern).
+ */
+interface CollectorWalkTargets {
+  definitions: Definition[];
+  typeMap: Map<string, TypeMapEntry>;
+  paramBindings: ParamBinding[];
+  arrayElemBindings: ArrayElemBinding[];
+  objectPropBindings: ObjectPropBinding[];
+  newExpressions: string[];
+  definePropertyReceivers: Map<string, string>;
+  imports?: Import[];
+  calls?: Call[];
+  thisCallBindings?: ThisCallBinding[];
+  classMemberDefs?: Definition[];
+  funcPropDefs?: Definition[];
+}
+
+/**
+ * Single-pass collector walk: one DFS that dispatches each node to every
+ * collector interested in its type.
+ *
+ * This replaces what had grown to ten independent full-tree traversals (one
+ * per collector). On WASM trees every node access (`child(i)`, `.type`,
+ * `childForFieldName`) marshals through the JS↔WASM boundary, so traversal
+ * count — not collector work — dominated extraction cost: the accumulated
+ * per-collector walks made extraction ~2.4× slower between v3.11.2 and
+ * v3.12.0 (7.5 → 17.7 ms/file on codegraph's own corpus).
+ *
+ * Collectors with bespoke traversal semantics stay separate:
+ * - extractConstantsWalk / extractDestructuredBindingsWalk prune function
+ *   scopes and unwrap export statements on the way down;
+ * - extractReturnTypeMapWalk / extractTypeMapWalk / extractSpreadForOfWalk /
+ *   extractObjectRestParamBindingsWalk thread enclosing-class context with
+ *   per-walk reset rules that intentionally differ (see each walk's comments).
+ */
+function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTargets): void {
+  const walk = (node: TreeSitterNode, depth: number, inDynamicImport: boolean): void => {
+    if (depth >= MAX_WALK_DEPTH) return;
+    let childInDynamicImport = inDynamicImport;
+    switch (node.type) {
+      case 'call_expression': {
+        // Matched import() calls suppress *dynamic-import* collection in their
+        // argument subtree (mirrors the old walk's early return) while leaving
+        // the subtree visible to every other collector. The !inDynamicImport
+        // check runs first so nested import() calls are neither collected nor
+        // re-matched.
+        if (targets.imports && !inDynamicImport && collectDynamicImport(node, targets.imports)) {
+          childInDynamicImport = true;
+        }
+        if (targets.calls && targets.thisCallBindings) {
+          collectThisCallAndBindings(node, targets.calls, targets.thisCallBindings);
+        }
+        collectParamBindings(node, targets.paramBindings);
+        collectDefinePropertyReceiver(node, targets.definePropertyReceivers);
+        break;
+      }
+      case 'variable_declarator':
+        collectArrayElemBindings(node, targets.arrayElemBindings);
+        collectObjectPropBindings(node, targets.objectPropBindings);
+        break;
+      case 'expression_statement': {
+        const expr = node.child(0);
+        if (expr?.type === 'assignment_expression') {
+          const lhs = expr.childForFieldName('left');
+          const rhs = expr.childForFieldName('right');
+          if (lhs && rhs) {
+            handlePrototypeAssignment(lhs, rhs, targets.definitions, targets.typeMap);
+            if (targets.funcPropDefs) handleFuncPropAssignment(lhs, rhs, targets.funcPropDefs);
+          }
+        }
+        break;
+      }
+      case 'new_expression': {
+        const name = extractNewExprTypeName(node);
+        if (name) targets.newExpressions.push(name);
+        break;
+      }
+      case 'field_definition':
+      case 'public_field_definition':
+        if (targets.classMemberDefs) handleFieldDef(node, targets.classMemberDefs);
+        break;
+      case 'class_static_block':
+        if (targets.classMemberDefs) handleStaticBlock(node, targets.classMemberDefs);
+        break;
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1, childInDynamicImport);
+    }
+  };
+  walk(rootNode, 0, false);
 }
 
 function findAnonymousCallback(argsNode: TreeSitterNode): TreeSitterNode | null {
@@ -3240,27 +3246,8 @@ function extractDynamicImportNames(callNode: TreeSitterNode): string[] {
  * typeMap entries for identifier aliases (`Foo.bar → { type: 'someId' }`) are
  * consumed by the prototype-alias fallback added to resolveByMethodOrGlobal.
  */
-function extractPrototypeMethodsWalk(
-  rootNode: TreeSitterNode,
-  definitions: Definition[],
-  typeMap: Map<string, TypeMapEntry>,
-): void {
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (node.type === 'expression_statement') {
-      const expr = node.child(0);
-      if (expr?.type === 'assignment_expression') {
-        const lhs = expr.childForFieldName('left');
-        const rhs = expr.childForFieldName('right');
-        if (lhs && rhs) handlePrototypeAssignment(lhs, rhs, definitions, typeMap);
-      }
-    }
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
-    }
-  }
-  walk(rootNode, 0);
-}
+// Prototype-method assignments (`Foo.prototype.bar = fn`) are collected inline
+// in runCollectorWalk's expression_statement case via handlePrototypeAssignment.
 
 /**
  * Handle an assignment_expression that may be a prototype assignment.
@@ -3344,23 +3331,10 @@ function emitPrototypeMethod(
  *
  * Excludes BUILTIN_GLOBALS objects and `.prototype` (handled by extractPrototypeMethodsWalk).
  */
-function extractFuncPropMethodsWalk(rootNode: TreeSitterNode, definitions: Definition[]): void {
-  function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= MAX_WALK_DEPTH) return;
-    if (node.type === 'expression_statement') {
-      const expr = node.child(0);
-      if (expr?.type === 'assignment_expression') {
-        const lhs = expr.childForFieldName('left');
-        const rhs = expr.childForFieldName('right');
-        if (lhs && rhs) handleFuncPropAssignment(lhs, rhs, definitions);
-      }
-    }
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, depth + 1);
-    }
-  }
-  walk(rootNode, 0);
-}
+// Function-as-object-property assignments (`fn.method = function(){}`) are
+// collected inline in runCollectorWalk's expression_statement case (walk path
+// only — the query path captures them via the `assign_left`/`assign_right`
+// query pattern in dispatchQueryMatch).
 
 function handleFuncPropAssignment(
   lhs: TreeSitterNode,
