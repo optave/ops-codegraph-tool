@@ -30,6 +30,7 @@ import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
   type CallNodeLookup,
   findCaller,
+  isModuleScopedLanguage,
   resolveCallTargets,
   resolveReceiverEdge,
 } from '../call-resolver.js';
@@ -1357,9 +1358,14 @@ function buildFileCallEdges(
     // Same-class bare-call fallback: when a no-receiver call can't be resolved
     // globally, try the caller's own class as a qualifier. Handles C# static
     // sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
-    // to `Validators.IsValidEmail`. Safe for JS/TS: only fires when byName()
-    // already returned nothing (so module-level functions are found first).
-    if (targets.length === 0 && !call.receiver && caller.callerName != null) {
+    // to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
+    // module-scoped, not class-scoped.
+    if (
+      targets.length === 0 &&
+      !call.receiver &&
+      caller.callerName != null &&
+      !isModuleScopedLanguage(relPath)
+    ) {
       const lastDot = caller.callerName.lastIndexOf('.');
       if (lastDot > 0) {
         const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
