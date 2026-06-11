@@ -720,6 +720,10 @@ async function runPostNativeThisDispatch(
     NATIVE_SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase()),
   );
   const callsByRel = new Map<string, { name: string; receiver?: string; line: number }[]>();
+  // Track native-supported files that returned null (per-file parse error) so
+  // they can be included in the WASM fallback set below, ensuring no file's
+  // this/super call sites are silently discarded.
+  const nativeNullFiles = new Set<string>();
   let nativeParsed = false;
   if (nativeAbs.length > 0) {
     const native = loadNative();
@@ -729,8 +733,13 @@ async function runPostNativeThisDispatch(
           file: string;
           calls?: { name: string; receiver?: string; line: number }[];
         } | null>;
-        for (const r of results) {
-          if (!r) continue;
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          if (!r) {
+            // Per-file parse failure — fall back to WASM for this file.
+            if (nativeAbs[i]) nativeNullFiles.add(nativeAbs[i]);
+            continue;
+          }
           callsByRel.set(normalizePath(path.relative(rootDir, r.file)), r.calls ?? []);
         }
         nativeParsed = true;
@@ -739,8 +748,14 @@ async function runPostNativeThisDispatch(
       }
     }
   }
+  // WASM handles: (a) non-native extensions (e.g. .mts/.cts), (b) the entire
+  // file list when the native batch threw, and (c) individual files where the
+  // native addon returned null (per-file parse error).
   const wasmAbs = nativeParsed
-    ? absFiles.filter((f) => !NATIVE_SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase()))
+    ? [
+        ...absFiles.filter((f) => !NATIVE_SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase())),
+        ...nativeNullFiles,
+      ]
     : absFiles;
   const wasmResults =
     wasmAbs.length > 0
@@ -1433,19 +1448,27 @@ export async function tryNativeOrchestrator(
   // major part of the v3.12.0 native full-build benchmark regression).
   if (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0) {
     const affectedFiles = [...new Set([...chaAffectedFiles, ...thisDispatchAffectedFiles])];
-    if (affectedFiles.length > 0) {
-      try {
-        const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-          classifyNodeRoles: (
-            db: BetterSqlite3Database,
-            changedFiles?: string[] | null,
-          ) => Record<string, number>;
-        };
-        classifyNodeRoles(ctx.db as unknown as BetterSqlite3Database, affectedFiles);
-        debug(`Post-pass role re-classification complete (${affectedFiles.length} file(s))`);
-      } catch (err) {
-        debug(`Post-pass role re-classification failed: ${toErrorMessage(err)}`);
-      }
+    // When edges were inserted but all their endpoint nodes have null `file`
+    // columns (rare but possible), affectedFiles stays empty even though
+    // fan-in/out changed. Fall back to full-graph re-classification in that
+    // case — scoped classification with an empty set would be a no-op, leaving
+    // roles stale for those nodes.
+    const scopedFiles = affectedFiles.length > 0 ? affectedFiles : null;
+    try {
+      const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+        classifyNodeRoles: (
+          db: BetterSqlite3Database,
+          changedFiles?: string[] | null,
+        ) => Record<string, number>;
+      };
+      classifyNodeRoles(ctx.db as unknown as BetterSqlite3Database, scopedFiles);
+      debug(
+        scopedFiles
+          ? `Post-pass role re-classification complete (${scopedFiles.length} file(s))`
+          : 'Post-pass role re-classification complete (full graph — null-file endpoints)',
+      );
+    } catch (err) {
+      debug(`Post-pass role re-classification failed: ${toErrorMessage(err)}`);
     }
   }
 
