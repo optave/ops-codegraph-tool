@@ -350,6 +350,38 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   exemption above (which was a WASM metric; this is native). Exempt this
  *   release; remove once 3.12.0+ data confirms the steady-state.
  *
+ * - 3.12.0:Full build — root-caused residual feature cost of the Phase 8.x
+ *   resolution work on the native engine. The v3.12.0 publish gate first
+ *   measured 2231 → 3333 (+49%). Local A/B against a v3.11.2 baseline worktree
+ *   (same machine, release-built addons for each side) attributed the delta to
+ *   three post-pass regressions, all fixed: (a) the func-prop WASM re-parse
+ *   post-pass booted the WASM worker pool on every native full build and
+ *   inserted zero nodes on this corpus (~430ms — removed; the Rust extractor
+ *   now emits func-prop method definitions, #1432); (b) an unscoped full-graph
+ *   role re-classification after the CHA/this-dispatch post-passes (~130ms —
+ *   now scoped to files containing the new edges' endpoints); (c) the
+ *   this-dispatch pass booted the in-process WASM runtime to re-parse hierarchy
+ *   files (~40ms — now re-parsed through the already-loaded native engine).
+ *   The remaining delta (local: 1378ms → ~1745ms, +26% including 630 → 672
+ *   corpus growth) is in-phase Rust extraction cost of the Phase 8.x features
+ *   themselves — parse +28%/file (points-to, return-type, prototype and
+ *   func-prop extraction), insert/edges +10–20% — which lands at the 25%
+ *   threshold boundary under CI runner variance. This is measured feature
+ *   cost, not an undiagnosed regression. Tracking: #1433 (per-PR perf canary),
+ *   #1434 (post-pass phase timings). Remove once 3.13+ data establishes the
+ *   new steady-state baseline.
+ *
+ * - 3.12.0:1-file rebuild — CI methodology noise on the ~100ms native metric:
+ *   the build-benchmark suite measures this tier with no warmup runs (#1440),
+ *   unlike the incremental suite, whose identical metric PASSED in the same
+ *   publish run that flagged this one (86 → 131, +52%, noisy threshold 50%).
+ *   Local A/B on the same machine shows parity: v3.11.2 baseline 84–102ms vs
+ *   dev 97–108ms (overlapping ranges). The only systematic additions on this
+ *   path are the CHA scan (~12ms, scoping tracked in #1441) and the native
+ *   this-dispatch re-parse of the changed file (~2ms). Same shape as the
+ *   3.11.2:1-file rebuild entry above. Remove once #1440 lands warmups and
+ *   3.13+ data confirms the steady state.
+ *
  * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
  * handled structurally by WASM_TIMING_THRESHOLD (see above). The 3.11.x
  * entries that remain are kept because they trip the *native* engine too
@@ -376,6 +408,8 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.2:No-op rebuild',
   '3.11.2:1-file rebuild',
   '3.11.2:Full build',
+  '3.12.0:Full build',
+  '3.12.0:1-file rebuild',
 ]);
 
 /**
