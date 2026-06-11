@@ -43,7 +43,7 @@ Codegraph builds a function-level dependency graph of your entire codebase — e
 
 It parses your code with [tree-sitter](https://tree-sitter.github.io/) (native Rust or WASM), stores the graph in SQLite, and exposes it where it matters most:
 
-- **MCP server** — AI agents query the graph directly through 34 tools — one call instead of 30 `grep`/`find`/`cat` invocations
+- **MCP server** — AI agents query the graph directly through 34 tools — one call instead of dozens of `grep`/`find`/`cat` invocations
 - **CLI** — developers and agents explore, query, and audit code from the terminal
 - **CI gates** — `check` and `manifesto` commands enforce quality thresholds with exit codes
 - **Programmatic API** — embed codegraph in your own tools via `npm install`
@@ -857,7 +857,7 @@ Works with any secret manager: 1Password CLI (`op`), Bitwarden (`bw`), `pass`, H
 
 ### MCP tool filtering
 
-Codegraph's MCP server exposes 30+ tools by default. For models with a small context window, you can shrink the schema by disabling tools you don't use:
+Codegraph's MCP server exposes 34 tools by default. For models with a small context window, you can shrink the schema by disabling tools you don't use:
 
 ```json
 {
