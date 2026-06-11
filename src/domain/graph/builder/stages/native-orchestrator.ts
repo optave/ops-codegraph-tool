@@ -568,7 +568,7 @@ function runPostNativeCha(db: BetterSqlite3Database): number {
  * method definitions, so those nodes are absent from the DB after the native
  * orchestrator completes. This pass:
  *   1. Re-parses JS/TS files via WASM to obtain the full ExtractorOutput
- *      (including definitions emitted by extractFuncPropMethodsWalk).
+ *      (including func-prop definitions emitted by handleFuncPropAssignment).
  *   2. Inserts any method nodes that are missing from the DB.
  *   3. Resolves call edges to those newly-inserted nodes using the WASM typeMap
  *      and the existing DB node table as a lookup.
@@ -579,19 +579,36 @@ function runPostNativeCha(db: BetterSqlite3Database): number {
 async function runPostNativePrototypeMethods(
   db: BetterSqlite3Database,
   rootDir: string,
+  changedFiles: string[] | undefined,
+  isFullBuild: boolean,
 ): Promise<void> {
-  // Collect JS/TS file paths from the DB — only extensions where these
-  // patterns can appear.
+  // Only extensions where these patterns can appear.
   const jsExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx']);
-  const fileRows = db
-    .prepare(
-      `SELECT DISTINCT file FROM nodes WHERE kind = 'file' AND file IS NOT NULL ORDER BY file`,
-    )
-    .all() as Array<{ file: string }>;
 
-  const jsFiles = fileRows
-    .map((r) => r.file)
-    .filter((f) => jsExts.has(path.extname(f).toLowerCase()));
+  // All JS/TS file paths known to the DB. Used for the definition scan on
+  // full builds, and for the caller-relink second pass below (which must
+  // sweep unchanged files even on incremental builds).
+  const allJsFilesFromDb = (): string[] => {
+    const fileRows = db
+      .prepare(
+        `SELECT DISTINCT file FROM nodes WHERE kind = 'file' AND file IS NOT NULL ORDER BY file`,
+      )
+      .all() as Array<{ file: string }>;
+    return fileRows.map((r) => r.file).filter((f) => jsExts.has(path.extname(f).toLowerCase()));
+  };
+
+  // Incremental builds: only changed files can introduce *new* func-prop
+  // method definitions — unchanged definition files keep their nodes from
+  // the previous build. Restricting the definition scan to changedFiles
+  // (mirroring runPostNativeThisDispatch) keeps the per-build cost
+  // proportional to the change set; the unscoped variant re-read and
+  // WASM-re-parsed the whole repo on every 1-file rebuild (86ms → 1657ms
+  // on codegraph itself — the v3.12.0 publish-gate regression). Removing
+  // this pass entirely via native func-prop extraction is tracked in #1432.
+  const jsFiles =
+    isFullBuild || !changedFiles
+      ? allJsFilesFromDb()
+      : changedFiles.filter((f) => jsExts.has(path.extname(f).toLowerCase()));
 
   if (jsFiles.length === 0) return;
 
@@ -617,10 +634,12 @@ async function runPostNativePrototypeMethods(
 
   // WASM-parse only the files that have func-prop patterns to get full
   // ExtractorOutput including method definitions and typeMap entries.
+  // symbolsOnly: this pass reads definitions/calls/typeMap — skip the
+  // worker-side AST/complexity/CFG/dataflow visitors and their transfer.
   const absPaths = protoFiles.map((f) => path.join(rootDir, f));
   let wasmResults: Map<string, ExtractorOutput>;
   try {
-    wasmResults = await parseFilesWasmForBackfill(absPaths, rootDir);
+    wasmResults = await parseFilesWasmForBackfill(absPaths, rootDir, { symbolsOnly: true });
   } catch (e) {
     debug(`runPostNativePrototypeMethods: WASM parse failed: ${toErrorMessage(e)}`);
     return;
@@ -691,8 +710,15 @@ async function runPostNativePrototypeMethods(
       return new RegExp(`\\.${escaped}\\s*\\(`);
     });
     const protoFileSet = new Set(protoFiles);
+    // This pass must sweep ALL JS/TS files, not just changedFiles: when a
+    // changed definition file is re-parsed, its method nodes get new IDs,
+    // and *unchanged* caller files lost their edges to the old IDs when the
+    // pipeline deleted the definition file's previous nodes. Gated on
+    // newMethodSuffixes (a definition actually changed), so incremental
+    // rebuilds that touch no func-prop definitions never pay this sweep.
+    const callerScanFiles = isFullBuild || !changedFiles ? jsFiles : allJsFilesFromDb();
     const callerCandidateAbs: string[] = [];
-    for (const relPath of jsFiles) {
+    for (const relPath of callerScanFiles) {
       if (protoFileSet.has(relPath)) continue; // already parsed in first pass
       try {
         const content = readFileSafe(path.join(rootDir, relPath));
@@ -704,7 +730,9 @@ async function runPostNativePrototypeMethods(
     }
     if (callerCandidateAbs.length > 0) {
       try {
-        const callerWasmResults = await parseFilesWasmForBackfill(callerCandidateAbs, rootDir);
+        const callerWasmResults = await parseFilesWasmForBackfill(callerCandidateAbs, rootDir, {
+          symbolsOnly: true,
+        });
         if (callerWasmResults.size > 0) {
           mergedWasmResults = new Map([...wasmResults, ...callerWasmResults]);
         }
@@ -955,9 +983,10 @@ async function runPostNativeThisDispatch(
     LIMIT 1
   `);
 
-  // WASM-parse the files to obtain raw call sites with receiver info
+  // WASM-parse the files to obtain raw call sites with receiver info.
+  // symbolsOnly: only `calls` (with receivers) are consumed here.
   const absFiles = relFiles.map((f) => path.join(rootDir, f));
-  const wasmResults = await parseFilesWasmForBackfill(absFiles, rootDir);
+  const wasmResults = await parseFilesWasmForBackfill(absFiles, rootDir, { symbolsOnly: true });
 
   const newEdges: Array<[number, number, string, number, number, string]> = [];
 
@@ -1616,7 +1645,12 @@ export async function tryNativeOrchestrator(
   // WASM to insert missing method nodes. `Foo.prototype.bar = fn` is now
   // handled natively by the Rust extractor and no longer needs a WASM re-parse.
   try {
-    await runPostNativePrototypeMethods(ctx.db as unknown as BetterSqlite3Database, ctx.rootDir);
+    await runPostNativePrototypeMethods(
+      ctx.db as unknown as BetterSqlite3Database,
+      ctx.rootDir,
+      result.changedFiles,
+      !!result.isFullBuild,
+    );
   } catch (err) {
     debug(`Function-prop methods post-pass failed: ${toErrorMessage(err)}`);
   }

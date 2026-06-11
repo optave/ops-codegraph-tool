@@ -1156,6 +1156,7 @@ async function backfillTypeMapBatch(
 async function parseFilesWasm(
   filePaths: string[],
   rootDir: string,
+  analysis: WorkerAnalysisOpts = FULL_ANALYSIS,
 ): Promise<Map<string, ExtractorOutput>> {
   const result = new Map<string, ExtractorOutput>();
   const pool = getWasmWorkerPool();
@@ -1168,7 +1169,7 @@ async function parseFilesWasm(
       warn(`Skipping ${path.relative(rootDir, filePath)}: ${(err as Error).message}`);
       continue;
     }
-    const output = await pool.parse(filePath, code, FULL_ANALYSIS);
+    const output = await pool.parse(filePath, code, analysis);
     if (output) {
       const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
       result.set(relPath, output);
@@ -1231,15 +1232,23 @@ async function parseFilesWasmInline(
  * batches keep the worker-pool isolation against tree-sitter WASM crashes
  * (#965). Threshold matches typical engine-parity drop sizes (a few fixture
  * files in one or two languages).
+ *
+ * `opts.symbolsOnly` skips the AST/complexity/CFG/dataflow visitors in the
+ * worker (and their result serialization across the thread boundary) for
+ * callers that only consume definitions/calls/typeMap — the native
+ * orchestrator's prototype-methods and this-dispatch post-passes. Callers
+ * that ingest the files into the DB (dropped-language backfill) must keep
+ * the default full analysis.
  */
 export async function parseFilesWasmForBackfill(
   filePaths: string[],
   rootDir: string,
+  opts: { symbolsOnly?: boolean } = {},
 ): Promise<Map<string, ExtractorOutput>> {
   if (filePaths.length <= INLINE_BACKFILL_THRESHOLD) {
     return parseFilesWasmInline(filePaths, rootDir);
   }
-  return parseFilesWasm(filePaths, rootDir);
+  return parseFilesWasm(filePaths, rootDir, opts.symbolsOnly ? EXTRACT_ONLY : FULL_ANALYSIS);
 }
 
 /**
