@@ -4,7 +4,7 @@
 //! extension filters, and ignored directory names. Uses the `ignore` crate
 //! (from BurntSushi/ripgrep) for gitignore-aware traversal.
 
-use crate::parser_registry::LanguageKind;
+use crate::domain::parser::LanguageKind;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -60,7 +60,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
 ///
 /// Mirrors the predicate at the heart of `collect_files`: a file is collected
 /// if `LanguageKind::from_extension` recognizes it OR its raw extension is in
-/// `SUPPORTED_EXTENSIONS`. Exposed for `change_detection::detect_removed_files`
+/// `SUPPORTED_EXTENSIONS`. Exposed for `detect_changes::detect_removed_files`
 /// so that files outside Rust's capability are not flagged as "removed"
 /// merely because the orchestrator's narrower collector never sees them.
 pub fn is_supported_extension(path: &str) -> bool {

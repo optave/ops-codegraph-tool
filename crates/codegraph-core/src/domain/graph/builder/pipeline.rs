@@ -10,23 +10,23 @@
 //! 3. Detect changes (tiered: journal/mtime/hash)
 //! 4. Parse files in parallel (existing `parallel::parse_files_parallel`)
 //! 5. Insert nodes (existing `insert_nodes::do_insert_nodes`)
-//! 6. Resolve imports (existing `import_resolution::resolve_imports_batch`)
+//! 6. Resolve imports (existing `resolve::resolve_imports_batch`)
 //! 6b. Re-parse barrel candidates (incremental only)
 //! 7. Build import edges + call edges + barrel resolution
 //! 8. Structure metrics + role classification
 //! 9. Finalize (metadata, journal)
 
-use crate::change_detection;
-use crate::config::{BuildConfig, BuildOpts, BuildPathAliases};
-use crate::constants::{FAST_PATH_MAX_CHANGED_FILES, FAST_PATH_MIN_EXISTING_FILES};
-use crate::file_collector;
-use crate::import_edges::{self, ImportEdgeContext};
-use crate::import_resolution;
-use crate::journal;
-use crate::parallel;
-use crate::ast_db::{self, AstInsertNode, FileAstBatch};
-use crate::roles_db;
-use crate::structure;
+use crate::domain::graph::builder::stages::detect_changes;
+use crate::infrastructure::config::{BuildConfig, BuildOpts, BuildPathAliases};
+use crate::shared::constants::{FAST_PATH_MAX_CHANGED_FILES, FAST_PATH_MIN_EXISTING_FILES};
+use crate::domain::graph::builder::stages::collect_files;
+use crate::domain::graph::builder::stages::import_edges::{self, ImportEdgeContext};
+use crate::domain::graph::resolve;
+use crate::domain::graph::journal;
+use crate::domain::parallel;
+use crate::db::repository::ast::{self, AstInsertNode, FileAstBatch};
+use crate::graph::classifiers::roles;
+use crate::features::structure;
 use crate::types::{FileSymbols, ImportResolutionInput};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -145,9 +145,9 @@ fn early_exit_result(
     timing: PipelineTiming,
     conn: &Connection,
     root_dir: &str,
-    metadata_updates: &[change_detection::MetadataUpdate],
+    metadata_updates: &[detect_changes::MetadataUpdate],
 ) -> BuildPipelineResult {
-    change_detection::heal_metadata(conn, metadata_updates);
+    detect_changes::heal_metadata(conn, metadata_updates);
     journal::write_journal_header(root_dir, now_ms());
     BuildPipelineResult {
         phases: timing,
@@ -170,29 +170,29 @@ fn early_exit_result(
 /// pipeline can reconnect them after Stage 5 and reclassify roles in Stage 8.
 fn save_and_purge_changed(
     conn: &Connection,
-    parse_changes: &[&change_detection::ChangedFile],
-    change_result: &change_detection::ChangeResult,
+    parse_changes: &[&detect_changes::ChangedFile],
+    change_result: &detect_changes::ChangeResult,
     opts: &BuildOpts,
     root_dir: &str,
-) -> (Vec<change_detection::SavedReverseDepEdge>, Vec<String>) {
-    let mut saved_reverse_dep_edges: Vec<change_detection::SavedReverseDepEdge> = Vec::new();
+) -> (Vec<detect_changes::SavedReverseDepEdge>, Vec<String>) {
+    let mut saved_reverse_dep_edges: Vec<detect_changes::SavedReverseDepEdge> = Vec::new();
     let mut removal_reverse_deps: Vec<String> = Vec::new();
 
     if change_result.is_full_build {
-        let has_embeddings = change_detection::has_embeddings(conn);
-        change_detection::clear_all_graph_data(conn, has_embeddings);
+        let has_embeddings = detect_changes::has_embeddings(conn);
+        detect_changes::clear_all_graph_data(conn, has_embeddings);
         return (saved_reverse_dep_edges, removal_reverse_deps);
     }
 
     let changed_paths: Vec<String> = parse_changes.iter().map(|c| c.rel_path.clone()).collect();
 
     if !opts.no_reverse_deps.unwrap_or(false) {
-        saved_reverse_dep_edges = change_detection::save_reverse_dep_edges(conn, &changed_paths);
+        saved_reverse_dep_edges = detect_changes::save_reverse_dep_edges(conn, &changed_paths);
 
         if !change_result.removed.is_empty() {
             let removed_set: HashSet<String> = change_result.removed.iter().cloned().collect();
             removal_reverse_deps =
-                change_detection::find_reverse_dependencies(conn, &removed_set, root_dir)
+                detect_changes::find_reverse_dependencies(conn, &removed_set, root_dir)
                     .into_iter()
                     .collect();
         }
@@ -204,14 +204,14 @@ fn save_and_purge_changed(
         .chain(parse_changes.iter().map(|c| &c.rel_path))
         .cloned()
         .collect();
-    change_detection::purge_changed_files(conn, &files_to_purge, &[]);
+    detect_changes::purge_changed_files(conn, &files_to_purge, &[]);
 
     (saved_reverse_dep_edges, removal_reverse_deps)
 }
 
 /// Parse a changed-file slice in parallel and key the results by relative path.
 fn parse_and_index_files(
-    parse_changes: &[&change_detection::ChangedFile],
+    parse_changes: &[&detect_changes::ChangedFile],
     root_dir: &str,
     include_dataflow: bool,
     include_ast: bool,
@@ -251,7 +251,7 @@ fn resolve_pipeline_imports(
     let known_files: HashSet<String> =
         collect_files.iter().map(|f| relative_path(root_dir, f)).collect();
     let resolved =
-        import_resolution::resolve_imports_batch(&batch_inputs, root_dir, napi_aliases, Some(&known_files));
+        resolve::resolve_imports_batch(&batch_inputs, root_dir, napi_aliases, Some(&known_files));
     let mut batch_resolved: HashMap<String, String> = HashMap::new();
     for r in &resolved {
         let key = format!("{}|{}", r.from_file, r.import_source);
@@ -263,12 +263,12 @@ fn resolve_pipeline_imports(
 /// Reconnect any saved reverse-dep edges to the new target node IDs (#1012).
 fn reconnect_saved_reverse_dep_edges(
     conn: &Connection,
-    saved: &[change_detection::SavedReverseDepEdge],
+    saved: &[detect_changes::SavedReverseDepEdge],
 ) {
     if saved.is_empty() {
         return;
     }
-    let (reconnected, dropped) = change_detection::reconnect_reverse_dep_edges(conn, saved);
+    let (reconnected, dropped) = detect_changes::reconnect_reverse_dep_edges(conn, saved);
     if dropped > 0 {
         eprintln!(
             "[codegraph] reconnect_reverse_dep_edges: {reconnected} reconnected, {dropped} dropped (target nodes not found)"
@@ -341,10 +341,10 @@ fn run_role_classification(
     };
     if let Some(ref files) = changed_file_list {
         if !files.is_empty() {
-            let _ = roles_db::do_classify_incremental(conn, files);
+            let _ = roles::do_classify_incremental(conn, files);
         }
     } else {
-        let _ = roles_db::do_classify_full(conn);
+        let _ = roles::do_classify_full(conn);
     }
 }
 
@@ -386,7 +386,7 @@ fn run_analysis_persistence(
     if include_ast {
         let t0 = Instant::now();
         let ast_batches = build_ast_batches(file_symbols, &analysis_file_set);
-        if ast_db::do_insert_ast_nodes(conn, &ast_batches).is_err() {
+        if ast::do_insert_ast_nodes(conn, &ast_batches).is_err() {
             analysis_ok = false;
         }
         timing.ast_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -458,7 +458,7 @@ pub fn run_pipeline(
 
     // ── Stage 3: Detect changes ────────────────────────────────────────
     let t0 = Instant::now();
-    let change_result = change_detection::detect_changes(
+    let change_result = detect_changes::detect_changes(
         conn,
         &collect_result.files,
         root_dir,
@@ -469,7 +469,7 @@ pub fn run_pipeline(
     timing.detect_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Filter out metadata-only changes
-    let parse_changes: Vec<&change_detection::ChangedFile> = change_result
+    let parse_changes: Vec<&detect_changes::ChangedFile> = change_result
         .changed
         .iter()
         .filter(|c| !c.metadata_only)
@@ -505,13 +505,13 @@ pub fn run_pipeline(
     let t0 = Instant::now();
     let insert_batches = build_insert_batches(&file_symbols);
     let file_hashes = build_file_hash_entries(&parse_changes);
-    let _ = crate::insert_nodes::do_insert_nodes(
+    let _ = crate::domain::graph::builder::stages::insert_nodes::do_insert_nodes(
         conn,
         &insert_batches,
         &file_hashes,
         &change_result.removed,
     );
-    change_detection::heal_metadata(conn, &change_result.metadata_updates);
+    detect_changes::heal_metadata(conn, &change_result.metadata_updates);
     timing.insert_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 6: Resolve imports ───────────────────────────────────────
@@ -646,7 +646,7 @@ fn collect_source_files(
     opts: &BuildOpts,
     incremental: bool,
     force_full_rebuild: bool,
-) -> file_collector::CollectResult {
+) -> collect_files::CollectResult {
     if let Some(ref scope) = opts.scope {
         // Scoped rebuild
         let files: Vec<String> = scope
@@ -657,7 +657,7 @@ fn collect_source_files(
             })
             .filter(|f| Path::new(f).exists())
             .collect();
-        file_collector::CollectResult {
+        collect_files::CollectResult {
             directories: files
                 .iter()
                 .filter_map(|f| {
@@ -684,7 +684,7 @@ fn collect_source_files(
                 .unwrap_or_default();
 
             if !db_files.is_empty() {
-                file_collector::try_fast_collect(
+                collect_files::try_fast_collect(
                     root_dir,
                     &db_files,
                     &journal.changed,
@@ -693,7 +693,7 @@ fn collect_source_files(
                     &config.exclude,
                 )
             } else {
-                file_collector::collect_files(
+                collect_files::collect_files(
                     root_dir,
                     &config.ignore_dirs,
                     &config.include,
@@ -701,7 +701,7 @@ fn collect_source_files(
                 )
             }
         } else {
-            file_collector::collect_files(
+            collect_files::collect_files(
                 root_dir,
                 &config.ignore_dirs,
                 &config.include,
@@ -709,7 +709,7 @@ fn collect_source_files(
             )
         }
     } else {
-        file_collector::collect_files(
+        collect_files::collect_files(
             root_dir,
             &config.ignore_dirs,
             &config.include,
@@ -820,7 +820,7 @@ fn reparse_barrel_candidates(
                     from_file: abs_str.clone(),
                     import_source: imp.source.clone(),
                 };
-                let resolved_batch = import_resolution::resolve_imports_batch(
+                let resolved_batch = resolve::resolve_imports_batch(
                     &[input],
                     root_dir,
                     napi_aliases,
@@ -982,16 +982,16 @@ fn check_version_mismatch(conn: &Connection) -> bool {
 /// Build InsertNodesBatch from parsed file symbols.
 fn build_insert_batches(
     file_symbols: &HashMap<String, FileSymbols>,
-) -> Vec<crate::insert_nodes::InsertNodesBatch> {
+) -> Vec<crate::domain::graph::builder::stages::insert_nodes::InsertNodesBatch> {
     file_symbols
         .iter()
         .map(
-            |(rel_path, symbols)| crate::insert_nodes::InsertNodesBatch {
+            |(rel_path, symbols)| crate::domain::graph::builder::stages::insert_nodes::InsertNodesBatch {
                 file: rel_path.clone(),
                 definitions: symbols
                     .definitions
                     .iter()
-                    .map(|d| crate::insert_nodes::InsertNodesDefinition {
+                    .map(|d| crate::domain::graph::builder::stages::insert_nodes::InsertNodesDefinition {
                         name: d.name.clone(),
                         kind: d.kind.clone(),
                         line: d.line,
@@ -1002,7 +1002,7 @@ fn build_insert_batches(
                             .as_ref()
                             .map(|kids| {
                                 kids.iter()
-                                    .map(|c| crate::insert_nodes::InsertNodesChild {
+                                    .map(|c| crate::domain::graph::builder::stages::insert_nodes::InsertNodesChild {
                                         name: c.name.clone(),
                                         kind: c.kind.clone(),
                                         line: c.line,
@@ -1017,7 +1017,7 @@ fn build_insert_batches(
                 exports: symbols
                     .exports
                     .iter()
-                    .map(|e| crate::insert_nodes::InsertNodesExport {
+                    .map(|e| crate::domain::graph::builder::stages::insert_nodes::InsertNodesExport {
                         name: e.name.clone(),
                         kind: e.kind.clone(),
                         line: e.line,
@@ -1034,8 +1034,8 @@ fn build_insert_batches(
 /// reading file content. In that case we read and hash each file here so
 /// that `file_hashes` is populated for subsequent incremental builds.
 fn build_file_hash_entries(
-    changed: &[&change_detection::ChangedFile],
-) -> Vec<crate::insert_nodes::FileHashEntry> {
+    changed: &[&detect_changes::ChangedFile],
+) -> Vec<crate::domain::graph::builder::stages::insert_nodes::FileHashEntry> {
     changed
         .iter()
         .filter_map(|c| {
@@ -1072,7 +1072,7 @@ fn build_file_hash_entries(
             } else {
                 (c.mtime as f64, c.size as f64)
             };
-            Some(crate::insert_nodes::FileHashEntry {
+            Some(crate::domain::graph::builder::stages::insert_nodes::FileHashEntry {
                 file: c.rel_path.clone(),
                 hash,
                 mtime,
@@ -1119,7 +1119,7 @@ const EDGE_NODE_KIND_FILTER: &str = "kind IN ('function','method','class','inter
 /// `relevantFiles` accumulation in `loadNodes` (#976, greptile P1).
 fn compute_edge_relevant_files(
     file_symbols: &HashMap<String, FileSymbols>,
-    import_ctx: &crate::import_edges::ImportEdgeContext,
+    import_ctx: &crate::domain::graph::builder::stages::import_edges::ImportEdgeContext,
 ) -> HashSet<String> {
     let mut relevant_files: HashSet<String> = file_symbols.keys().cloned().collect();
     for (rel_path, symbols) in file_symbols {
@@ -1156,10 +1156,10 @@ fn compute_edge_relevant_files(
 fn load_edge_node_set(
     conn: &Connection,
     file_symbols: &HashMap<String, FileSymbols>,
-    import_ctx: &crate::import_edges::ImportEdgeContext,
+    import_ctx: &crate::domain::graph::builder::stages::import_edges::ImportEdgeContext,
     is_incremental: bool,
-) -> Vec<crate::edge_builder::NodeInfo> {
-    use crate::edge_builder::NodeInfo;
+) -> Vec<crate::domain::graph::builder::stages::build_edges::NodeInfo> {
+    use crate::domain::graph::builder::stages::build_edges::NodeInfo;
 
     let existing_file_count: i64 = conn
         .query_row(
@@ -1169,8 +1169,8 @@ fn load_edge_node_set(
         )
         .unwrap_or(0);
     let scope_eligible = is_incremental
-        && file_symbols.len() <= crate::constants::FAST_PATH_MAX_CHANGED_FILES
-        && existing_file_count > crate::constants::FAST_PATH_MIN_EXISTING_FILES;
+        && file_symbols.len() <= crate::shared::constants::FAST_PATH_MAX_CHANGED_FILES
+        && existing_file_count > crate::shared::constants::FAST_PATH_MIN_EXISTING_FILES;
 
     if !scope_eligible {
         return load_all_edge_nodes(conn);
@@ -1212,7 +1212,7 @@ fn load_edge_node_set(
 }
 
 /// Load every candidate edge node from the DB (full-build path).
-fn load_all_edge_nodes(conn: &Connection) -> Vec<crate::edge_builder::NodeInfo> {
+fn load_all_edge_nodes(conn: &Connection) -> Vec<crate::domain::graph::builder::stages::build_edges::NodeInfo> {
     let sql = format!(
         "SELECT id, name, kind, file, line FROM nodes WHERE {EDGE_NODE_KIND_FILTER}",
     );
@@ -1227,8 +1227,8 @@ fn load_all_edge_nodes(conn: &Connection) -> Vec<crate::edge_builder::NodeInfo> 
 
 /// Row-mapper for the `SELECT id, name, kind, file, line FROM nodes ...`
 /// shape used by both scoped and full edge-node loads.
-fn read_edge_node_info(row: &rusqlite::Row) -> rusqlite::Result<crate::edge_builder::NodeInfo> {
-    Ok(crate::edge_builder::NodeInfo {
+fn read_edge_node_info(row: &rusqlite::Row) -> rusqlite::Result<crate::domain::graph::builder::stages::build_edges::NodeInfo> {
+    Ok(crate::domain::graph::builder::stages::build_edges::NodeInfo {
         id: row.get::<_, i64>(0)? as u32,
         name: row.get(1)?,
         kind: row.get(2)?,
@@ -1262,9 +1262,9 @@ fn load_file_node_id_map(conn: &Connection) -> HashMap<String, u32> {
 fn collect_imported_names_for_file(
     abs_str: &str,
     symbols: &FileSymbols,
-    import_ctx: &crate::import_edges::ImportEdgeContext,
-) -> Vec<crate::edge_builder::ImportedName> {
-    use crate::edge_builder::ImportedName;
+    import_ctx: &crate::domain::graph::builder::stages::import_edges::ImportEdgeContext,
+) -> Vec<crate::domain::graph::builder::stages::build_edges::ImportedName> {
+    use crate::domain::graph::builder::stages::build_edges::ImportedName;
     let mut imported_names: Vec<ImportedName> = Vec::new();
     for imp in &symbols.imports {
         let resolved_path = import_ctx.get_resolved(abs_str, &imp.source);
@@ -1289,13 +1289,13 @@ fn collect_imported_names_for_file(
 }
 
 /// Insert the edges produced by the native edge builder into the edges table.
-fn insert_call_edge_rows(conn: &Connection, edges: &[crate::edge_builder::ComputedEdge]) {
+fn insert_call_edge_rows(conn: &Connection, edges: &[crate::domain::graph::builder::stages::build_edges::ComputedEdge]) {
     if edges.is_empty() {
         return;
     }
-    let edge_rows: Vec<crate::edges_db::EdgeRow> = edges
+    let edge_rows: Vec<crate::db::repository::edges::EdgeRow> = edges
         .iter()
-        .map(|e| crate::edges_db::EdgeRow {
+        .map(|e| crate::db::repository::edges::EdgeRow {
             source_id: e.source_id,
             target_id: e.target_id,
             kind: e.kind.clone(),
@@ -1303,7 +1303,7 @@ fn insert_call_edge_rows(conn: &Connection, edges: &[crate::edge_builder::Comput
             dynamic: e.dynamic,
         })
         .collect();
-    let _ = crate::edges_db::do_insert_edges(conn, &edge_rows);
+    let _ = crate::db::repository::edges::do_insert_edges(conn, &edge_rows);
 }
 
 /// Full builds always load every node — there is no smaller set anyway.
@@ -1313,7 +1313,7 @@ fn build_and_insert_call_edges(
     import_ctx: &ImportEdgeContext,
     is_incremental: bool,
 ) {
-    use crate::edge_builder::*;
+    use crate::domain::graph::builder::stages::build_edges::*;
 
     let all_nodes = load_edge_node_set(conn, file_symbols, import_ctx, is_incremental);
     if all_nodes.is_empty() {
@@ -1446,7 +1446,7 @@ fn build_analysis_node_map(
     map
 }
 
-/// Convert FileSymbols AST nodes to FileAstBatch format for `ast_db::do_insert_ast_nodes`.
+/// Convert FileSymbols AST nodes to FileAstBatch format for `ast::do_insert_ast_nodes`.
 fn build_ast_batches(
     file_symbols: &HashMap<String, FileSymbols>,
     analysis_files: &HashSet<&str>,

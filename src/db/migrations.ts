@@ -8,7 +8,7 @@ interface Migration {
   up: string;
 }
 
-// IMPORTANT: Migration DDL is mirrored in crates/codegraph-core/src/native_db.rs.
+// IMPORTANT: Migration DDL is mirrored in crates/codegraph-core/src/db/connection.rs.
 // Any changes here MUST be reflected there (and vice-versa).
 export const MIGRATIONS: Migration[] = [
   {

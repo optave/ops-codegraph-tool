@@ -4,8 +4,8 @@
 //! the barrel detection from `resolve-imports.ts:isBarrelFile()`, and the
 //! recursive barrel export resolution from `resolveBarrelExport()`.
 
-use crate::barrel_resolution::{self, BarrelContext, ReexportRef};
-use crate::import_resolution;
+use crate::domain::graph::builder::barrel_resolution::{self, BarrelContext, ReexportRef};
+use crate::domain::graph::resolve;
 use crate::types::{FileSymbols, PathAliases};
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
@@ -56,7 +56,7 @@ impl ImportEdgeContext {
         if let Some(hit) = self.batch_resolved.get(&key) {
             return hit.clone();
         }
-        import_resolution::resolve_import_path(
+        resolve::resolve_import_path(
             abs_file,
             import_source,
             &self.root_dir,
@@ -449,7 +449,7 @@ pub fn build_import_edges(conn: &Connection, ctx: &ImportEdgeContext) -> Vec<Edg
 }
 
 /// 199 rows × 5 params = 995 bind parameters, safely under the legacy
-/// `SQLITE_MAX_VARIABLE_NUMBER` default of 999. Mirrors `edges_db::CHUNK`.
+/// `SQLITE_MAX_VARIABLE_NUMBER` default of 999. Mirrors `edges::CHUNK`.
 const INSERT_CHUNK: usize = 199;
 
 /// Batch insert edges into the database using multi-row VALUES chunks.

@@ -32,7 +32,7 @@ pub mod swift;
 pub mod verilog;
 pub mod zig;
 
-use crate::parser_registry::LanguageKind;
+use crate::domain::parser::LanguageKind;
 use crate::types::FileSymbols;
 use tree_sitter::Tree;
 

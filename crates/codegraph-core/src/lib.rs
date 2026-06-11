@@ -1,31 +1,41 @@
-pub mod analysis;
-pub mod ast_db;
-pub mod barrel_resolution;
-pub mod build_pipeline;
-pub mod change_detection;
-pub mod cfg;
-pub mod complexity;
-pub mod config;
-pub mod constants;
-pub mod cycles;
-pub mod dataflow;
-pub mod edge_builder;
-pub mod edges_db;
+//! codegraph-core — native (napi-rs) engine.
+//!
+//! # Structure parity with the TypeScript engine
+//!
+//! This crate mirrors the `src/` TypeScript tree so each module has a
+//! predictable counterpart in the other engine. When changing resolution or
+//! extraction behavior in one engine, apply the equivalent change to the
+//! mirrored module in the other (both engines must produce identical results).
+//!
+//! | Rust module                          | TypeScript counterpart                          |
+//! |--------------------------------------|-------------------------------------------------|
+//! | `lib.rs`                             | `src/index.ts` (public API surface)             |
+//! | `types.rs`                           | `src/types.ts`                                  |
+//! | `shared/constants.rs`                | `src/shared/constants.ts`                       |
+//! | `infrastructure/config.rs`           | `src/infrastructure/config.ts`                  |
+//! | `db/connection.rs`                   | `src/db/connection.ts` + `src/db/migrations.ts` |
+//! | `db/repository/*`                    | `src/db/repository/*`                           |
+//! | `domain/parser.rs`                   | `src/domain/parser.ts`                          |
+//! | `domain/parallel.rs`                 | `src/domain/wasm-worker-pool.ts`                |
+//! | `domain/graph/resolve.rs`            | `src/domain/graph/resolve.ts`                   |
+//! | `domain/graph/journal.rs`            | `src/domain/graph/journal.ts`                   |
+//! | `domain/graph/builder/pipeline.rs`   | `src/domain/graph/builder/pipeline.ts`          |
+//! | `domain/graph/builder/incremental.rs`| `src/domain/graph/builder/incremental.ts`       |
+//! | `domain/graph/builder/stages/*`      | `src/domain/graph/builder/stages/*`             |
+//! | `ast_analysis/*`                     | `src/ast-analysis/*`                            |
+//! | `graph/algorithms/*`                 | `src/graph/algorithms/*`                        |
+//! | `graph/classifiers/roles.rs`         | `src/graph/classifiers/roles.ts`                |
+//! | `features/structure.rs`              | `src/features/structure.ts`                     |
+//! | `extractors/*`                       | `src/extractors/*`                              |
+
+pub mod ast_analysis;
+pub mod db;
+pub mod domain;
 pub mod extractors;
-pub mod file_collector;
-pub mod graph_algorithms;
-pub mod import_edges;
-pub mod import_resolution;
-pub mod incremental;
-pub mod insert_nodes;
-pub mod journal;
-pub mod native_db;
-pub mod parallel;
-pub mod parser_registry;
-pub mod read_queries;
-pub mod read_types;
-pub mod roles_db;
-pub mod structure;
+pub mod features;
+pub mod graph;
+pub mod infrastructure;
+pub mod shared;
 pub mod types;
 
 use napi_derive::napi;
@@ -41,7 +51,7 @@ pub fn parse_file(
     include_dataflow: Option<bool>,
     include_ast_nodes: Option<bool>,
 ) -> Option<FileSymbols> {
-    parallel::parse_file(
+    domain::parallel::parse_file(
         &file_path,
         &source,
         include_dataflow.unwrap_or(false),
@@ -59,7 +69,7 @@ pub fn parse_files(
     include_dataflow: Option<bool>,
     include_ast_nodes: Option<bool>,
 ) -> Vec<FileSymbols> {
-    parallel::parse_files_parallel(
+    domain::parallel::parse_files_parallel(
         &file_paths,
         &root_dir,
         include_dataflow.unwrap_or(false),
@@ -75,7 +85,7 @@ pub fn parse_files_full(
     file_paths: Vec<String>,
     root_dir: String,
 ) -> Vec<FileSymbols> {
-    parallel::parse_files_parallel_full(
+    domain::parallel::parse_files_parallel_full(
         &file_paths,
         &root_dir,
     )
@@ -93,7 +103,7 @@ pub fn resolve_import(
         base_url: None,
         paths: vec![],
     });
-    import_resolution::resolve_import_path(&from_file, &import_source, &root_dir, &aliases)
+    domain::graph::resolve::resolve_import_path(&from_file, &import_source, &root_dir, &aliases)
 }
 
 /// Batch resolve multiple imports.
@@ -110,7 +120,7 @@ pub fn resolve_imports(
     });
     let known_set =
         known_files.map(|v| v.into_iter().collect::<std::collections::HashSet<String>>());
-    import_resolution::resolve_imports_batch(&inputs, &root_dir, &aliases, known_set.as_ref())
+    domain::graph::resolve::resolve_imports_batch(&inputs, &root_dir, &aliases, known_set.as_ref())
 }
 
 /// Compute proximity-based confidence for call resolution.
@@ -120,14 +130,14 @@ pub fn compute_confidence(
     target_file: String,
     imported_from: Option<String>,
 ) -> f64 {
-    import_resolution::compute_confidence(&caller_file, &target_file, imported_from.as_deref())
+    domain::graph::resolve::compute_confidence(&caller_file, &target_file, imported_from.as_deref())
 }
 
 /// Detect cycles using Tarjan's SCC algorithm.
 /// Returns arrays of node names forming each cycle.
 #[napi]
 pub fn detect_cycles(edges: Vec<GraphEdge>) -> Vec<Vec<String>> {
-    cycles::detect_cycles(&edges)
+    graph::algorithms::tarjan::detect_cycles(&edges)
 }
 
 /// Returns the engine name.
@@ -151,7 +161,7 @@ pub fn analyze_complexity(
     file_path: String,
     lang_id: Option<String>,
 ) -> Vec<types::FunctionComplexityResult> {
-    analysis::analyze_complexity_standalone(&source, &file_path, lang_id.as_deref())
+    ast_analysis::engine::analyze_complexity_standalone(&source, &file_path, lang_id.as_deref())
 }
 
 /// Build control-flow graphs for all functions in the given source.
@@ -163,7 +173,7 @@ pub fn build_cfg_analysis(
     file_path: String,
     lang_id: Option<String>,
 ) -> Vec<types::FunctionCfgResult> {
-    analysis::build_cfg_standalone(&source, &file_path, lang_id.as_deref())
+    ast_analysis::engine::build_cfg_standalone(&source, &file_path, lang_id.as_deref())
 }
 
 /// Extract dataflow analysis for the given source.
@@ -175,5 +185,5 @@ pub fn extract_dataflow_analysis(
     file_path: String,
     lang_id: Option<String>,
 ) -> Option<types::DataflowResult> {
-    analysis::extract_dataflow_standalone(&source, &file_path, lang_id.as_deref())
+    ast_analysis::engine::extract_dataflow_standalone(&source, &file_path, lang_id.as_deref())
 }

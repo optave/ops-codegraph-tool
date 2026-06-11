@@ -7,11 +7,11 @@
 
 use tree_sitter::{Node, Parser};
 
-use crate::cfg::{build_function_cfg, get_cfg_rules};
-use crate::complexity::{compute_all_metrics, lang_rules};
-use crate::constants::MAX_WALK_DEPTH;
-use crate::dataflow::extract_dataflow;
-use crate::parser_registry::LanguageKind;
+use crate::ast_analysis::cfg::{build_function_cfg, get_cfg_rules};
+use crate::ast_analysis::complexity::{compute_all_metrics, lang_rules};
+use crate::shared::constants::MAX_WALK_DEPTH;
+use crate::ast_analysis::dataflow::extract_dataflow;
+use crate::domain::parser::LanguageKind;
 use crate::types::{DataflowResult, FunctionCfgResult, FunctionComplexityResult};
 
 /// Extract the name of a function/method node via the "name" field.

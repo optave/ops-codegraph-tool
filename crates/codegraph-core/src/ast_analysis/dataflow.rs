@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use crate::constants::{DATAFLOW_TRUNCATION_LIMIT, MAX_WALK_DEPTH};
+use crate::shared::constants::{DATAFLOW_TRUNCATION_LIMIT, MAX_WALK_DEPTH};
 use crate::types::{
     DataflowArgFlow, DataflowAssignment, DataflowMutation, DataflowParam, DataflowResult,
     DataflowReturn,

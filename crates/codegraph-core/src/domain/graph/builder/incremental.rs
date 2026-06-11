@@ -5,7 +5,7 @@ use tree_sitter::{Parser, Tree};
 use napi_derive::napi;
 
 use crate::extractors::extract_symbols;
-use crate::parser_registry::LanguageKind;
+use crate::domain::parser::LanguageKind;
 use crate::types::FileSymbols;
 
 struct CacheEntry {

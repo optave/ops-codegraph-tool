@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
-use crate::cfg::build_function_cfg;
-use crate::complexity::compute_all_metrics;
+use crate::ast_analysis::cfg::build_function_cfg;
+use crate::ast_analysis::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;

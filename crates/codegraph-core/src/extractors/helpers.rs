@@ -2,7 +2,7 @@ use crate::types::{AstNode, Call, Definition, FileSymbols, Import, TypeMapEntry}
 use tree_sitter::Node;
 
 // Re-export so extractors that `use super::helpers::*` still see it.
-pub use crate::constants::MAX_WALK_DEPTH;
+pub use crate::shared::constants::MAX_WALK_DEPTH;
 
 /// Get the text of a node from the source bytes.
 pub fn node_text<'a>(node: &Node, source: &'a [u8]) -> &'a str {
