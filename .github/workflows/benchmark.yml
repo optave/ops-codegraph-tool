@@ -165,11 +165,21 @@ jobs:
           VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            # Skip patch releases (X.Y.Z where Z > 0) — embedding benchmarks
+            # only run on major (X.0.0) and minor/feature (X.Y.0) releases.
+            IFS='.' read -r _MAJOR _MINOR PATCH <<< "$VERSION"
+            if [ "${PATCH:-0}" -gt 0 ]; then
+              echo "Patch release ${VERSION} — skipping embedding benchmark (only runs for major/minor releases)"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+              echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Wait for npm propagation
