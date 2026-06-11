@@ -169,6 +169,7 @@ jobs:
             # Skip patch releases (X.Y.Z where Z > 0) — embedding benchmarks
             # only run on major (X.0.0) and minor/feature (X.Y.0) releases.
             IFS='.' read -r _MAJOR _MINOR PATCH <<< "$VERSION"
+            PATCH="${PATCH%%[^0-9]*}"
             if [ "${PATCH:-0}" -gt 0 ]; then
               echo "Patch release ${VERSION} — skipping embedding benchmark (only runs for major/minor releases)"
               echo "skip=true" >> "$GITHUB_OUTPUT"
