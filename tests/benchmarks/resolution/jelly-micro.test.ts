@@ -1,7 +1,7 @@
 /**
  * Jelly Micro-Test Benchmark (imported from github.com/cs-au-dk/jelly/tests/micro)
  *
- * Runs codegraph on each of Jelly's 65 hand-authored micro-test programs
+ * Runs codegraph on each of Jelly's 64 micro-test programs
  * (imported from github.com/cs-au-dk/jelly/tests/micro) and measures how many
  * of Jelly's ground-truth call edges codegraph resolves.
  *
@@ -54,7 +54,52 @@ function discoverTests(): string[] {
     .sort();
 }
 
+/**
+ * Per-fixture minimum recall floors based on the baseline measured on origin/main
+ * (commit 784951d, June 2026).  Fixtures not listed here default to 0 — they
+ * produce 0% recall and can only improve, never regress below zero.
+ *
+ * Format: fixture-name → minimum recall fraction in [0, 1].
+ * Exact fractions shown in comments; stored as the corresponding percentage
+ * value so a single lost TP triggers a failure.
+ *
+ * Note: more1 was moved to the pts-javascript fixture set in #1383 and is
+ * no longer part of jelly-micro.
+ */
+const RECALL_FLOORS: Record<string, number> = {
+  accessors3: 1.0, // 1/1
+  arguments: 1.0, // 1/1
+  classes: 0.19, // 6/31
+  defineProperty: 0.5, // 3/6
+  fun: 1.0, // 4/4
+  generators: 1.0, // 9/9
+  'receiver-callee-mixup': 1.0, // 1/1
+  rest: 1.0, // 1/1
+  spread: 1.0, // 4/4
+  super: 0.38, // 5/13
+  super2: 0.4, // 2/5
+  super3: 1.0, // 3/3
+  this: 1.0, // 1/1
+};
+
 const tests = discoverTests();
+
+// Sanity-check: every RECALL_FLOORS key must match a discovered fixture name.
+// A mismatch means either a fixture was renamed or the key was mistyped, and
+// the regression floor would silently degrade to 0 without this guard.
+// Only enforce when the fixture directory is present (CI skips the whole suite
+// when fixtures are absent).
+if (tests.length > 0) {
+  const testSet = new Set(tests);
+  for (const key of Object.keys(RECALL_FLOORS)) {
+    if (!testSet.has(key)) {
+      throw new Error(
+        `RECALL_FLOORS key "${key}" does not match any discovered fixture in ${FIXTURES_DIR}. ` +
+          'Update the key or remove the stale entry.',
+      );
+    }
+  }
+}
 
 // Per-test results collected for summary
 const allResults: Record<
@@ -194,8 +239,8 @@ describe.skipIf(tests.length === 0)('Jelly Micro-Test Benchmark', () => {
           for (const e of fn) console.log(`    FN: ${e}`);
         }
 
-        // Soft gate: recall must be ≥ 0% (we don't gate yet — this benchmark is diagnostic)
-        expect(recall).toBeGreaterThanOrEqual(0);
+        const floor = RECALL_FLOORS[testName] ?? 0;
+        expect(recall).toBeGreaterThanOrEqual(floor);
       });
     });
   }

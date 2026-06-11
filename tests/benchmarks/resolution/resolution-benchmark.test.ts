@@ -93,6 +93,11 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'points-to': 'points-to',
   'pts-define-property': 'points-to',
   'pts-create-prototype': 'points-to',
+  'pts-for-of': 'points-to',
+  'pts-set': 'points-to',
+  'pts-array-from': 'points-to',
+  'pts-spread': 'points-to',
+  'pts-param': 'points-to',
   'define-property': 'ts-native',
 };
 
@@ -121,8 +126,15 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   adds bind/call/apply resolution (3 new edges in bind-call-apply.js), total expected now 33.
   //   Phase 8.3f adds Object.defineProperty accessor this-dispatch (#1335): getter→baz in
   //   define-property.js and accessorGetter→accessorTarget.accessMethod in define-property-accessor.js,
-  //   total expected now 35.
+  //   total expected now 35. multi-class.js adds 4 class-scoped typeMap edges (#1382) → 39.
+  //   call/apply this-rebinding adds 2 edges (runCallThis→invoker, invoker→handler) and removes
+  //   the false-positive from handler being extracted as a callback arg of .call() (#1405) → 41.
+  //   #1422 adds class-scope.js (bare-call guard), +1 → total 42.
   javascript: { precision: 1.0, recall: 0.9 },
+  // pts-javascript: hand-authored points-to JS fixture (for-of, Set, Array.from, spread) — patterns
+  //   too broad for the main JS fixture. Patterns split per file to prevent intra-fixture FPs.
+  //   Currently resolves all 13 expected edges (100% recall, 100% precision).
+  'pts-javascript': { precision: 1.0, recall: 0.9 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
@@ -137,7 +149,9 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   python: { precision: 0.7, recall: 0.3 },
   go: { precision: 0.7, recall: 0.3 },
   java: { precision: 0.7, recall: 0.3 },
-  csharp: { precision: 0.5, recall: 0.2 },
+  // csharp 1.0/0.9: static receiver fix (#1395) ensures precision; var-declared instance typeMap
+  //   (implicit_type) lifts receiver-typed recall from 0/4 → 4/4 (#1396).
+  csharp: { precision: 1.0, recall: 0.9 },
   kotlin: { precision: 0.6, recall: 0.2 },
   // Lower bars — resolution still maturing
   rust: { precision: 0.6, recall: 0.2 },

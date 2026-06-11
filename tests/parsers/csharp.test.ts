@@ -151,4 +151,26 @@ public class Service : BaseService, IDisposable {
       expect.objectContaining({ name: 'User.Name', kind: 'property' }),
     );
   });
+
+  it('populates typeMap for var-declared instances (implicit type)', () => {
+    const symbols = parseCSharp(`public class Program {
+  void Run() {
+    var service = new UserService();
+    var repo = new UserRepository();
+    service.AddUser(null);
+  }
+}`);
+    expect(symbols.typeMap.get('service')).toEqual({ type: 'UserService', confidence: 1.0 });
+    expect(symbols.typeMap.get('repo')).toEqual({ type: 'UserRepository', confidence: 1.0 });
+  });
+
+  it('populates typeMap for explicitly-typed local variables', () => {
+    const symbols = parseCSharp(`public class Foo {
+  void Bar() {
+    UserService svc = new UserService();
+    svc.DoWork();
+  }
+}`);
+    expect(symbols.typeMap.get('svc')).toEqual({ type: 'UserService', confidence: 0.9 });
+  });
 });

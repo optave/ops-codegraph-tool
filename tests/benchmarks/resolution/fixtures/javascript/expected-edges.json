@@ -193,6 +193,20 @@
       "notes": "greet.apply(user, ['Hey']) — .apply() extracts greet as the callee"
     },
     {
+      "source": { "name": "runCallThis", "file": "bind-call-apply.js" },
+      "target": { "name": "invoker", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "invoker.call(handler, 10) — .call() extracts invoker as the callee"
+    },
+    {
+      "source": { "name": "invoker", "file": "bind-call-apply.js" },
+      "target": { "name": "handler", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "points-to",
+      "notes": "invoker.call(handler, 10) — this-rebinding: this() inside invoker resolves to handler"
+    },
+    {
       "source": { "name": "Dog.speak", "file": "inheritance.js" },
       "target": { "name": "Animal.speak", "file": "inheritance.js" },
       "kind": "calls",
@@ -275,6 +289,13 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "this.service.doB() — receiver-typed via ClassB.service = new ServiceB() (class-scoped typeMap key prevents collision with ClassA.service)"
+    },
+    {
+      "source": { "name": "Processor.run", "file": "class-scope.js" },
+      "target": { "name": "processData", "file": "class-scope.js" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Bare call to same-file module-level function — regression guard: bare flush() in run() must NOT resolve to Processor.flush (class-scoped lookup must be receiver-gated)"
     }
   ]
 }

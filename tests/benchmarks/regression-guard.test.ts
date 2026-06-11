@@ -72,21 +72,22 @@ const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild', 'fnDep
  * than native and dominated by interpreter + GC overhead. The same ±10–20ms
  * of shared-runner jitter therefore lands as a much larger *percentage* swing
  * than on native. Empirically, WASM timing metrics on the publish runner swing
- * run-to-run by +27–67% on byte-identical code (No-op rebuild 15→25 = +67%,
+ * run-to-run by +27–71% on byte-identical code (No-op rebuild 15→25 = +67%,
  * Query time 32.5→44.2 = +36%, fnDeps depth 3/5 ~+31%, Full build 7664→9833
- * = +28%), which previously required a per-version KNOWN_REGRESSIONS entry for
- * each metric on every release — an endless whack-a-mole.
+ * = +28%, Build ms/file 18.7→32 = +71%), which previously required a
+ * per-version KNOWN_REGRESSIONS entry for each metric on every release — an
+ * endless whack-a-mole.
  *
  * Why this is safe: the native engine shares all extraction, resolution, and
  * query logic with WASM (the WASM path only swaps the parser/runtime), so any
  * *real* algorithmic regression shows up on the native numbers too — and native
  * keeps the strict 25% / 50% thresholds. Native is the canary. WASM timing only
  * needs to catch gross WASM-specific catastrophes (the 100–220% blowups seen in
- * v3.0.1–3.4.0), which 70% still flags, while absorbing the ≤67% shared-runner
+ * v3.0.1–3.4.0), which 75% still flags, while absorbing the ≤71% shared-runner
  * jitter. Size metrics (DB bytes/file) are engine-independent and excluded from
  * this widening via SIZE_METRICS below — they keep the strict threshold.
  */
-const WASM_TIMING_THRESHOLD = 0.7;
+const WASM_TIMING_THRESHOLD = 0.75;
 
 /**
  * Metric labels that measure size/count rather than wall-clock time. These are
@@ -144,99 +145,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * latest, when `previous.version` matches via the baseline fallback). Once
  * a version is no longer the latest in committed history and no longer the
  * baseline used for `dev` comparisons, its entries become dead weight and
- * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6).
- *
- * - 3.10.0:No-op rebuild — small (~3–7ms / ~25–35% local) real regression
- *   amplified by CI variance on a sub-30ms metric. Verified by running
- *   the v3.9.6 source+binary against this repo: steady-state 14–19ms vs
- *   HEAD's 18–22ms. The JS-side fast-skip pre-flight (#1064) was *not*
- *   the cause — disabling it leaves the orchestrator-only path at the
- *   same ~20ms. Likely contributors: the extra is_supported_extension
- *   filter in detect_removed_files (#1070), the larger file_hashes row
- *   set after #1069 stores symbol-less files, and tree-sitter 0.24→0.25.
- *   Each is a few hundred microseconds; aggregated they explain the
- *   local delta. CI's +120% reflects sub-30ms metric noise floor on
- *   shared runners — not a 2x slowdown.
- *
- * - 3.10.0:1-file rebuild — same CI-amplification pattern on a sub-100ms
- *   metric. Local steady-state is ~60ms (PR #1085 brought it down from
- *   ~108ms by skipping unnecessary backfill on clean incrementals); CI
- *   measures 75–82ms = local + ~20ms shared-runner overhead. Against the
- *   v3.9.6 baseline of 54ms that's +44–52% on CI, fluctuating across runs
- *   (run 25624120076: 79ms / +46%; run 25627318198: 82ms / +52%). The
- *   underlying perf work is real and incremental-benchmark.ts now uses
- *   warmup + 5 samples to reduce variance, but a 50% threshold on a
- *   sub-100ms metric is still razor-thin. Exempt this release; remove
- *   once 3.11.0+ data confirms CI numbers stabilize under the new
- *   methodology.
- *
- * - 3.10.0:fnDeps depth 1 — CI variance on a sub-30ms metric (24.7ms native
- *   baseline). The fn_deps Rust implementation, fnDepsData JS wrapper, and
- *   DB schema/indexes are all byte-for-byte unchanged since v3.9.6 (already
- *   documented in NOISY_METRICS above). Measured runs land at +40–60%
- *   typically (within the 50% NOISY_METRIC_THRESHOLD), but the per-PR gate
- *   has seen outliers up to +82% (run 25708925467: 24.7 → 44.9ms) on
- *   shared runners — the ~20ms absolute delta is the runner noise floor.
- *   Exempt this release; remove once 3.11.0+ data confirms stabilization
- *   under the warmup + 5-sample methodology already applied to incremental
- *   benchmarks.
- *
- * - 3.10.0:fnDeps depth 3 — same CI-variance pattern as fnDeps depth 1, just
- *   one depth-level deeper. WASM baseline is 33ms (sub-30ms range when CI
- *   jitter is included). The fn_deps codepath is depth-agnostic — same Rust
- *   implementation, same JS wrapper, same DB indexes — so a deviation at
- *   depth 3 but not depth 1/5 indicates per-run runner noise, not a
- *   structural regression. Observed +32% (33 → 43.4ms) on run 25790873005,
- *   absolute delta 10.4ms exactly at the MIN_ABSOLUTE_DELTA floor. Exempt
- *   this release; remove once 3.11.0+ data confirms stabilization.
- *
- * - 3.10.0:Query time — methodology artifact, not a real regression. The
- *   metric was a single-shot cold call to `fnDepsData('buildGraph', dbPath)`
- *   with no warmup, no median, and `noTests: false` — so it captured ~65ms
- *   of NAPI/rusqlite/OS-page-cache init plus the cost of walking through
- *   fixture files added by new language extractors. Local v3.9.6 vs HEAD
- *   on the same corpus measured 78.8ms vs 67.5ms single-shot (HEAD faster),
- *   while the warmed `queries.fnDepsMs` in the same benchmark showed 4.0ms
- *   vs 2.8ms — confirming no underlying regression. Methodology fixed in
- *   #1113: queryTimeMs now uses 3 warmup runs + median of 5 with
- *   `noTests: true`, matching query-benchmark.ts hygiene. Exemption kept
- *   in place until 3.11.0+ data captures the new steady-state under the
- *   updated methodology (expected ~36ms native on this corpus); remove
- *   the entry then.
- *
- * - 3.10.0:fnDeps depth 5 — same cause as Query time above. Merging main
- *   into #1102 added the Erlang extractor (#1103) on top of the existing
- *   Solidity (#1100) + R (#1102) growth, expanding `buildGraph`'s
- *   depth-5 transitive callee fan-out by another step. The depth-5 walk
- *   amplifies any base-graph growth quadratically (each new node adds
- *   its own depth-5 subtree). +31% over the 25% threshold maps to the
- *   ~33→43ms swing on a sub-50ms metric. Tracked in #1113 alongside
- *   Query time; remove both once 3.11.0+ data confirms the new steady-state.
- *
- * - 3.10.0:fnDeps depth 3 — same cause as depth 1 and depth 5. Merging main
- *   into #1101 (Groovy) layered the Groovy extractor on top of the
- *   Solidity + R + Erlang growth that already inflated the depth-1 and
- *   depth-5 baselines. The depth-3 walk sits between those two and
- *   regresses for the same reason: the self-build benchmark's
- *   `buildGraph` callee graph grew, so every fnDeps depth walks a larger
- *   transitive set. +88% over the 25% threshold on a sub-50ms metric
- *   (24.3 → 45.6ms) is consistent with the other depths. Tracked in #1113
- *   alongside depth 1, depth 5, and Query time; remove all four once
- *   3.11.0+ data confirms the new steady-state.
- *
- * - 3.10.0:DB bytes/file — one-time per-file methodology shift introduced
- *   by #1134, which excludes `tests/benchmarks/resolution/fixtures/**`
- *   from the dogfooding `buildGraph` sweep so heavyweight new grammars
- *   (e.g. Verilog #1107) no longer inflate timing. The 3.10.0 baseline
- *   was measured with fixtures in the corpus (~745 files); dev now
- *   measures the codegraph source alone (~607 files). DB content is
- *   dominated by `src/`, so total bytes stay roughly constant while the
- *   denominator drops, inflating `dbSizeBytes/file` from 41614 → ~52211
- *   (+25%, exactly at the threshold). This is the same shape as the old
- *   `3.10.0:Full build` exemption (now removed because Full build absolute
- *   timing actually improved) — a measurement-scope artifact, not a real
- *   regression in the schema or extraction layer. Exempt this release;
- *   remove once 3.11.0+ data is captured under the post-#1134 methodology.
+ * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0).
  *
  * - 3.11.0:Query time / 3.11.0:No-op rebuild / 3.11.0:fnDeps depth 3 /
  *   3.11.0:fnDeps depth 5 — CI runner variance on sub-50ms WASM metrics
@@ -256,8 +165,8 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   33 → 33.6 = ~flat, fnDeps depth 5 33 → 33.3 = ~flat, No-op rebuild
  *   15 → 18 = +20% but at runner noise floor) — confirming no underlying
  *   regression and ruling out a real slowdown introduced in 3.11.0. Same
- *   shape and root cause as the 3.10.0 entries above. Exempt this release;
- *   remove once 3.12.0+ data confirms the new steady-state on whatever
+ *   shape and root cause as the pruned 3.10.0 entries. Exempt this release;
+ *   remove once 3.13.0+ data confirms the new steady-state on whatever
  *   runner generation is current at that time.
  *
  * - 3.11.0:1-file rebuild — CI runner variance on a sub-100ms native
@@ -270,7 +179,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   (run 26706695868), confirming per-runner noise rather than a
  *   structural slowdown. The 50% NOISY_METRIC_THRESHOLD is razor-thin
  *   for a sub-100ms metric at shared-runner noise floor (~20ms). Exempt
- *   this release; remove once 3.12.0+ data confirms stabilization.
+ *   this release; remove once 3.13.0+ data confirms stabilization.
  *
  * - 3.11.0:Full build — same CI runner-variance root cause as the four
  *   3.11.0 entries above, but on the multi-second WASM full-build metric
@@ -286,7 +195,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   runner instance later measured 9765. No extractor, builder, or DB
  *   layer changed between 3.11.0 release and #1218; only EMBEDDING-
  *   BENCHMARKS.md, which is not loaded at build time. Exempt this release;
- *   remove once 3.12.0+ data confirms stabilization under whatever runner
+ *   remove once 3.13.0+ data confirms stabilization under whatever runner
  *   generation is current at that time.
  *
  * - 3.11.1:DB bytes/file — same methodology-scope artifact as 3.10.0:DB
@@ -297,7 +206,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   excluded resolution fixtures from the build sweep. The denominator
  *   shrinks while total DB content stays roughly constant, inflating
  *   dbSizeBytes/file: native 41614 → 54107 (+30%), wasm 41543 → 53517
- *   (+29%). No schema or extraction change; remove once 3.12.0+ data is
+ *   (+29%). No schema or extraction change; remove once 3.13.0+ data is
  *   captured with the full 3.11.x baseline in committed query history.
  *
  * - 3.11.1:fnDeps depth 3 / 3.11.1:fnDeps depth 5 — same baseline-gap
@@ -323,7 +232,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   change is present in the dev tree for this docs-only PR (#1282);
  *   the delta is entirely shared-runner scheduling noise. Same shape and
  *   root cause as the 3.11.0 and 3.11.1 entries above. Exempt this
- *   release; remove once 3.12.0+ data confirms the steady-state.
+ *   release; remove once 3.13.0+ data confirms the steady-state.
  *
  * - 3.11.2:1-file rebuild — CI runner variance on the sub-100ms native
  *   incremental metric. The 3.11.2 baseline was captured at 83ms; the
@@ -335,7 +244,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   execute on the incremental hot path. Locally the same PR measures 86ms
  *   (within noise of the 83ms baseline). The 3.11.0:1-file rebuild exemption
  *   above documents the same pattern for the same baseline range. Exempt
- *   this release; remove once 3.12.0+ data confirms stabilization.
+ *   this release; remove once 3.13.0+ data confirms stabilization.
  *
  * - 3.11.2:Full build — CI runner variance on the multi-second native
  *   full-build metric. The 3.11.2 baseline captures fullBuildMs=2231; the
@@ -347,7 +256,39 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   1959ms (3.10.0) to 2986ms (3.9.6), so 2852ms sits well within the
  *   runner-noise envelope. Same shape and root cause as the 3.11.0:Full build
  *   exemption above (which was a WASM metric; this is native). Exempt this
- *   release; remove once 3.12.0+ data confirms the steady-state.
+ *   release; remove once 3.13.0+ data confirms the steady-state.
+ *
+ * - 3.12.0:Full build — root-caused residual feature cost of the Phase 8.x
+ *   resolution work on the native engine. The v3.12.0 publish gate first
+ *   measured 2231 → 3333 (+49%). Local A/B against a v3.11.2 baseline worktree
+ *   (same machine, release-built addons for each side) attributed the delta to
+ *   three post-pass regressions, all fixed: (a) the func-prop WASM re-parse
+ *   post-pass booted the WASM worker pool on every native full build and
+ *   inserted zero nodes on this corpus (~430ms — removed; the Rust extractor
+ *   now emits func-prop method definitions, #1432); (b) an unscoped full-graph
+ *   role re-classification after the CHA/this-dispatch post-passes (~130ms —
+ *   now scoped to files containing the new edges' endpoints); (c) the
+ *   this-dispatch pass booted the in-process WASM runtime to re-parse hierarchy
+ *   files (~40ms — now re-parsed through the already-loaded native engine).
+ *   The remaining delta (local: 1378ms → ~1745ms, +26% including 630 → 672
+ *   corpus growth) is in-phase Rust extraction cost of the Phase 8.x features
+ *   themselves — parse +28%/file (points-to, return-type, prototype and
+ *   func-prop extraction), insert/edges +10–20% — which lands at the 25%
+ *   threshold boundary under CI runner variance. This is measured feature
+ *   cost, not an undiagnosed regression. Tracking: #1433 (per-PR perf canary),
+ *   #1434 (post-pass phase timings). Remove once 3.13+ data establishes the
+ *   new steady-state baseline.
+ *
+ * - 3.12.0:1-file rebuild — CI methodology noise on the ~100ms native metric:
+ *   the build-benchmark suite measures this tier with no warmup runs (#1440),
+ *   unlike the incremental suite, whose identical metric PASSED in the same
+ *   publish run that flagged this one (86 → 131, +52%, noisy threshold 50%).
+ *   Local A/B on the same machine shows parity: v3.11.2 baseline 84–102ms vs
+ *   dev 97–108ms (overlapping ranges). The only systematic additions on this
+ *   path are the CHA scan (~12ms, scoping tracked in #1441) and the native
+ *   this-dispatch re-parse of the changed file (~2ms). Same shape as the
+ *   3.11.2:1-file rebuild entry above. Remove once #1440 lands warmups and
+ *   3.13+ data confirms the steady state.
  *
  * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
  * handled structurally by WASM_TIMING_THRESHOLD (see above). The 3.11.x
@@ -356,13 +297,6 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * (DB bytes/file), neither of which the WASM widening covers.
  */
 const KNOWN_REGRESSIONS = new Set([
-  '3.10.0:No-op rebuild',
-  '3.10.0:1-file rebuild',
-  '3.10.0:fnDeps depth 1',
-  '3.10.0:fnDeps depth 3',
-  '3.10.0:fnDeps depth 5',
-  '3.10.0:Query time',
-  '3.10.0:DB bytes/file',
   '3.11.0:Query time',
   '3.11.0:No-op rebuild',
   '3.11.0:1-file rebuild',
@@ -375,6 +309,8 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.2:No-op rebuild',
   '3.11.2:1-file rebuild',
   '3.11.2:Full build',
+  '3.12.0:Full build',
+  '3.12.0:1-file rebuild',
 ]);
 
 /**
