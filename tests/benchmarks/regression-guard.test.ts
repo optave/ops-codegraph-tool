@@ -165,8 +165,8 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   33 → 33.6 = ~flat, fnDeps depth 5 33 → 33.3 = ~flat, No-op rebuild
  *   15 → 18 = +20% but at runner noise floor) — confirming no underlying
  *   regression and ruling out a real slowdown introduced in 3.11.0. Same
- *   shape and root cause as the 3.10.0 entries above. Exempt this release;
- *   remove once 3.12.0+ data confirms the new steady-state on whatever
+ *   shape and root cause as the pruned 3.10.0 entries. Exempt this release;
+ *   remove once 3.13.0+ data confirms the new steady-state on whatever
  *   runner generation is current at that time.
  *
  * - 3.11.0:1-file rebuild — CI runner variance on a sub-100ms native
@@ -179,7 +179,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   (run 26706695868), confirming per-runner noise rather than a
  *   structural slowdown. The 50% NOISY_METRIC_THRESHOLD is razor-thin
  *   for a sub-100ms metric at shared-runner noise floor (~20ms). Exempt
- *   this release; remove once 3.12.0+ data confirms stabilization.
+ *   this release; remove once 3.13.0+ data confirms stabilization.
  *
  * - 3.11.0:Full build — same CI runner-variance root cause as the four
  *   3.11.0 entries above, but on the multi-second WASM full-build metric
@@ -195,7 +195,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   runner instance later measured 9765. No extractor, builder, or DB
  *   layer changed between 3.11.0 release and #1218; only EMBEDDING-
  *   BENCHMARKS.md, which is not loaded at build time. Exempt this release;
- *   remove once 3.12.0+ data confirms stabilization under whatever runner
+ *   remove once 3.13.0+ data confirms stabilization under whatever runner
  *   generation is current at that time.
  *
  * - 3.11.1:DB bytes/file — same methodology-scope artifact as 3.10.0:DB
@@ -206,7 +206,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   excluded resolution fixtures from the build sweep. The denominator
  *   shrinks while total DB content stays roughly constant, inflating
  *   dbSizeBytes/file: native 41614 → 54107 (+30%), wasm 41543 → 53517
- *   (+29%). No schema or extraction change; remove once 3.12.0+ data is
+ *   (+29%). No schema or extraction change; remove once 3.13.0+ data is
  *   captured with the full 3.11.x baseline in committed query history.
  *
  * - 3.11.1:fnDeps depth 3 / 3.11.1:fnDeps depth 5 — same baseline-gap
@@ -232,7 +232,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   change is present in the dev tree for this docs-only PR (#1282);
  *   the delta is entirely shared-runner scheduling noise. Same shape and
  *   root cause as the 3.11.0 and 3.11.1 entries above. Exempt this
- *   release; remove once 3.12.0+ data confirms the steady-state.
+ *   release; remove once 3.13.0+ data confirms the steady-state.
  *
  * - 3.11.2:1-file rebuild — CI runner variance on the sub-100ms native
  *   incremental metric. The 3.11.2 baseline was captured at 83ms; the
@@ -244,7 +244,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   execute on the incremental hot path. Locally the same PR measures 86ms
  *   (within noise of the 83ms baseline). The 3.11.0:1-file rebuild exemption
  *   above documents the same pattern for the same baseline range. Exempt
- *   this release; remove once 3.12.0+ data confirms stabilization.
+ *   this release; remove once 3.13.0+ data confirms stabilization.
  *
  * - 3.11.2:Full build — CI runner variance on the multi-second native
  *   full-build metric. The 3.11.2 baseline captures fullBuildMs=2231; the
@@ -256,7 +256,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   1959ms (3.10.0) to 2986ms (3.9.6), so 2852ms sits well within the
  *   runner-noise envelope. Same shape and root cause as the 3.11.0:Full build
  *   exemption above (which was a WASM metric; this is native). Exempt this
- *   release; remove once 3.12.0+ data confirms the steady-state.
+ *   release; remove once 3.13.0+ data confirms the steady-state.
  *
  * - 3.12.0:Full build — root-caused residual feature cost of the Phase 8.x
  *   resolution work on the native engine. The v3.12.0 publish gate first

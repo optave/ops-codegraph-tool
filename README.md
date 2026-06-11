@@ -624,36 +624,38 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.11.2 (2026-06-01)*
+*Last updated: v3.12.0 (2026-06-11)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **3.6 ms/file** | **18.7 ms/file** |
-| Query time | **34ms** | **44ms** |
-| No-op rebuild | **25ms** | **21ms** |
-| 1-file rebuild | **86ms** | **60ms** |
+| Build speed | **4.4 ms/file** | **21.2 ms/file** |
+| Query time | **38ms** | **48ms** |
+| No-op rebuild | **30ms** | **27ms** |
+| 1-file rebuild | **121ms** | **76ms** |
 | Query: fn-deps | **2.7ms** | **2.6ms** |
-| Query: path | **2.7ms** | **2.4ms** |
-| ~50,000 files (est.) | **~180.0s build** | **~935.0s build** |
-| Resolution precision | **89.9%** | — |
-| Resolution recall | **42.3%** | — |
+| Query: path | **2.8ms** | **2.5ms** |
+| ~50,000 files (est.) | **~220.0s build** | **~1060.0s build** |
+| Resolution precision | **84.4%** | — |
+| Resolution recall | **56.1%** | — |
 
-Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
+Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files. v3.12.0 note: native build speed regressed ~22% (3.6→4.4 ms/file) and native 1-file incremental rebuild regressed ~41% (86→121 ms); tracked in [#1446](https://github.com/optave/ops-codegraph-tool/issues/1446).
 
 <details><summary>Per-language resolution precision/recall</summary>
 
+v3.12.0 note: global precision dropped 89.9%→84.4%, driven by new false positives in `elixir` (+17 FP), `julia` (+11 FP), and `objc` (+5 FP) — all three still have 0% recall; tracked in [#1447](https://github.com/optave/ops-codegraph-tool/issues/1447). Global recall improved substantially (42.3%→56.1%).
+
 | Language | Precision | Recall | TP | FP | FN | Edges | Dynamic |
 |----------|----------:|-------:|---:|---:|---:|------:|--------:|
-| javascript | 100.0% | 66.7% | 12 | 0 | 6 | 18 | 14/28 |
-| typescript | 100.0% | 75.0% | 15 | 0 | 5 | 20 | — |
+| javascript | 100.0% | 97.6% | 41 | 0 | 1 | 42 | 14/32 |
+| typescript | 100.0% | 100.0% | 47 | 0 | 0 | 47 | — |
 | bash | 100.0% | 100.0% | 12 | 0 | 0 | 12 | 0/1 |
 | c | 100.0% | 100.0% | 9 | 0 | 0 | 9 | — |
 | clojure | 80.0% | 26.7% | 4 | 1 | 11 | 15 | — |
 | cpp | 100.0% | 57.1% | 8 | 0 | 6 | 14 | — |
-| csharp | 100.0% | 52.6% | 10 | 0 | 9 | 19 | — |
+| csharp | 100.0% | 100.0% | 23 | 0 | 0 | 23 | — |
 | cuda | 50.0% | 33.3% | 4 | 4 | 8 | 12 | — |
 | dart | 0.0% | 0.0% | 0 | 0 | 18 | 18 | — |
-| elixir | 0.0% | 0.0% | 0 | 0 | 21 | 21 | — |
+| elixir | 0.0% | 0.0% | 0 | 17 | 21 | 21 | — |
 | erlang | 100.0% | 100.0% | 12 | 0 | 0 | 12 | — |
 | fsharp | 0.0% | 0.0% | 0 | 11 | 12 | 12 | — |
 | gleam | 100.0% | 26.7% | 4 | 0 | 11 | 15 | — |
@@ -661,18 +663,19 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | groovy | 100.0% | 7.7% | 1 | 0 | 12 | 13 | — |
 | haskell | 100.0% | 33.3% | 4 | 0 | 8 | 12 | — |
 | hcl | 0.0% | 0.0% | 0 | 0 | 2 | 2 | — |
-| java | 100.0% | 52.9% | 9 | 0 | 8 | 17 | — |
-| julia | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
+| java | 100.0% | 76.5% | 13 | 0 | 4 | 17 | — |
+| julia | 0.0% | 0.0% | 0 | 11 | 15 | 15 | — |
 | kotlin | 92.3% | 63.2% | 12 | 1 | 7 | 19 | — |
 | lua | 100.0% | 15.4% | 2 | 0 | 11 | 13 | — |
-| objc | 0.0% | 0.0% | 0 | 1 | 12 | 12 | — |
+| objc | 0.0% | 0.0% | 0 | 6 | 12 | 12 | — |
 | ocaml | 100.0% | 8.3% | 1 | 0 | 11 | 12 | — |
-| php | 100.0% | 31.6% | 6 | 0 | 13 | 19 | — |
+| php | 100.0% | 57.9% | 11 | 0 | 8 | 19 | — |
+| pts-javascript | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
 | python | 100.0% | 60.0% | 9 | 0 | 6 | 15 | 15/15 |
 | r | 100.0% | 100.0% | 11 | 0 | 0 | 11 | — |
 | ruby | 100.0% | 100.0% | 11 | 0 | 0 | 11 | 11/11 |
-| rust | 100.0% | 35.7% | 5 | 0 | 9 | 14 | — |
-| scala | 100.0% | 71.4% | 5 | 0 | 2 | 7 | — |
+| rust | 100.0% | 64.3% | 9 | 0 | 5 | 14 | — |
+| scala | 100.0% | 100.0% | 7 | 0 | 0 | 7 | — |
 | solidity | 33.3% | 7.7% | 1 | 2 | 12 | 13 | — |
 | swift | 75.0% | 42.9% | 6 | 2 | 8 | 14 | 9/9 |
 | tsx | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
@@ -683,13 +686,25 @@ Metrics are normalized per file for cross-version comparability. Times above are
 
 | Mode | Resolved | Expected | Recall |
 |------|--------:|---------:|-------:|
+| receiver-typed | 32 | 112 | 28.6% |
 | module-function | 16 | 112 | 14.3% |
-| receiver-typed | 17 | 104 | 16.3% |
-| static | 66 | 93 | 71.0% |
-| same-file | 48 | 86 | 55.8% |
-| interface-dispatched | 7 | 12 | 58.3% |
-| class-inheritance | 0 | 4 | 0.0% |
+| static | 78 | 96 | 81.3% |
+| same-file | 66 | 90 | 73.3% |
+| interface-dispatched | 19 | 19 | 100.0% |
+| class-inheritance | 8 | 12 | 66.7% |
+| callback | 7 | 7 | 100.0% |
+| pts-spread | 4 | 4 | 100.0% |
+| pts-define-property | 3 | 3 | 100.0% |
+| dynamic | 3 | 3 | 100.0% |
+| pts-create-prototype | 2 | 2 | 100.0% |
+| points-to | 1 | 2 | 50.0% |
+| re-export | 2 | 2 | 100.0% |
+| pts-for-of | 2 | 2 | 100.0% |
+| pts-set | 2 | 2 | 100.0% |
+| pts-array-from | 2 | 2 | 100.0% |
 | trait-dispatch | 0 | 2 | 0.0% |
+| define-property | 1 | 1 | 100.0% |
+| defineProperty-accessor | 1 | 1 | 100.0% |
 | package-function | 1 | 1 | 100.0% |
 
 </details>
