@@ -200,10 +200,14 @@ jobs:
 
       - name: Cache HuggingFace models
         if: steps.existing.outputs.skip != 'true'
+        id: hf-cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
-          key: hf-models-${{ runner.os }}-${{ hashFiles('src/domain/search/**') }}
+          # Key on the benchmark script (which owns the model list), not on
+          # search source. Source changes don't require re-downloading models,
+          # so the old key caused an unnecessary cache miss on every new release.
+          key: hf-models-${{ runner.os }}-${{ hashFiles('scripts/embedding-benchmark.ts') }}
           restore-keys: hf-models-${{ runner.os }}-
 
       - name: Build graph
@@ -215,6 +219,9 @@ jobs:
         timeout-minutes: 300
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # On a cache miss models must be downloaded before inference can start.
+          # Allow 90 min per model for cold starts; warm runs stay at 30 min.
+          BENCHMARK_TIMEOUT_MS: ${{ steps.hf-cache.outputs.cache-hit == 'true' && '1800000' || '5400000' }}
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           ARGS="--version ${{ steps.mode.outputs.version }}"
