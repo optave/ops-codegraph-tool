@@ -638,9 +638,11 @@ Self-measured on every release via CI ([build benchmarks](generated/benchmarks/B
 | Resolution precision | **84.4%** | — |
 | Resolution recall | **56.1%** | — |
 
-Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
+Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files. v3.12.0 note: native build speed regressed ~22% (3.6→4.4 ms/file) and native 1-file incremental rebuild regressed ~41% (86→121 ms); tracked in [#1446](https://github.com/optave/ops-codegraph-tool/issues/1446).
 
 <details><summary>Per-language resolution precision/recall</summary>
+
+v3.12.0 note: global precision dropped 89.9%→84.4%, driven by new false positives in `elixir` (+17 FP), `julia` (+11 FP), and `objc` (+5 FP) — all three still have 0% recall; tracked in [#1447](https://github.com/optave/ops-codegraph-tool/issues/1447). Global recall improved substantially (42.3%→56.1%).
 
 | Language | Precision | Recall | TP | FP | FN | Edges | Dynamic |
 |----------|----------:|-------:|---:|---:|---:|------:|--------:|
