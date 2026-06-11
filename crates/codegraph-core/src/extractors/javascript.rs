@@ -633,6 +633,37 @@ fn handle_js_prototype_assignment(lhs: &Node, rhs: &Node, source: &[u8], symbols
         && rhs.kind() == "object"
     {
         extract_js_prototype_object_literal(node_text(&lhs_obj, source), rhs, source, symbols);
+        return;
+    }
+
+    // Pattern 3: `fn.method = function(){}` / `fn.method = () => {}` — function-as-
+    // object-property method definitions (#1432). Mirrors `handleFuncPropAssignment`
+    // in src/extractors/javascript.ts: bare-identifier receiver that is not a builtin
+    // global, property other than `prototype`, RHS a function or arrow. Emitting these
+    // natively lets the Rust edge builder resolve `obj.method()` call sites in-build
+    // (via the direct qualified lookup) and removes the WASM re-parse post-pass that
+    // previously backfilled them on every native build.
+    if lhs_obj.kind() == "identifier"
+        && matches!(lhs_prop.kind(), "property_identifier" | "identifier")
+        && node_text(&lhs_prop, source) != "prototype"
+        && !is_js_builtin_global(node_text(&lhs_obj, source))
+        && matches!(rhs.kind(), "function_expression" | "arrow_function")
+    {
+        let children = extract_js_parameters(rhs, source);
+        symbols.definitions.push(Definition {
+            name: format!(
+                "{}.{}",
+                node_text(&lhs_obj, source),
+                node_text(&lhs_prop, source)
+            ),
+            kind: "method".to_string(),
+            line: start_line(rhs),
+            end_line: Some(end_line(rhs)),
+            decorators: None,
+            complexity: compute_all_metrics(rhs, source, "javascript"),
+            cfg: build_function_cfg(rhs, "javascript", source),
+            children: opt_children(children),
+        });
     }
 }
 
@@ -2911,6 +2942,82 @@ mod tests {
             children.iter().any(|c| c.name == "y"),
             "C.foo should have parameter 'y'; got: {:?}", children
         );
+    }
+
+    // ── Function-as-object-property extraction (#1432) ─────────────────────
+    // Mirrors `handleFuncPropAssignment` in src/extractors/javascript.ts.
+
+    #[test]
+    fn func_prop_function_emits_method_definition() {
+        let s = parse_js(
+            "function f() {}\n\
+             f.g = function() { return 1; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "f.g");
+        assert!(def.is_some(), "f.g definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        let def = def.unwrap();
+        assert_eq!(def.kind, "method");
+        assert!(def.complexity.is_some(), "f.g should have complexity metrics");
+        assert!(def.cfg.is_some(), "f.g should have a CFG");
+    }
+
+    #[test]
+    fn func_prop_arrow_emits_method_definition() {
+        let s = parse_js(
+            "function f() {}\n\
+             f.g = (x) => x + 1;",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "f.g");
+        assert!(def.is_some(), "f.g definition missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        assert_eq!(def.unwrap().kind, "method");
+    }
+
+    #[test]
+    fn func_prop_extracts_parameters_as_children() {
+        let s = parse_js(
+            "function f() {}\n\
+             f.process = function(a, b) { return a + b; };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "f.process").expect("f.process missing");
+        let children = def.children.as_deref().unwrap_or(&[]);
+        assert!(
+            children.iter().any(|c| c.name == "a"),
+            "f.process should have parameter 'a'; got: {:?}", children
+        );
+        assert!(
+            children.iter().any(|c| c.name == "b"),
+            "f.process should have parameter 'b'; got: {:?}", children
+        );
+    }
+
+    #[test]
+    fn func_prop_builtin_globals_are_excluded() {
+        let s = parse_js("console.log = function() {};");
+        let def = s.definitions.iter().find(|d| d.name == "console.log");
+        assert!(def.is_none(), "built-in global func-prop assignment should be ignored; got: {:?}", def);
+    }
+
+    #[test]
+    fn func_prop_nested_member_receiver_is_skipped() {
+        // Only bare-identifier receivers qualify — `a.b.c = fn` must not emit a
+        // definition (mirrors the `obj.type !== 'identifier'` guard in the WASM
+        // extractor).
+        let s = parse_js("const a = { b: {} };\na.b.c = function() {};");
+        let def = s.definitions.iter().find(|d| d.name.ends_with(".c"));
+        assert!(def.is_none(), "nested member receiver should be skipped; got: {:?}", def);
+    }
+
+    #[test]
+    fn func_prop_prototype_function_assignment_is_not_a_method() {
+        // `C.prototype = function(){}` matches neither the prototype object-literal
+        // pattern (rhs must be an object) nor the func-prop pattern (property must
+        // not be `prototype`). No definition should be emitted.
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = function() {};",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.prototype");
+        assert!(def.is_none(), "C.prototype function assignment should not emit a method; got: {:?}", def);
     }
 
     #[test]
