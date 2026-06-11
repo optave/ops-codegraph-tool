@@ -546,4 +546,4 @@ Needs work: Native incremental rebuild performance (11-14x slower than WASM), na
 |------|--------|-------|--------|
 | Issue | [#1452](https://github.com/optave/ops-codegraph-tool/issues/1452) | bug: native build log under-reports edge count (CHA post-pass edges excluded) | Open |
 | Issue | [#1453](https://github.com/optave/ops-codegraph-tool/issues/1453) | bug: native engine misses 6 expected call edges in JavaScript fixture (85% vs WASM 100%) | Open |
-| Issue | [#1454](https://github.com/optave/ops-codegraph-tool/issues/1454) | bug: native 1-file incremental rebuild is 11-14x slower than WASM (1596-1901ms vs 112-171ms) | Open |
+| Issue | [#1454](https://github.com/optave/ops-codegraph-tool/issues/1454) | bug: native 1-file incremental rebuild is 11-14x slower than WASM (1596-9043ms vs 112-171ms) | Open |
