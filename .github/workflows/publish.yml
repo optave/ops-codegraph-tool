@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (e.g. 2.1.0, without v prefix). Used to retry a failed stable release.'
+        description: 'Version to publish (e.g. 2.1.0 or v2.1.0 — the v prefix is optional). Used to retry a failed stable release.'
         required: true
         type: string
 
