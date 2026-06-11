@@ -737,7 +737,8 @@ async function runPostNativeThisDispatch(
           const r = results[i];
           if (!r) {
             // Per-file parse failure — fall back to WASM for this file.
-            if (nativeAbs[i]) nativeNullFiles.add(nativeAbs[i]);
+            const abs = nativeAbs[i];
+            if (abs) nativeNullFiles.add(abs);
             continue;
           }
           callsByRel.set(normalizePath(path.relative(rootDir, r.file)), r.calls ?? []);
