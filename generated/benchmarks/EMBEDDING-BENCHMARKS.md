@@ -6,6 +6,11 @@ Hit@N = expected symbol found in top N results.
 
 | Version | Model | Symbols | Hit@1 | Hit@3 | Hit@5 | Misses | Embed Time |
 |---------|-------|--------:|------:|------:|------:|-------:|-----------:|
+| 3.12.0 | minilm | 1500 | 64.0% ↓2.6pp | 84.7% ↓2.0pp | 90.2% ↓1.3pp | 78 | 158.6s |
+| 3.12.0 | jina-small | 1500 | 77.4% ↑2.1pp | 92.1% ↑0.8pp | 95.1% ~ | 42 | 307.6s |
+| 3.12.0 | jina-code | 1500 | 68.5% ~ | 84.5% ↓1.3pp | 89.2% ↓1.9pp | 87 | 1342.5s |
+| 3.12.0 | mxbai-xsmall | 1500 | 50.2% ~ | 69.7% ↑0.9pp | 76.9% ↑1.7pp | 232 | 233.1s |
+| 3.12.0 | modernbert | 1500 | 74.7% ~ | 91.8% ↑0.7pp | 95.1% ↑0.8pp | 31 | 1472.9s |
 | 3.11.2 | minilm | 1500 | 66.6% ↑1.2pp | 86.7% ↑1.1pp | 91.5% ~ | 66 | 148.6s |
 | 3.11.2 | jina-small | 1500 | 75.3% ↓0.9pp | 91.3% ↓1.0pp | 95.1% ~ | 35 | 297.1s |
 | 3.11.2 | jina-base | 1500 | 69.1% ↓1.4pp | 88.6% ↓1.3pp | 92.7% ↓0.5pp | 62 | 1536.6s |
@@ -35,21 +40,86 @@ Hit@N = expected symbol found in top N results.
 
 ### Latest results
 
-**Version:** 3.11.2 | **Strategy:** structured | **Symbols:** 1500 | **Date:** 2026-06-02
+**Version:** 3.12.0 | **Strategy:** structured | **Symbols:** 1500 | **Date:** 2026-06-11
 
 | Model | Dim | Context | Hit@1 | Hit@3 | Hit@5 | Hit@10 | Misses | Embed | Search |
 |-------|----:|--------:|------:|------:|------:|-------:|-------:|------:|-------:|
-| minilm | 384 | 256 | 66.6% | 86.7% | 91.5% | 95.6% | 66 | 148.6s | 147.0s |
-| jina-small | 512 | 8192 | 75.3% | 91.3% | 95.1% | 97.7% | 35 | 297.1s | 181.6s |
-| jina-base | 768 | 8192 | 69.1% | 88.6% | 92.7% | 95.9% | 62 | 1536.6s | 229.0s |
-| jina-code | 768 | 8192 | 68.0% | 85.9% | 91.1% | 95.3% | 70 | 1318.3s | 231.7s |
-| nomic | 768 | 8192 | 80.7% | 95.2% | 97.4% | 99.3% | 10 | 1535.8s | 230.4s |
-| nomic-v1.5 | 768 | 8192 | 79.3% | 94.0% | 96.9% | 98.9% | 17 | 1534.3s | 227.1s |
-| mxbai-xsmall | 384 | 4096 | 50.0% | 68.8% | 75.1% | 83.2% | 252 | 213.0s | 162.9s |
-| modernbert | 768 | 8192 | 74.9% | 91.1% | 94.3% | 97.1% | 43 | 1425.5s | 232.5s |
+| minilm | 384 | 256 | 64.0% | 84.7% | 90.2% | 94.8% | 78 | 158.6s | 143.0s |
+| jina-small | 512 | 8192 | 77.4% | 92.1% | 95.1% | 97.2% | 42 | 307.6s | 181.9s |
+| jina-code | 768 | 8192 | 68.5% | 84.5% | 89.2% | 94.2% | 87 | 1342.5s | 235.4s |
+| mxbai-xsmall | 384 | 4096 | 50.2% | 69.7% | 76.9% | 84.5% | 232 | 233.1s | 164.0s |
+| modernbert | 768 | 8192 | 74.7% | 91.8% | 95.1% | 97.9% | 31 | 1472.9s | 231.8s |
 
 <!-- EMBEDDING_BENCHMARK_DATA
 [
+  {
+    "version": "3.12.0",
+    "date": "2026-06-11",
+    "strategy": "structured",
+    "symbols": 1500,
+    "models": {
+      "minilm": {
+        "dim": 384,
+        "contextWindow": 256,
+        "hits1": 960,
+        "hits3": 1271,
+        "hits5": 1353,
+        "hits10": 1422,
+        "misses": 78,
+        "total": 1500,
+        "embedTimeMs": 158640,
+        "searchTimeMs": 142958
+      },
+      "jina-small": {
+        "dim": 512,
+        "contextWindow": 8192,
+        "hits1": 1161,
+        "hits3": 1382,
+        "hits5": 1427,
+        "hits10": 1458,
+        "misses": 42,
+        "total": 1500,
+        "embedTimeMs": 307560,
+        "searchTimeMs": 181906
+      },
+      "jina-code": {
+        "dim": 768,
+        "contextWindow": 8192,
+        "hits1": 1027,
+        "hits3": 1268,
+        "hits5": 1338,
+        "hits10": 1413,
+        "misses": 87,
+        "total": 1500,
+        "embedTimeMs": 1342512,
+        "searchTimeMs": 235431
+      },
+      "mxbai-xsmall": {
+        "dim": 384,
+        "contextWindow": 4096,
+        "hits1": 753,
+        "hits3": 1046,
+        "hits5": 1153,
+        "hits10": 1268,
+        "misses": 232,
+        "total": 1500,
+        "embedTimeMs": 233137,
+        "searchTimeMs": 163956
+      },
+      "modernbert": {
+        "dim": 768,
+        "contextWindow": 8192,
+        "hits1": 1120,
+        "hits3": 1377,
+        "hits5": 1426,
+        "hits10": 1469,
+        "misses": 31,
+        "total": 1500,
+        "embedTimeMs": 1472876,
+        "searchTimeMs": 231831
+      }
+    }
+  },
   {
     "version": "3.11.2",
     "date": "2026-06-02",
