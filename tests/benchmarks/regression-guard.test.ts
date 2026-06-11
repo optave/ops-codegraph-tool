@@ -145,99 +145,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * latest, when `previous.version` matches via the baseline fallback). Once
  * a version is no longer the latest in committed history and no longer the
  * baseline used for `dev` comparisons, its entries become dead weight and
- * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6).
- *
- * - 3.10.0:No-op rebuild — small (~3–7ms / ~25–35% local) real regression
- *   amplified by CI variance on a sub-30ms metric. Verified by running
- *   the v3.9.6 source+binary against this repo: steady-state 14–19ms vs
- *   HEAD's 18–22ms. The JS-side fast-skip pre-flight (#1064) was *not*
- *   the cause — disabling it leaves the orchestrator-only path at the
- *   same ~20ms. Likely contributors: the extra is_supported_extension
- *   filter in detect_removed_files (#1070), the larger file_hashes row
- *   set after #1069 stores symbol-less files, and tree-sitter 0.24→0.25.
- *   Each is a few hundred microseconds; aggregated they explain the
- *   local delta. CI's +120% reflects sub-30ms metric noise floor on
- *   shared runners — not a 2x slowdown.
- *
- * - 3.10.0:1-file rebuild — same CI-amplification pattern on a sub-100ms
- *   metric. Local steady-state is ~60ms (PR #1085 brought it down from
- *   ~108ms by skipping unnecessary backfill on clean incrementals); CI
- *   measures 75–82ms = local + ~20ms shared-runner overhead. Against the
- *   v3.9.6 baseline of 54ms that's +44–52% on CI, fluctuating across runs
- *   (run 25624120076: 79ms / +46%; run 25627318198: 82ms / +52%). The
- *   underlying perf work is real and incremental-benchmark.ts now uses
- *   warmup + 5 samples to reduce variance, but a 50% threshold on a
- *   sub-100ms metric is still razor-thin. Exempt this release; remove
- *   once 3.11.0+ data confirms CI numbers stabilize under the new
- *   methodology.
- *
- * - 3.10.0:fnDeps depth 1 — CI variance on a sub-30ms metric (24.7ms native
- *   baseline). The fn_deps Rust implementation, fnDepsData JS wrapper, and
- *   DB schema/indexes are all byte-for-byte unchanged since v3.9.6 (already
- *   documented in NOISY_METRICS above). Measured runs land at +40–60%
- *   typically (within the 50% NOISY_METRIC_THRESHOLD), but the per-PR gate
- *   has seen outliers up to +82% (run 25708925467: 24.7 → 44.9ms) on
- *   shared runners — the ~20ms absolute delta is the runner noise floor.
- *   Exempt this release; remove once 3.11.0+ data confirms stabilization
- *   under the warmup + 5-sample methodology already applied to incremental
- *   benchmarks.
- *
- * - 3.10.0:fnDeps depth 3 — same CI-variance pattern as fnDeps depth 1, just
- *   one depth-level deeper. WASM baseline is 33ms (sub-30ms range when CI
- *   jitter is included). The fn_deps codepath is depth-agnostic — same Rust
- *   implementation, same JS wrapper, same DB indexes — so a deviation at
- *   depth 3 but not depth 1/5 indicates per-run runner noise, not a
- *   structural regression. Observed +32% (33 → 43.4ms) on run 25790873005,
- *   absolute delta 10.4ms exactly at the MIN_ABSOLUTE_DELTA floor. Exempt
- *   this release; remove once 3.11.0+ data confirms stabilization.
- *
- * - 3.10.0:Query time — methodology artifact, not a real regression. The
- *   metric was a single-shot cold call to `fnDepsData('buildGraph', dbPath)`
- *   with no warmup, no median, and `noTests: false` — so it captured ~65ms
- *   of NAPI/rusqlite/OS-page-cache init plus the cost of walking through
- *   fixture files added by new language extractors. Local v3.9.6 vs HEAD
- *   on the same corpus measured 78.8ms vs 67.5ms single-shot (HEAD faster),
- *   while the warmed `queries.fnDepsMs` in the same benchmark showed 4.0ms
- *   vs 2.8ms — confirming no underlying regression. Methodology fixed in
- *   #1113: queryTimeMs now uses 3 warmup runs + median of 5 with
- *   `noTests: true`, matching query-benchmark.ts hygiene. Exemption kept
- *   in place until 3.11.0+ data captures the new steady-state under the
- *   updated methodology (expected ~36ms native on this corpus); remove
- *   the entry then.
- *
- * - 3.10.0:fnDeps depth 5 — same cause as Query time above. Merging main
- *   into #1102 added the Erlang extractor (#1103) on top of the existing
- *   Solidity (#1100) + R (#1102) growth, expanding `buildGraph`'s
- *   depth-5 transitive callee fan-out by another step. The depth-5 walk
- *   amplifies any base-graph growth quadratically (each new node adds
- *   its own depth-5 subtree). +31% over the 25% threshold maps to the
- *   ~33→43ms swing on a sub-50ms metric. Tracked in #1113 alongside
- *   Query time; remove both once 3.11.0+ data confirms the new steady-state.
- *
- * - 3.10.0:fnDeps depth 3 — same cause as depth 1 and depth 5. Merging main
- *   into #1101 (Groovy) layered the Groovy extractor on top of the
- *   Solidity + R + Erlang growth that already inflated the depth-1 and
- *   depth-5 baselines. The depth-3 walk sits between those two and
- *   regresses for the same reason: the self-build benchmark's
- *   `buildGraph` callee graph grew, so every fnDeps depth walks a larger
- *   transitive set. +88% over the 25% threshold on a sub-50ms metric
- *   (24.3 → 45.6ms) is consistent with the other depths. Tracked in #1113
- *   alongside depth 1, depth 5, and Query time; remove all four once
- *   3.11.0+ data confirms the new steady-state.
- *
- * - 3.10.0:DB bytes/file — one-time per-file methodology shift introduced
- *   by #1134, which excludes `tests/benchmarks/resolution/fixtures/**`
- *   from the dogfooding `buildGraph` sweep so heavyweight new grammars
- *   (e.g. Verilog #1107) no longer inflate timing. The 3.10.0 baseline
- *   was measured with fixtures in the corpus (~745 files); dev now
- *   measures the codegraph source alone (~607 files). DB content is
- *   dominated by `src/`, so total bytes stay roughly constant while the
- *   denominator drops, inflating `dbSizeBytes/file` from 41614 → ~52211
- *   (+25%, exactly at the threshold). This is the same shape as the old
- *   `3.10.0:Full build` exemption (now removed because Full build absolute
- *   timing actually improved) — a measurement-scope artifact, not a real
- *   regression in the schema or extraction layer. Exempt this release;
- *   remove once 3.11.0+ data is captured under the post-#1134 methodology.
+ * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0).
  *
  * - 3.11.0:Query time / 3.11.0:No-op rebuild / 3.11.0:fnDeps depth 3 /
  *   3.11.0:fnDeps depth 5 — CI runner variance on sub-50ms WASM metrics
@@ -389,13 +297,6 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * (DB bytes/file), neither of which the WASM widening covers.
  */
 const KNOWN_REGRESSIONS = new Set([
-  '3.10.0:No-op rebuild',
-  '3.10.0:1-file rebuild',
-  '3.10.0:fnDeps depth 1',
-  '3.10.0:fnDeps depth 3',
-  '3.10.0:fnDeps depth 5',
-  '3.10.0:Query time',
-  '3.10.0:DB bytes/file',
   '3.11.0:Query time',
   '3.11.0:No-op rebuild',
   '3.11.0:1-file rebuild',
