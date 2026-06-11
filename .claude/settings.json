@@ -9,32 +9,32 @@
         "hooks": [
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/check-readme.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/check-readme.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/guard-git.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/guard-git.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/guard-pr-body.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/guard-pr-body.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/commitlint-local.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/commitlint-local.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/pre-commit.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/pre-commit.sh\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/lint-staged.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/lint-staged.sh\"",
             "timeout": 15
           }
         ]
@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/enrich-context.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/enrich-context.sh\"",
             "timeout": 10
           }
         ]
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/enrich-context.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/enrich-context.sh\"",
             "timeout": 10
           }
         ]
@@ -66,12 +66,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/update-graph.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/update-graph.sh\"",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/track-edits.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/track-edits.sh\"",
             "timeout": 5
           }
         ]
@@ -81,12 +81,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/track-moves.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/track-moves.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$p\" ] || exit 0; bash \"$p/.claude/hooks/post-git-ops.sh\"",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/post-git-ops.sh\"",
             "timeout": 30
           }
         ]
