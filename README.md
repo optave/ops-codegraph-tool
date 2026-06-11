@@ -43,7 +43,7 @@ Codegraph builds a function-level dependency graph of your entire codebase — e
 
 It parses your code with [tree-sitter](https://tree-sitter.github.io/) (native Rust or WASM), stores the graph in SQLite, and exposes it where it matters most:
 
-- **MCP server** — AI agents query the graph directly through 30 tools — one call instead of 30 `grep`/`find`/`cat` invocations
+- **MCP server** — AI agents query the graph directly through 34 tools — one call instead of dozens of `grep`/`find`/`cat` invocations
 - **CLI** — developers and agents explore, query, and audit code from the terminal
 - **CI gates** — `check` and `manifesto` commands enforce quality thresholds with exit codes
 - **Programmatic API** — embed codegraph in your own tools via `npm install`
@@ -76,7 +76,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 ### Feature comparison
 
-<sub>Comparison last verified: May 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
+<sub>Comparison last verified: June 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
 | Capability | codegraph (this repo) | [code-review-graph](https://github.com/tirth8205/code-review-graph) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph (other)¹](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -100,7 +100,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 | | Differentiator | In practice |
 |---|---|---|
-| **🤖** | **AI-first architecture** | 30-tool [MCP server](https://modelcontextprotocol.io/) — agents query the graph directly instead of scraping the filesystem. One call replaces 20+ grep/find/cat invocations |
+| **🤖** | **AI-first architecture** | 34-tool [MCP server](https://modelcontextprotocol.io/) — agents query the graph directly instead of scraping the filesystem. One call replaces 20+ grep/find/cat invocations |
 | **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents understand a symbol's architectural role without reading surrounding code |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
 | **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds — agents work with current data |
@@ -124,10 +124,10 @@ That's it. The graph is ready. Now connect your AI agent.
 
 ### For AI agents (primary use case)
 
-Connect directly via MCP — your agent gets 30 tools to query the graph:
+Connect directly via MCP — your agent gets 34 tools to query the graph:
 
 ```bash
-codegraph mcp          # 33-tool MCP server — AI queries the graph directly
+codegraph mcp          # 34-tool MCP server — AI queries the graph directly
 ```
 
 Or add codegraph to your agent's instructions (e.g. `CLAUDE.md`):
@@ -169,7 +169,7 @@ cd codegraph && npm install && npm link
 
 | | Feature | Description |
 |---|---|---|
-| 🤖 | **MCP server** | 33-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
+| 🤖 | **MCP server** | 34-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | 🎯 | **Deep context** | `context` gives agents source, deps, callers, signature, and tests for a function in one call; `audit --quick` gives structural summaries |
 | 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity — agents instantly know architectural role |
 | 📦 | **Batch querying** | Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch |
@@ -727,7 +727,7 @@ Optional: `@huggingface/transformers` (semantic search), `@modelcontextprotocol/
 
 ### MCP Server
 
-Codegraph is built around a [Model Context Protocol](https://modelcontextprotocol.io/) server with 30 tools (31 in multi-repo mode) — the primary way agents consume the graph:
+Codegraph is built around a [Model Context Protocol](https://modelcontextprotocol.io/) server with 34 tools (35 in multi-repo mode) — the primary way agents consume the graph:
 
 ```bash
 codegraph mcp                  # Single-repo mode (default) — only local project
@@ -857,7 +857,7 @@ Works with any secret manager: 1Password CLI (`op`), Bitwarden (`bw`), `pass`, H
 
 ### MCP tool filtering
 
-Codegraph's MCP server exposes 30+ tools by default. For models with a small context window, you can shrink the schema by disabling tools you don't use:
+Codegraph's MCP server exposes 34 tools by default. For models with a small context window, you can shrink the schema by disabling tools you don't use:
 
 ```json
 {
@@ -915,7 +915,7 @@ const { results: fused } = await multiSearchData(
 
 ## ⚠️ Limitations
 
-- **No TypeScript type-checker integration** — type inference resolves annotations, `new` expressions, and assignment chains, but does not invoke `tsc` for overload resolution or complex generics
+- **TypeScript compiler integration is opt-in** — set `"build": { "typescriptResolver": true }` in `.codegraphrc.json` to enable the TypeScript compiler API pass; heuristic type inference (annotations, `new` expressions, assignment chains) is always active without it
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
 - **Dataflow analysis** — intraprocedural (single-function scope), not interprocedural
@@ -933,7 +933,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 7. ~~**TypeScript Migration**~~ — **Complete** (v3.4.0) — all 271 source files migrated from JS to TS, zero `.js` remaining
 8. ~~**Native Analysis Acceleration**~~ — **Complete** (v3.5.0) — all build phases in Rust/rusqlite, sub-100ms incremental rebuilds, better-sqlite3 lazy-loaded as fallback only
 9. ~~**Expanded Language Support**~~ — **Complete** (v3.8.0) — 23 new languages in 4 batches (11 → 34), dual-engine WASM + Rust support for all
-10. **Analysis Depth** — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis
+10. ~~**Analysis Depth**~~ — **Complete** (v3.12.0) — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, barrel re-export chain resolution, CHA+RTA dynamic dispatch
 11. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
 12. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
 13. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
