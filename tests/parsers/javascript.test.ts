@@ -217,6 +217,17 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.get('res')).toEqual({ type: 'Response', confidence: 0.9 });
     });
 
+    it('extracts class field annotations into typeMap with confidence 0.9', () => {
+      const symbols = parseTS(`
+        class UserService {
+          private repo: Repository;
+          run() { this.repo.save(); }
+        }
+      `);
+      expect(symbols.typeMap.get('repo')).toEqual({ type: 'Repository', confidence: 0.9 });
+      expect(symbols.typeMap.get('this.repo')).toEqual({ type: 'Repository', confidence: 0.9 });
+    });
+
     it('returns empty typeMap when no annotations', () => {
       const symbols = parseJS(`const x = 42; function foo(a, b) {}`);
       expect(symbols.typeMap).toBeInstanceOf(Map);

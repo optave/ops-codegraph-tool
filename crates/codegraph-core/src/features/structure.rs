@@ -921,21 +921,8 @@ mod tests {
     #[test]
     fn line_count_map_from_symbols() {
         let mut file_symbols = HashMap::new();
-        let mut sym = FileSymbols {
-            file: "src/a.ts".to_string(),
-            definitions: vec![],
-            imports: vec![],
-            calls: vec![],
-            classes: vec![],
-            exports: vec![],
-            type_map: vec![],
-            return_type_map: vec![],
-            call_assignments: vec![],
-            ast_nodes: vec![],
-            dataflow: None,
-            line_count: Some(42),
-            fn_ref_bindings: vec![],
-        };
+        let mut sym = FileSymbols::new("src/a.ts".to_string());
+        sym.line_count = Some(42);
         file_symbols.insert("src/a.ts".to_string(), sym.clone());
 
         sym.file = "src/b.ts".to_string();

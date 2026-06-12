@@ -564,6 +564,9 @@ function runPostNativeCha(db: BetterSqlite3Database): {
 
   if (newEdges.length > 0) {
     db.transaction(() => batchInsertEdges(db, newEdges))();
+    // Account for post-pass edges excluded from the build summary line (#1452),
+    // mirroring the this/super dispatch post-pass insertion log.
+    debug(`CHA expansion post-pass: inserted ${newEdgeCount} edge(s)`);
   }
   return { newEdgeCount, affectedFiles };
 }
@@ -1344,9 +1347,9 @@ export async function tryNativeOrchestrator(
     built_at: new Date().toISOString(),
   });
 
-  info(
-    `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
-  );
+  // The build summary is logged after the JS edge-writing post-passes below
+  // (dropped-language backfill, CHA, this/super dispatch) so the reported
+  // counts include their edges (#1452).
 
   // ── Post-native structure + analysis ──────────────────────────────
   let analysisTiming = {
@@ -1478,6 +1481,27 @@ export async function tryNativeOrchestrator(
   // phases (including the WASM dropped-language backfill, CHA post-pass, and
   // this/super dispatch) so every new edge in this build cycle gets a label.
   backfillEdgeTechniquesAfterNativeOrchestrator(ctx.db, !!result.isFullBuild, result.changedFiles);
+
+  // Re-count nodes/edges now that all edge-writing post-passes have run: the
+  // Rust orchestrator captured its counts before the JS post-passes added
+  // edges, so both its summary and build_meta under-report (#1452).
+  let finalNodeCount = result.nodeCount ?? 0;
+  let finalEdgeCount = result.edgeCount ?? 0;
+  try {
+    const counts = (ctx.db as unknown as BetterSqlite3Database)
+      .prepare('SELECT (SELECT COUNT(*) FROM nodes) AS n, (SELECT COUNT(*) FROM edges) AS e')
+      .get() as { n: number; e: number };
+    if (counts.n !== finalNodeCount || counts.e !== finalEdgeCount) {
+      finalNodeCount = counts.n;
+      finalEdgeCount = counts.e;
+      setBuildMeta(ctx.db, { node_count: finalNodeCount, edge_count: finalEdgeCount });
+    }
+  } catch (err) {
+    debug(`Post-pass node/edge re-count failed: ${toErrorMessage(err)}`);
+  }
+  info(
+    `Native build orchestrator completed: ${finalNodeCount} nodes, ${finalEdgeCount} edges, ${result.fileCount ?? 0} files`,
+  );
 
   // ── Structure and analysis fallback (run after edge-writing so roles see full graph) ──
   // Reconstruct fileSymbols once for both structure and analysis to avoid two

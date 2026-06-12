@@ -566,6 +566,14 @@ mod tests {
             dataflow: None,
             line_count: None,
             fn_ref_bindings: vec![],
+            param_bindings: vec![],
+            this_call_bindings: vec![],
+            array_elem_bindings: vec![],
+            spread_arg_bindings: vec![],
+            for_of_bindings: vec![],
+            array_callback_bindings: vec![],
+            object_rest_param_bindings: vec![],
+            object_prop_bindings: vec![],
         }
     }
 

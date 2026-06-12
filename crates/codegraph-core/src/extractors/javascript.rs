@@ -33,6 +33,9 @@ impl SymbolExtractor for JsExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_prototype_methods);
         // call_assignments runs after type_map is populated (needs receiver types)
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_call_assignments);
+        // Phase 8.3c–8.3f: points-to bindings (params, this-rebinding, arrays,
+        // spread, for-of, object rest/props) for the pts constraint solver.
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_pts_bindings);
         symbols
     }
 }
@@ -70,6 +73,27 @@ fn extract_new_expr_type_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&
         }
         _ => None,
     }
+}
+
+/// Nearest enclosing class context for class-scoped typeMap keys.
+///
+/// Mirrors the TS walk's `childTypeMapClass` propagation: a `class_declaration`
+/// (or `abstract_class_declaration`) provides its name; a `class` *expression*
+/// resets the context to None because the expression-internal name is never
+/// visible to the resolver, preserving the `this.prop` key fallback.
+fn enclosing_type_map_class<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        match n.kind() {
+            "class_declaration" | "abstract_class_declaration" => {
+                return n.child_by_field_name("name").map(|name| node_text(&name, source));
+            }
+            "class" => return None,
+            _ => {}
+        }
+        cur = n.parent();
+    }
+    None
 }
 
 fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
@@ -126,24 +150,46 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
             }
         }
         // Phase 8.3d: property-write pts tracking — `obj.prop = fn` seeds composite key.
+        // Also seeds `this.prop = new Ctor()` constructor-assigned property types,
+        // keyed as `ClassName.prop` (class-scoped) so two classes with identically-named
+        // properties don't overwrite each other's typeMap entry (issue #1323).
+        // Mirrors handlePropWriteTypeMap in src/extractors/javascript.ts.
         "assignment_expression" => {
             let lhs = node.child_by_field_name("left");
             let rhs = node.child_by_field_name("right");
             if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
-                if lhs.kind() == "member_expression" && rhs.kind() == "identifier" {
+                if lhs.kind() == "member_expression" {
                     let obj = lhs.child_by_field_name("object");
                     let prop = lhs.child_by_field_name("property");
                     if let (Some(obj), Some(prop)) = (obj, prop) {
-                        if obj.kind() == "identifier" {
-                            let obj_name = node_text(&obj, source);
-                            if !is_js_builtin_global(obj_name) {
-                                let key = format!("{}.{}", obj_name, node_text(&prop, source));
-                                let rhs_name = node_text(&rhs, source).to_string();
-                                symbols.type_map.push(TypeMapEntry {
-                                    name: key,
-                                    type_name: rhs_name,
-                                    confidence: 0.85,
-                                });
+                        // Guard: only static property access, not computed subscripts.
+                        let prop_kind = prop.kind();
+                        if prop_kind == "property_identifier" || prop_kind == "identifier" {
+                            if obj.kind() == "this" && rhs.kind() == "new_expression" {
+                                if let Some(ctor_type) = extract_new_expr_type_name(&rhs, source) {
+                                    let key = match enclosing_type_map_class(node, source) {
+                                        Some(class_name) => {
+                                            format!("{}.{}", class_name, node_text(&prop, source))
+                                        }
+                                        None => format!("this.{}", node_text(&prop, source)),
+                                    };
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: key,
+                                        type_name: ctor_type.to_string(),
+                                        confidence: 1.0,
+                                    });
+                                }
+                            } else if obj.kind() == "identifier" && rhs.kind() == "identifier" {
+                                let obj_name = node_text(&obj, source);
+                                if !is_js_builtin_global(obj_name) {
+                                    let key = format!("{}.{}", obj_name, node_text(&prop, source));
+                                    let rhs_name = node_text(&rhs, source).to_string();
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: key,
+                                        type_name: rhs_name,
+                                        confidence: 0.85,
+                                    });
+                                }
                             }
                         }
                     }
@@ -1084,17 +1130,52 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             // Phase 8.3: `const alias = obj.method` — record for pts analysis.
             // Mirror the JS BUILTIN_GLOBALS guard: skip bindings where the
             // receiver object is a well-known JS global (e.g. `const fn = Math.random`).
+            // Guards mirror the TS extractor: only static property access on a plain
+            // identifier receiver — chained `a.b.method` and computed subscripts are
+            // skipped because they can never match pts keys.
             if let (Some(obj), Some(prop)) = (
                 value_n.child_by_field_name("object"),
                 value_n.child_by_field_name("property"),
             ) {
-                let obj_text = node_text(&obj, source);
-                if !JS_BUILTIN_GLOBALS.contains(&obj_text) {
-                    symbols.fn_ref_bindings.push(FnRefBinding {
-                        lhs: node_text(&name_n, source).to_string(),
-                        rhs: node_text(&prop, source).to_string(),
-                        rhs_receiver: Some(obj_text.to_string()),
-                    });
+                let prop_kind = prop.kind();
+                if (prop_kind == "property_identifier" || prop_kind == "identifier")
+                    && obj.kind() == "identifier"
+                {
+                    let obj_text = node_text(&obj, source);
+                    if !JS_BUILTIN_GLOBALS.contains(&obj_text) {
+                        symbols.fn_ref_bindings.push(FnRefBinding {
+                            lhs: node_text(&name_n, source).to_string(),
+                            rhs: node_text(&prop, source).to_string(),
+                            rhs_receiver: Some(obj_text.to_string()),
+                        });
+                    }
+                }
+            }
+        } else if name_n.kind() == "identifier" && value_n.kind() == "call_expression" {
+            // Phase 8.3: `const f = fn.bind(ctx)` — bind returns a bound copy of fn;
+            // track f → fn so pts(f) ⊇ pts(fn) and subsequent `f(args)` calls resolve
+            // to fn. Only flat-identifier binds (fn.bind) are tracked, mirroring the
+            // TS extractor; method-receiver binds like `obj.method.bind(ctx)` are not.
+            if let Some(call_fn) = value_n.child_by_field_name("function") {
+                if call_fn.kind() == "member_expression" {
+                    let is_bind = call_fn
+                        .child_by_field_name("property")
+                        .map(|p| node_text(&p, source) == "bind")
+                        .unwrap_or(false);
+                    if is_bind {
+                        if let Some(bound_fn) = call_fn.child_by_field_name("object") {
+                            if bound_fn.kind() == "identifier" {
+                                let bound_name = node_text(&bound_fn, source);
+                                if !JS_BUILTIN_GLOBALS.contains(&bound_name) {
+                                    symbols.fn_ref_bindings.push(FnRefBinding {
+                                        lhs: node_text(&name_n, source).to_string(),
+                                        rhs: bound_name.to_string(),
+                                        rhs_receiver: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1741,6 +1822,14 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
     let call_line = start_line(call_node);
 
     let callee_name = extract_callee_name(call_node, source);
+    // .call() / .apply() / .bind() — the first arg is the `this` context (not a
+    // callback of the enclosing function) and subsequent args flow into the
+    // delegated function's parameters. Emitting them here would produce
+    // false-positive edges from the *calling* function. This-rebinding
+    // (fn::this → ctx) is handled separately by collect_this_call_and_bindings.
+    if matches!(callee_name, Some("call") | Some("apply") | Some("bind")) {
+        return;
+    }
     let mut member_expr_args_allowed = callee_name
         .map(|n| CALLBACK_ACCEPTING_CALLEES.contains(&n))
         .unwrap_or(false);
@@ -1769,7 +1858,7 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
             "member_expression" if member_expr_args_allowed => {
                 if let Some(prop) = child.child_by_field_name("property") {
                     let receiver = child.child_by_field_name("object")
-                        .map(|obj| node_text(&obj, source).to_string());
+                        .map(|obj| extract_receiver_name(&obj, source));
                     calls.push(Call {
                         name: node_text(&prop, source).to_string(),
                         line: call_line,
@@ -1828,6 +1917,34 @@ fn extract_destructured_bindings(
     }
 }
 
+/// Mirrors `extractReceiverName` in src/extractors/javascript.ts: normalize a
+/// call receiver node to a resolvable name. Inline-new (`new Foo().method()`)
+/// and single-paren-wrapped new (`(new Foo()).method()`) yield the constructor
+/// name so the resolver can look up `Foo.method` directly.
+fn extract_receiver_name(obj: &Node, source: &[u8]) -> String {
+    match obj.kind() {
+        "new_expression" => {
+            if let Some(name) = extract_new_expr_type_name(obj, source) {
+                return name.to_string();
+            }
+        }
+        "parenthesized_expression" => {
+            // Only one level of parentheses is unwrapped, matching the TS
+            // extractor; deeper nesting falls through to raw-text handling.
+            for i in 0..obj.child_count() {
+                let Some(child) = obj.child(i) else { continue };
+                if child.kind() == "new_expression" {
+                    if let Some(name) = extract_new_expr_type_name(&child, source) {
+                        return name.to_string();
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    node_text(obj, source).to_string()
+}
+
 fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<Call> {
     match fn_node.kind() {
         "identifier" => Some(Call {
@@ -1868,8 +1985,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             if prop.kind() == "string" || prop.kind() == "string_fragment" {
                 let method_name = node_text(&prop, source).replace(&['\'', '"'][..], "");
                 if !method_name.is_empty() {
-                    let receiver = named_child_text(&fn_node, "object", source)
-                        .map(|s| s.to_string());
+                    let receiver = obj.as_ref().map(|o| extract_receiver_name(o, source));
                     return Some(Call {
                         name: method_name,
                         line: start_line(call_node),
@@ -1879,8 +1995,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                 }
             }
 
-            let receiver = named_child_text(&fn_node, "object", source)
-                .map(|s| s.to_string());
+            let receiver = obj.as_ref().map(|o| extract_receiver_name(o, source));
             Some(Call {
                 name: prop_text.to_string(),
                 line: start_line(call_node),
@@ -1895,8 +2010,8 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                     let method_name = node_text(&index, source)
                         .replace(&['\'', '"', '`'][..], "");
                     if !method_name.is_empty() && !method_name.contains('$') {
-                        let receiver = named_child_text(&fn_node, "object", source)
-                            .map(|s| s.to_string());
+                        let receiver = fn_node.child_by_field_name("object")
+                            .map(|o| extract_receiver_name(&o, source));
                         return Some(Call {
                             name: method_name,
                             line: start_line(call_node),
@@ -2220,6 +2335,594 @@ fn scan_import_names_depth(node: &Node, source: &[u8], names: &mut Vec<String>, 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             scan_import_names_depth(&child, source, names, depth + 1);
+        }
+    }
+}
+
+// ── Points-to binding collectors (Phase 8.3c–8.3f) ──────────────────────────
+// Mirror the TS collectors invoked from runCollectorWalk / runContextCollectorWalk
+// in `src/extractors/javascript.ts`. Each collector records bindings consumed by
+// the pts constraint solver in `build_edges.rs`.
+
+/// Collectors whose interest spans multiple node kinds, dispatched per node.
+fn match_js_pts_bindings(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    match node.kind() {
+        "call_expression" => {
+            collect_this_call_and_bindings(node, source, symbols);
+            collect_param_bindings(node, source, symbols);
+            collect_spread_and_array_from_bindings(node, source, symbols);
+        }
+        "variable_declarator" => {
+            collect_array_elem_bindings(node, source, symbols);
+            collect_object_prop_bindings(node, source, symbols);
+            collect_collection_wrap_binding(node, source, symbols);
+        }
+        "for_in_statement" => collect_for_of_binding(node, source, symbols),
+        _ => {}
+    }
+    collect_object_rest_params(node, source, symbols);
+}
+
+/// Nearest enclosing *named* callable for for-of binding context.
+///
+/// Mirrors the TS `funcStack` in runContextCollectorWalk: named function
+/// declarations, class methods (qualified `Class.method` when the class name
+/// parses as `identifier` — TS class names are `type_identifier` and stay
+/// unqualified), variables initialized with arrow/function expressions, and
+/// `obj.method = function()` property assignments. Anonymous callables are
+/// skipped so the outer context wins. Top level → `<module>`.
+fn enclosing_func_context(node: &Node, source: &[u8]) -> String {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        match n.kind() {
+            "function_declaration" | "generator_function_declaration" => {
+                if let Some(name_n) = n.child_by_field_name("name") {
+                    if name_n.kind() == "identifier" {
+                        return node_text(&name_n, source).to_string();
+                    }
+                }
+            }
+            "method_definition" => {
+                if let Some(name_n) = n.child_by_field_name("name") {
+                    let method = node_text(&name_n, source);
+                    let class_name = find_parent_of_types(
+                        &n,
+                        &["class_declaration", "abstract_class_declaration", "class"],
+                    )
+                    .and_then(|c| c.child_by_field_name("name"))
+                    .filter(|name| name.kind() == "identifier")
+                    .map(|name| node_text(&name, source));
+                    return match class_name {
+                        Some(c) => format!("{c}.{method}"),
+                        None => method.to_string(),
+                    };
+                }
+            }
+            "arrow_function" | "function_expression" | "generator_function" => {
+                if let Some(parent) = n.parent() {
+                    if parent.kind() == "variable_declarator" {
+                        if let Some(name_n) = parent.child_by_field_name("name") {
+                            if name_n.kind() == "identifier" {
+                                return node_text(&name_n, source).to_string();
+                            }
+                        }
+                    } else if parent.kind() == "assignment_expression" {
+                        // `obj.method = function() { ... }` — func-prop assignment.
+                        if let Some(lhs) = parent.child_by_field_name("left") {
+                            if lhs.kind() == "member_expression" {
+                                if let (Some(obj), Some(prop)) = (
+                                    lhs.child_by_field_name("object"),
+                                    lhs.child_by_field_name("property"),
+                                ) {
+                                    let prop_kind = prop.kind();
+                                    let obj_text = node_text(&obj, source);
+                                    let prop_text = node_text(&prop, source);
+                                    if obj.kind() == "identifier"
+                                        && (prop_kind == "property_identifier"
+                                            || prop_kind == "identifier")
+                                        && !JS_BUILTIN_GLOBALS.contains(&obj_text)
+                                        && prop_text != "prototype"
+                                    {
+                                        return format!("{obj_text}.{prop_text}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        cur = n.parent();
+    }
+    "<module>".to_string()
+}
+
+/// Collect from a call_expression node:
+/// - `this(args)` → `Call { name: "this" }` (this used as a function)
+/// - `fn.call(ctx, ...)` / `fn.apply(ctx, ...)` → ThisCallBinding
+fn collect_this_call_and_bindings(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(fn_node) = node.child_by_field_name("function") else { return };
+    if fn_node.kind() == "this" {
+        symbols.calls.push(Call {
+            name: "this".to_string(),
+            line: start_line(node),
+            dynamic: None,
+            receiver: None,
+        });
+        return;
+    }
+    if fn_node.kind() != "member_expression" {
+        return;
+    }
+    let (Some(obj), Some(prop)) = (
+        fn_node.child_by_field_name("object"),
+        fn_node.child_by_field_name("property"),
+    ) else {
+        return;
+    };
+    let prop_text = node_text(&prop, source);
+    let obj_text = node_text(&obj, source);
+    if obj.kind() != "identifier"
+        || (prop_text != "call" && prop_text != "apply")
+        || JS_BUILTIN_GLOBALS.contains(&obj_text)
+    {
+        return;
+    }
+    let args = node
+        .child_by_field_name("arguments")
+        .or_else(|| find_child(node, "arguments"));
+    let Some(args) = args else { return };
+    // First real argument: only bind if it's a plain identifier.
+    for i in 0..args.child_count() {
+        let Some(child) = args.child(i) else { continue };
+        let t = child.kind();
+        if t == "(" || t == ")" || t == "," {
+            continue;
+        }
+        if t == "identifier" {
+            let arg_text = node_text(&child, source);
+            if !JS_BUILTIN_GLOBALS.contains(&arg_text) && arg_text != "undefined" && arg_text != "null" {
+                symbols.this_call_bindings.push(ThisCallBinding {
+                    callee: obj_text.to_string(),
+                    this_arg: arg_text.to_string(),
+                });
+            }
+        }
+        break;
+    }
+}
+
+/// Phase 8.3c: `f(x)` identifier-argument bindings, including inline
+/// `f(...[a, b])` array-literal spread expansion.
+fn collect_param_bindings(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(fn_node) = node.child_by_field_name("function") else { return };
+    if fn_node.kind() != "identifier" {
+        return;
+    }
+    let fn_text = node_text(&fn_node, source);
+    if JS_BUILTIN_GLOBALS.contains(&fn_text) {
+        return;
+    }
+    let args = node
+        .child_by_field_name("arguments")
+        .or_else(|| find_child(node, "arguments"));
+    let Some(args) = args else { return };
+    let mut arg_idx: u32 = 0;
+    for i in 0..args.child_count() {
+        let Some(child) = args.child(i) else { continue };
+        let ct = child.kind();
+        if ct == "," || ct == "(" || ct == ")" {
+            continue;
+        }
+        if ct == "identifier" {
+            let arg_text = node_text(&child, source);
+            if !JS_BUILTIN_GLOBALS.contains(&arg_text) {
+                symbols.param_bindings.push(ParamBinding {
+                    callee: fn_text.to_string(),
+                    arg_index: arg_idx,
+                    arg_name: arg_text.to_string(),
+                });
+            }
+        } else if ct == "spread_element" {
+            // f(...[a, b]) — inline array literal: expand each element as a direct binding.
+            let inner = child
+                .child_by_field_name("argument")
+                .or_else(|| if child.child_count() > 1 { child.child(1) } else { None });
+            if let Some(inner) = inner {
+                if inner.kind() == "array" {
+                    let mut elem_count: u32 = 0;
+                    for j in 0..inner.child_count() {
+                        let Some(elem) = inner.child(j) else { continue };
+                        let et = elem.kind();
+                        if et == "," || et == "[" || et == "]" {
+                            continue;
+                        }
+                        if et == "identifier" {
+                            let elem_text = node_text(&elem, source);
+                            if !JS_BUILTIN_GLOBALS.contains(&elem_text) {
+                                symbols.param_bindings.push(ParamBinding {
+                                    callee: fn_text.to_string(),
+                                    arg_index: arg_idx + elem_count,
+                                    arg_name: elem_text.to_string(),
+                                });
+                            }
+                        }
+                        elem_count += 1;
+                    }
+                    // Advance by the exact number of slots this spread occupies so
+                    // zero-element spreads (...[]) don't shift subsequent indices.
+                    arg_idx += elem_count;
+                    continue;
+                }
+            }
+        }
+        arg_idx += 1;
+    }
+}
+
+/// Phase 8.3e: `f(...arr)` spread bindings and `Array.from(src, cb)` callbacks.
+fn collect_spread_and_array_from_bindings(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(fn_node) = node.child_by_field_name("function") else { return };
+    let args = node
+        .child_by_field_name("arguments")
+        .or_else(|| find_child(node, "arguments"));
+    let Some(args) = args else { return };
+
+    // Spread: f(...arr)
+    if fn_node.kind() == "identifier" {
+        let fn_text = node_text(&fn_node, source);
+        if !JS_BUILTIN_GLOBALS.contains(&fn_text) {
+            let mut arg_idx: u32 = 0;
+            for i in 0..args.child_count() {
+                let Some(child) = args.child(i) else { continue };
+                let ct = child.kind();
+                if ct == "," || ct == "(" || ct == ")" {
+                    continue;
+                }
+                if ct == "spread_element" {
+                    let target = child
+                        .child_by_field_name("argument")
+                        .or_else(|| if child.child_count() > 1 { child.child(1) } else { None });
+                    if let Some(target) = target {
+                        if target.kind() == "identifier" {
+                            let target_text = node_text(&target, source);
+                            if !JS_BUILTIN_GLOBALS.contains(&target_text) {
+                                symbols.spread_arg_bindings.push(SpreadArgBinding {
+                                    callee: fn_text.to_string(),
+                                    array_name: target_text.to_string(),
+                                    start_index: arg_idx,
+                                });
+                            }
+                        }
+                    }
+                }
+                arg_idx += 1;
+            }
+        }
+    }
+
+    // Array.from(source, cb)
+    if fn_node.kind() == "member_expression" {
+        let (Some(obj), Some(prop)) = (
+            fn_node.child_by_field_name("object"),
+            fn_node.child_by_field_name("property"),
+        ) else {
+            return;
+        };
+        if node_text(&obj, source) != "Array" || node_text(&prop, source) != "from" {
+            return;
+        }
+        let mut fn_args: Vec<Node> = Vec::new();
+        for i in 0..args.child_count() {
+            let Some(child) = args.child(i) else { continue };
+            let ct = child.kind();
+            if ct == "," || ct == "(" || ct == ")" {
+                continue;
+            }
+            fn_args.push(child);
+        }
+        if fn_args.len() >= 2 {
+            let src_arg = &fn_args[0];
+            let cb_arg = &fn_args[1];
+            let src_text = node_text(src_arg, source);
+            let cb_text = node_text(cb_arg, source);
+            if src_arg.kind() == "identifier"
+                && !JS_BUILTIN_GLOBALS.contains(&src_text)
+                && cb_arg.kind() == "identifier"
+                && !JS_BUILTIN_GLOBALS.contains(&cb_text)
+            {
+                symbols.array_callback_bindings.push(ArrayCallbackBinding {
+                    source_name: src_text.to_string(),
+                    callee_name: cb_text.to_string(),
+                });
+            }
+        }
+    }
+}
+
+/// Phase 8.3e: `const arr = [fn1, fn2]` array-element bindings.
+fn collect_array_elem_bindings(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let (Some(name_n), Some(value_n)) = (
+        node.child_by_field_name("name"),
+        node.child_by_field_name("value"),
+    ) else {
+        return;
+    };
+    if name_n.kind() != "identifier" || value_n.kind() != "array" {
+        return;
+    }
+    let array_name = node_text(&name_n, source);
+    let mut idx: u32 = 0;
+    for i in 0..value_n.child_count() {
+        let Some(elem) = value_n.child(i) else { continue };
+        let et = elem.kind();
+        if et == "," || et == "[" || et == "]" {
+            continue;
+        }
+        if et == "identifier" {
+            let elem_text = node_text(&elem, source);
+            if !JS_BUILTIN_GLOBALS.contains(&elem_text) {
+                symbols.array_elem_bindings.push(ArrayElemBinding {
+                    array_name: array_name.to_string(),
+                    index: idx,
+                    elem_name: elem_text.to_string(),
+                });
+            }
+        }
+        idx += 1;
+    }
+}
+
+/// Phase 8.3e: collection wrap `const s = new Set(arr)` / `new Map(arr)` →
+/// FnRefBinding `s[*] ⊇ arr[*]`.
+fn collect_collection_wrap_binding(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let (Some(name_n), Some(value_n)) = (
+        node.child_by_field_name("name"),
+        node.child_by_field_name("value"),
+    ) else {
+        return;
+    };
+    if name_n.kind() != "identifier" || value_n.kind() != "new_expression" {
+        return;
+    }
+    let (Some(ctor), Some(args)) = (
+        value_n.child_by_field_name("constructor"),
+        value_n.child_by_field_name("arguments"),
+    ) else {
+        return;
+    };
+    let ctor_text = node_text(&ctor, source);
+    if ctor_text != "Set" && ctor_text != "Map" {
+        return;
+    }
+    for i in 0..args.child_count() {
+        let Some(arg) = args.child(i) else { continue };
+        let at = arg.kind();
+        if at == "(" || at == ")" {
+            continue;
+        }
+        if at == "identifier" {
+            let arg_text = node_text(&arg, source);
+            if !JS_BUILTIN_GLOBALS.contains(&arg_text) {
+                symbols.fn_ref_bindings.push(FnRefBinding {
+                    lhs: format!("{}[*]", node_text(&name_n, source)),
+                    rhs: format!("{arg_text}[*]"),
+                    rhs_receiver: None,
+                });
+                break;
+            }
+        }
+        break;
+    }
+}
+
+/// Phase 8.3e: `for (const x of arr)` iteration bindings
+/// (for_in_statement with an `of` keyword).
+fn collect_for_of_binding(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let mut is_for_of = false;
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if node_text(&child, source) == "of" {
+                is_for_of = true;
+                break;
+            }
+        }
+    }
+    if !is_for_of {
+        return;
+    }
+    let Some(right) = node.child_by_field_name("right") else { return };
+    let right_text = node_text(&right, source);
+    if right.kind() != "identifier" || JS_BUILTIN_GLOBALS.contains(&right_text) {
+        return;
+    }
+    let Some(left) = node.child_by_field_name("left") else { return };
+    let mut var_name: Option<&str> = None;
+    if left.kind() == "identifier" {
+        var_name = Some(node_text(&left, source));
+    } else {
+        for i in 0..left.child_count() {
+            let Some(lc) = left.child(i) else { continue };
+            if lc.kind() == "variable_declarator" {
+                if let Some(nc) = lc.child_by_field_name("name") {
+                    if nc.kind() == "identifier" {
+                        var_name = Some(node_text(&nc, source));
+                        break;
+                    }
+                }
+            } else if lc.kind() == "identifier" {
+                let lc_text = node_text(&lc, source);
+                if lc_text != "const" && lc_text != "let" && lc_text != "var" {
+                    var_name = Some(lc_text);
+                    break;
+                }
+            }
+        }
+    }
+    if let Some(var_name) = var_name {
+        if !JS_BUILTIN_GLOBALS.contains(&var_name) {
+            let enclosing_func = enclosing_func_context(node, source);
+            symbols.for_of_bindings.push(ForOfBinding {
+                var_name: var_name.to_string(),
+                source_name: right_text.to_string(),
+                enclosing_func,
+            });
+        }
+    }
+}
+
+/// Phase 8.3f: object-destructuring rest-parameter bindings from function
+/// definitions (`function f({ a, ...rest })` → callee "f", restName "rest").
+/// Class methods are qualified `ClassName.method`, mirroring the TS
+/// `objectRestClass` propagation (class_declaration|class → class_body →
+/// method_definition; abstract classes intentionally excluded).
+fn collect_object_rest_params(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let t = node.kind();
+    let mut fn_name: Option<String> = None;
+    let mut params_node: Option<Node> = None;
+
+    match t {
+        "function_declaration" | "generator_function_declaration" => {
+            if let Some(name_n) = node.child_by_field_name("name") {
+                if name_n.kind() == "identifier" {
+                    fn_name = Some(node_text(&name_n, source).to_string());
+                }
+            }
+            params_node = node
+                .child_by_field_name("parameters")
+                .or_else(|| find_child(node, "formal_parameters"));
+        }
+        "variable_declarator" => {
+            if let (Some(name_n), Some(value_n)) = (
+                node.child_by_field_name("name"),
+                node.child_by_field_name("value"),
+            ) {
+                let vt = value_n.kind();
+                if name_n.kind() == "identifier"
+                    && (vt == "arrow_function" || vt == "function_expression" || vt == "generator_function")
+                {
+                    fn_name = Some(node_text(&name_n, source).to_string());
+                    params_node = value_n
+                        .child_by_field_name("parameters")
+                        .or_else(|| find_child(&value_n, "formal_parameters"));
+                }
+            }
+        }
+        "method_definition" => {
+            // class method `class Foo { bar({ ...rest }) {} }` or object-literal
+            // shorthand method `{ bar({ ...rest }) {} }`.
+            if let Some(name_n) = node.child_by_field_name("name") {
+                let method = node_text(&name_n, source);
+                let current_class = node
+                    .parent()
+                    .filter(|p| p.kind() == "class_body")
+                    .and_then(|p| p.parent())
+                    .filter(|c| c.kind() == "class_declaration" || c.kind() == "class")
+                    .and_then(|c| c.child_by_field_name("name").map(|n| node_text(&n, source).to_string()));
+                fn_name = Some(match current_class {
+                    Some(c) => format!("{c}.{method}"),
+                    None => method.to_string(),
+                });
+                params_node = node
+                    .child_by_field_name("parameters")
+                    .or_else(|| find_child(node, "formal_parameters"));
+            }
+        }
+        "pair" => {
+            // object-literal method: `{ bar: function({ ...rest }) {} }`.
+            // Computed keys are skipped — they can never match a paramBinding callee.
+            if let (Some(key_n), Some(value_n)) = (
+                node.child_by_field_name("key"),
+                node.child_by_field_name("value"),
+            ) {
+                let vt = value_n.kind();
+                if key_n.kind() != "computed_property_name"
+                    && (vt == "arrow_function" || vt == "function_expression" || vt == "generator_function")
+                {
+                    let key_text = node_text(&key_n, source);
+                    fn_name = Some(if key_n.kind() == "string" {
+                        key_text[1..key_text.len() - 1].to_string()
+                    } else {
+                        key_text.to_string()
+                    });
+                    params_node = value_n
+                        .child_by_field_name("parameters")
+                        .or_else(|| find_child(&value_n, "formal_parameters"));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let (Some(fn_name), Some(params_node)) = (fn_name, params_node) else { return };
+    let mut param_idx: u32 = 0;
+    for i in 0..params_node.child_count() {
+        let Some(child) = params_node.child(i) else { continue };
+        let ct = child.kind();
+        if ct == "," || ct == "(" || ct == ")" {
+            continue;
+        }
+        if ct == "object_pattern" {
+            for j in 0..child.child_count() {
+                let Some(inner) = child.child(j) else { continue };
+                if inner.kind() == "rest_pattern" || inner.kind() == "rest_element" {
+                    let rest_id = inner.child(1).or_else(|| inner.child_by_field_name("name"));
+                    if let Some(rest_id) = rest_id {
+                        if rest_id.kind() == "identifier" {
+                            symbols.object_rest_param_bindings.push(ObjectRestParamBinding {
+                                callee: fn_name.clone(),
+                                rest_name: node_text(&rest_id, source).to_string(),
+                                arg_index: param_idx,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        param_idx += 1;
+    }
+}
+
+/// Phase 8.3f: object-property bindings from object literals.
+/// `const obj = { e4 }` and `const obj = { e1: fn }` (identifier values only).
+fn collect_object_prop_bindings(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let (Some(name_n), Some(value_n)) = (
+        node.child_by_field_name("name"),
+        node.child_by_field_name("value"),
+    ) else {
+        return;
+    };
+    if name_n.kind() != "identifier" || value_n.kind() != "object" {
+        return;
+    }
+    let object_name = node_text(&name_n, source);
+    for i in 0..value_n.child_count() {
+        let Some(child) = value_n.child(i) else { continue };
+        if child.kind() == "shorthand_property_identifier" {
+            let prop = node_text(&child, source);
+            symbols.object_prop_bindings.push(ObjectPropBinding {
+                object_name: object_name.to_string(),
+                prop_name: prop.to_string(),
+                value_name: prop.to_string(),
+            });
+        } else if child.kind() == "pair" {
+            if let (Some(key_n), Some(val_n)) = (
+                child.child_by_field_name("key"),
+                child.child_by_field_name("value"),
+            ) {
+                let val_text = node_text(&val_n, source);
+                if key_n.kind() == "property_identifier"
+                    && val_n.kind() == "identifier"
+                    && !JS_BUILTIN_GLOBALS.contains(&val_text)
+                {
+                    symbols.object_prop_bindings.push(ObjectPropBinding {
+                        object_name: object_name.to_string(),
+                        prop_name: node_text(&key_n, source).to_string(),
+                        value_name: val_text.to_string(),
+                    });
+                }
+            }
         }
     }
 }
@@ -2824,6 +3527,76 @@ mod tests {
         );
     }
 
+    /// Issue #1453: `this.prop = new Ctor()` inside a class must seed a
+    /// class-scoped typeMap key `ClassName.prop` (mirrors issue #1323 in TS).
+    #[test]
+    fn this_prop_constructor_assignment_seeds_class_scoped_type_map() {
+        let s = parse_js(
+            "class Logger { error(m) {} }\n\
+             class UserService {\n\
+               constructor() { this.logger = new Logger(); }\n\
+               run() { this.logger.error('x'); }\n\
+             }",
+        );
+        let tm = s.type_map.iter().find(|t| t.name == "UserService.logger");
+        assert!(
+            tm.is_some(),
+            "type_map should contain 'UserService.logger'; got: {:?}",
+            s.type_map
+        );
+        assert_eq!(tm.unwrap().type_name, "Logger");
+        assert_eq!(tm.unwrap().confidence, 1.0);
+    }
+
+    /// `this.prop = new Ctor()` outside any class declaration (function-style
+    /// constructor) falls back to the un-scoped `this.prop` key.
+    #[test]
+    fn this_prop_constructor_assignment_outside_class_uses_this_key() {
+        let s = parse_js(
+            "function Service() { this.client = new HttpClient(); }",
+        );
+        let tm = s.type_map.iter().find(|t| t.name == "this.client");
+        assert!(
+            tm.is_some(),
+            "type_map should contain 'this.client'; got: {:?}",
+            s.type_map
+        );
+        assert_eq!(tm.unwrap().type_name, "HttpClient");
+    }
+
+    /// Issue #1453 (edge 4): `const f = fn.bind(ctx)` must record a
+    /// fnRefBinding f → fn so later `f()` calls resolve through pts.
+    #[test]
+    fn bind_call_records_fn_ref_binding() {
+        let s = parse_js(
+            "function doWork() {}\n\
+             const f = doWork.bind(null);",
+        );
+        let b = s.fn_ref_bindings.iter().find(|b| b.lhs == "f");
+        assert!(
+            b.is_some(),
+            "fn_ref_bindings should contain lhs 'f'; got: {:?}",
+            s.fn_ref_bindings
+        );
+        assert_eq!(b.unwrap().rhs, "doWork");
+        assert!(b.unwrap().rhs_receiver.is_none());
+    }
+
+    /// Method-receiver binds (`obj.method.bind`) and builtin-global binds
+    /// (`Math.max.bind`) are not tracked, mirroring the TS extractor.
+    #[test]
+    fn bind_call_skips_method_receiver_and_builtins() {
+        let s = parse_js(
+            "const a = obj.method.bind(ctx);\n\
+             const b = Math.bind(null);",
+        );
+        assert!(
+            s.fn_ref_bindings.iter().all(|b| b.lhs != "a" && b.lhs != "b"),
+            "method-receiver and builtin binds must not be tracked; got: {:?}",
+            s.fn_ref_bindings
+        );
+    }
+
     // ── Prototype-method extraction ─────────────────────────────────────────
 
     #[test]
@@ -3146,5 +3919,265 @@ mod tests {
             "calls should contain obj.f() with receiver='obj'; got: {:?}",
             s.calls.iter().map(|c| (&c.name, &c.receiver)).collect::<Vec<_>>()
         );
+    }
+
+    // ── Pts binding collectors (parity with src/extractors/javascript.ts) ───
+
+    #[test]
+    fn param_binding_recorded_for_identifier_args() {
+        let s = parse_js(
+            "function target() {}\n\
+             function hof(cb) { cb(); }\n\
+             hof(target);",
+        );
+        let b = s
+            .param_bindings
+            .iter()
+            .find(|b| b.callee == "hof" && b.arg_name == "target");
+        assert!(b.is_some(), "param_bindings should contain hof←target; got: {:?}", s.param_bindings);
+        assert_eq!(b.unwrap().arg_index, 0);
+    }
+
+    #[test]
+    fn param_binding_inline_spread_array_expands_elements() {
+        let s = parse_js(
+            "function a() {}\n\
+             function b() {}\n\
+             function pair(x, y) { x(); y(); }\n\
+             pair(...[a, b]);",
+        );
+        let idx: Vec<(u32, &str)> = s
+            .param_bindings
+            .iter()
+            .filter(|p| p.callee == "pair")
+            .map(|p| (p.arg_index, p.arg_name.as_str()))
+            .collect();
+        assert!(idx.contains(&(0, "a")), "expected (0, a); got: {:?}", idx);
+        assert!(idx.contains(&(1, "b")), "expected (1, b); got: {:?}", idx);
+    }
+
+    #[test]
+    fn this_call_binding_recorded_for_call_and_apply() {
+        let s = parse_js(
+            "function f() { this(); }\n\
+             function ctx() {}\n\
+             f.call(ctx);\n\
+             f.apply(ctx);",
+        );
+        let bindings: Vec<(&str, &str)> = s
+            .this_call_bindings
+            .iter()
+            .map(|b| (b.callee.as_str(), b.this_arg.as_str()))
+            .collect();
+        assert_eq!(
+            bindings.iter().filter(|b| **b == ("f", "ctx")).count(),
+            2,
+            "expected f→ctx from both .call and .apply; got: {:?}",
+            bindings
+        );
+        // `this()` inside f must be recorded as a call named "this".
+        assert!(
+            s.calls.iter().any(|c| c.name == "this"),
+            "calls should contain bare this(); got: {:?}",
+            s.calls.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn this_call_binding_skips_null_and_undefined() {
+        let s = parse_js(
+            "function f() {}\n\
+             f.call(null);\n\
+             f.apply(undefined);",
+        );
+        assert!(
+            s.this_call_bindings.is_empty(),
+            "null/undefined this-args must not bind; got: {:?}",
+            s.this_call_bindings
+        );
+    }
+
+    /// `invoker.call(handler, 10)` must emit a dynamic call to `invoker` only.
+    /// Emitting the identifier args too would create a false runCallThis→handler
+    /// edge; the handler flow is covered by the ThisCallBinding (invoker::this).
+    #[test]
+    fn call_apply_bind_args_do_not_emit_callback_reference_calls() {
+        let s = parse_js(
+            "function invoker(x) { return this(x); }\n\
+             function handler(n) { return n * 2; }\n\
+             function runCallThis() { return invoker.call(handler, 10); }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "invoker" && c.dynamic == Some(true)),
+            "invoker.call() should emit a dynamic call to invoker; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "handler"),
+            ".call() args must not become callback-reference calls; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+        let b = s.this_call_bindings.iter().find(|b| b.callee == "invoker");
+        assert!(b.is_some(), "this_call_bindings should contain invoker→handler; got: {:?}", s.this_call_bindings);
+        assert_eq!(b.unwrap().this_arg, "handler");
+    }
+
+    #[test]
+    fn array_elem_bindings_recorded() {
+        let s = parse_js(
+            "function fn1() {}\n\
+             function fn2() {}\n\
+             const arr = [fn1, fn2];",
+        );
+        let got: Vec<(u32, &str)> = s
+            .array_elem_bindings
+            .iter()
+            .filter(|b| b.array_name == "arr")
+            .map(|b| (b.index, b.elem_name.as_str()))
+            .collect();
+        assert!(got.contains(&(0, "fn1")), "expected (0, fn1); got: {:?}", got);
+        assert!(got.contains(&(1, "fn2")), "expected (1, fn2); got: {:?}", got);
+    }
+
+    #[test]
+    fn spread_arg_binding_recorded() {
+        let s = parse_js(
+            "function callAll(a, b) { a(); b(); }\n\
+             const fns = [x, y];\n\
+             callAll(...fns);",
+        );
+        let b = s.spread_arg_bindings.iter().find(|b| b.callee == "callAll");
+        assert!(b.is_some(), "spread_arg_bindings missing; got: {:?}", s.spread_arg_bindings);
+        let b = b.unwrap();
+        assert_eq!(b.array_name, "fns");
+        assert_eq!(b.start_index, 0);
+    }
+
+    #[test]
+    fn collection_wrap_set_emits_wildcard_fn_ref_binding() {
+        let s = parse_js(
+            "const arr = [f1];\n\
+             const wrapped = new Set(arr);",
+        );
+        let b = s.fn_ref_bindings.iter().find(|b| b.lhs == "wrapped[*]");
+        assert!(b.is_some(), "Set wrap should bind wrapped[*] ⊇ arr[*]; got: {:?}", s.fn_ref_bindings);
+        assert_eq!(b.unwrap().rhs, "arr[*]");
+    }
+
+    #[test]
+    fn for_of_binding_records_enclosing_func() {
+        let s = parse_js(
+            "function run(handlers) {\n\
+               for (const h of handlers) { h(); }\n\
+             }",
+        );
+        let b = s.for_of_bindings.iter().find(|b| b.var_name == "h");
+        assert!(b.is_some(), "for_of_bindings missing; got: {:?}", s.for_of_bindings);
+        let b = b.unwrap();
+        assert_eq!(b.source_name, "handlers");
+        assert_eq!(b.enclosing_func, "run");
+    }
+
+    #[test]
+    fn for_of_binding_in_method_uses_class_qualified_context() {
+        let s = parse_js(
+            "class Runner {\n\
+               runAll() { for (const h of this.handlers) {} const x = 1; for (const g of list) { g(); } }\n\
+             }",
+        );
+        let b = s.for_of_bindings.iter().find(|b| b.var_name == "g");
+        assert!(b.is_some(), "for_of_bindings missing for g; got: {:?}", s.for_of_bindings);
+        assert_eq!(b.unwrap().enclosing_func, "Runner.runAll");
+    }
+
+    #[test]
+    fn for_of_binding_at_module_level_uses_module_context() {
+        let s = parse_js("for (const cb of callbacks) { cb(); }");
+        let b = s.for_of_bindings.iter().find(|b| b.var_name == "cb");
+        assert!(b.is_some(), "for_of_bindings missing; got: {:?}", s.for_of_bindings);
+        assert_eq!(b.unwrap().enclosing_func, "<module>");
+    }
+
+    #[test]
+    fn array_from_callback_binding_recorded() {
+        let s = parse_js(
+            "function makeThing(x) { return x; }\n\
+             const things = Array.from(items, makeThing);",
+        );
+        let b = s
+            .array_callback_bindings
+            .iter()
+            .find(|b| b.callee_name == "makeThing");
+        assert!(b.is_some(), "array_callback_bindings missing; got: {:?}", s.array_callback_bindings);
+        assert_eq!(b.unwrap().source_name, "items");
+    }
+
+    #[test]
+    fn object_rest_param_binding_recorded() {
+        let s = parse_js("function f3({ e1, ...eerest }) { eerest.e4(); }");
+        let b = s
+            .object_rest_param_bindings
+            .iter()
+            .find(|b| b.callee == "f3");
+        assert!(b.is_some(), "object_rest_param_bindings missing; got: {:?}", s.object_rest_param_bindings);
+        let b = b.unwrap();
+        assert_eq!(b.rest_name, "eerest");
+        assert_eq!(b.arg_index, 0);
+    }
+
+    #[test]
+    fn object_rest_param_binding_in_method_uses_class_context() {
+        let s = parse_js(
+            "class Svc {\n\
+               handle({ id, ...rest }) { rest.go(); }\n\
+             }",
+        );
+        let b = s.object_rest_param_bindings.iter().find(|b| b.rest_name == "rest");
+        assert!(b.is_some(), "object_rest_param_bindings missing; got: {:?}", s.object_rest_param_bindings);
+        assert_eq!(b.unwrap().callee, "Svc.handle");
+    }
+
+    #[test]
+    fn object_prop_bindings_recorded_for_shorthand_and_pair() {
+        let s = parse_js(
+            "function e4() {}\n\
+             function named() {}\n\
+             const obj = { e4, alias: named };",
+        );
+        let shorthand = s
+            .object_prop_bindings
+            .iter()
+            .find(|b| b.object_name == "obj" && b.prop_name == "e4");
+        assert!(shorthand.is_some(), "shorthand binding missing; got: {:?}", s.object_prop_bindings);
+        assert_eq!(shorthand.unwrap().value_name, "e4");
+
+        let pair = s
+            .object_prop_bindings
+            .iter()
+            .find(|b| b.object_name == "obj" && b.prop_name == "alias");
+        assert!(pair.is_some(), "pair binding missing; got: {:?}", s.object_prop_bindings);
+        assert_eq!(pair.unwrap().value_name, "named");
+    }
+
+    #[test]
+    fn inline_new_receiver_normalized_to_constructor_name() {
+        let s = parse_js(
+            "class A { t() {} }\n\
+             export function testPrototypeAlias() { new A().t(); }",
+        );
+        let call = s.calls.iter().find(|c| c.name == "t");
+        assert!(call.is_some(), "t() call missing; got: {:?}", s.calls);
+        assert_eq!(call.unwrap().receiver.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn paren_wrapped_new_receiver_normalized_to_constructor_name() {
+        let s = parse_js(
+            "class Dog { bark() {} }\n\
+             export function run() { (new Dog()).bark(); }",
+        );
+        let call = s.calls.iter().find(|c| c.name == "bark");
+        assert!(call.is_some(), "bark() call missing; got: {:?}", s.calls);
+        assert_eq!(call.unwrap().receiver.as_deref(), Some("Dog"));
     }
 }

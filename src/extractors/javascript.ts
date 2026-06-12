@@ -1866,6 +1866,8 @@ function runContextCollectorWalk(rootNode: TreeSitterNode, out: ContextCollector
       collectCollectionWrapBinding(node, out.fnRefBindings);
     } else if (t === 'required_parameter' || t === 'optional_parameter') {
       handleParamTypeMap(node, out.typeMap);
+    } else if (t === 'public_field_definition' || t === 'field_definition') {
+      handleFieldDefTypeMap(node, out.typeMap);
     } else if (t === 'assignment_expression') {
       handlePropWriteTypeMap(node, out.typeMap, typeMapClass);
     } else if (t === 'call_expression') {
@@ -2088,6 +2090,34 @@ function handleParamTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEn
     const typeName = extractSimpleTypeName(typeAnno);
     if (typeName) setTypeMapEntry(typeMap, nameNode.text, typeName, 0.9);
   }
+}
+
+/**
+ * Extract type info from a class field declaration: `private repo: Repository<User>`.
+ * Seeds both "repo" and "this.repo" so `this.repo.method()` calls resolve to the
+ * declared type via the type map. Mirrors the field_definition branch of
+ * match_js_type_map in crates/codegraph-core/src/extractors/javascript.rs.
+ */
+function handleFieldDefTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+  const nameNode =
+    node.childForFieldName('name') ||
+    node.childForFieldName('property') ||
+    findChild(node, 'property_identifier');
+  if (!nameNode) return;
+  const kind = nameNode.type;
+  if (
+    kind !== 'property_identifier' &&
+    kind !== 'identifier' &&
+    kind !== 'private_property_identifier'
+  )
+    return;
+  const typeAnno = findChild(node, 'type_annotation');
+  if (!typeAnno) return;
+  const typeName = extractSimpleTypeName(typeAnno);
+  if (!typeName) return;
+  setTypeMapEntry(typeMap, nameNode.text, typeName, 0.9);
+  // "this.fieldName" key resolves `this.repo.method()` calls.
+  setTypeMapEntry(typeMap, `this.${nameNode.text}`, typeName, 0.9);
 }
 
 /**

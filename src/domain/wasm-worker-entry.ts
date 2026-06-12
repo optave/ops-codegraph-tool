@@ -818,6 +818,7 @@ function serializeExtractorOutput(
     ...(symbols.objectPropBindings?.length
       ? { objectPropBindings: symbols.objectPropBindings }
       : {}),
+    ...(symbols.thisCallBindings?.length ? { thisCallBindings: symbols.thisCallBindings } : {}),
     ...(symbols.newExpressions?.length ? { newExpressions: symbols.newExpressions } : {}),
     ...(symbols.definePropertyReceivers?.size
       ? { definePropertyReceivers: Array.from(symbols.definePropertyReceivers.entries()) }

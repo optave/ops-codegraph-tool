@@ -318,6 +318,102 @@ pub struct FnRefBinding {
     pub rhs_receiver: Option<String>,
 }
 
+/// Argument-to-parameter binding at a call site (Phase 8.3c).
+/// Records `f(x)` where `x` is an identifier that may carry a function reference.
+/// Mirrors the `ParamBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParamBinding {
+    pub callee: String,
+    #[napi(js_name = "argIndex")]
+    pub arg_index: u32,
+    #[napi(js_name = "argName")]
+    pub arg_name: String,
+}
+
+/// This-context binding from `fn.call(ctx, ...)` / `fn.apply(ctx, ...)`.
+/// Mirrors the `ThisCallBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThisCallBinding {
+    pub callee: String,
+    #[napi(js_name = "thisArg")]
+    pub this_arg: String,
+}
+
+/// Array-element binding from `const arr = [fn1, fn2]` (Phase 8.3e).
+/// Mirrors the `ArrayElemBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArrayElemBinding {
+    #[napi(js_name = "arrayName")]
+    pub array_name: String,
+    pub index: u32,
+    #[napi(js_name = "elemName")]
+    pub elem_name: String,
+}
+
+/// Spread-argument binding from `f(...arr)` (Phase 8.3e).
+/// Mirrors the `SpreadArgBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpreadArgBinding {
+    pub callee: String,
+    #[napi(js_name = "arrayName")]
+    pub array_name: String,
+    #[napi(js_name = "startIndex")]
+    pub start_index: u32,
+}
+
+/// For-of iteration binding from `for (const x of arr)` (Phase 8.3e).
+/// Mirrors the `ForOfBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForOfBinding {
+    #[napi(js_name = "varName")]
+    pub var_name: String,
+    #[napi(js_name = "sourceName")]
+    pub source_name: String,
+    #[napi(js_name = "enclosingFunc")]
+    pub enclosing_func: String,
+}
+
+/// Array-callback binding from `Array.from(arr, cb)` (Phase 8.3e).
+/// Mirrors the `ArrayCallbackBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArrayCallbackBinding {
+    #[napi(js_name = "sourceName")]
+    pub source_name: String,
+    #[napi(js_name = "calleeName")]
+    pub callee_name: String,
+}
+
+/// Object-rest parameter binding from `function f({ a, ...rest })` (Phase 8.3f).
+/// Mirrors the `ObjectRestParamBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectRestParamBinding {
+    pub callee: String,
+    #[napi(js_name = "restName")]
+    pub rest_name: String,
+    #[napi(js_name = "argIndex")]
+    pub arg_index: u32,
+}
+
+/// Object-property binding from `const obj = { e4 }` / `{ e4: fn }` (Phase 8.3f).
+/// Mirrors the `ObjectPropBinding` interface in `src/types.ts`.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectPropBinding {
+    #[napi(js_name = "objectName")]
+    pub object_name: String,
+    #[napi(js_name = "propName")]
+    pub prop_name: String,
+    #[napi(js_name = "valueName")]
+    pub value_name: String,
+}
+
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSymbols {
@@ -341,6 +437,30 @@ pub struct FileSymbols {
     /// Phase 8.3: function-reference bindings for points-to analysis.
     #[napi(js_name = "fnRefBindings")]
     pub fn_ref_bindings: Vec<FnRefBinding>,
+    /// Phase 8.3c: argument-to-parameter bindings for parameter-flow pts.
+    #[napi(js_name = "paramBindings")]
+    pub param_bindings: Vec<ParamBinding>,
+    /// This-context bindings from `fn.call(ctx)` / `fn.apply(ctx)`.
+    #[napi(js_name = "thisCallBindings")]
+    pub this_call_bindings: Vec<ThisCallBinding>,
+    /// Phase 8.3e: array-element bindings from `const arr = [fn1, fn2]`.
+    #[napi(js_name = "arrayElemBindings")]
+    pub array_elem_bindings: Vec<ArrayElemBinding>,
+    /// Phase 8.3e: spread-argument bindings from `f(...arr)`.
+    #[napi(js_name = "spreadArgBindings")]
+    pub spread_arg_bindings: Vec<SpreadArgBinding>,
+    /// Phase 8.3e: for-of iteration variable bindings.
+    #[napi(js_name = "forOfBindings")]
+    pub for_of_bindings: Vec<ForOfBinding>,
+    /// Phase 8.3e: array callback bindings from `Array.from(arr, cb)`.
+    #[napi(js_name = "arrayCallbackBindings")]
+    pub array_callback_bindings: Vec<ArrayCallbackBinding>,
+    /// Phase 8.3f: object-rest parameter bindings from `function f({ ...rest })`.
+    #[napi(js_name = "objectRestParamBindings")]
+    pub object_rest_param_bindings: Vec<ObjectRestParamBinding>,
+    /// Phase 8.3f: object-property bindings from `const obj = { fn }`.
+    #[napi(js_name = "objectPropBindings")]
+    pub object_prop_bindings: Vec<ObjectPropBinding>,
 }
 
 impl FileSymbols {
@@ -359,6 +479,14 @@ impl FileSymbols {
             return_type_map: Vec::new(),
             call_assignments: Vec::new(),
             fn_ref_bindings: Vec::new(),
+            param_bindings: Vec::new(),
+            this_call_bindings: Vec::new(),
+            array_elem_bindings: Vec::new(),
+            spread_arg_bindings: Vec::new(),
+            for_of_bindings: Vec::new(),
+            array_callback_bindings: Vec::new(),
+            object_rest_param_bindings: Vec::new(),
+            object_prop_bindings: Vec::new(),
         }
     }
 }

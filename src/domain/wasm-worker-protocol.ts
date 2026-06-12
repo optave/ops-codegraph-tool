@@ -71,6 +71,7 @@ export interface SerializedExtractorOutput {
   objectRestParamBindings?: import('../types.js').ObjectRestParamBinding[];
   objectPropBindings?: import('../types.js').ObjectPropBinding[];
   paramBindings?: import('../types.js').ParamBinding[];
+  thisCallBindings?: import('../types.js').ThisCallBinding[];
   newExpressions?: readonly string[];
   /** Serialized definePropertyReceivers map (funcName → receiverVarName) as tuple array. */
   definePropertyReceivers?: Array<[string, string]>;

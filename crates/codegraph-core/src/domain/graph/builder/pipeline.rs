@@ -1348,6 +1348,10 @@ fn build_and_insert_call_edges(
             })
             .collect();
 
+        fn non_empty<T: Clone>(v: &[T]) -> Option<Vec<T>> {
+            if v.is_empty() { None } else { Some(v.to_vec()) }
+        }
+
         file_entries.push(FileEdgeInput {
             file: rel_path.clone(),
             file_node_id,
@@ -1359,6 +1363,15 @@ fn build_and_insert_call_edges(
                     kind: d.kind.clone(),
                     line: d.line,
                     end_line: d.end_line,
+                    // Phase 8.3c: ordered parameter names for parameter-flow pts —
+                    // mirrors buildDefinitionParamsMap reading def.children.
+                    params: d.children.as_ref().map(|children| {
+                        children
+                            .iter()
+                            .filter(|c| c.kind == "parameter")
+                            .map(|c| c.name.clone())
+                            .collect()
+                    }),
                 })
                 .collect(),
             calls: symbols
@@ -1382,11 +1395,15 @@ fn build_and_insert_call_edges(
                 })
                 .collect(),
             type_map,
-            fn_ref_bindings: if symbols.fn_ref_bindings.is_empty() {
-                None
-            } else {
-                Some(symbols.fn_ref_bindings.clone())
-            },
+            fn_ref_bindings: non_empty(&symbols.fn_ref_bindings),
+            param_bindings: non_empty(&symbols.param_bindings),
+            this_call_bindings: non_empty(&symbols.this_call_bindings),
+            array_elem_bindings: non_empty(&symbols.array_elem_bindings),
+            spread_arg_bindings: non_empty(&symbols.spread_arg_bindings),
+            for_of_bindings: non_empty(&symbols.for_of_bindings),
+            array_callback_bindings: non_empty(&symbols.array_callback_bindings),
+            object_rest_param_bindings: non_empty(&symbols.object_rest_param_bindings),
+            object_prop_bindings: non_empty(&symbols.object_prop_bindings),
         });
     }
 

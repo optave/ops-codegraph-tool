@@ -115,6 +115,7 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
   if (ser.objectRestParamBindings?.length)
     out.objectRestParamBindings = ser.objectRestParamBindings;
   if (ser.objectPropBindings?.length) out.objectPropBindings = ser.objectPropBindings;
+  if (ser.thisCallBindings?.length) out.thisCallBindings = ser.thisCallBindings;
   if (ser.newExpressions?.length) out.newExpressions = ser.newExpressions;
   if (ser.definePropertyReceivers?.length) {
     const m = new Map<string, string>();
