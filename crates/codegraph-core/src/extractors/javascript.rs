@@ -6,7 +6,8 @@ use crate::types::*;
 use tree_sitter::{Node, Tree};
 
 /// Well-known JS globals that must not be recorded as pts targets.
-/// Mirrors the `BUILTIN_GLOBALS` set in `src/extractors/javascript.ts`.
+/// Mirrors the `BUILTIN_GLOBALS` set in `src/extractors/javascript.ts`
+/// and must be identical to the set tested in `is_js_builtin_global`.
 const JS_BUILTIN_GLOBALS: &[&str] = &[
     "Math", "JSON", "Promise", "Array", "Object", "Date", "Error",
     "Symbol", "Map", "Set", "RegExp", "Number", "String", "Boolean",
@@ -17,7 +18,11 @@ const JS_BUILTIN_GLOBALS: &[&str] = &[
     "URL", "URLSearchParams", "TextEncoder", "TextDecoder",
     "AbortController", "AbortSignal", "Headers", "Request", "Response",
     "FormData", "Blob", "File", "ReadableStream", "WritableStream",
-    "TransformStream", "console", "Buffer", "EventEmitter", "Stream",
+    "TransformStream",
+    // Browser/runtime globals — must match is_js_builtin_global below
+    "console", "process", "window", "document", "globalThis",
+    // Node.js built-ins
+    "Buffer", "EventEmitter", "Stream",
 ];
 
 pub struct JsExtractor;
