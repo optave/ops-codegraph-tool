@@ -9,7 +9,7 @@ describe('Erlang parser', () => {
 
   beforeAll(async () => {
     parsers = await createParsers();
-    erlangAvailable = parsers.has('erlang');
+    erlangAvailable = !!parsers.get('erlang');
   });
 
   function parseErlang(code) {
