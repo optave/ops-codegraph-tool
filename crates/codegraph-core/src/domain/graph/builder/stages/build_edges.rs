@@ -243,6 +243,8 @@ fn build_points_to_map(
         for sb in bindings.spread_arg_bindings {
             let Some(params) = definition_params.get(sb.callee.as_str()) else { continue };
             let max_idx = array_max_index.get(sb.array_name.as_str()).copied().unwrap_or(-1);
+            // Safety: the cast to usize is only reached inside the `max_idx >= 0` guard,
+            // so max_idx is non-negative here and cannot wrap to usize::MAX.
             if max_idx >= 0 {
                 for i in 0..=(max_idx as usize) {
                     let param_idx = sb.start_index as usize + i;
