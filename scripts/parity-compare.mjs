@@ -134,8 +134,9 @@ const BUILD_OPTS = {
   skipRegistry: true,
 };
 
-async function buildEngine(fixtureDir, engine, label) {
+async function buildEngine(fixtureDir, engine, label, tempDirs) {
   const dir = mkdtempSync(join(tmpdir(), `parity-${label}-`));
+  tempDirs.push(dir); // register before await so cleanup runs even if buildGraph throws
   cpSync(fixtureDir, dir, { recursive: true });
   await buildGraph(dir, { ...BUILD_OPTS, engine });
   return dir;
@@ -145,8 +146,9 @@ async function buildEngine(fixtureDir, engine, label) {
 // build on the same dir triggers "Engine changed (wasm -> native), promoting
 // to full rebuild", which sets forceFullRebuild and skips the orchestrator —
 // the JS pipeline then drives the napi buildCallEdges resolver.
-async function buildHybrid(fixtureDir, label) {
+async function buildHybrid(fixtureDir, label, tempDirs) {
   const dir = mkdtempSync(join(tmpdir(), `parity-${label}-`));
+  tempDirs.push(dir); // register before await so cleanup runs even if buildGraph throws
   cpSync(fixtureDir, dir, { recursive: true });
   await buildGraph(dir, { ...BUILD_OPTS, incremental: true, engine: 'wasm' });
   await buildGraph(dir, { ...BUILD_OPTS, incremental: true, engine: 'native' });
@@ -193,6 +195,7 @@ function readMultisets(dir) {
 function diffMultisets(base, other) {
   const diffs = [];
   const keys = new Set([...base.keys(), ...other.keys()]);
+  keys.delete('__TOTAL_ROWS__');
   for (const key of keys) {
     const a = base.get(key) ?? 0;
     const b = other.get(key) ?? 0;
@@ -213,15 +216,13 @@ for (const fixture of fixtures) {
   const tempDirs = [];
 
   try {
-    const wasmDir = await buildEngine(fixtureDir, 'wasm', `${fixture}-wasm`);
-    tempDirs.push(wasmDir);
+    const wasmDir = await buildEngine(fixtureDir, 'wasm', `${fixture}-wasm`, tempDirs);
     const base = readMultisets(wasmDir);
 
-    const variants = [['native', await buildEngine(fixtureDir, 'native', `${fixture}-native`)]];
-    tempDirs.push(variants[0][1]);
+    const nativeDir = await buildEngine(fixtureDir, 'native', `${fixture}-native`, tempDirs);
+    const variants = [['native', nativeDir]];
     if (hybrid) {
-      const hybridDir = await buildHybrid(fixtureDir, `${fixture}-hybrid`);
-      tempDirs.push(hybridDir);
+      const hybridDir = await buildHybrid(fixtureDir, `${fixture}-hybrid`, tempDirs);
       variants.push(['hybrid', hybridDir]);
     }
 

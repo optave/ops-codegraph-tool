@@ -49,16 +49,27 @@ All steps run from the repo root.
    ```bash
    codesign --sign - --force crates/codegraph-core/*.node
    ```
-4. Verify the loader picks it up:
+4. Verify the loader picks up the **locally built** binary, not the published
+   package. First check which path is actually resolved:
+   ```bash
+   node -e "
+     const { createRequire } = require('node:module');
+     const r = createRequire(require.resolve('./dist/index.js'));
+     try { console.log(r.resolve('codegraph-core')); } catch { console.log('not found via require'); }
+   "
+   ```
+   If the resolved path points to
+   `node_modules/@optave/codegraph-<platform>-<arch>/codegraph-core.node`
+   (the installed package), copy your freshly built binary over it:
+   ```bash
+   cp crates/codegraph-core/*.node node_modules/@optave/codegraph-<platform>-<arch>/codegraph-core.node
+   ```
+   Then confirm the loader picks it up:
    ```bash
    node -e "import('./dist/infrastructure/native.js').then(m => console.log(m.isNativeAvailable()))"
    ```
    If `false`, stop and report — auditing parity without the native engine is
-   meaningless. Note: if the repo (or a parent) has
-   `node_modules/@optave/codegraph-<platform>-<arch>/` installed, Node resolves
-   that package **before** the crate-local build — copy the freshly built
-   binary over `codegraph-core.node` in that package dir, or the audit will
-   silently test the published binary instead of your changes.
+   meaningless.
 
 ## Phase 1 — Audit
 
