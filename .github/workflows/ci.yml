@@ -180,6 +180,12 @@ jobs:
         # abort the audit before it can report real vulnerabilities.
         run: npm audit --omit=dev --audit-level=high --package-lock-only
 
+      - name: Audit dev dependencies (critical only)
+        # Catches malware/critical advisories in devDependencies (e.g. GHSA-rphw-c8qj-jv84).
+        # Scoped to critical only — high/moderate in devDeps are acceptable noise since
+        # they never reach production. --package-lock-only avoids installing packages.
+        run: npm audit --audit-level=critical --package-lock-only
+
   verify-imports:
     runs-on: ubuntu-latest
     name: Verify dynamic imports
