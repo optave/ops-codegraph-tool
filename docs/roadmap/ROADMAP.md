@@ -21,7 +21,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **Complete** (v3.4.0) |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Rust extraction for AST/CFG/dataflow/complexity; batch SQLite inserts; incremental rebuilds; native DB write pipeline; full rusqlite migration so native engine never touches better-sqlite3 | **Complete** (v3.5.0) |
 | [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support — all 4 batches shipped across v3.6.0–v3.8.0 | **Complete** (v3.8.0) |
-| [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates, language-specific analysis reference map (34 languages, Jelly-equivalents, fixture acquisition guide) | In Progress |
+| [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates, language-specific analysis reference map (34 languages, Jelly-equivalents, fixture acquisition guide) | **Complete** (v3.12.0) |
 | [**9**](#phase-9--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
 | [**10**](#phase-10--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | In Progress |
 | [**11**](#phase-11--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
@@ -1378,7 +1378,9 @@ Languages with solid tree-sitter grammars and active communities.
 
 ---
 
-## Phase 8 -- Analysis Depth
+## Phase 8 -- Analysis Depth ✅
+
+> **Status:** Complete -- all 8 sub-phases shipped in v3.12.0
 
 **Goal:** Raise caller coverage from 29% to ≥70% for TypeScript/JavaScript projects by investing in analysis depth — type-aware resolution, inter-procedural type propagation, and field-based points-to analysis. The [architecture audit (v3.4.0)](https://github.com/optave/ops-codegraph-tool/blob/main/generated/architecture/ARCHITECTURE_AUDIT_v3.4.0_2026-03-26.md) identified this as the single highest-impact investment: "A code intelligence tool that can only resolve callers for 29% of functions is fundamentally limited in the value it can provide." Every downstream feature — diff-impact, blast radius, dead code detection, community analysis — degrades proportionally with low caller coverage. **Depth over breadth.**
 
@@ -1406,7 +1408,7 @@ The single highest-ROI improvement. Currently codegraph treats TypeScript as "Ja
 
 **Progress (v3.12.0):**
 - ✅ `src/domain/graph/resolver/ts-resolver.ts` — build-time enrichment pass using `ts.createProgram` + `getTypeChecker`; heuristic typeMap entries replaced with compiler-verified confidence 1.0 values ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
-- ✅ Gated on `config.build.typescriptResolver` (default: `false`) — set to `true` in `.codegraphrc.json` to enable ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
+- ✅ Auto-enabled when `typescript` is installed and `tsconfig.json` is found — disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
 - ✅ Native Rust engine: `returnTypeMap` and `callAssignments` extracted in Rust, closing the enrichment gap ([#1283](https://github.com/optave/ops-codegraph-tool/pull/1283))
 
 ### 8.2 -- Inter-Procedural Type Propagation
