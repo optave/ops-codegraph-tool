@@ -1,8 +1,8 @@
 use super::helpers::*;
 use super::SymbolExtractor;
-use crate::cfg::build_function_cfg;
-use crate::complexity::compute_all_metrics;
-use crate::constants::MAX_WALK_DEPTH;
+use crate::ast_analysis::cfg::build_function_cfg;
+use crate::ast_analysis::complexity::compute_all_metrics;
+use crate::shared::constants::MAX_WALK_DEPTH;
 use crate::types::*;
 use tree_sitter::{Node, Tree};
 

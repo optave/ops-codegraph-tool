@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use napi_derive::napi;
 use rusqlite::params;
 
-use crate::native_db::{has_table, NativeDatabase};
-use crate::read_types::*;
+use crate::db::connection::{has_table, NativeDatabase};
+use crate::db::repository::read_types::*;
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 

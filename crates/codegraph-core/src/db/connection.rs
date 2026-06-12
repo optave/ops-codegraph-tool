@@ -11,10 +11,10 @@ use napi_derive::napi;
 use rusqlite::{params, types::ValueRef, Connection, OpenFlags};
 use send_wrapper::SendWrapper;
 
-use crate::ast_db::{self, FileAstBatch};
-use crate::edges_db::{self, EdgeRow};
-use crate::insert_nodes::{self, FileHashEntry, InsertNodesBatch};
-use crate::roles_db::{self, RoleSummary};
+use crate::db::repository::ast::{self, FileAstBatch};
+use crate::db::repository::edges::{self, EdgeRow};
+use crate::domain::graph::builder::stages::insert_nodes::{self, FileHashEntry, InsertNodesBatch};
+use crate::graph::classifiers::roles::{self, RoleSummary};
 
 // ── Migration DDL (mirrored from src/db/migrations.ts) ──────────────────
 
@@ -819,7 +819,7 @@ impl NativeDatabase {
             return Ok(true);
         }
         let conn = self.conn()?;
-        Ok(edges_db::do_insert_edges(conn, &edges)
+        Ok(edges::do_insert_edges(conn, &edges)
             .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_edges failed: {e}"))
             .is_ok())
     }
@@ -829,7 +829,7 @@ impl NativeDatabase {
     #[napi]
     pub fn bulk_insert_ast_nodes(&self, batches: Vec<FileAstBatch>) -> napi::Result<u32> {
         let conn = self.conn()?;
-        Ok(ast_db::do_insert_ast_nodes(conn, &batches).unwrap_or(0))
+        Ok(ast::do_insert_ast_nodes(conn, &batches).unwrap_or(0))
     }
 
     /// Bulk-insert complexity metrics for functions/methods.
@@ -1022,7 +1022,7 @@ impl NativeDatabase {
     #[napi]
     pub fn classify_roles_full(&self) -> napi::Result<Option<RoleSummary>> {
         let conn = self.conn()?;
-        Ok(roles_db::do_classify_full(conn).ok())
+        Ok(roles::do_classify_full(conn).ok())
     }
 
     /// Incremental role classification: only reclassifies nodes from changed
@@ -1033,7 +1033,7 @@ impl NativeDatabase {
         changed_files: Vec<String>,
     ) -> napi::Result<Option<RoleSummary>> {
         let conn = self.conn()?;
-        Ok(roles_db::do_classify_incremental(conn, &changed_files).ok())
+        Ok(roles::do_classify_incremental(conn, &changed_files).ok())
     }
 
     // ── Phase 6.18: Batched build-glue queries ──────────────────────────
@@ -1363,7 +1363,7 @@ impl NativeDatabase {
         opts_json: String,
     ) -> napi::Result<String> {
         let conn = self.conn()?;
-        let result = crate::build_pipeline::run_pipeline(
+        let result = crate::domain::graph::builder::pipeline::run_pipeline(
             conn,
             &root_dir,
             &config_json,

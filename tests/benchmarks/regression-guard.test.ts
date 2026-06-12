@@ -54,7 +54,7 @@ const NOISY_METRIC_THRESHOLD = 0.5;
  *   implementation, fnDepsData JS wrapper, and DB schema/indexes are all
  *   byte-for-byte unchanged since v3.9.6 (verified by `git log v3.9.6..HEAD`
  *   on crates/codegraph-core/src/read_queries.rs, src/domain/analysis/
- *   dependencies.ts, src/db/, crates/codegraph-core/src/native_db.rs).
+ *   dependencies.ts, src/db/, crates/codegraph-core/src/db/connection.rs).
  *   CI consistently measures +40–60% on this sub-30ms metric while the
  *   absolute delta (~13ms) is at the noise floor for shared runners.
  *   Methodology already discards 3 warmup runs (#1077). Same pattern as

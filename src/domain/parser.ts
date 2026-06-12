@@ -465,7 +465,7 @@ export function getInstalledWasmExtensions(): Set<string> {
  * Lowercase file extensions covered by the native Rust addon.
  *
  * Mirrors `LanguageKind::from_extension` in
- * `crates/codegraph-core/src/parser_registry.rs`. Used to classify why the
+ * `crates/codegraph-core/src/domain/parser.rs`. Used to classify why the
  * native orchestrator dropped a file: extensions outside this set are a
  * legitimate parser limit (no Rust extractor exists), while extensions inside
  * it indicate a real native bug (parse/read/extract failure).

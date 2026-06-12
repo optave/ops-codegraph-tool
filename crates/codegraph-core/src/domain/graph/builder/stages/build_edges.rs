@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use napi_derive::napi;
 
-use crate::barrel_resolution::{self, BarrelContext, ReexportRef};
-use crate::import_resolution;
+use crate::domain::graph::builder::barrel_resolution::{self, BarrelContext, ReexportRef};
+use crate::domain::graph::resolve;
 use crate::types::FnRefBinding;
 
 /// Kind sets for hierarchy edge resolution -- mirrors the JS constants in
@@ -317,7 +317,7 @@ fn process_file<'a>(
                     for t in &alias_targets {
                         let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
                         if t.id != caller_id && !seen_edges.contains(&edge_key) && !pts_edge_map.contains_key(&edge_key) {
-                            let conf = import_resolution::compute_confidence(
+                            let conf = resolve::compute_confidence(
                                 rel_path, &t.file, alias_imported_from,
                             ) - PROPAGATION_HOP_PENALTY;
                             if conf > 0.0 {
@@ -432,7 +432,7 @@ fn resolve_call_targets<'a>(
                 let resolved: Vec<&NodeInfo> = ctx.nodes_by_name
                     .get(proto_target)
                     .map(|v| v.iter()
-                        .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                        .filter(|n| resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
                         .copied().collect())
                     .unwrap_or_default();
                 if !resolved.is_empty() { return resolved; }
@@ -460,7 +460,7 @@ fn resolve_call_targets<'a>(
             let resolved: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(pts_target)
                 .map(|v| v.iter()
-                    .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                    .filter(|n| resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
                     .copied().collect())
                 .unwrap_or_default();
             if !resolved.is_empty() { return resolved; }
@@ -486,7 +486,7 @@ fn resolve_call_targets<'a>(
                     let accessor_resolved: Vec<&NodeInfo> = ctx.nodes_by_name
                         .get(target_fn)
                         .map(|v| v.iter()
-                            .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                            .filter(|n| resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
                             .copied().collect())
                         .unwrap_or_default();
                     if !accessor_resolved.is_empty() { return accessor_resolved; }
@@ -498,7 +498,7 @@ fn resolve_call_targets<'a>(
         let exact: Vec<&NodeInfo> = ctx.nodes_by_name
             .get(call.name.as_str())
             .map(|v| v.iter()
-                .filter(|n| import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                .filter(|n| resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
                 .copied().collect())
             .unwrap_or_default();
         if !exact.is_empty() { return exact; }
@@ -516,7 +516,7 @@ fn resolve_call_targets<'a>(
                 .get(qualified.as_str())
                 .map(|v| v.iter()
                     .filter(|n| n.kind == "method"
-                        && import_resolution::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                        && resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
                     .copied().collect())
                 .unwrap_or_default();
             if !class_scoped.is_empty() { return class_scoped; }
@@ -581,8 +581,8 @@ fn extract_inline_new_type(receiver: &str) -> Option<String> {
 fn sort_targets_by_confidence(targets: &mut Vec<&NodeInfo>, rel_path: &str, imported_from: Option<&str>) {
     if targets.len() > 1 {
         targets.sort_by(|a, b| {
-            let conf_a = import_resolution::compute_confidence(rel_path, &a.file, imported_from);
-            let conf_b = import_resolution::compute_confidence(rel_path, &b.file, imported_from);
+            let conf_a = resolve::compute_confidence(rel_path, &a.file, imported_from);
+            let conf_b = resolve::compute_confidence(rel_path, &b.file, imported_from);
             conf_b.partial_cmp(&conf_a).unwrap_or(std::cmp::Ordering::Equal)
         });
     }
@@ -597,7 +597,7 @@ fn emit_call_edges(
     for t in targets {
         let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
         if t.id != caller_id && !seen_edges.contains(&edge_key) {
-            let confidence = import_resolution::compute_confidence(rel_path, &t.file, imported_from);
+            let confidence = resolve::compute_confidence(rel_path, &t.file, imported_from);
             if let Some(&pts_idx) = pts_edge_map.get(&edge_key) {
                 // A pts-resolved edge already exists for this caller→target pair with a
                 // penalised confidence. Upgrade it to the direct-call confidence in-place,

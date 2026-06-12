@@ -10,8 +10,8 @@
 //! when switching between JS and native engines, so hash format compatibility is
 //! not required.
 
-use crate::file_collector::is_supported_extension;
-use crate::journal;
+use crate::domain::graph::builder::stages::collect_files::is_supported_extension;
+use crate::domain::graph::journal;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -547,7 +547,7 @@ pub fn find_reverse_dependencies(
 
 /// Purge graph data for changed/removed files and delete outgoing edges for reverse deps.
 ///
-/// Deletion order: analysis dependents → edges → nodes (matches `native_db::purge_files_data`).
+/// Deletion order: analysis dependents → edges → nodes (matches `connection::purge_files_data`).
 /// Analysis tables use join-based queries (node_id IN SELECT id FROM nodes) because they
 /// reference nodes by ID, not by file path directly.
 pub fn purge_changed_files(

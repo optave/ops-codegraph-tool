@@ -302,7 +302,7 @@ if (i.<lang><Keyword> === undefined) i.<lang><Keyword> = i.<lang>_<keyword>;
 tree-sitter-<lang> = "0.x"
 ```
 
-### 6. `crates/codegraph-core/src/parser_registry.rs` — register the language
+### 6. `crates/codegraph-core/src/domain/parser.rs` — register the language
 
 Four changes in this file:
 
@@ -518,7 +518,7 @@ codegraph query someFunction
 | 4 | `src/types.ts` | Both | Add `'<lang>'` to the `LanguageId` union; add language-specific flag to `Import` if needed |
 | 5 | `src/domain/parser.ts` | WASM | Update `patchNativeResult` (if language flag needed) |
 | 6 | `crates/codegraph-core/Cargo.toml` | Native | Add tree-sitter crate |
-| 7 | `crates/.../parser_registry.rs` | Native | Register enum + extension + grammar + `lang_id_str` |
+| 7 | `crates/.../domain/parser.rs` | Native | Register enum + extension + grammar + `lang_id_str` |
 | 8 | `crates/.../extractors/<lang>.rs` | Native | Implement `SymbolExtractor` trait |
 | 9 | `crates/.../extractors/mod.rs` | Native | Declare module + dispatch arm in `extract_symbols_with_opts()` |
 | 10 | `crates/.../types.rs` | Native | Add language flag to `Import` (if needed) |

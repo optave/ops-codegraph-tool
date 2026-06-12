@@ -1302,7 +1302,7 @@ export async function tryNativeOrchestrator(
     // Even on no-op rebuilds, dropped-language files added since the last
     // full build are still missing from `nodes`/`file_hashes` (#1083), and
     // WASM-only files deleted from disk leave stale rows behind (#1073).
-    // The orchestrator's file_collector skipped them, so its earlyExit
+    // The orchestrator's collect_files skipped them, so its earlyExit
     // doesn't imply DB consistency. Run the gap repair before returning.
     const gap = detectDroppedLanguageGap(ctx);
     if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {

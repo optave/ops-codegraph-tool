@@ -1,6 +1,6 @@
 use tree_sitter::Node;
 
-use crate::constants::MAX_WALK_DEPTH;
+use crate::shared::constants::MAX_WALK_DEPTH;
 use crate::types::ComplexityMetrics;
 
 // ─── Language-Configurable Complexity Rules ───────────────────────────────

@@ -2,9 +2,9 @@ use rayon::prelude::*;
 use std::fs;
 use tree_sitter::Parser;
 
-use crate::dataflow::extract_dataflow;
+use crate::ast_analysis::dataflow::extract_dataflow;
 use crate::extractors::extract_symbols_with_opts;
-use crate::parser_registry::LanguageKind;
+use crate::domain::parser::LanguageKind;
 use crate::types::FileSymbols;
 
 /// Parse multiple files in parallel using rayon.
