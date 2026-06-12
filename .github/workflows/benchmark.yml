@@ -113,9 +113,10 @@ jobs:
   # against the npm-installed package and open their own PR.
   embedding-benchmark:
     runs-on: ubuntu-latest
-    # 11 models x 30 min each = 330 min worst-case (caps via TIMEOUT_MS in the
-    # script); symbols are sampled to 1500 so typical runtime is ~23 min/model
-    # ≈ 253 min + setup headroom
+    # Warm run (cached models): 11 models × 30 min = 330 min worst-case.
+    # Cold start (cache miss): 11 models × 90 min = 990 min — exceeds GitHub's
+    # 360-min job cap, but cold starts only happen when the model list changes.
+    # Most releases hit cache and run well within the limit.
     timeout-minutes: 360
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -165,11 +166,22 @@ jobs:
           VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            # Skip patch releases (X.Y.Z where Z > 0) — embedding benchmarks
+            # only run on major (X.0.0) and minor/feature (X.Y.0) releases.
+            IFS='.' read -r _MAJOR _MINOR PATCH <<< "$VERSION"
+            PATCH_NUM="${PATCH%%[^0-9]*}"  # strip any pre-release suffix (e.g. "1-rc.1" → "1")
+            if [ "${PATCH_NUM:-0}" -gt 0 ]; then
+              echo "Patch release ${VERSION} — skipping embedding benchmark (only runs for major/minor releases)"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+              echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Wait for npm propagation
@@ -190,10 +202,14 @@ jobs:
 
       - name: Cache HuggingFace models
         if: steps.existing.outputs.skip != 'true'
+        id: hf-cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
-          key: hf-models-${{ runner.os }}-${{ hashFiles('src/domain/search/**') }}
+          # Key on the benchmark script (which owns the model list), not on
+          # search source. Source changes don't require re-downloading models,
+          # so the old key caused an unnecessary cache miss on every new release.
+          key: hf-models-${{ runner.os }}-${{ hashFiles('scripts/embedding-benchmark.ts') }}
           restore-keys: hf-models-${{ runner.os }}-
 
       - name: Build graph
@@ -202,9 +218,12 @@ jobs:
 
       - name: Run embedding benchmark
         if: steps.existing.outputs.skip != 'true'
-        timeout-minutes: 300
+        timeout-minutes: 360
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # On a cache miss models must be downloaded before inference can start.
+          # Allow 90 min per model for cold starts; warm runs stay at 30 min.
+          BENCHMARK_TIMEOUT_MS: ${{ steps.hf-cache.outputs.cache-hit == 'true' && '1800000' || '5400000' }}
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           ARGS="--version ${{ steps.mode.outputs.version }}"

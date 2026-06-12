@@ -196,7 +196,9 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
 
 const { MODELS } = await import(srcImport(srcDir, 'domain/search/index.js'));
 
-const TIMEOUT_MS = 1_800_000; // 30 min — with symbol sampling, embed (~18 min) + search (~5 min) fits comfortably
+// Default: 30 min (warm, models cached). CI sets BENCHMARK_TIMEOUT_MS=5400000
+// on a cache miss so cold-start downloads don't kill the worker prematurely.
+const TIMEOUT_MS = Number(process.env.BENCHMARK_TIMEOUT_MS) || 1_800_000;
 const modelKeys = Object.keys(MODELS);
 const results = {};
 let symbolCount = 0;
