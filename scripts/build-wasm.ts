@@ -212,9 +212,14 @@ const grammars = [
   { name: 'tree-sitter-julia', pkg: 'tree-sitter-julia', sub: null },
   { name: 'tree-sitter-r', pkg: '@eagleoutice/tree-sitter-r', sub: null },
   // tree-sitter-erlang: the WhatsApp/tree-sitter-erlang npm package was flagged as malware
-  // (GHSA-rphw-c8qj-jv84). The grammar WASM is committed in grammars/ and was validated
-  // clean. To rebuild it, manually install github:the-mikedavis/tree-sitter-erlang, add this
-  // entry back, run build:wasm, validate the output, then remove the dep and this entry again.
+  // (GHSA-rphw-c8qj-jv84). The devDependency has been removed; grammars/*.wasm is gitignored
+  // so the Erlang WASM is not present in the repository. Erlang parsing is unavailable in
+  // the WASM engine until a clean replacement is integrated. To restore support:
+  //   1. npm install github:the-mikedavis/tree-sitter-erlang
+  //   2. Add this entry back to the grammars array
+  //   3. Run `npm run build:wasm`, validate the output
+  //   4. Add `!grammars/tree-sitter-erlang.wasm` to .gitignore and commit the WASM
+  //   5. Remove the temporary devDependency again
   { name: 'tree-sitter-solidity', pkg: 'tree-sitter-solidity', sub: null },
   { name: 'tree-sitter-objc', pkg: 'tree-sitter-objc', sub: null },
   { name: 'tree-sitter-cuda', pkg: 'tree-sitter-cuda', sub: null },
