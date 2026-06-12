@@ -311,6 +311,13 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.2:Full build',
   '3.12.0:Full build',
   '3.12.0:1-file rebuild',
+  // tree-sitter-erlang devDependency removed (GHSA-rphw-c8qj-jv84 — malware).
+  // The erlang WASM is no longer built, so erlang resolution drops to 0%.
+  // These entries exempt the expected precision/recall drop on every build
+  // that follows the 3.12.0 baseline until a clean replacement grammar is
+  // integrated and a new baseline is captured.
+  '3.12.0:resolution erlang precision',
+  '3.12.0:resolution erlang recall',
 ]);
 
 /**

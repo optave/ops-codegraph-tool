@@ -61,7 +61,6 @@ const GRAMMAR_NPM_PACKAGES = [
   'tree-sitter-cuda',
   'tree-sitter-dart',
   'tree-sitter-elixir',
-  'tree-sitter-erlang',
   'tree-sitter-fsharp',
   'tree-sitter-gleam',
   'tree-sitter-go',
