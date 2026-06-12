@@ -136,6 +136,7 @@ struct DefWithId<'a> {
 struct EdgeContext<'a> {
     nodes_by_name: HashMap<&'a str, Vec<&'a NodeInfo>>,
     nodes_by_name_and_file: HashMap<(&'a str, &'a str), Vec<&'a NodeInfo>>,
+    nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
     receiver_kinds: HashSet<&'a str>,
 }
@@ -144,17 +145,19 @@ impl<'a> EdgeContext<'a> {
     fn new(all_nodes: &'a [NodeInfo], builtin_receivers: &'a [String]) -> Self {
         let mut nodes_by_name: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         let mut nodes_by_name_and_file: HashMap<(&str, &str), Vec<&NodeInfo>> = HashMap::new();
+        let mut nodes_by_file: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         for node in all_nodes {
             nodes_by_name.entry(&node.name).or_default().push(node);
             nodes_by_name_and_file
                 .entry((&node.name, &node.file))
                 .or_default()
                 .push(node);
+            nodes_by_file.entry(&node.file).or_default().push(node);
         }
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        Self { nodes_by_name, nodes_by_name_and_file, builtin_set, receiver_kinds }
+        Self { nodes_by_name, nodes_by_name_and_file, nodes_by_file, builtin_set, receiver_kinds }
     }
 }
 
@@ -821,6 +824,31 @@ fn resolve_call_targets<'a>(
                         .copied().collect())
                     .unwrap_or_default();
                 if !class_scoped.is_empty() { return class_scoped; }
+            }
+        }
+
+        // Broader fallback: same-file suffix scan.  Only for this/self/super (not no-receiver
+        // plain calls) to avoid false positives on global function calls inside class methods.
+        // Always restricts to the caller's own class prefix to avoid false edges to unrelated
+        // classes in the same file (e.g. this.area() inside Shape.describe must never yield
+        // Calculator.area, even when Calculator.area is the only method with that name).
+        if call.receiver.is_some() {
+            let suffix = format!(".{}", call.name);
+            if let Some(file_nodes) = ctx.nodes_by_file.get(rel_path) {
+                let same_file_methods: Vec<&NodeInfo> = file_nodes.iter()
+                    .filter(|n| n.kind == "method" && n.name.ends_with(&suffix))
+                    .copied()
+                    .collect();
+                if !same_file_methods.is_empty() {
+                    if let Some(dot_pos) = caller_name.find('.') {
+                        let caller_prefix = format!("{}.", &caller_name[..dot_pos]);
+                        let caller_scoped: Vec<&NodeInfo> = same_file_methods.iter()
+                            .filter(|n| n.name.starts_with(&caller_prefix))
+                            .copied()
+                            .collect();
+                        if !caller_scoped.is_empty() { return caller_scoped; }
+                    }
+                }
             }
         }
         return exact; // empty

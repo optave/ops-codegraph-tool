@@ -239,7 +239,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   per-PR gate for the Phase 8.1 TypeScript resolver PR (#1278) re-measured
  *   dev on a fresh runner and landed at 212ms (+155%, threshold 50%) on run
  *   26793082961. The same PR modifies only: (a) a new ts-resolver.ts module
- *   gated behind `typescriptResolver: false` (default), (b) an import of
+ *   gated behind `typescriptResolver: false` (was the default at the time), (b) an import of
  *   that module in build-edges.ts, and (c) a config field — none of which
  *   execute on the incremental hot path. Locally the same PR measures 86ms
  *   (within noise of the 83ms baseline). The 3.11.0:1-file rebuild exemption
