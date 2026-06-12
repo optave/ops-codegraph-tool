@@ -110,6 +110,10 @@ const allFixtures = readdirSync(fixturesRoot)
 
 let fixtures = allFixtures;
 if (langsFilter) {
+  if (langsFilter.length === 0) {
+    console.error('parity-compare: --langs requires at least one fixture name.');
+    process.exit(2);
+  }
   const unknown = langsFilter.filter((l) => !allFixtures.includes(l));
   if (unknown.length > 0) {
     console.error(

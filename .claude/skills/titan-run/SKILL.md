@@ -763,6 +763,10 @@ test -f .claude/skills/parity/SKILL.md && echo "PARITY SKILL FOUND" || echo "NO 
 
 Record `phaseTimestamps.parity.startedAt`.
 
+```bash
+headBefore=$(git rev-parse HEAD)
+```
+
 ### 4.6c. Run Pre-Agent Gate (G1-G4)
 
 ### 4.6d. Dispatch sub-agent
@@ -780,8 +784,13 @@ Agent → "Run /parity. Read .claude/skills/parity/SKILL.md and follow it exactl
 ### 4.6e. Post-phase validation
 
 After the agent returns:
+
+```bash
+headAfter=$(git rev-parse HEAD)
+```
+
 - `git status --short` → the working tree must be clean. The sub-agent commits its fixes; uncommitted changes mean it stopped mid-fix → **stop** and report.
-- If the agent fixed divergences, run V16-style commit audit: `git log --oneline <headBefore>..<headAfter>` and print the parity-fix commits.
+- If the agent fixed divergences, run V16-style commit audit: `git log --oneline $headBefore..$headAfter` and print the parity-fix commits.
 - If the agent reports divergences introduced by THIS run that it could not fix → **stop**: "PARITY failed — this run introduced implementation drift. Fix before CLOSE or revert the offending commits." Pre-existing divergences filed as issues are not blockers; print the issue URLs.
 
 Print: `"PARITY complete: <clean | N divergences fixed | N pre-existing filed as issues>"`
