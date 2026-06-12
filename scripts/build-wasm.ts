@@ -211,7 +211,10 @@ const grammars = [
   { name: 'tree-sitter-clojure', pkg: 'tree-sitter-clojure', sub: null },
   { name: 'tree-sitter-julia', pkg: 'tree-sitter-julia', sub: null },
   { name: 'tree-sitter-r', pkg: '@eagleoutice/tree-sitter-r', sub: null },
-  { name: 'tree-sitter-erlang', pkg: 'tree-sitter-erlang', sub: null },
+  // tree-sitter-erlang: the WhatsApp/tree-sitter-erlang npm package was flagged as malware
+  // (GHSA-rphw-c8qj-jv84). The grammar WASM is committed in grammars/ and was validated
+  // clean. To rebuild it, manually install github:the-mikedavis/tree-sitter-erlang, add this
+  // entry back, run build:wasm, validate the output, then remove the dep and this entry again.
   { name: 'tree-sitter-solidity', pkg: 'tree-sitter-solidity', sub: null },
   { name: 'tree-sitter-objc', pkg: 'tree-sitter-objc', sub: null },
   { name: 'tree-sitter-cuda', pkg: 'tree-sitter-cuda', sub: null },
