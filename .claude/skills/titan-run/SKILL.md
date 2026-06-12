@@ -742,13 +742,13 @@ Record `phaseTimestamps.grind.completedAt`.
 
 ---
 
-## Step 4.7 — PARITY (conditional, repo-provided)
+## Step 4.6 — PARITY (conditional, repo-provided)
 
 Some repos ship multiple implementations of the same logic that must stay in lockstep (e.g. a dual native/WASM engine, a client and server copy of a validator). Forge and grind edit code across the tree; this step verifies those edits didn't leave one implementation behind.
 
 **titan-run is repo-agnostic** — never assume the target repo has engines, fixtures, or any parity surface. The contract: a repo opts in by shipping its own `/parity` skill at `.claude/skills/parity/SKILL.md` (wrapping whatever audit mechanism it uses internally). No skill → no parity phase.
 
-### 4.7a. Detect the repo's parity mechanism
+### 4.6a. Detect the repo's parity mechanism
 
 ```bash
 test -f .claude/skills/parity/SKILL.md && echo "PARITY SKILL FOUND" || echo "NO PARITY SKILL"
@@ -759,13 +759,13 @@ test -f .claude/skills/parity/SKILL.md && echo "PARITY SKILL FOUND" || echo "NO 
 
 **Skip also if:** `--start-from` is `close`, or the pipeline made no code changes this run (`titan-state.json → execution.commits` empty/absent AND no grind adoption commits) — unless `--start-from parity` was given explicitly, which always runs the audit.
 
-### 4.7b. Record phase start
+### 4.6b. Record phase start
 
 Record `phaseTimestamps.parity.startedAt`.
 
-### 4.7c. Run Pre-Agent Gate (G1-G4)
+### 4.6c. Run Pre-Agent Gate (G1-G4)
 
-### 4.7d. Dispatch sub-agent
+### 4.6d. Dispatch sub-agent
 
 ```
 Agent → "Run /parity. Read .claude/skills/parity/SKILL.md and follow it exactly.
@@ -777,7 +777,7 @@ Agent → "Run /parity. Read .claude/skills/parity/SKILL.md and follow it exactl
          pre-existing findings (typically: file an issue, don't expand scope)."
 ```
 
-### 4.7e. Post-phase validation
+### 4.6e. Post-phase validation
 
 After the agent returns:
 - `git status --short` → the working tree must be clean. The sub-agent commits its fixes; uncommitted changes mean it stopped mid-fix → **stop** and report.
