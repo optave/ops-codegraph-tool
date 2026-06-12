@@ -915,7 +915,7 @@ const { results: fused } = await multiSearchData(
 
 ## ⚠️ Limitations
 
-- **TypeScript compiler integration is opt-in** — set `"build": { "typescriptResolver": true }` in `.codegraphrc.json` to enable the TypeScript compiler API pass; heuristic type inference (annotations, `new` expressions, assignment chains) is always active without it
+- **TypeScript compiler integration is auto-enabled** — when `typescript` is installed and a `tsconfig.json` is found, the TypeScript compiler API pass runs automatically; disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` if you want faster builds without it; heuristic type inference (annotations, `new` expressions, assignment chains) is always active as a baseline
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
 - **Dataflow analysis** — intraprocedural (single-function scope), not interprocedural

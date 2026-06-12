@@ -24,7 +24,7 @@ export const DEFAULTS = {
     dbPath: '.codegraph/graph.db',
     driftThreshold: 0.2,
     smallFilesThreshold: 5,
-    typescriptResolver: false,
+    typescriptResolver: true,
   },
   query: {
     defaultDepth: 3,

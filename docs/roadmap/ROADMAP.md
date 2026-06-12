@@ -1408,7 +1408,7 @@ The single highest-ROI improvement. Currently codegraph treats TypeScript as "Ja
 
 **Progress (v3.12.0):**
 - ✅ `src/domain/graph/resolver/ts-resolver.ts` — build-time enrichment pass using `ts.createProgram` + `getTypeChecker`; heuristic typeMap entries replaced with compiler-verified confidence 1.0 values ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
-- ✅ Gated on `config.build.typescriptResolver` (default: `false`) — set to `true` in `.codegraphrc.json` to enable ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
+- ✅ Auto-enabled when `typescript` is installed and `tsconfig.json` is found — disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` ([#1278](https://github.com/optave/ops-codegraph-tool/pull/1278))
 - ✅ Native Rust engine: `returnTypeMap` and `callAssignments` extracted in Rust, closing the enrichment gap ([#1283](https://github.com/optave/ops-codegraph-tool/pull/1283))
 
 ### 8.2 -- Inter-Procedural Type Propagation
