@@ -198,7 +198,8 @@ const { MODELS } = await import(srcImport(srcDir, 'domain/search/index.js'));
 
 // Default: 30 min (warm, models cached). CI sets BENCHMARK_TIMEOUT_MS=5400000
 // on a cache miss so cold-start downloads don't kill the worker prematurely.
-const TIMEOUT_MS = Number(process.env.BENCHMARK_TIMEOUT_MS) || 1_800_000;
+const _envTimeout = Number(process.env.BENCHMARK_TIMEOUT_MS);
+const TIMEOUT_MS = _envTimeout > 0 ? _envTimeout : 1_800_000;
 const modelKeys = Object.keys(MODELS);
 const results = {};
 let symbolCount = 0;
