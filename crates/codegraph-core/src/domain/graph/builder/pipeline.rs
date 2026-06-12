@@ -27,7 +27,7 @@ use crate::domain::parallel;
 use crate::db::repository::ast::{self, AstInsertNode, FileAstBatch};
 use crate::graph::classifiers::roles;
 use crate::features::structure;
-use crate::types::{FileSymbols, ImportResolutionInput};
+use crate::types::{FileSymbols, ImportResolutionInput, TypeMapEntry};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -549,6 +549,11 @@ pub fn run_pipeline(
     // Build import edges
     let import_edge_rows = import_edges::build_import_edges(conn, &import_ctx);
     import_edges::insert_edges(conn, &import_edge_rows);
+
+    // Phase 8.2: cross-file return-type propagation — seed each file's
+    // type_map with the return types of imported functions before call-edge
+    // building, mirroring propagateReturnTypesAcrossFiles in build-edges.ts.
+    propagate_return_types_across_files(&mut file_symbols, &import_ctx);
 
     // Build call edges using existing Rust edge_builder (internal path)
     // For now, call edges are built via the existing napi-exported function's
@@ -1288,6 +1293,106 @@ fn collect_imported_names_for_file(
     imported_names
 }
 
+/// Phase 8.2: cross-file return-type propagation.
+///
+/// Mirrors `propagateReturnTypesAcrossFiles` in `build-edges.ts`: when a file
+/// assigns the return value of an imported function to a variable
+/// (`const svc = buildService()`), look up the callee's return type in the
+/// defining file's `return_type_map` and seed the assigning file's `type_map`
+/// so method calls and receiver edges on that variable resolve. Must run
+/// before `build_and_insert_call_edges`.
+fn propagate_return_types_across_files(
+    file_symbols: &mut HashMap<String, FileSymbols>,
+    import_ctx: &ImportEdgeContext,
+) {
+    use crate::domain::graph::builder::stages::build_edges::PROPAGATION_HOP_PENALTY;
+
+    // rel_path → (fn_name → (type_name, confidence))
+    let mut return_type_index: HashMap<String, HashMap<String, (String, f64)>> = HashMap::new();
+    for (rel_path, symbols) in file_symbols.iter() {
+        if symbols.return_type_map.is_empty() {
+            continue;
+        }
+        let per_file = return_type_index.entry(rel_path.clone()).or_default();
+        for e in &symbols.return_type_map {
+            per_file.insert(e.name.clone(), (e.type_name.clone(), e.confidence));
+        }
+    }
+    if return_type_index.is_empty() {
+        return;
+    }
+
+    // Flat map for qualified `Type.method` lookups. Higher confidence wins;
+    // ties keep the first writer. Files are visited in sorted order so the
+    // tie-break is deterministic (HashMap iteration order is not).
+    let mut global_return_types: HashMap<String, (String, f64)> = HashMap::new();
+    let mut sorted_paths: Vec<&String> = return_type_index.keys().collect();
+    sorted_paths.sort();
+    for rel_path in sorted_paths {
+        for (name, entry) in &return_type_index[rel_path] {
+            let replace = match global_return_types.get(name) {
+                Some(existing) => entry.1 > existing.1,
+                None => true,
+            };
+            if replace {
+                global_return_types.insert(name.clone(), entry.clone());
+            }
+        }
+    }
+
+    for (rel_path, symbols) in file_symbols.iter_mut() {
+        if symbols.call_assignments.is_empty() {
+            continue;
+        }
+
+        let abs_file = Path::new(&import_ctx.root_dir).join(rel_path.as_str());
+        let abs_str = abs_file.to_str().unwrap_or("");
+        let imported_names = collect_imported_names_for_file(abs_str, symbols, import_ctx);
+        // Later entries overwrite earlier ones on duplicate names — same as the
+        // HashMap collect in build_call_edges.
+        let imported_map: HashMap<String, String> = imported_names
+            .into_iter()
+            .map(|e| (e.name, e.file))
+            .collect();
+
+        let mut injections: Vec<TypeMapEntry> = Vec::new();
+        let mut injected: HashSet<String> = HashSet::new();
+        for ca in &symbols.call_assignments {
+            // Already resolved locally (JS: `typeMap.has(varName)`); first
+            // successful injection wins for repeated assignments to one name.
+            if injected.contains(&ca.var_name)
+                || symbols.type_map.iter().any(|t| t.name == ca.var_name)
+            {
+                continue;
+            }
+
+            let found = match &ca.receiver_type_name {
+                Some(receiver) => {
+                    global_return_types.get(&format!("{receiver}.{}", ca.callee_name))
+                }
+                None => imported_map.get(&ca.callee_name).and_then(|from| {
+                    return_type_index
+                        .get(from)
+                        .and_then(|m| m.get(&ca.callee_name))
+                }),
+            };
+
+            if let Some((type_name, confidence)) = found {
+                let propagated = confidence - PROPAGATION_HOP_PENALTY;
+                if propagated > 0.0 {
+                    injections.push(TypeMapEntry {
+                        name: ca.var_name.clone(),
+                        type_name: type_name.clone(),
+                        confidence: propagated,
+                    });
+                    injected.insert(ca.var_name.clone());
+                }
+            }
+        }
+        symbols.type_map.extend(injections);
+    }
+}
+
 /// Insert the edges produced by the native edge builder into the edges table.
 fn insert_call_edge_rows(conn: &Connection, edges: &[crate::domain::graph::builder::stages::build_edges::ComputedEdge]) {
     if edges.is_empty() {
@@ -1814,4 +1919,124 @@ fn now_ms() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as f64)
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Import, PathAliases};
+
+    fn make_import_ctx(file_symbols: &HashMap<String, FileSymbols>) -> ImportEdgeContext {
+        let mut batch_resolved = HashMap::new();
+        batch_resolved.insert("/repo/driver.js|./service.js".to_string(), "service.js".to_string());
+        ImportEdgeContext {
+            batch_resolved,
+            reexport_map: HashMap::new(),
+            barrel_only_files: HashSet::new(),
+            file_symbols: file_symbols.clone(),
+            root_dir: "/repo".to_string(),
+            aliases: PathAliases { base_url: None, paths: vec![] },
+            known_files: HashSet::new(),
+        }
+    }
+
+    fn entry(name: &str, type_name: &str, confidence: f64) -> TypeMapEntry {
+        TypeMapEntry {
+            name: name.to_string(),
+            type_name: type_name.to_string(),
+            confidence,
+        }
+    }
+
+    #[test]
+    fn propagates_imported_factory_return_type_into_type_map() {
+        let mut service = FileSymbols::new("service.js".to_string());
+        service.return_type_map.push(entry("buildService", "UserService", 0.85));
+
+        let mut driver = FileSymbols::new("driver.js".to_string());
+        driver.imports.push(Import::new(
+            "./service.js".to_string(),
+            vec!["buildService".to_string()],
+            1,
+        ));
+        driver.call_assignments.push(crate::types::NativeCallAssignment {
+            var_name: "svc".to_string(),
+            callee_name: "buildService".to_string(),
+            receiver_type_name: None,
+        });
+
+        let mut file_symbols = HashMap::new();
+        file_symbols.insert("service.js".to_string(), service);
+        file_symbols.insert("driver.js".to_string(), driver);
+        let import_ctx = make_import_ctx(&file_symbols);
+
+        propagate_return_types_across_files(&mut file_symbols, &import_ctx);
+
+        let driver = &file_symbols["driver.js"];
+        let seeded = driver
+            .type_map
+            .iter()
+            .find(|t| t.name == "svc")
+            .expect("svc should be seeded from buildService's return type");
+        assert_eq!(seeded.type_name, "UserService");
+        // 0.85 (inferred `return new X()`) minus one propagation hop.
+        assert!((seeded.confidence - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn qualified_receiver_lookup_uses_global_return_type_map() {
+        let mut factory = FileSymbols::new("factory.js".to_string());
+        factory.return_type_map.push(entry("Factory.create", "Widget", 1.0));
+
+        let mut driver = FileSymbols::new("driver.js".to_string());
+        driver.type_map.push(entry("factory", "Factory", 0.9));
+        driver.call_assignments.push(crate::types::NativeCallAssignment {
+            var_name: "w".to_string(),
+            callee_name: "create".to_string(),
+            receiver_type_name: Some("Factory".to_string()),
+        });
+
+        let mut file_symbols = HashMap::new();
+        file_symbols.insert("factory.js".to_string(), factory);
+        file_symbols.insert("driver.js".to_string(), driver);
+        let import_ctx = make_import_ctx(&file_symbols);
+
+        propagate_return_types_across_files(&mut file_symbols, &import_ctx);
+
+        let driver = &file_symbols["driver.js"];
+        let seeded = driver.type_map.iter().find(|t| t.name == "w").expect("w seeded");
+        assert_eq!(seeded.type_name, "Widget");
+        assert!((seeded.confidence - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn locally_typed_variables_are_not_overwritten() {
+        let mut service = FileSymbols::new("service.js".to_string());
+        service.return_type_map.push(entry("buildService", "UserService", 0.85));
+
+        let mut driver = FileSymbols::new("driver.js".to_string());
+        driver.imports.push(Import::new(
+            "./service.js".to_string(),
+            vec!["buildService".to_string()],
+            1,
+        ));
+        driver.type_map.push(entry("svc", "LocalOverride", 1.0));
+        driver.call_assignments.push(crate::types::NativeCallAssignment {
+            var_name: "svc".to_string(),
+            callee_name: "buildService".to_string(),
+            receiver_type_name: None,
+        });
+
+        let mut file_symbols = HashMap::new();
+        file_symbols.insert("service.js".to_string(), service);
+        file_symbols.insert("driver.js".to_string(), driver);
+        let import_ctx = make_import_ctx(&file_symbols);
+
+        propagate_return_types_across_files(&mut file_symbols, &import_ctx);
+
+        let driver = &file_symbols["driver.js"];
+        let svc_entries: Vec<_> = driver.type_map.iter().filter(|t| t.name == "svc").collect();
+        assert_eq!(svc_entries.len(), 1, "no duplicate entry should be injected");
+        assert_eq!(svc_entries[0].type_name, "LocalOverride");
+    }
 }

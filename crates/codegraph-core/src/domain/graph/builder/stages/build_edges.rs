@@ -19,7 +19,7 @@ const IMPLEMENTS_TARGET_KINDS: &[&str] = &["interface", "trait", "class"];
 
 /// Confidence penalty per alias hop — mirrors `PROPAGATION_HOP_PENALTY` in
 /// `src/extractors/javascript.ts`.
-const PROPAGATION_HOP_PENALTY: f64 = 0.1;
+pub(crate) const PROPAGATION_HOP_PENALTY: f64 = 0.1;
 
 #[napi(object)]
 pub struct NodeInfo {
