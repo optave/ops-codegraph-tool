@@ -4,7 +4,7 @@ use crate::types::GraphEdge;
 
 /// Detect cycles using Tarjan's strongly connected components algorithm.
 /// Returns SCCs with size > 1 (actual cycles).
-/// Mirrors the JS implementation in src/cycles.js.
+/// Mirrors the JS implementation in src/graph/algorithms/tarjan.ts.
 pub fn detect_cycles(edges: &[GraphEdge]) -> Vec<Vec<String>> {
     // Build adjacency list
     let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();

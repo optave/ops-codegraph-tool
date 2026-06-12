@@ -52,14 +52,14 @@ fn bfs_neighbors_for_direction<'a>(
 pub fn bfs_traversal(
     edges: Vec<GraphEdge>,
     start_ids: Vec<String>,
-    max_depth: Option<i32>,
+    max_depth: Option<u32>,
     direction: Option<String>,
 ) -> Vec<BfsEntry> {
     let graph = DirectedGraph::from_edges(&edges);
-    let max_depth = max_depth.unwrap_or(i32::MAX);
+    let max_depth = max_depth.unwrap_or(u32::MAX);
     let dir = direction.as_deref().unwrap_or("forward");
 
-    let mut depths: HashMap<&str, i32> = HashMap::new();
+    let mut depths: HashMap<&str, u32> = HashMap::new();
     let mut queue: VecDeque<&str> = VecDeque::new();
 
     for id in &start_ids {
@@ -87,7 +87,7 @@ pub fn bfs_traversal(
         .into_iter()
         .map(|(node, depth)| BfsEntry {
             node: node.to_string(),
-            depth,
+            depth: depth as i32,
         })
         .collect()
 }
