@@ -523,7 +523,10 @@ function runPostNativeCha(
       if (row) gateAFired = true;
     }
 
-    // Gate B: calls from changed-file sources to class-kind targets?
+    // Gate B: calls from changed-file sources to instantiable-kind targets?
+    //   Checks the same kind set as Gate A (class/interface/trait/struct/record)
+    //   so that future CHA extensions to struct/record kinds correctly trigger
+    //   the full scan when RTA evidence grows in a changed file.
     let gateBFired = false;
     if (!gateAFired) {
       for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
@@ -534,7 +537,8 @@ function runPostNativeCha(
             `SELECT 1 FROM edges e
              JOIN nodes src ON e.source_id = src.id
              JOIN nodes tgt ON e.target_id = tgt.id
-             WHERE e.kind = 'calls' AND tgt.kind = 'class'
+             WHERE e.kind = 'calls'
+             AND tgt.kind IN ('class', 'interface', 'trait', 'struct', 'record')
              AND src.file IN (${ph})
              LIMIT 1`,
           )
@@ -556,8 +560,8 @@ function runPostNativeCha(
   }
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
-  // Include caller_file and method_file so affectedFiles can be populated for
-  // incremental role reclassification; confidence is hardcoded 0.8 matching runChaPostPass.
+  // Include the caller node's file so confidence can be computed file-pair-aware,
+  // matching the WASM path's computeConfidence(callerFile, targetFile, null) - CHA_DISPATCH_PENALTY formula.
   // When scopeToChangedFiles is true, restrict to call sites in the changed files
   // (safe because no hierarchy or RTA evidence changed outside those files).
   let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
@@ -653,10 +657,12 @@ function runPostNativeCha(
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            // Use the same hardcoded 0.8 that runChaPostPass (helpers.ts) uses for
-            // DB-level CHA dispatch edges. This aligns the native orchestrator path
-            // with the WASM and hybrid paths, which both go through runChaPostPass.
-            const conf = 0.8;
+            // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - CHA_DISPATCH_PENALTY)
+            // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
+            const conf =
+              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) -
+              CHA_DISPATCH_PENALTY;
+            if (conf <= 0) continue;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newEdgeCount++;
             if (caller_file) affectedFiles.add(caller_file);
@@ -900,6 +906,7 @@ async function runPostNativeThisDispatch(
       );
 
       for (const t of targets) {
+        if (t.id === callerRow.id) continue; // skip self-loops
         const key = `${callerRow.id}|${t.id}`;
         if (seen.has(key)) continue;
         seen.add(key);

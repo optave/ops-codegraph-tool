@@ -511,6 +511,7 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
           const qualifiedName = `${cls}.${methodSuffix}`;
           const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
           for (const methodNode of methodNodes) {
+            if (methodNode.id === source_id) continue; // skip self-loops
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
