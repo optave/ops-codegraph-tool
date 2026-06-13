@@ -1107,6 +1107,19 @@ function buildFileCallEdges(
       }
     }
 
+    // Sort targets by confidence descending before emitting edges.
+    // For multi-target calls with duplicate (source_id, target_id) pairs the
+    // stored confidence depends on which duplicate is processed last — sorting
+    // here guarantees the highest-confidence target wins on dedup, matching the
+    // native engine's sort_targets_by_confidence call in build_edges.rs.
+    if (targets.length > 1) {
+      targets = [...targets].sort(
+        (a, b) =>
+          computeConfidence(relPath, b.file, importedFrom ?? null) -
+          computeConfidence(relPath, a.file, importedFrom ?? null),
+      );
+    }
+
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
       if (t.id !== caller.id) {
@@ -1188,7 +1201,15 @@ function buildFileCallEdges(
           importedNames,
           typeMap as Map<string, unknown>,
         );
-        for (const t of aliasTargets) {
+        const sortedAliasTargets =
+          aliasTargets.length > 1
+            ? [...aliasTargets].sort(
+                (a, b) =>
+                  computeConfidence(relPath, b.file, aliasFrom ?? null) -
+                  computeConfidence(relPath, a.file, aliasFrom ?? null),
+              )
+            : aliasTargets;
+        for (const t of sortedAliasTargets) {
           const edgeKey = `${caller.id}|${t.id}`;
           if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
             const conf =
@@ -1224,7 +1245,15 @@ function buildFileCallEdges(
             importedNames,
             typeMap as Map<string, unknown>,
           );
-          for (const t of aliasTargets) {
+          const sortedAliasTargets =
+            aliasTargets.length > 1
+              ? [...aliasTargets].sort(
+                  (a, b) =>
+                    computeConfidence(relPath, b.file, aliasFrom ?? null) -
+                    computeConfidence(relPath, a.file, aliasFrom ?? null),
+                )
+              : aliasTargets;
+          for (const t of sortedAliasTargets) {
             const edgeKey = `${caller.id}|${t.id}`;
             if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
               const conf =
