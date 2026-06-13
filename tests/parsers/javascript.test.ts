@@ -217,15 +217,34 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.get('res')).toEqual({ type: 'Response', confidence: 0.9 });
     });
 
-    it('extracts class field annotations into typeMap with confidence 0.9', () => {
+    it('extracts class field annotations into class-scoped typeMap key (issue #1458)', () => {
       const symbols = parseTS(`
         class UserService {
           private repo: Repository;
           run() { this.repo.save(); }
         }
       `);
-      expect(symbols.typeMap.get('repo')).toEqual({ type: 'Repository', confidence: 0.9 });
-      expect(symbols.typeMap.get('this.repo')).toEqual({ type: 'Repository', confidence: 0.9 });
+      // Primary: class-scoped key at 0.9 — prevents cross-class collision.
+      expect(symbols.typeMap.get('UserService.repo')).toEqual({ type: 'Repository', confidence: 0.9 });
+      // Fallback bare keys at lower confidence for single-class files.
+      expect(symbols.typeMap.get('repo')).toEqual({ type: 'Repository', confidence: 0.6 });
+      expect(symbols.typeMap.get('this.repo')).toEqual({ type: 'Repository', confidence: 0.6 });
+    });
+
+    it('prevents cross-class collision for same-named fields (issue #1458)', () => {
+      const symbols = parseTS(`
+        class OrderService {
+          private repo: OrderRepository;
+        }
+        class UserService {
+          private repo: UserRepository;
+        }
+      `);
+      // Each class gets its own scoped key — no collision.
+      expect(symbols.typeMap.get('OrderService.repo')).toEqual({ type: 'OrderRepository', confidence: 0.9 });
+      expect(symbols.typeMap.get('UserService.repo')).toEqual({ type: 'UserRepository', confidence: 0.9 });
+      // Bare "repo" key should hold the first class's type at 0.6 (second write is same confidence, no overwrite).
+      expect(symbols.typeMap.get('repo')?.confidence).toBe(0.6);
     });
 
     it('returns empty typeMap when no annotations', () => {

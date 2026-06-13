@@ -1867,7 +1867,7 @@ function runContextCollectorWalk(rootNode: TreeSitterNode, out: ContextCollector
     } else if (t === 'required_parameter' || t === 'optional_parameter') {
       handleParamTypeMap(node, out.typeMap);
     } else if (t === 'public_field_definition' || t === 'field_definition') {
-      handleFieldDefTypeMap(node, out.typeMap);
+      handleFieldDefTypeMap(node, out.typeMap, typeMapClass);
     } else if (t === 'assignment_expression') {
       handlePropWriteTypeMap(node, out.typeMap, typeMapClass);
     } else if (t === 'call_expression') {
@@ -2094,11 +2094,23 @@ function handleParamTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEn
 
 /**
  * Extract type info from a class field declaration: `private repo: Repository<User>`.
- * Seeds both "repo" and "this.repo" so `this.repo.method()` calls resolve to the
- * declared type via the type map. Mirrors the field_definition branch of
- * match_js_type_map in crates/codegraph-core/src/extractors/javascript.rs.
+ *
+ * Seeds a class-scoped key `ClassName.field` (confidence 0.9) as the primary entry
+ * so that two classes with identically-named fields don't overwrite each other's
+ * typeMap entry (issue #1458). The resolver's `CallerClass.X` fallback (call-resolver.ts
+ * line 110) looks up exactly this key.
+ *
+ * Bare `field` and `this.field` keys are kept at lower confidence (0.6) as fallbacks
+ * for single-class files where the resolver may not have a callerClass context.
+ *
+ * Mirrors the field_definition branch of match_js_type_map in
+ * crates/codegraph-core/src/extractors/javascript.rs.
  */
-function handleFieldDefTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+function handleFieldDefTypeMap(
+  node: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+  currentClass: string | null,
+): void {
   const nameNode =
     node.childForFieldName('name') ||
     node.childForFieldName('property') ||
@@ -2115,9 +2127,18 @@ function handleFieldDefTypeMap(node: TreeSitterNode, typeMap: Map<string, TypeMa
   if (!typeAnno) return;
   const typeName = extractSimpleTypeName(typeAnno);
   if (!typeName) return;
-  setTypeMapEntry(typeMap, nameNode.text, typeName, 0.9);
-  // "this.fieldName" key resolves `this.repo.method()` calls.
-  setTypeMapEntry(typeMap, `this.${nameNode.text}`, typeName, 0.9);
+  if (currentClass) {
+    // Primary: class-scoped key prevents cross-class collision (issue #1458).
+    setTypeMapEntry(typeMap, `${currentClass}.${nameNode.text}`, typeName, 0.9);
+    // Fallback: bare keys at lower confidence for single-class files or when
+    // the resolver does not have a callerClass in scope.
+    setTypeMapEntry(typeMap, nameNode.text, typeName, 0.6);
+    setTypeMapEntry(typeMap, `this.${nameNode.text}`, typeName, 0.6);
+  } else {
+    // No enclosing class declaration (e.g. class expression) — use bare keys only.
+    setTypeMapEntry(typeMap, nameNode.text, typeName, 0.9);
+    setTypeMapEntry(typeMap, `this.${nameNode.text}`, typeName, 0.9);
+  }
 }
 
 /**

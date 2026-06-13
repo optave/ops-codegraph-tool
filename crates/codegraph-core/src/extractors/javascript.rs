@@ -202,8 +202,13 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
             }
         }
         // TypeScript class field declarations: `private repo: Repository<User>`
-        // Seeds both "repo" and "this.repo" so that `this.repo.method()` calls
-        // can be resolved to the interface/class type via the type map.
+        // Seeds a class-scoped key `ClassName.field` (confidence 0.9) as the primary
+        // entry so that two classes with identically-named fields don't overwrite each
+        // other's typeMap entry (issue #1458). The resolver's `CallerClass.X` fallback
+        // looks up exactly this key.
+        // Bare `field` and `this.field` keys are kept at lower confidence (0.6) as
+        // fallbacks for single-class files where the resolver may lack callerClass context.
+        // Mirrors handleFieldDefTypeMap in src/extractors/javascript.ts.
         "public_field_definition" | "field_definition" => {
             let name_node = node.child_by_field_name("name")
                 .or_else(|| node.child_by_field_name("property"))
@@ -216,9 +221,33 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                     let field_name = node_text(&name_node, source).to_string();
                     if let Some(type_anno) = find_child(node, "type_annotation") {
                         if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
-                            push_type_map_entry(symbols, field_name.clone(), type_name.to_string());
-                            // "this.fieldName" key resolves `this.repo.method()` calls.
-                            push_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string());
+                            match enclosing_type_map_class(node, source) {
+                                Some(class_name) => {
+                                    // Primary: class-scoped key prevents cross-class collision.
+                                    push_type_map_entry(
+                                        symbols,
+                                        format!("{}.{}", class_name, field_name),
+                                        type_name.to_string(),
+                                    );
+                                    // Fallback bare keys at lower confidence.
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: field_name.clone(),
+                                        type_name: type_name.to_string(),
+                                        confidence: 0.6,
+                                    });
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: format!("this.{}", field_name),
+                                        type_name: type_name.to_string(),
+                                        confidence: 0.6,
+                                    });
+                                }
+                                None => {
+                                    // No enclosing class declaration (e.g. class expression)
+                                    // — use bare keys only at full confidence.
+                                    push_type_map_entry(symbols, field_name.clone(), type_name.to_string());
+                                    push_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string());
+                                }
+                            }
                         }
                     }
                 }
