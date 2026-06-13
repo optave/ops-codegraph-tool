@@ -27,7 +27,10 @@ fi
 # Resolve the project root (worktree-aware — each worktree has its own .claude/)
 PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 
-# Reproduce the same project hash used by snapshot-pre-bash.sh
+# Reproduce the same snapshot path used by snapshot-pre-bash.sh.
+# The snapshot is keyed by (project root, command) so concurrent Bash calls
+# within the same session each get a distinct file — preventing parallel calls
+# from overwriting each other's baseline.
 PROJECT_HASH=$(echo "$PROJECT_DIR" | node -e "
   const crypto = require('crypto');
   let d='';
@@ -37,7 +40,16 @@ PROJECT_HASH=$(echo "$PROJECT_DIR" | node -e "
   });
 " 2>/dev/null) || PROJECT_HASH="default"
 
-SNAPSHOT_FILE="/tmp/claude-bash-snapshot-${PROJECT_HASH}.txt"
+CMD_HASH=$(echo "$COMMAND" | node -e "
+  const crypto = require('crypto');
+  let d='';
+  process.stdin.on('data',c=>d+=c);
+  process.stdin.on('end',()=>{
+    process.stdout.write(crypto.createHash('sha1').update(d.trim()).digest('hex').slice(0,8));
+  });
+" 2>/dev/null) || CMD_HASH="default"
+
+SNAPSHOT_FILE="/tmp/claude-bash-snapshot-${PROJECT_HASH}-${CMD_HASH}.txt"
 
 # If there is no snapshot (hook was not installed yet, or the pre-hook was
 # skipped for a read-only command) we have no baseline — exit cleanly.
