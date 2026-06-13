@@ -672,9 +672,9 @@ fn is_top_level_binding_kind(kind: &str) -> bool {
 /// Two-pass strategy (mirrors the updated `findCaller` in call-resolver.ts):
 ///   Pass 1 — narrowest enclosing function/method.  Local variable declarations
 ///             inside a function body must not shadow the enclosing function.
-///   Pass 2 — narrowest enclosing variable/constant binding.  Used as fallback
-///             when no function/method encloses the call (e.g. Haskell top-level
-///             `main = do …` is a `bind` node with kind `variable`).
+///   Pass 2 — widest (outermost) enclosing variable/constant binding.  Used as
+///             fallback when no function/method encloses the call (e.g. Haskell
+///             top-level `main = do …` is a `bind` node with kind `variable`).
 ///
 /// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call
 /// falls back to file scope.
