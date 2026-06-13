@@ -654,6 +654,7 @@ function runPostNativeCha(
             method_file: string | null;
           }>;
           for (const methodNode of methodNodes) {
+            if (methodNode.id === source_id) continue; // skip self-loops
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);

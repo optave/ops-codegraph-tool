@@ -515,7 +515,7 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0, 'cha']);
+            newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0, 'cha']); // TODO: align with runPostNativeCha: computeConfidence(callerFile, methodFile) - CHA_DISPATCH_PENALTY (requires extending findMethodStmt to fetch file)
           }
         }
 
