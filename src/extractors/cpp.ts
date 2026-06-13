@@ -4,6 +4,7 @@ import type {
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
+  TypeMapEntry,
 } from '../types.js';
 import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
@@ -49,6 +50,9 @@ function walkCppNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'call_expression':
       handleCppCallExpression(node, ctx);
+      break;
+    case 'declaration':
+      handleCppDeclaration(node, ctx);
       break;
   }
 
@@ -204,6 +208,36 @@ function handleCppInclude(node: TreeSitterNode, ctx: ExtractorOutput): void {
   });
 }
 
+/**
+ * Seed typeMap for declaration-typed locals: `UserService svc;` and
+ * `UserService svc = makeService();` both yield typeMap["svc"] = "UserService"
+ * at confidence 0.9. Mirrors `match_c_family_type_map` ("declaration" branch)
+ * in the native Rust C++ extractor.
+ */
+function handleCppDeclaration(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const typeNode = node.childForFieldName('type');
+  if (!typeNode) return;
+  const typeName = typeNode.text;
+  // Skip primitive types — they are never class/struct receivers
+  if (isPrimitiveCppType(typeName)) return;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const kind = child.type;
+    let nameNode: TreeSitterNode | null = null;
+    if (kind === 'init_declarator') {
+      nameNode = child.childForFieldName('declarator') ?? null;
+    } else if (kind === 'identifier') {
+      nameNode = child;
+    }
+    if (!nameNode) continue;
+    const varName = unwrapCppDeclaratorName(nameNode);
+    if (varName) {
+      ctx.typeMap.set(varName, { type: typeName, confidence: 0.9 });
+    }
+  }
+}
+
 function handleCppCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const funcNode = node.childForFieldName('function');
   if (!funcNode) return;
@@ -322,6 +356,23 @@ function extractCppClassFields(classNode: TreeSitterNode): SubDeclaration[] {
     }
   }
   return fields;
+}
+
+/**
+ * Primitive C/C++ types that are never class/struct receivers. Seeding these
+ * into typeMap would cause spurious receiver edges (e.g. `int x` → `int`).
+ */
+const CPP_PRIMITIVE_TYPES = new Set([
+  'int', 'long', 'short', 'unsigned', 'signed', 'float', 'double',
+  'char', 'bool', 'void', 'wchar_t', 'auto', 'size_t', 'uint8_t',
+  'uint16_t', 'uint32_t', 'uint64_t', 'int8_t', 'int16_t', 'int32_t',
+  'int64_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t',
+]);
+
+function isPrimitiveCppType(typeName: string): boolean {
+  // Strip qualifiers like `const`, `volatile`, `unsigned` etc.
+  const base = typeName.split(/\s+/).pop() ?? typeName;
+  return CPP_PRIMITIVE_TYPES.has(base) || CPP_PRIMITIVE_TYPES.has(typeName);
 }
 
 function extractCppEnumEntries(enumNode: TreeSitterNode): SubDeclaration[] {

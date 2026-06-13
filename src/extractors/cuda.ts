@@ -4,6 +4,7 @@ import type {
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
+  TypeMapEntry,
 } from '../types.js';
 import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
@@ -62,6 +63,9 @@ function walkCudaNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'call_expression':
       handleCudaCallExpression(node, ctx);
+      break;
+    case 'declaration':
+      handleCudaDeclaration(node, ctx);
       break;
   }
 
@@ -202,6 +206,36 @@ function handleCudaInclude(node: TreeSitterNode, ctx: ExtractorOutput): void {
     line: node.startPosition.row + 1,
     cInclude: true,
   });
+}
+
+/**
+ * Seed typeMap for declaration-typed locals: `UserService svc;` and
+ * `UserService svc = make();` both yield typeMap["svc"] = "UserService"
+ * at confidence 0.9. Mirrors `match_c_family_type_map` ("declaration" branch)
+ * in the native Rust CUDA extractor.
+ */
+function handleCudaDeclaration(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const typeNode = node.childForFieldName('type');
+  if (!typeNode) return;
+  const typeName = typeNode.text;
+  // Skip primitive types — they are never class/struct receivers
+  if (isCudaPrimitiveType(typeName)) return;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const kind = child.type;
+    let nameNode: TreeSitterNode | null = null;
+    if (kind === 'init_declarator') {
+      nameNode = child.childForFieldName('declarator') ?? null;
+    } else if (kind === 'identifier') {
+      nameNode = child;
+    }
+    if (!nameNode) continue;
+    const varName = extractCudaFieldName(nameNode);
+    if (varName) {
+      ctx.typeMap.set(varName, { type: typeName, confidence: 0.9 });
+    }
+  }
 }
 
 function handleCudaCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -372,6 +406,22 @@ function innerCudaDeclarator(node: TreeSitterNode): TreeSitterNode | null {
     }
   }
   return null;
+}
+
+/**
+ * Primitive C/C++/CUDA types that are never class/struct receivers. Seeding
+ * these into typeMap would produce spurious receiver edges (e.g. `int x` → `int`).
+ */
+const CUDA_PRIMITIVE_TYPES = new Set([
+  'int', 'long', 'short', 'unsigned', 'signed', 'float', 'double',
+  'char', 'bool', 'void', 'wchar_t', 'auto', 'size_t', 'uint8_t',
+  'uint16_t', 'uint32_t', 'uint64_t', 'int8_t', 'int16_t', 'int32_t',
+  'int64_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t',
+]);
+
+function isCudaPrimitiveType(typeName: string): boolean {
+  const base = typeName.split(/\s+/).pop() ?? typeName;
+  return CUDA_PRIMITIVE_TYPES.has(base) || CUDA_PRIMITIVE_TYPES.has(typeName);
 }
 
 function extractCudaEnumEntries(enumNode: TreeSitterNode): SubDeclaration[] {
