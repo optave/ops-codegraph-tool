@@ -167,19 +167,30 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // TODO(#875): raise scala thresholds once call resolution lands
   scala: { precision: 0.0, recall: 0.0 },
   php: { precision: 0.6, recall: 0.2 },
-  // TODO: raise thresholds below once call resolution is implemented for each language
-  elixir: { precision: 0.0, recall: 0.0 },
+  // elixir: cross-module qualified calls resolve at 100% precision, 81% recall.
+  //   Expected-edges now use module-qualified names (Main.run, UserService.create_user, etc.)
+  //   matching what the Elixir extractor emits. Same-module bare calls (display_user → get_user)
+  //   are not yet resolved — tracked as FNs. Precision 1.0 acts as ratchet against future FPs.
+  elixir: { precision: 1.0, recall: 0.8 },
   dart: { precision: 0.0, recall: 0.0 },
   zig: { precision: 0.0, recall: 0.0 },
   fsharp: { precision: 0.0, recall: 0.0 },
   gleam: { precision: 0.0, recall: 0.0 },
   clojure: { precision: 0.0, recall: 0.0 },
-  julia: { precision: 0.0, recall: 0.0 },
+  // julia: cross-module qualified calls resolve at 100% precision, 73% recall.
+  //   Expected-edges now use module-qualified names (App.main, Service.create_user, etc.)
+  //   matching what the Julia extractor emits. Same-file calls (summary → format_summary, etc.)
+  //   are not yet resolved — tracked as FNs. Precision 1.0 acts as ratchet against future FPs.
+  julia: { precision: 1.0, recall: 0.7 },
   r: { precision: 0.0, recall: 0.0 },
   erlang: { precision: 0.0, recall: 0.0 },
   solidity: { precision: 0.0, recall: 0.0 },
   // New fixture languages — no parser or call resolution yet
-  objc: { precision: 0.0, recall: 0.0 },
+  // objc: class-method static calls and same-class calls resolve at 100% precision, 46% recall.
+  //   Expected-edges now use full ObjC selectors (createUserWithId:name:email:, isValidEmail:, etc.)
+  //   matching what the ObjC extractor emits. Receiver-typed instance message sends
+  //   are not yet resolved — tracked as FNs. Precision 1.0 acts as ratchet against future FPs.
+  objc: { precision: 1.0, recall: 0.4 },
   cuda: { precision: 0.0, recall: 0.0 },
   groovy: { precision: 0.0, recall: 0.0 },
   verilog: { precision: 0.0, recall: 0.0 },

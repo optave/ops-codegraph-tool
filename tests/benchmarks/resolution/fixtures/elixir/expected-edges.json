@@ -4,148 +4,148 @@
   "description": "Hand-annotated call edges for Elixir resolution benchmark",
   "edges": [
     {
-      "source": { "name": "validate_user", "file": "validators.ex" },
-      "target": { "name": "valid_name?", "file": "validators.ex" },
+      "source": { "name": "Validators.validate_user", "file": "validators.ex" },
+      "target": { "name": "Validators.valid_name?", "file": "validators.ex" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-module helper call within Validators"
+      "notes": "Same-module helper call within Validators — extractor emits module-qualified names"
     },
     {
-      "source": { "name": "validate_user", "file": "validators.ex" },
-      "target": { "name": "valid_email?", "file": "validators.ex" },
+      "source": { "name": "Validators.validate_user", "file": "validators.ex" },
+      "target": { "name": "Validators.valid_email?", "file": "validators.ex" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-module helper call within Validators"
+      "notes": "Same-module helper call within Validators — extractor emits module-qualified names"
     },
     {
-      "source": { "name": "create_user", "file": "service.ex" },
-      "target": { "name": "validate_user", "file": "validators.ex" },
+      "source": { "name": "UserService.create_user", "file": "service.ex" },
+      "target": { "name": "Validators.validate_user", "file": "validators.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "Validators.validate_user() — cross-module qualified call"
     },
     {
-      "source": { "name": "create_user", "file": "service.ex" },
-      "target": { "name": "save", "file": "repository.ex" },
+      "source": { "name": "UserService.create_user", "file": "service.ex" },
+      "target": { "name": "UserRepository.save", "file": "repository.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserRepository.save() — cross-module qualified call"
     },
     {
-      "source": { "name": "get_user", "file": "service.ex" },
-      "target": { "name": "find_by_id", "file": "repository.ex" },
+      "source": { "name": "UserService.get_user", "file": "service.ex" },
+      "target": { "name": "UserRepository.find_by_id", "file": "repository.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserRepository.find_by_id() — cross-module qualified call"
     },
     {
-      "source": { "name": "remove_user", "file": "service.ex" },
-      "target": { "name": "delete", "file": "repository.ex" },
+      "source": { "name": "UserService.remove_user", "file": "service.ex" },
+      "target": { "name": "UserRepository.delete", "file": "repository.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserRepository.delete() — cross-module qualified call"
     },
     {
-      "source": { "name": "list_users", "file": "service.ex" },
-      "target": { "name": "list_all", "file": "repository.ex" },
+      "source": { "name": "UserService.list_users", "file": "service.ex" },
+      "target": { "name": "UserRepository.list_all", "file": "repository.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserRepository.list_all() — cross-module qualified call"
     },
     {
-      "source": { "name": "display_user", "file": "service.ex" },
-      "target": { "name": "get_user", "file": "service.ex" },
+      "source": { "name": "UserService.display_user", "file": "service.ex" },
+      "target": { "name": "UserService.get_user", "file": "service.ex" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-module call to get_user within UserService"
+      "notes": "Same-module call to get_user within UserService — extractor emits module-qualified names"
     },
     {
-      "source": { "name": "display_user", "file": "service.ex" },
-      "target": { "name": "format_user", "file": "service.ex" },
+      "source": { "name": "UserService.display_user", "file": "service.ex" },
+      "target": { "name": "UserService.format_user", "file": "service.ex" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-module call to private helper format_user"
+      "notes": "Same-module call to private helper format_user — extractor emits module-qualified names"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "new_store", "file": "repository.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "UserRepository.new_store", "file": "repository.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserRepository.new_store() — cross-module qualified call"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "create_user", "file": "service.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "UserService.create_user", "file": "service.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserService.create_user() — cross-module qualified call"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "get_user", "file": "service.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "UserService.get_user", "file": "service.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserService.get_user() — cross-module qualified call"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "list_users", "file": "service.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "UserService.list_users", "file": "service.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserService.list_users() — cross-module qualified call"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "display_user", "file": "service.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "UserService.display_user", "file": "service.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserService.display_user() — cross-module qualified call"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "remove_user", "file": "service.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "UserService.remove_user", "file": "service.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserService.remove_user() — cross-module qualified call"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "fetch", "file": "patterns.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "Patterns.fetch", "file": "patterns.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "Patterns.fetch() — exercises default-value parameter extraction"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "first_of", "file": "patterns.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "Patterns.first_of", "file": "patterns.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "Patterns.first_of() — exercises tuple-pattern parameter extraction"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "name_of", "file": "patterns.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "Patterns.name_of", "file": "patterns.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "Patterns.name_of() — exercises map-pattern parameter extraction"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "id_of", "file": "patterns.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "Patterns.id_of", "file": "patterns.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "Patterns.id_of() — exercises struct-pattern parameter extraction"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "head_of", "file": "patterns.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "Patterns.head_of", "file": "patterns.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "Patterns.head_of() — exercises list-cons pattern parameter extraction"
     },
     {
-      "source": { "name": "run", "file": "main.ex" },
-      "target": { "name": "all_of", "file": "patterns.ex" },
+      "source": { "name": "Main.run", "file": "main.ex" },
+      "target": { "name": "Patterns.all_of", "file": "patterns.ex" },
       "kind": "calls",
       "mode": "module-function",
       "notes": "Patterns.all_of() — exercises list pattern parameter extraction"
