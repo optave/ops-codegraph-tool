@@ -1471,7 +1471,7 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
  * their import targets. Falls back to loading ALL nodes for full builds or
  * larger incremental changes.
  */
-const NODE_KIND_FILTER_SQL = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`;
+const NODE_KIND_FILTER_SQL = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant','variable')`;
 
 function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolean } {
   const { db, fileSymbols, isFullBuild, batchResolved } = ctx;
