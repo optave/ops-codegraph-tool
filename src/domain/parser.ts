@@ -1230,6 +1230,12 @@ async function parseFilesWasmInline(
     // are needed by callers like the this/super dispatch post-pass.
     if (!symbolsOnly) {
       symbols._tree = extracted.tree;
+    } else if (typeof (extracted.tree as any)?.delete === 'function') {
+      // Free the WASM-backed tree immediately — web-tree-sitter trees are backed
+      // by WASM linear memory and require explicit disposal.  When symbolsOnly is
+      // true the tree is never stored anywhere, so we must delete it here to
+      // avoid leaking WASM heap on every incremental rebuild.
+      (extracted.tree as any).delete();
     }
     symbols._langId = extracted.langId;
     result.set(relPath, symbols);
