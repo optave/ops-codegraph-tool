@@ -26,7 +26,7 @@ fi
 # Skip read-only commands that can never write files — reduces snapshot overhead
 # for the most common Bash calls (ls, cat, grep, git log, git status, etc.).
 # sed is intentionally NOT in this list because `sed -i` modifies files in-place.
-if echo "$COMMAND" | grep -qE '^\s*(ls|cat|head|tail|grep|find|git\s+(log|status|diff|show|branch|remote|fetch|rev-parse|stash\s+list|ls-files|blame|describe|tag|config\s+--get)|gh\s+(pr|issue|repo)\s+(view|list|status)|echo|printf|pwd|which|node\s+-e|node\s+-p|npx\s+--version|wc|sort|uniq|awk)\b'; then
+if echo "$COMMAND" | grep -qE '^\s*(ls|cat|head|tail|grep|find|git\s+(log|status|diff|show|branch|remote|fetch|rev-parse|stash\s+list|ls-files|blame|describe|tag|config\s+--get)|gh\s+(pr|issue|repo)\s+(view|list|status)|echo|printf|pwd|which|npx\s+--version|wc|sort|uniq|awk)\b'; then
   exit 0
 fi
 
