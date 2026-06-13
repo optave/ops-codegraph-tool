@@ -882,8 +882,8 @@ fn collect_identifiers(node: &Node, out: &mut Vec<String>, rules: &DataflowRules
 
 #[derive(Debug, Clone)]
 enum LocalSource {
-    CallReturn { callee: String },
-    Destructured { callee: String },
+    CallReturn,
+    Destructured,
 }
 
 struct ScopeFrame {
@@ -1200,7 +1200,7 @@ fn handle_var_declarator(
             });
             scope
                 .locals
-                .insert(n.clone(), LocalSource::Destructured { callee: callee.clone() });
+                .insert(n.clone(), LocalSource::Destructured);
         }
     } else {
         let var_name = node_text(&name_n, source).to_string();
@@ -1211,7 +1211,7 @@ fn handle_var_declarator(
             expression: truncate(node_text(node, source), DATAFLOW_TRUNCATION_LIMIT),
             line: node_line(node),
         });
-        scope.locals.insert(var_name, LocalSource::CallReturn { callee });
+        scope.locals.insert(var_name, LocalSource::CallReturn);
     }
 }
 
@@ -1267,7 +1267,7 @@ fn handle_assignment(
                         line: node_line(node),
                     });
                     if let Some(scope) = scope_stack.last_mut() {
-                        scope.locals.insert(var_name, LocalSource::CallReturn { callee });
+                        scope.locals.insert(var_name, LocalSource::CallReturn);
                     }
                 }
             }

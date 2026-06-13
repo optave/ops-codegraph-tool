@@ -516,8 +516,6 @@ fn walk_children(
 enum BranchAction {
     /// Node handled — walk children at the given nesting delta, then return.
     Handled { cognitive_delta: u32, cyclomatic_delta: u32, nesting_delta: u32 },
-    /// Not a special branch pattern — fall through to normal processing.
-    NotHandled,
 }
 
 /// Classify a branch node (one where `rules.is_branch(kind)` is true).
@@ -675,14 +673,12 @@ fn walk(
 
     // Branch/control flow nodes (skip keyword leaf tokens)
     if rules.is_branch(kind) && node.child_count() > 0 {
-        if let BranchAction::Handled { cognitive_delta, cyclomatic_delta, nesting_delta } =
-            classify_branch(node, kind, rules, nesting_level)
-        {
-            *cognitive += cognitive_delta;
-            *cyclomatic += cyclomatic_delta;
-            walk_children(node, nesting_level + nesting_delta, false, rules, cognitive, cyclomatic, max_nesting, depth);
-            return;
-        }
+        let BranchAction::Handled { cognitive_delta, cyclomatic_delta, nesting_delta } =
+            classify_branch(node, kind, rules, nesting_level);
+        *cognitive += cognitive_delta;
+        *cyclomatic += cyclomatic_delta;
+        walk_children(node, nesting_level + nesting_delta, false, rules, cognitive, cyclomatic, max_nesting, depth);
+        return;
     }
 
     // Pattern C plain else (Go/Java)
@@ -1323,17 +1319,15 @@ fn walk_all(
 
     // Branch/control flow nodes (skip keyword leaf tokens)
     if c_rules.is_branch(kind) && node.child_count() > 0 {
-        if let BranchAction::Handled { cognitive_delta, cyclomatic_delta, nesting_delta } =
-            classify_branch(node, kind, c_rules, nesting_level)
-        {
-            *cognitive += cognitive_delta;
-            *cyclomatic += cyclomatic_delta;
-            walk_all_children(
-                node, source, nesting_level + nesting_delta, false, skip_h,
-                c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
-            );
-            return;
-        }
+        let BranchAction::Handled { cognitive_delta, cyclomatic_delta, nesting_delta } =
+            classify_branch(node, kind, c_rules, nesting_level);
+        *cognitive += cognitive_delta;
+        *cyclomatic += cyclomatic_delta;
+        walk_all_children(
+            node, source, nesting_level + nesting_delta, false, skip_h,
+            c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
+        );
+        return;
     }
 
     // Pattern C plain else (Go/Java)
