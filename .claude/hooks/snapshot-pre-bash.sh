@@ -29,8 +29,9 @@ fi
 #   - echo, printf  — write files via shell redirections (echo … > file)
 #   - find          — can write via -exec sed -i, -exec cp, -delete, etc.
 #   - awk           — can write via redirection or getline
+#   - node -e/-p    — can write files via the Node.js fs module
 # sed is intentionally NOT in this list because `sed -i` modifies files in-place.
-if echo "$COMMAND" | grep -qE '^\s*(ls|cat|head|tail|grep|git\s+(log|status|diff|show|branch|remote|fetch|rev-parse|stash\s+list|ls-files|blame|describe|tag|config\s+--get)|gh\s+(pr|issue|repo)\s+(view|list|status)|pwd|which|node\s+-e|node\s+-p|npx\s+--version|wc|sort|uniq)\b'; then
+if echo "$COMMAND" | grep -qE '^\s*(ls|cat|head|tail|grep|git\s+(log|status|diff|show|branch|remote|fetch|rev-parse|stash\s+list|ls-files|blame|describe|tag|config\s+--get)|gh\s+(pr|issue|repo)\s+(view|list|status)|pwd|which|npx\s+--version|wc|sort|uniq)\b'; then
   exit 0
 fi
 
