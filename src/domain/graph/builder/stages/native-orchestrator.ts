@@ -1532,10 +1532,10 @@ export async function tryNativeOrchestrator(
   // re-parse of the missing set) is gated below.
   const gapDetectStart = performance.now();
   const gap = detectDroppedLanguageGap(ctx);
-  if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {
+  const backfillHappened = gap.missingAbs.length > 0 || gap.staleRel.length > 0;
+  if (backfillHappened) {
     await backfillNativeDroppedFiles(ctx, gap);
   }
-  const backfillHappened = gap.missingAbs.length > 0 || gap.staleRel.length > 0;
   const gapDetectMs = performance.now() - gapDetectStart;
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
