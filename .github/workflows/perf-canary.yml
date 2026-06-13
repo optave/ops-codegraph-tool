@@ -24,6 +24,10 @@ on:
       - "scripts/incremental-benchmark.ts"
       - "scripts/lib/bench-config.ts"
       - "scripts/lib/fork-engine.ts"
+      - "scripts/update-incremental-report.ts"
+      - "tests/benchmarks/regression-guard.test.ts"
+
+permissions: {}
 
 concurrency:
   group: perf-canary-${{ github.ref }}
@@ -38,12 +42,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: 22
           cache: "npm"
 
       - name: Setup Rust
