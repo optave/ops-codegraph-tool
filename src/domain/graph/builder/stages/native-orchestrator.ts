@@ -498,6 +498,10 @@ function runPostNativeCha(
   //   A new `extends`/`implements` edge means a previously-untracked implementor
   //   is now in the hierarchy — unchanged call sites in OTHER files may gain new
   //   valid expansions, so the full scan is required.
+  //   Note: *removed* class nodes are safe — Rust's `purge_changed_files` runs
+  //   before this post-pass and deletes stale nodes and their hierarchy edges, so
+  //   Gate A queries the post-purge DB. A deleted class returns no row here, which
+  //   is correct: its stale CHA edges were already cleaned up by the Rust purge.
   //
   // Gate B: did a changed file add new RTA evidence (`new ConcreteX()`)?
   //   A new `calls` edge to a class/constructor/function-kind target means the
