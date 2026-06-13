@@ -507,6 +507,15 @@ function extractDestructuredBindingsWalk(node: TreeSitterNode, definitions: Defi
             nodeEndLine(declNode),
             definitions,
           );
+        } else if (nameN && nameN.type === 'array_pattern') {
+          // `const [x, y] = ...` — emit a single constant node whose name is the
+          // full array pattern text (e.g. `[x, y]`), matching native engine behaviour.
+          definitions.push({
+            name: nameN.text,
+            kind: 'constant',
+            line: nodeStartLine(declNode),
+            endLine: nodeEndLine(declNode),
+          });
         }
       }
     }
@@ -1017,6 +1026,16 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             nodeEndLine(node),
             ctx.definitions,
           );
+        } else if (isConst && nameN.type === 'array_pattern' && !hasFunctionScopeAncestor(node)) {
+          // Array destructuring: `const [x, y] = ...` — emit a single constant node
+          // whose name is the full array pattern text (e.g. `[x, y]`), matching
+          // native engine behaviour. Scope guard mirrors the object_pattern branch above.
+          ctx.definitions.push({
+            name: nameN.text,
+            kind: 'constant',
+            line: nodeStartLine(node),
+            endLine: nodeEndLine(node),
+          });
         }
       }
     }
@@ -3359,11 +3378,13 @@ function emitPrototypeMethod(
 ): void {
   const fullName = `${className}.${methodName}`;
   if (rhs.type === 'function_expression' || rhs.type === 'arrow_function') {
+    const params = extractParameters(rhs);
     definitions.push({
       name: fullName,
       kind: 'method',
       line: nodeStartLine(rhs),
       endLine: nodeEndLine(rhs),
+      children: params.length > 0 ? params : undefined,
     });
   } else if (rhs.type === 'identifier' && !BUILTIN_GLOBALS.has(rhs.text)) {
     // Prototype alias: `A.prototype.t = f` → typeMap['A.t'] = { type: 'f' }
