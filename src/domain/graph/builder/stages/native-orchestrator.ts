@@ -401,12 +401,26 @@ async function runPostNativeAnalysis(
  * Note: `this`/`super` dispatch is handled separately by `runPostNativeThisDispatch`,
  * which WASM-re-parses JS/TS files to obtain raw call site receiver info.
  *
+ * `changedFiles` controls candidate scoping on incremental builds:
+ *   - null  → full build; scan all call→method edges (existing behaviour).
+ *   - array → incremental; two cheap gate queries decide scope:
+ *       Gate A: any class/interface/trait/struct/record nodes in changed files?
+ *               If yes, a new implementor may have appeared — full scan required.
+ *       Gate B: any `calls` edges from changed-file sources targeting class-kind
+ *               nodes? If yes, the RTA set may have grown, enabling previously
+ *               filtered expansions in unchanged caller files — full scan required.
+ *       If neither gate fires: scope `callToMethods` to `src.file IN changedFiles`
+ *       (safe because no hierarchy or RTA evidence changed).
+ *
  * Returns the count of newly inserted CHA edges plus the set of files containing
  * the new edges' endpoints, so the caller can scope role re-classification to the
  * nodes whose fan-in/out actually changed. A zero count means no edges were added
  * and role re-classification is unnecessary.
  */
-function runPostNativeCha(db: BetterSqlite3Database): {
+function runPostNativeCha(
+  db: BetterSqlite3Database,
+  changedFiles: string[] | null,
+): {
   newEdgeCount: number;
   affectedFiles: Set<string>;
 } {
@@ -474,19 +488,111 @@ function runPostNativeCha(db: BetterSqlite3Database): {
     debug('runPostNativeCha: no constructor-call evidence found — proceeding without RTA filter');
   }
 
+  // ── Incremental candidate scoping ──────────────────────────────────────────
+  // On incremental builds, two gate queries decide whether to restrict the
+  // candidate scan to changed-file call sites or run the full graph scan.
+  //
+  // Gate A: did a changed file add/change a class hierarchy node?
+  //   A new `extends`/`implements` edge means a previously-untracked implementor
+  //   is now in the hierarchy — unchanged call sites in OTHER files may gain new
+  //   valid expansions, so the full scan is required.
+  //
+  // Gate B: did a changed file add new RTA evidence (`new ConcreteX()`)?
+  //   A new `calls` edge to a class-kind target means the instantiated set grew —
+  //   previously RTA-filtered expansions in unchanged caller files become
+  //   admissible, so the full scan is required.
+  //
+  // If neither gate fires, the hierarchy and RTA set are unchanged for all files
+  // outside changedFiles, so restricting to changed-file sources is safe.
+  let scopeToChangedFiles = false; // true → add WHERE src.file IN changedFiles
+  if (changedFiles !== null && changedFiles.length > 0) {
+    // Gate A: class/interface/trait/struct/record nodes in changed files?
+    const CHUNK_SIZE = 500;
+    let gateAFired = false;
+    for (let i = 0; i < changedFiles.length && !gateAFired; i += CHUNK_SIZE) {
+      const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+      const ph = chunk.map(() => '?').join(',');
+      const row = db
+        .prepare(
+          `SELECT 1 FROM nodes
+           WHERE file IN (${ph})
+           AND kind IN ('class', 'interface', 'trait', 'struct', 'record')
+           LIMIT 1`,
+        )
+        .get(...chunk);
+      if (row) gateAFired = true;
+    }
+
+    // Gate B: calls from changed-file sources to class-kind targets?
+    let gateBFired = false;
+    if (!gateAFired) {
+      for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
+        const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+        const ph = chunk.map(() => '?').join(',');
+        const row = db
+          .prepare(
+            `SELECT 1 FROM edges e
+             JOIN nodes src ON e.source_id = src.id
+             JOIN nodes tgt ON e.target_id = tgt.id
+             WHERE e.kind = 'calls' AND tgt.kind = 'class'
+             AND src.file IN (${ph})
+             LIMIT 1`,
+          )
+          .get(...chunk);
+        if (row) gateBFired = true;
+      }
+    }
+
+    if (!gateAFired && !gateBFired) {
+      scopeToChangedFiles = true;
+      debug(
+        `runPostNativeCha: neither gate fired — scoping candidate scan to ${changedFiles.length} changed file(s)`,
+      );
+    } else {
+      debug(
+        `runPostNativeCha: ${gateAFired ? 'Gate A (hierarchy)' : 'Gate B (RTA)'} fired — running full scan`,
+      );
+    }
+  }
+
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
   // Include the caller node's file so confidence can be computed file-pair-aware,
   // matching the WASM path's computeConfidence(callerFile, targetFile, null) - CHA_DISPATCH_PENALTY formula.
-  const callToMethods = db
-    .prepare(`
-      SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
-      FROM edges e
-      JOIN nodes tgt ON e.target_id = tgt.id
-      JOIN nodes src ON e.source_id = src.id
-      WHERE e.kind = 'calls' AND tgt.kind = 'method'
-      AND INSTR(tgt.name, '.') > 0
-    `)
-    .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  // When scopeToChangedFiles is true, restrict to call sites in the changed files
+  // (safe because no hierarchy or RTA evidence changed outside those files).
+  let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  if (scopeToChangedFiles && changedFiles && changedFiles.length > 0) {
+    const CHUNK_SIZE = 500;
+    const rows: Array<{ source_id: number; method_name: string; caller_file: string | null }> = [];
+    for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
+      const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+      const ph = chunk.map(() => '?').join(',');
+      const chunkRows = db
+        .prepare(
+          `SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+           FROM edges e
+           JOIN nodes tgt ON e.target_id = tgt.id
+           JOIN nodes src ON e.source_id = src.id
+           WHERE e.kind = 'calls' AND tgt.kind = 'method'
+           AND INSTR(tgt.name, '.') > 0
+           AND src.file IN (${ph})`,
+        )
+        .all(...chunk) as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+      rows.push(...chunkRows);
+    }
+    callToMethods = rows;
+  } else {
+    callToMethods = db
+      .prepare(`
+        SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+        FROM edges e
+        JOIN nodes tgt ON e.target_id = tgt.id
+        JOIN nodes src ON e.source_id = src.id
+        WHERE e.kind = 'calls' AND tgt.kind = 'method'
+        AND INSTR(tgt.name, '.') > 0
+      `)
+      .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  }
 
   // Seed seen-pairs only from the source_ids we'll be expanding — avoids loading every
   // call edge in the DB (which would be O(all edges)) for large codebases.
@@ -1427,6 +1533,8 @@ export async function tryNativeOrchestrator(
   // no WASM re-parse post-pass is needed for them. `Foo.prototype.bar = fn` likewise.
   const { newEdgeCount: chaEdgeCount, affectedFiles: chaAffectedFiles } = runPostNativeCha(
     ctx.db as unknown as BetterSqlite3Database,
+    // null = full build (scan all call→method edges); array = incremental (gate queries decide scope)
+    result.isFullBuild ? null : (result.changedFiles ?? null),
   );
 
   // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
