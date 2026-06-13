@@ -1268,8 +1268,6 @@ export interface BuildResult {
     edgesMs: number;
     structureMs: number;
     rolesMs: number;
-    /** Wall-clock time for the prototype-method post-pass (native path only). */
-    protoMethodsMs?: number;
     /** Wall-clock time for the CHA expansion post-pass (native path only). */
     chaMs?: number;
     /** Wall-clock time for the this/super dispatch WASM post-pass (native path only). */
