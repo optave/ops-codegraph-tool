@@ -91,6 +91,37 @@ describe('JavaScript parser', () => {
     );
   });
 
+  it('extracts class field definitions with initializers as method definitions', () => {
+    const symbols = parseJS(`class C1 { f8 = () => { return 1; } }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C1.f8', kind: 'method' }),
+    );
+  });
+
+  it('extracts static class field definitions as method definitions', () => {
+    const symbols = parseJS(`class C6 { static staticProperty = function() {}; }`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'C6.staticProperty', kind: 'method' }),
+    );
+  });
+
+  it('does not extract scalar static field definitions as method definitions', () => {
+    const symbols = parseJS(`class C7 { static x = 42; }`);
+    const names = symbols.definitions.map((d: { name: string }) => d.name);
+    expect(names).not.toContain('C7.x');
+  });
+
+  it('extracts static blocks as method definitions with unique names', () => {
+    const symbols = parseJS(`class C6 { static { f1(); } static { f2(); } }`);
+    // Each static block gets a unique name with line:column suffix to avoid collisions
+    const staticDefs = symbols.definitions.filter((d) => d.name.startsWith('C6.<static:'));
+    expect(staticDefs).toHaveLength(2);
+    expect(staticDefs[0]).toMatchObject({ kind: 'method' });
+    expect(staticDefs[1]).toMatchObject({ kind: 'method' });
+    // Names must be distinct even on the same line
+    expect(staticDefs[0].name).not.toBe(staticDefs[1].name);
+  });
+
   it('extracts import statements', () => {
     const symbols = parseJS(`import { foo, bar } from './baz';`);
     expect(symbols.imports).toHaveLength(1);
@@ -184,6 +215,17 @@ describe('JavaScript parser', () => {
       const symbols = parseTS(`function process(req: Request, res: Response) {}`);
       expect(symbols.typeMap.get('req')).toEqual({ type: 'Request', confidence: 0.9 });
       expect(symbols.typeMap.get('res')).toEqual({ type: 'Response', confidence: 0.9 });
+    });
+
+    it('extracts class field annotations into typeMap with confidence 0.9', () => {
+      const symbols = parseTS(`
+        class UserService {
+          private repo: Repository;
+          run() { this.repo.save(); }
+        }
+      `);
+      expect(symbols.typeMap.get('repo')).toEqual({ type: 'Repository', confidence: 0.9 });
+      expect(symbols.typeMap.get('this.repo')).toEqual({ type: 'Repository', confidence: 0.9 });
     });
 
     it('returns empty typeMap when no annotations', () => {
@@ -329,7 +371,7 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.has('b.c')).toBe(false);
     });
 
-    it('seeds typeMap for this.prop = new ClassName() with confidence 1.0', () => {
+    it('seeds typeMap for this.prop = new ClassName() using class-scoped key', () => {
       const symbols = parseJS(`
         class UserService {
           constructor() {
@@ -337,7 +379,47 @@ describe('JavaScript parser', () => {
           }
         }
       `);
+      expect(symbols.typeMap.get('UserService.logger')).toEqual({
+        type: 'Logger',
+        confidence: 1.0,
+      });
+      expect(symbols.typeMap.has('this.logger')).toBe(false);
+    });
+
+    it('uses this.prop key when no enclosing class is present', () => {
+      const symbols = parseJS(`
+        function setup() {
+          this.logger = new Logger();
+        }
+      `);
       expect(symbols.typeMap.get('this.logger')).toEqual({ type: 'Logger', confidence: 1.0 });
+    });
+
+    it('scopes this.prop typeMap key to enclosing class — no collision across classes', () => {
+      const symbols = parseJS(`
+        class ClassA {
+          constructor() { this.service = new ServiceA(); }
+        }
+        class ClassB {
+          constructor() { this.service = new ServiceB(); }
+        }
+      `);
+      expect(symbols.typeMap.get('ClassA.service')).toEqual({ type: 'ServiceA', confidence: 1.0 });
+      expect(symbols.typeMap.get('ClassB.service')).toEqual({ type: 'ServiceB', confidence: 1.0 });
+      expect(symbols.typeMap.has('this.service')).toBe(false);
+    });
+
+    it('uses this.prop fallback for named class expressions (expression name not resolver-visible)', () => {
+      // `const Foo = class Bar { ... }` — the resolver derives callerClass from the
+      // binding name `Foo`, never from the expression name `Bar`. Storing as `Bar.x`
+      // would produce an unreachable key, so we fall back to `this.x` instead.
+      const symbols = parseJS(`
+        const Foo = class Bar {
+          constructor() { this.x = new X(); }
+        };
+      `);
+      expect(symbols.typeMap.get('this.x')).toEqual({ type: 'X', confidence: 1.0 });
+      expect(symbols.typeMap.has('Bar.x')).toBe(false);
     });
 
     it('does not seed typeMap for this.prop = identifier (only new expressions)', () => {
@@ -347,6 +429,7 @@ describe('JavaScript parser', () => {
         }
       `);
       expect(symbols.typeMap.has('this.logger')).toBe(false);
+      expect(symbols.typeMap.has('Foo.logger')).toBe(false);
     });
 
     it('ignores non-identifier RHS (a.prop = obj.method)', () => {
@@ -777,6 +860,381 @@ describe('JavaScript parser', () => {
       expect(def).toBeDefined();
       expect(def.line).toBe(2);
       expect(def.endLine).toBe(4);
+    });
+
+    // .call/.apply/.bind narrowing (#1406)
+    // All args flow into the delegated function, not as callbacks for the current scope.
+    // This-rebinding (fn::this → ctx) is handled by extractThisCallBindingsWalk instead.
+    it('emits nothing for .call() — args flow into the delegated function, not the current scope', () => {
+      const symbols = parseJS(`Array.prototype.forEach.call(collection, handler);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'handler' }));
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'collection' }));
+    });
+
+    it('emits nothing for .apply() — second arg is an arguments array, not a callback', () => {
+      const symbols = parseJS(`fn.apply(ctx, handler);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'handler' }));
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'ctx' }));
+    });
+
+    it('emits nothing for .call() with only the this-context arg', () => {
+      const symbols = parseJS(`fn.call(ctx);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'ctx' }));
+    });
+
+    it('emits nothing for .bind() — all args are absorbed into the partial application', () => {
+      const symbols = parseJS(`Promise.resolve.bind(null, transform);`);
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'transform' }));
+      expect(symbols.calls).not.toContainEqual(expect.objectContaining({ name: 'null' }));
+    });
+  });
+
+  describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    it('extracts rest binding from object-destructuring function parameter', () => {
+      const symbols = parseJS(`
+        function f3({ e1: eee1, ...eerest }) {
+          eerest.e4();
+        }
+        f3(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'f3',
+        restName: 'eerest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from arrow function with object-destructuring parameter', () => {
+      const symbols = parseJS(`
+        const handler = ({ a, ...rest }) => { rest.b(); };
+        handler(obj);
+      `);
+      expect(symbols.objectRestParamBindings).toBeDefined();
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'handler',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('records correct argIndex when rest param is not the first parameter', () => {
+      const symbols = parseJS(`
+        function g(x, { a, ...rest }) { rest.b(); }
+        g(1, obj);
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'g',
+        restName: 'rest',
+        argIndex: 1,
+      });
+    });
+
+    it('does not emit binding when object pattern has no rest element', () => {
+      const symbols = parseJS(`
+        function h({ a, b }) { a(); }
+        h(obj);
+      `);
+      expect(symbols.objectRestParamBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ callee: 'h' }),
+      );
+    });
+
+    it('seeds composite typeMap keys from object literal with shorthand properties', () => {
+      const symbols = parseJS(`
+        function e4() {}
+        var obj = { e4 };
+      `);
+      expect(symbols.typeMap.get('obj.e4')).toEqual({ type: 'e4', confidence: 0.85 });
+    });
+
+    it('seeds composite typeMap keys from object literal with pair properties', () => {
+      const symbols = parseJS(`
+        function handler() {}
+        var routes = { get: handler };
+      `);
+      expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
+    });
+
+    it('extracts rest binding from a class method', () => {
+      const symbols = parseJS(`
+        class Service {
+          handle({ event, ...rest }) {
+            rest.save();
+          }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'Service.handle',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal shorthand method', () => {
+      const symbols = parseJS(`
+        const api = {
+          process({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('extracts rest binding from object-literal pair with function value', () => {
+      const symbols = parseJS(`
+        const api = {
+          process: function({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('uses unqualified method name for class method with no class name', () => {
+      const symbols = parseJS(`
+        export default class {
+          handle({ a, ...rest }) { rest.b(); }
+        }
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual(
+        expect.objectContaining({ restName: 'rest', argIndex: 0 }),
+      );
+    });
+  });
+
+  describe('prototype method extraction', () => {
+    it('extracts Foo.prototype.bar = function() {} as a method definition', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype.foo = function() {}
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.foo', kind: 'method' }),
+      );
+    });
+
+    it('extracts Foo.prototype.bar = arrow as a method definition', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype.greet = () => 'hello';
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.greet', kind: 'method' }),
+      );
+    });
+
+    it('seeds typeMap for Foo.prototype.bar = identifier with confidence 0.9', () => {
+      const symbols = parseJS(`
+        const f = () => {};
+        class A {}
+        A.prototype.t = f;
+      `);
+      expect(symbols.typeMap.get('A.t')).toEqual({ type: 'f', confidence: 0.9 });
+    });
+
+    it('extracts methods from Foo.prototype = { bar: fn } object literal', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = {
+          foo: function() {},
+          baz: function() {},
+        };
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.foo', kind: 'method' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.baz', kind: 'method' }),
+      );
+    });
+
+    it('seeds typeMap for identifier values in object literal prototype assignment', () => {
+      const symbols = parseJS(`
+        function helper() {}
+        function C() {}
+        C.prototype = { run: helper };
+      `);
+      expect(symbols.typeMap.get('C.run')).toEqual({ type: 'helper', confidence: 0.9 });
+    });
+
+    it('does not extract prototype assignments on built-in globals', () => {
+      const symbols = parseJS(
+        `Array.prototype.last = function() { return this[this.length - 1]; };`,
+      );
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'Array.last' }),
+      );
+    });
+
+    it('does not seed typeMap for prototype identifier assignment from built-in globals', () => {
+      const symbols = parseJS(`Object.prototype.clone = myClone;`);
+      expect(symbols.typeMap.has('Object.clone')).toBe(false);
+    });
+
+    it('seeds typeMap for shorthand property in prototype object literal', () => {
+      const symbols = parseJS(`
+        function helper() {}
+        function C() {}
+        C.prototype = { helper };
+      `);
+      expect(symbols.typeMap.get('C.helper')).toEqual({ type: 'helper', confidence: 0.9 });
+    });
+  });
+
+  describe('function-as-object property method extraction (#1334)', () => {
+    it('extracts fn.method = function() {} as a method definition', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = function() { console.log("2"); }
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'f.g', kind: 'method' }),
+      );
+    });
+
+    it('extracts fn.method = () => {} as a method definition', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = () => 42;
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'f.g', kind: 'method' }),
+      );
+    });
+
+    it('extracts the this.g() call inside f.h', () => {
+      const symbols = parseJS(`
+        function f() {}
+        f.g = function() {}
+        f.h = function() { this.g(); }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'g', receiver: 'this' }),
+      );
+    });
+
+    it('does not extract func-prop assignments on built-in globals', () => {
+      const symbols = parseJS(`console.log = function() {};`);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'console.log' }),
+      );
+    });
+
+    it('does not extract .prototype property assignments (handled by prototype walk)', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = function() {};
+      `);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: 'C.prototype' }),
+      );
+    });
+  });
+
+  describe('Phase 8.3e: extractSpreadForOfWalk — exported arrow function funcStack (#1354)', () => {
+    it('tracks plain const arrow function on funcStack for for-of loop', () => {
+      const symbols = parseJS(`const f = (arr) => { for (const x of arr) x(); };`);
+      expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
+    });
+
+    it('tracks func-prop assignment on funcStack for for-of loop (#1373)', () => {
+      const symbols = parseJS(`
+        const obj = {};
+        obj.run = function(callbacks) {
+          for (const cb of callbacks) cb();
+        };
+      `);
+      expect(symbols.forOfBindings).toContainEqual(
+        expect.objectContaining({
+          varName: 'cb',
+          sourceName: 'callbacks',
+          enclosingFunc: 'obj.run',
+        }),
+      );
+    });
+
+    it('tracks exported const arrow function on funcStack for for-of loop', () => {
+      const symbols = parseJS(`export const f = (arr) => { for (const x of arr) x(); };`);
+      expect(symbols.forOfBindings).toContainEqual(expect.objectContaining({ enclosingFunc: 'f' }));
+    });
+
+    it('records correct varName and sourceName for exported arrow for-of', () => {
+      const symbols = parseJS(
+        `export const handleItems = (items) => { for (const cb of items) cb(); };`,
+      );
+      expect(symbols.forOfBindings).toContainEqual(
+        expect.objectContaining({
+          varName: 'cb',
+          sourceName: 'items',
+          enclosingFunc: 'handleItems',
+        }),
+      );
+    });
+  });
+
+  describe('class expression extends + static block + field def extraction', () => {
+    it('extracts extends relationship from named class expression', () => {
+      const symbols = parseJS(
+        `function make() { return class Child extends Parent { m() { super.m(); } } }`,
+      );
+      expect(symbols.classes).toContainEqual(
+        expect.objectContaining({ name: 'Child', extends: 'Parent' }),
+      );
+    });
+
+    it('extracts methods from named class expression', () => {
+      const symbols = parseJS(`const X = class Foo extends Base { bar() { return 1; } }`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'Foo.bar', kind: 'method' }),
+      );
+    });
+
+    it('records super.method() call with receiver=super from class expression method', () => {
+      const symbols = parseJS(`const X = class Child extends Parent { m() { super.m(); } }`);
+      const superCall = symbols.calls.find((c) => c.name === 'm' && c.receiver === 'super');
+      expect(superCall).toBeDefined();
+    });
+
+    it('creates ClassName.<static:L:C> definition for class static block', () => {
+      const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
+      // Name includes line:column suffix for uniqueness
+      const staticDef = symbols.definitions.find((d) => d.name.startsWith('A.<static:'));
+      expect(staticDef).toBeDefined();
+      expect(staticDef).toMatchObject({ kind: 'method' });
+    });
+
+    it('attributes super.method() call inside static block to ClassName.<static:L:C>', () => {
+      const symbols = parseJS(`class A extends B {\n  static {\n    super.init();\n  }\n}`);
+      const staticDef = symbols.definitions.find((d) => d.name.startsWith('A.<static:'));
+      expect(staticDef).toBeDefined();
+      const superCall = symbols.calls.find((c) => c.name === 'init' && c.receiver === 'super');
+      expect(superCall).toBeDefined();
+      expect(superCall!.line).toBeGreaterThanOrEqual(staticDef!.line);
+      expect(superCall!.line).toBeLessThanOrEqual(staticDef!.endLine!);
+    });
+
+    it('extracts class field arrow function as callable ClassName.fieldName method', () => {
+      const symbols = parseJS(`class A {\n  static f = () => {\n    doSomething();\n  };\n}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'A.f', kind: 'method' }),
+      );
     });
   });
 });

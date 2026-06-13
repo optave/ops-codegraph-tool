@@ -168,14 +168,20 @@ const COMMON_QUERY_PATTERNS: string[] = [
   '(expression_statement (assignment_expression left: (member_expression) @assign_left right: (_) @assign_right)) @assign_node',
 ];
 
-// JS: class name is (identifier)
-const JS_CLASS_PATTERN: string = '(class_declaration name: (identifier) @cls_name) @cls_node';
+// JS: class name is (identifier) — declarations and expressions
+const JS_CLASS_PATTERNS: string[] = [
+  '(class_declaration name: (identifier) @cls_name) @cls_node',
+  // class expressions: `return class Foo extends Bar { ... }` or `const X = class Foo { ... }`
+  '(class name: (identifier) @cls_name) @cls_node',
+];
 
 // TS/TSX: class name is (type_identifier), plus interface and type alias
 // abstract_class_declaration is a separate node type in tree-sitter-typescript
 const TS_EXTRA_PATTERNS: string[] = [
   '(class_declaration name: (type_identifier) @cls_name) @cls_node',
   '(abstract_class_declaration name: (type_identifier) @cls_name) @cls_node',
+  // class expressions: `return class Foo extends Bar { ... }`
+  '(class name: (type_identifier) @cls_name) @cls_node',
   '(interface_declaration name: (type_identifier) @iface_name) @iface_node',
   '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
 ];
@@ -206,7 +212,7 @@ async function doLoadLanguage(entry: LanguageRegistryEntry): Promise<void> {
       const isTS = entry.id === 'typescript' || entry.id === 'tsx';
       const patterns = isTS
         ? [...COMMON_QUERY_PATTERNS, ...TS_EXTRA_PATTERNS]
-        : [...COMMON_QUERY_PATTERNS, JS_CLASS_PATTERN];
+        : [...COMMON_QUERY_PATTERNS, ...JS_CLASS_PATTERNS];
       _queryCache.set(entry.id, new Query(lang, patterns.join('\n')));
     }
   } catch (e: unknown) {
@@ -459,7 +465,7 @@ export function getInstalledWasmExtensions(): Set<string> {
  * Lowercase file extensions covered by the native Rust addon.
  *
  * Mirrors `LanguageKind::from_extension` in
- * `crates/codegraph-core/src/parser_registry.rs`. Used to classify why the
+ * `crates/codegraph-core/src/domain/parser.rs`. Used to classify why the
  * native orchestrator dropped a file: extensions outside this set are a
  * legitimate parser limit (no Rust extractor exists), while extensions inside
  * it indicate a real native bug (parse/read/extract failure).
@@ -1150,6 +1156,7 @@ async function backfillTypeMapBatch(
 async function parseFilesWasm(
   filePaths: string[],
   rootDir: string,
+  analysis: WorkerAnalysisOpts = FULL_ANALYSIS,
 ): Promise<Map<string, ExtractorOutput>> {
   const result = new Map<string, ExtractorOutput>();
   const pool = getWasmWorkerPool();
@@ -1162,7 +1169,7 @@ async function parseFilesWasm(
       warn(`Skipping ${path.relative(rootDir, filePath)}: ${(err as Error).message}`);
       continue;
     }
-    const output = await pool.parse(filePath, code, FULL_ANALYSIS);
+    const output = await pool.parse(filePath, code, analysis);
     if (output) {
       const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
       result.set(relPath, output);
@@ -1225,15 +1232,23 @@ async function parseFilesWasmInline(
  * batches keep the worker-pool isolation against tree-sitter WASM crashes
  * (#965). Threshold matches typical engine-parity drop sizes (a few fixture
  * files in one or two languages).
+ *
+ * `opts.symbolsOnly` skips the AST/complexity/CFG/dataflow visitors in the
+ * worker (and their result serialization across the thread boundary) for
+ * callers that only consume definitions/calls/typeMap — the native
+ * orchestrator's prototype-methods and this-dispatch post-passes. Callers
+ * that ingest the files into the DB (dropped-language backfill) must keep
+ * the default full analysis.
  */
 export async function parseFilesWasmForBackfill(
   filePaths: string[],
   rootDir: string,
+  opts: { symbolsOnly?: boolean } = {},
 ): Promise<Map<string, ExtractorOutput>> {
   if (filePaths.length <= INLINE_BACKFILL_THRESHOLD) {
     return parseFilesWasmInline(filePaths, rootDir);
   }
-  return parseFilesWasm(filePaths, rootDir);
+  return parseFilesWasm(filePaths, rootDir, opts.symbolsOnly ? EXTRACT_ONLY : FULL_ANALYSIS);
 }
 
 /**

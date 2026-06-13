@@ -1,7 +1,7 @@
 use super::helpers::*;
 use super::SymbolExtractor;
-use crate::cfg::build_function_cfg;
-use crate::complexity::compute_all_metrics;
+use crate::ast_analysis::cfg::build_function_cfg;
+use crate::ast_analysis::complexity::compute_all_metrics;
 use crate::types::*;
 use std::collections::HashSet;
 use tree_sitter::{Node, Tree};
@@ -455,7 +455,27 @@ fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, 
         "variable_declaration" => {
             let type_node = node.child_by_field_name("type").or_else(|| node.child(0));
             if let Some(type_node) = type_node {
-                if type_node.kind() != "var_keyword" && type_node.kind() != "implicit_type" {
+                if type_node.kind() == "implicit_type" {
+                    // var x = new Foo() — infer type from object_creation_expression initializer
+                    for i in 0..node.child_count() {
+                        if let Some(declarator) = node.child(i) {
+                            if declarator.kind() != "variable_declarator" { continue; }
+                            let name_node = declarator.child_by_field_name("name")
+                                .or_else(|| declarator.child(0));
+                            let Some(name_node) = name_node else { continue };
+                            if name_node.kind() != "identifier" { continue; }
+                            let Some(obj_creation) = find_child(&declarator, "object_creation_expression") else { continue };
+                            let Some(ctor_type_node) = obj_creation.child_by_field_name("type") else { continue };
+                            if let Some(ctor_type) = extract_csharp_type_name(&ctor_type_node, source) {
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: node_text(&name_node, source).to_string(),
+                                    type_name: ctor_type.to_string(),
+                                    confidence: 1.0,
+                                });
+                            }
+                        }
+                    }
+                } else if type_node.kind() != "var_keyword" {
                     if let Some(type_name) = extract_csharp_type_name(&type_node, source) {
                         for i in 0..node.child_count() {
                             if let Some(child) = node.child(i) {

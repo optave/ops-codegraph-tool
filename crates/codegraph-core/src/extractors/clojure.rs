@@ -1,8 +1,8 @@
 use super::helpers::*;
 use super::SymbolExtractor;
-use crate::cfg::build_function_cfg;
-use crate::complexity::compute_all_metrics;
-use crate::constants::MAX_WALK_DEPTH;
+use crate::ast_analysis::cfg::build_function_cfg;
+use crate::ast_analysis::complexity::compute_all_metrics;
+use crate::shared::constants::MAX_WALK_DEPTH;
 use crate::types::*;
 use tree_sitter::{Node, Tree};
 
@@ -51,6 +51,10 @@ fn walk_clojure(
         return;
     }
 
+    // `next_ns_owned` holds the String so that `next_ns` can borrow it as
+    // `&str` for the duration of this stack frame.  The assignment looks
+    // "never read" to the compiler but the borrow on the next line reads it.
+    #[allow(unused_assignments)]
     let mut next_ns_owned: Option<String> = None;
     let next_ns: Option<&str> = if node.kind() == "list_lit" {
         match handle_list_form(node, source, symbols, current_ns) {

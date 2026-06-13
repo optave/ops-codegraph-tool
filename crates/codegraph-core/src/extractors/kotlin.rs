@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
-use crate::cfg::build_function_cfg;
-use crate::complexity::compute_all_metrics;
+use crate::ast_analysis::cfg::build_function_cfg;
+use crate::ast_analysis::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;
@@ -373,7 +373,7 @@ mod tests {
     fn parse_kotlin(code: &str) -> FileSymbols {
         let mut parser = Parser::new();
         parser
-            .set_language(&crate::parser_registry::LanguageKind::Kotlin.tree_sitter_language())
+            .set_language(&crate::domain::parser::LanguageKind::Kotlin.tree_sitter_language())
             .unwrap();
         let tree = parser.parse(code.as_bytes(), None).unwrap();
         KotlinExtractor.extract(&tree, code.as_bytes(), "Test.kt")

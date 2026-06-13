@@ -62,7 +62,7 @@ Skip the above commands for non-code files, trivial edits, or when you already h
 
 Codegraph (`@optave/codegraph`) is a local code dependency graph CLI. It parses codebases with tree-sitter (WASM), builds function-level dependency graphs stored in SQLite, and supports semantic search with local embeddings. No cloud services required.
 
-**Languages supported (23):** JavaScript, TypeScript, TSX, Python, Go, Rust, Java, C#, Ruby, PHP, C, C++, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, OCaml, Terraform/HCL. `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth — check there for the current list.
+**Languages supported (34):** JavaScript, TypeScript, TSX, Python, Go, Rust, Java, C#, Ruby, PHP, C, C++, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, OCaml, F#, Terraform/HCL, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, Verilog. `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth — check there for the current list.
 
 ## Commands
 
@@ -152,6 +152,7 @@ Source is TypeScript in `src/`, compiled via `tsup`. The Rust native engine live
 
 **Key design decisions:**
 - **Dual-engine architecture:** Native Rust parsing via napi-rs (`crates/codegraph-core/`) with automatic fallback to WASM. Controlled by `--engine native|wasm|auto` (default: `auto`). **Both engines must produce identical results.** If they diverge, the less-accurate engine has a bug — fix it, don't document the gap
+- **Mirrored engine layout:** `crates/codegraph-core/src/` mirrors the `src/` TypeScript tree (snake_case for kebab-case): `shared/`, `infrastructure/`, `db/repository/`, `domain/graph/builder/stages/`, `ast_analysis/`, `graph/algorithms/`, `graph/classifiers/`, `features/`, `extractors/`. The full module↔file mapping table lives in the `lib.rs` doc comment. When changing engine behavior in one language, make the equivalent change in the mirrored module of the other — new Rust modules must be placed at the path of their TS counterpart
 - Platform-specific prebuilt binaries published as optional npm packages (`@optave/codegraph-{platform}-{arch}`)
 - WASM grammars are built from devDeps on `npm install` (via `prepare` script) and not committed to git — used as fallback when native addon is unavailable
 - **Language parser registry:** `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth for all supported languages — maps each language to `{ id, extensions, grammarFile, extractor, required }`. `EXTENSIONS` in `shared/constants.ts` is derived from the registry. Adding a new language requires one registry entry + extractor function

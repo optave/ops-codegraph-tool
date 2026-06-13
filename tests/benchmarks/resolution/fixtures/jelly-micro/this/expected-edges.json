@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "this-dispatch in function-as-object property methods",
+  "edges": [
+    {
+      "source": { "name": "f.h", "file": "this.js" },
+      "target": { "name": "f.g", "file": "this.js" },
+      "kind": "calls",
+      "mode": "this-dispatch-func-prop"
+    }
+  ]
+}

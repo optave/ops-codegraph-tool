@@ -224,7 +224,7 @@ function extractClojureParams(defnNode: TreeSitterNode): SubDeclaration[] {
   // Find the parameter vector [x y z]
   for (let i = 0; i < defnNode.childCount; i++) {
     const child = defnNode.child(i);
-    if (!child || child.type !== 'vec_lit') continue;
+    if (child?.type !== 'vec_lit') continue;
     for (let j = 0; j < child.childCount; j++) {
       const param = child.child(j);
       if (!param) continue;

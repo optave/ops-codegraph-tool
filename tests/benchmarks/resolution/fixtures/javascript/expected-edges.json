@@ -130,35 +130,35 @@
       "notes": "new UserService() — class instantiation tracked as consumption"
     },
     {
-      "source": { "name": "defProp", "file": "define-property.js" },
+      "source": { "name": "_defProp", "file": "define-property.js" },
       "target": { "name": "f1", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-define-property",
       "notes": "obj.f() — resolved via Object.defineProperty(obj, \"f\", { value: f1 })"
     },
     {
-      "source": { "name": "defProps", "file": "define-property.js" },
+      "source": { "name": "_defProps", "file": "define-property.js" },
       "target": { "name": "f1", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-define-property",
       "notes": "obj.f1() — resolved via Object.defineProperties(obj, { \"f1\": { value: f1 } })"
     },
     {
-      "source": { "name": "defProps", "file": "define-property.js" },
+      "source": { "name": "_defProps", "file": "define-property.js" },
       "target": { "name": "f2", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-define-property",
       "notes": "obj.f2() — resolved via Object.defineProperties(obj, { \"f2\": { value: f2 } })"
     },
     {
-      "source": { "name": "create", "file": "define-property.js" },
+      "source": { "name": "_create", "file": "define-property.js" },
       "target": { "name": "f1", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-create-prototype",
       "notes": "obj.f1() — resolved via Object.create({ f1, f2 })"
     },
     {
-      "source": { "name": "create", "file": "define-property.js" },
+      "source": { "name": "_create", "file": "define-property.js" },
       "target": { "name": "f2", "file": "define-property.js" },
       "kind": "calls",
       "mode": "pts-create-prototype",
@@ -191,6 +191,20 @@
       "kind": "calls",
       "mode": "dynamic",
       "notes": "greet.apply(user, ['Hey']) — .apply() extracts greet as the callee"
+    },
+    {
+      "source": { "name": "runCallThis", "file": "bind-call-apply.js" },
+      "target": { "name": "invoker", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "invoker.call(handler, 10) — .call() extracts invoker as the callee"
+    },
+    {
+      "source": { "name": "invoker", "file": "bind-call-apply.js" },
+      "target": { "name": "handler", "file": "bind-call-apply.js" },
+      "kind": "calls",
+      "mode": "points-to",
+      "notes": "invoker.call(handler, 10) — this-rebinding: this() inside invoker resolves to handler"
     },
     {
       "source": { "name": "Dog.speak", "file": "inheritance.js" },
@@ -240,6 +254,48 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "new A().t() — A.prototype.t = f alias; inline new receiver resolved to type A, typeMap['A.t'] = f"
+    },
+    {
+      "source": { "name": "accessorGetter", "file": "define-property-accessor.js" },
+      "target": { "name": "accessorTarget.accessMethod", "file": "define-property-accessor.js" },
+      "kind": "calls",
+      "mode": "defineProperty-accessor",
+      "notes": "this.accessMethod() inside accessorGetter — this === accessorTarget (get accessor via Object.defineProperty); accessorTarget.accessMethod is the qualified node name for the arrow function property of accessorTarget"
+    },
+    {
+      "source": { "name": "ClassA.constructor", "file": "multi-class.js" },
+      "target": { "name": "ServiceA", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new ServiceA() — constructor call in ClassA.constructor"
+    },
+    {
+      "source": { "name": "ClassB.constructor", "file": "multi-class.js" },
+      "target": { "name": "ServiceB", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new ServiceB() — constructor call in ClassB.constructor"
+    },
+    {
+      "source": { "name": "ClassA.runA", "file": "multi-class.js" },
+      "target": { "name": "ServiceA.doA", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.service.doA() — receiver-typed via ClassA.service = new ServiceA() (class-scoped typeMap key prevents collision with ClassB.service)"
+    },
+    {
+      "source": { "name": "ClassB.runB", "file": "multi-class.js" },
+      "target": { "name": "ServiceB.doB", "file": "multi-class.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.service.doB() — receiver-typed via ClassB.service = new ServiceB() (class-scoped typeMap key prevents collision with ClassA.service)"
+    },
+    {
+      "source": { "name": "Processor.run", "file": "class-scope.js" },
+      "target": { "name": "processData", "file": "class-scope.js" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Bare call to same-file module-level function — regression guard: bare flush() in run() must NOT resolve to Processor.flush (class-scoped lookup must be receiver-gated)"
     }
   ]
 }

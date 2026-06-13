@@ -1,0 +1,428 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: classes",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/classes.js",
+  "edges": [
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f2",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f3",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f4",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "<anon@17:9>",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C1.f7",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C1.f8",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C2",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C2.f8",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "<anon@42:10>",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f9",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C5",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "F1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C6.staticProperty",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C6.staticMethod",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "F10",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f13",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "<anon@120:11>",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f9",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C12",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "C11.f16",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "D",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "D.s1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "A.s2",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "f4",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C1.f7",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f2",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C4",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C6.staticProperty",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C6.<static:75:2>",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C6.<static:78:2>",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C6.staticMethod",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f1",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "D.s1",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f2",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "A.s2",
+        "file": "classes.js"
+      },
+      "target": {
+        "name": "f2",
+        "file": "classes.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

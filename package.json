@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "3.11.2",
+  "version": "3.12.0",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "dist/index.js",
@@ -132,12 +132,12 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "3.11.2",
-    "@optave/codegraph-darwin-x64": "3.11.2",
-    "@optave/codegraph-linux-arm64-gnu": "3.11.2",
-    "@optave/codegraph-linux-x64-gnu": "3.11.2",
-    "@optave/codegraph-linux-x64-musl": "3.11.2",
-    "@optave/codegraph-win32-x64-msvc": "3.11.2"
+    "@optave/codegraph-darwin-arm64": "3.12.0",
+    "@optave/codegraph-darwin-x64": "3.12.0",
+    "@optave/codegraph-linux-arm64-gnu": "3.12.0",
+    "@optave/codegraph-linux-x64-gnu": "3.12.0",
+    "@optave/codegraph-linux-x64-musl": "3.12.0",
+    "@optave/codegraph-win32-x64-msvc": "3.12.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
@@ -161,7 +161,6 @@
     "tree-sitter-cuda": "^0.21.1",
     "tree-sitter-dart": "^1.0.0",
     "tree-sitter-elixir": "^0.3.5",
-    "tree-sitter-erlang": "github:WhatsApp/tree-sitter-erlang#semver:*",
     "tree-sitter-fsharp": "https://github.com/ionide/tree-sitter-fsharp/archive/refs/tags/0.3.0.tar.gz",
     "tree-sitter-gleam": "github:gleam-lang/tree-sitter-gleam",
     "tree-sitter-go": "^0.25.0",

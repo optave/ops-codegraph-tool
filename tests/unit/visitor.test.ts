@@ -4,7 +4,6 @@
 import { describe, expect, it } from 'vitest';
 
 // We need a tree-sitter tree to test. Use the JS parser.
-// biome-ignore lint/suspicious/noExplicitAny: tree-sitter parser type is complex and not worth typing for tests
 let parse: any;
 
 async function ensureParser() {

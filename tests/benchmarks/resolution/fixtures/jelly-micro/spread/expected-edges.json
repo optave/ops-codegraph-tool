@@ -1,0 +1,79 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Spread operator call resolution — named functions spread as arguments (variable and inline array)",
+  "edges": [
+    {
+      "source": { "name": "f", "file": "spread.js" },
+      "target": { "name": "a", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "f", "file": "spread.js" },
+      "target": { "name": "b", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "g", "file": "spread.js" },
+      "target": { "name": "c", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "g", "file": "spread.js" },
+      "target": { "name": "d", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-spread"
+    },
+    {
+      "source": { "name": "p", "file": "spread.js" },
+      "target": { "name": "e", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    },
+    {
+      "source": { "name": "q", "file": "spread.js" },
+      "target": { "name": "a", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    },
+    {
+      "source": { "name": "q", "file": "spread.js" },
+      "target": { "name": "b", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    },
+    {
+      "source": { "name": "q", "file": "spread.js" },
+      "target": { "name": "c", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    },
+    {
+      "source": { "name": "q", "file": "spread.js" },
+      "target": { "name": "e", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    },
+    {
+      "source": { "name": "q", "file": "spread.js" },
+      "target": { "name": "h", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    },
+    {
+      "source": { "name": "q", "file": "spread.js" },
+      "target": { "name": "d", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    },
+    {
+      "source": { "name": "r", "file": "spread.js" },
+      "target": { "name": "e", "file": "spread.js" },
+      "kind": "calls",
+      "mode": "pts-param"
+    }
+  ]
+}

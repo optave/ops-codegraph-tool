@@ -500,7 +500,7 @@ mod tests {
     fn parse_sol(code: &str) -> FileSymbols {
         let mut parser = Parser::new();
         parser
-            .set_language(&crate::parser_registry::LanguageKind::Solidity.tree_sitter_language())
+            .set_language(&crate::domain::parser::LanguageKind::Solidity.tree_sitter_language())
             .unwrap();
         let tree = parser.parse(code.as_bytes(), None).unwrap();
         SolidityExtractor.extract(&tree, code.as_bytes(), "Test.sol")

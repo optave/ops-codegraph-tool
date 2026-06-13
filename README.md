@@ -43,7 +43,7 @@ Codegraph builds a function-level dependency graph of your entire codebase — e
 
 It parses your code with [tree-sitter](https://tree-sitter.github.io/) (native Rust or WASM), stores the graph in SQLite, and exposes it where it matters most:
 
-- **MCP server** — AI agents query the graph directly through 30 tools — one call instead of 30 `grep`/`find`/`cat` invocations
+- **MCP server** — AI agents query the graph directly through 34 tools — one call instead of dozens of `grep`/`find`/`cat` invocations
 - **CLI** — developers and agents explore, query, and audit code from the terminal
 - **CI gates** — `check` and `manifesto` commands enforce quality thresholds with exit codes
 - **Programmatic API** — embed codegraph in your own tools via `npm install`
@@ -76,7 +76,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 ### Feature comparison
 
-<sub>Comparison last verified: May 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
+<sub>Comparison last verified: June 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
 | Capability | codegraph (this repo) | [code-review-graph](https://github.com/tirth8205/code-review-graph) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph (other)¹](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -100,7 +100,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 | | Differentiator | In practice |
 |---|---|---|
-| **🤖** | **AI-first architecture** | 30-tool [MCP server](https://modelcontextprotocol.io/) — agents query the graph directly instead of scraping the filesystem. One call replaces 20+ grep/find/cat invocations |
+| **🤖** | **AI-first architecture** | 34-tool [MCP server](https://modelcontextprotocol.io/) — agents query the graph directly instead of scraping the filesystem. One call replaces 20+ grep/find/cat invocations |
 | **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents understand a symbol's architectural role without reading surrounding code |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
 | **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds — agents work with current data |
@@ -124,10 +124,10 @@ That's it. The graph is ready. Now connect your AI agent.
 
 ### For AI agents (primary use case)
 
-Connect directly via MCP — your agent gets 30 tools to query the graph:
+Connect directly via MCP — your agent gets 34 tools to query the graph:
 
 ```bash
-codegraph mcp          # 33-tool MCP server — AI queries the graph directly
+codegraph mcp          # 34-tool MCP server — AI queries the graph directly
 ```
 
 Or add codegraph to your agent's instructions (e.g. `CLAUDE.md`):
@@ -169,7 +169,7 @@ cd codegraph && npm install && npm link
 
 | | Feature | Description |
 |---|---|---|
-| 🤖 | **MCP server** | 33-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
+| 🤖 | **MCP server** | 34-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | 🎯 | **Deep context** | `context` gives agents source, deps, callers, signature, and tests for a function in one call; `audit --quick` gives structural summaries |
 | 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity — agents instantly know architectural role |
 | 📦 | **Batch querying** | Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch |
@@ -624,36 +624,38 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.11.2 (2026-06-01)*
+*Last updated: v3.12.0 (2026-06-11)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **3.6 ms/file** | **18.7 ms/file** |
-| Query time | **34ms** | **44ms** |
-| No-op rebuild | **25ms** | **21ms** |
-| 1-file rebuild | **86ms** | **60ms** |
+| Build speed | **4.4 ms/file** | **21.2 ms/file** |
+| Query time | **38ms** | **48ms** |
+| No-op rebuild | **30ms** | **27ms** |
+| 1-file rebuild | **121ms** | **76ms** |
 | Query: fn-deps | **2.7ms** | **2.6ms** |
-| Query: path | **2.7ms** | **2.4ms** |
-| ~50,000 files (est.) | **~180.0s build** | **~935.0s build** |
-| Resolution precision | **89.9%** | — |
-| Resolution recall | **42.3%** | — |
+| Query: path | **2.8ms** | **2.5ms** |
+| ~50,000 files (est.) | **~220.0s build** | **~1060.0s build** |
+| Resolution precision | **84.4%** | — |
+| Resolution recall | **56.1%** | — |
 
-Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
+Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files. v3.12.0 note: native build speed regressed ~22% (3.6→4.4 ms/file) and native 1-file incremental rebuild regressed ~41% (86→121 ms); tracked in [#1446](https://github.com/optave/ops-codegraph-tool/issues/1446).
 
 <details><summary>Per-language resolution precision/recall</summary>
 
+v3.12.0 note: global precision dropped 89.9%→84.4%, driven by new false positives in `elixir` (+17 FP), `julia` (+11 FP), and `objc` (+5 FP) — all three still have 0% recall; tracked in [#1447](https://github.com/optave/ops-codegraph-tool/issues/1447). Global recall improved substantially (42.3%→56.1%).
+
 | Language | Precision | Recall | TP | FP | FN | Edges | Dynamic |
 |----------|----------:|-------:|---:|---:|---:|------:|--------:|
-| javascript | 100.0% | 66.7% | 12 | 0 | 6 | 18 | 14/28 |
-| typescript | 100.0% | 75.0% | 15 | 0 | 5 | 20 | — |
+| javascript | 100.0% | 97.6% | 41 | 0 | 1 | 42 | 14/32 |
+| typescript | 100.0% | 100.0% | 47 | 0 | 0 | 47 | — |
 | bash | 100.0% | 100.0% | 12 | 0 | 0 | 12 | 0/1 |
 | c | 100.0% | 100.0% | 9 | 0 | 0 | 9 | — |
 | clojure | 80.0% | 26.7% | 4 | 1 | 11 | 15 | — |
 | cpp | 100.0% | 57.1% | 8 | 0 | 6 | 14 | — |
-| csharp | 100.0% | 52.6% | 10 | 0 | 9 | 19 | — |
+| csharp | 100.0% | 100.0% | 23 | 0 | 0 | 23 | — |
 | cuda | 50.0% | 33.3% | 4 | 4 | 8 | 12 | — |
 | dart | 0.0% | 0.0% | 0 | 0 | 18 | 18 | — |
-| elixir | 0.0% | 0.0% | 0 | 0 | 21 | 21 | — |
+| elixir | 0.0% | 0.0% | 0 | 17 | 21 | 21 | — |
 | erlang | 100.0% | 100.0% | 12 | 0 | 0 | 12 | — |
 | fsharp | 0.0% | 0.0% | 0 | 11 | 12 | 12 | — |
 | gleam | 100.0% | 26.7% | 4 | 0 | 11 | 15 | — |
@@ -661,18 +663,19 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | groovy | 100.0% | 7.7% | 1 | 0 | 12 | 13 | — |
 | haskell | 100.0% | 33.3% | 4 | 0 | 8 | 12 | — |
 | hcl | 0.0% | 0.0% | 0 | 0 | 2 | 2 | — |
-| java | 100.0% | 52.9% | 9 | 0 | 8 | 17 | — |
-| julia | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
+| java | 100.0% | 76.5% | 13 | 0 | 4 | 17 | — |
+| julia | 0.0% | 0.0% | 0 | 11 | 15 | 15 | — |
 | kotlin | 92.3% | 63.2% | 12 | 1 | 7 | 19 | — |
 | lua | 100.0% | 15.4% | 2 | 0 | 11 | 13 | — |
-| objc | 0.0% | 0.0% | 0 | 1 | 12 | 12 | — |
+| objc | 0.0% | 0.0% | 0 | 6 | 12 | 12 | — |
 | ocaml | 100.0% | 8.3% | 1 | 0 | 11 | 12 | — |
-| php | 100.0% | 31.6% | 6 | 0 | 13 | 19 | — |
+| php | 100.0% | 57.9% | 11 | 0 | 8 | 19 | — |
+| pts-javascript | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
 | python | 100.0% | 60.0% | 9 | 0 | 6 | 15 | 15/15 |
 | r | 100.0% | 100.0% | 11 | 0 | 0 | 11 | — |
 | ruby | 100.0% | 100.0% | 11 | 0 | 0 | 11 | 11/11 |
-| rust | 100.0% | 35.7% | 5 | 0 | 9 | 14 | — |
-| scala | 100.0% | 71.4% | 5 | 0 | 2 | 7 | — |
+| rust | 100.0% | 64.3% | 9 | 0 | 5 | 14 | — |
+| scala | 100.0% | 100.0% | 7 | 0 | 0 | 7 | — |
 | solidity | 33.3% | 7.7% | 1 | 2 | 12 | 13 | — |
 | swift | 75.0% | 42.9% | 6 | 2 | 8 | 14 | 9/9 |
 | tsx | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
@@ -683,13 +686,25 @@ Metrics are normalized per file for cross-version comparability. Times above are
 
 | Mode | Resolved | Expected | Recall |
 |------|--------:|---------:|-------:|
+| receiver-typed | 32 | 112 | 28.6% |
 | module-function | 16 | 112 | 14.3% |
-| receiver-typed | 17 | 104 | 16.3% |
-| static | 66 | 93 | 71.0% |
-| same-file | 48 | 86 | 55.8% |
-| interface-dispatched | 7 | 12 | 58.3% |
-| class-inheritance | 0 | 4 | 0.0% |
+| static | 78 | 96 | 81.3% |
+| same-file | 66 | 90 | 73.3% |
+| interface-dispatched | 19 | 19 | 100.0% |
+| class-inheritance | 8 | 12 | 66.7% |
+| callback | 7 | 7 | 100.0% |
+| pts-spread | 4 | 4 | 100.0% |
+| pts-define-property | 3 | 3 | 100.0% |
+| dynamic | 3 | 3 | 100.0% |
+| pts-create-prototype | 2 | 2 | 100.0% |
+| points-to | 1 | 2 | 50.0% |
+| re-export | 2 | 2 | 100.0% |
+| pts-for-of | 2 | 2 | 100.0% |
+| pts-set | 2 | 2 | 100.0% |
+| pts-array-from | 2 | 2 | 100.0% |
 | trait-dispatch | 0 | 2 | 0.0% |
+| define-property | 1 | 1 | 100.0% |
+| defineProperty-accessor | 1 | 1 | 100.0% |
 | package-function | 1 | 1 | 100.0% |
 
 </details>
@@ -712,7 +727,7 @@ Optional: `@huggingface/transformers` (semantic search), `@modelcontextprotocol/
 
 ### MCP Server
 
-Codegraph is built around a [Model Context Protocol](https://modelcontextprotocol.io/) server with 30 tools (31 in multi-repo mode) — the primary way agents consume the graph:
+Codegraph is built around a [Model Context Protocol](https://modelcontextprotocol.io/) server with 34 tools (35 in multi-repo mode) — the primary way agents consume the graph:
 
 ```bash
 codegraph mcp                  # Single-repo mode (default) — only local project
@@ -842,7 +857,7 @@ Works with any secret manager: 1Password CLI (`op`), Bitwarden (`bw`), `pass`, H
 
 ### MCP tool filtering
 
-Codegraph's MCP server exposes 30+ tools by default. For models with a small context window, you can shrink the schema by disabling tools you don't use:
+Codegraph's MCP server exposes 34 tools by default. For models with a small context window, you can shrink the schema by disabling tools you don't use:
 
 ```json
 {
@@ -900,7 +915,7 @@ const { results: fused } = await multiSearchData(
 
 ## ⚠️ Limitations
 
-- **No TypeScript type-checker integration** — type inference resolves annotations, `new` expressions, and assignment chains, but does not invoke `tsc` for overload resolution or complex generics
+- **TypeScript compiler integration is auto-enabled** — when `typescript` is installed and a `tsconfig.json` is found, the TypeScript compiler API pass runs automatically; disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` if you want faster builds without it; heuristic type inference (annotations, `new` expressions, assignment chains) is always active as a baseline
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
 - **Dataflow analysis** — intraprocedural (single-function scope), not interprocedural
@@ -918,7 +933,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 7. ~~**TypeScript Migration**~~ — **Complete** (v3.4.0) — all 271 source files migrated from JS to TS, zero `.js` remaining
 8. ~~**Native Analysis Acceleration**~~ — **Complete** (v3.5.0) — all build phases in Rust/rusqlite, sub-100ms incremental rebuilds, better-sqlite3 lazy-loaded as fallback only
 9. ~~**Expanded Language Support**~~ — **Complete** (v3.8.0) — 23 new languages in 4 batches (11 → 34), dual-engine WASM + Rust support for all
-10. **Analysis Depth** — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis
+10. ~~**Analysis Depth**~~ — **Complete** (v3.12.0) — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, barrel re-export chain resolution, CHA+RTA dynamic dispatch
 11. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
 12. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
 13. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries

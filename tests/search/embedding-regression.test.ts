@@ -68,12 +68,41 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
     dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
 
     // Build embeddings with the smallest/fastest model.
-    // Skip gracefully when HuggingFace rate-limits the model download (HTTP 429).
+    // Skip gracefully when HuggingFace rate-limits the model download (HTTP 429),
+    // when the network is unavailable (ECONNRESET, ETIMEDOUT, ENOTFOUND,
+    // ECONNREFUSED, ERR_HTTP2_STREAM_CANCEL, ERR_HTTP2_SESSION_ERROR), or when
+    // HF's fetch layer times out. buildEmbeddings wraps HF failures as EngineError
+    // (code: ENGINE_UNAVAILABLE), losing the original errno, so we also match the
+    // "timeout" substring from HF's "Request timeout error occurred" message.
     try {
       await buildEmbeddings(tmpDir, 'minilm', dbPath);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('429')) {
+      // Walk the full error cause chain to detect network/timeout failures that
+      // may be wrapped by EngineError (e.g. ConnectTimeoutError with code
+      // UND_ERR_CONNECT_TIMEOUT wrapped as "fetch failed" wrapped as EngineError).
+      const isNetworkError = (function checkChain(e: unknown): boolean {
+        if (!e) return false;
+        const msg = e instanceof Error ? e.message : String(e);
+        const code = (e as NodeJS.ErrnoException).code ?? '';
+        if (
+          msg.includes('429') ||
+          msg.toLowerCase().includes('timeout') ||
+          msg.toLowerCase().includes('fetch failed') ||
+          code === 'ECONNRESET' ||
+          code === 'ETIMEDOUT' ||
+          code === 'ENOTFOUND' ||
+          code === 'ECONNREFUSED' ||
+          code === 'ERR_HTTP2_STREAM_CANCEL' ||
+          code === 'ERR_HTTP2_SESSION_ERROR' ||
+          code === 'UND_ERR_CONNECT_TIMEOUT' ||
+          code === 'UND_ERR_SOCKET' ||
+          code === 'UND_ERR_HEADERS_TIMEOUT'
+        )
+          return true;
+        const cause = (e as { cause?: unknown }).cause;
+        return cause !== undefined && cause !== e ? checkChain(cause) : false;
+      })(err);
+      if (isNetworkError) {
         rateLimited = true;
         return;
       }
@@ -88,7 +117,24 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
     // causing intermittent EBUSY errors. Node's built-in maxRetries handles
     // retrying EBUSY/EMFILE automatically with retryDelay ms between attempts.
     flushDeferredClose();
-    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    // Safety net: if the WAL lock outlasts the retry budget, clean up at process exit.
+    // This prevents leaked codegraph-embed-regression-* directories on Windows CI.
+    const capturedDir = tmpDir;
+    process.once('exit', () => {
+      try {
+        fs.rmSync(capturedDir, { recursive: true, force: true });
+      } catch {
+        // best-effort — OS will eventually reclaim at reboot
+      }
+    });
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (err: unknown) {
+      // Only swallow EBUSY / EPERM — Windows WAL locks that outlast the retry budget.
+      // Any other error (quota, path corruption, unexpected OS error) surfaces normally.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EBUSY' && code !== 'EPERM') throw err;
+    }
   });
 
   describe('smoke tests', () => {

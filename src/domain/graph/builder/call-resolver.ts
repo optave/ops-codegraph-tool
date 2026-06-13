@@ -23,6 +23,28 @@ export interface CallNodeLookup {
 
 export const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', 'module']);
 
+/**
+ * Languages where bare `foo()` calls inside a class method are lexically scoped
+ * to the module, not the class — there is no implicit this/class binding.
+ * For these languages, the same-class fallback must not run for bare (no-receiver)
+ * calls that found no exact same-file match.
+ */
+const MODULE_SCOPED_BARE_CALL_EXTENSIONS = new Set([
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.jsx',
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+]);
+
+export function isModuleScopedLanguage(relPath: string): boolean {
+  const ext = relPath.slice(relPath.lastIndexOf('.'));
+  return MODULE_SCOPED_BARE_CALL_EXTENSIONS.has(ext);
+}
+
 // ── Shared resolution functions ──────────────────────────────────────────
 
 export function findCaller(
@@ -72,23 +94,46 @@ export function resolveByMethodOrGlobal(
     const effectiveReceiver = call.receiver.startsWith('this.')
       ? call.receiver.slice('this.'.length)
       : call.receiver;
-    const typeEntry = typeMap.get(effectiveReceiver) ?? typeMap.get(call.receiver);
+    // For this.prop receivers, also try the class-scoped key (ClassName.prop) seeded by
+    // handlePropWriteTypeMap — prevents false edges when multiple classes define the same
+    // property name (issue #1323).
+    let typeEntry =
+      typeMap.get(effectiveReceiver) ??
+      typeMap.get(call.receiver) ??
+      // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) to avoid
+      // same-name rest-binding collision across functions in the same file (#1358).
+      (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
+    if (!typeEntry && call.receiver.startsWith('this.') && callerName) {
+      const dotIdx = callerName.lastIndexOf('.');
+      if (dotIdx > -1) {
+        const callerClass = callerName.slice(0, dotIdx);
+        typeEntry = typeMap.get(`${callerClass}.${effectiveReceiver}`);
+      }
+    }
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
         : (typeEntry as { type?: string }).type
       : null;
 
-    // Handle inline new-expression receivers: `(new Foo).bar()` or `(new Foo()).bar()`.
-    // extractReceiverName returns the raw node text for non-identifier nodes, so `(new A).t()`
-    // produces receiver='(new A)'. Extract the constructor name directly.
+    // Belt-and-suspenders fallback for inline new-expression receivers that
+    // extractReceiverName did not normalise (e.g. raw text leaked from an
+    // unhandled AST node type).  extractReceiverName already handles the common
+    // `new_expression` / `parenthesized_expression(new_expression)` shapes by
+    // returning the constructor name directly, so this branch is exercised only
+    // by future node types or constructs that fall through to the raw-text path.
+    // The uppercase-initial restriction ([A-Z_$]) is a heuristic to distinguish
+    // constructors (PascalCase) from regular functions and avoids false positives
+    // on `(new xmlParser()).parse()` style calls.
     if (!typeName && call.receiver) {
       const m = /^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/.exec(call.receiver);
       if (m?.[1]) typeName = m[1];
     }
 
     if (typeName) {
-      const typed = lookup.byName(`${typeName}.${call.name}`).filter((n) => n.kind === 'method');
+      const typed = lookup
+        .byName(`${typeName}.${call.name}`)
+        .filter((n) => n.kind === 'method' && computeConfidence(relPath, n.file, null) >= 0.5);
       if (typed.length > 0) return typed;
 
       // Prototype alias: `Foo.prototype.bar = identifier` seeds typeMap['Foo.bar'] = { type: identifier }.
@@ -105,6 +150,22 @@ export function resolveByMethodOrGlobal(
           .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
         if (resolved.length > 0) return resolved;
       }
+    }
+
+    // Direct qualified method lookup: ClassName.staticMethod() or ClassName.instanceMethod()
+    // when the receiver is a class name with no typeMap entry. Handles static method calls
+    // like `C6.staticMethod()` or `D.d()` where the receiver IS the class.
+    // Matches both 'method' and 'function' kinds to cover field-initializer synthetic defs.
+    if (!typeName) {
+      const qualifiedName = `${effectiveReceiver}.${call.name}`;
+      const direct = lookup
+        .byName(qualifiedName)
+        .filter(
+          (n) =>
+            (n.kind === 'method' || n.kind === 'function') &&
+            computeConfidence(relPath, n.file, null) >= 0.5,
+        );
+      if (direct.length > 0) return direct;
     }
 
     // Phase 8.3d: composite pts key — `obj.prop = fn` seeds typeMap['obj.prop'] = { type: 'fn' }.
@@ -128,18 +189,60 @@ export function resolveByMethodOrGlobal(
     call.receiver === 'self' ||
     call.receiver === 'super'
   ) {
+    // Phase 8.3f: accessor this-dispatch via Object.defineProperty.
+    // When a plain function (no class prefix) is registered as a get/set accessor for `obj`
+    // via Object.defineProperty, typeMap seeds 'callerName:this' = 'obj'.
+    // We then resolve this.method() → typeMap['obj.method'] → the concrete definition.
+    // This runs before the broad exact-name lookup to avoid false positives from
+    // unrelated same-file definitions.
+    if (call.receiver === 'this' && callerName && !callerName.includes('.')) {
+      const accessorThisEntry = typeMap.get(`${callerName}:this`);
+      const objName = accessorThisEntry
+        ? typeof accessorThisEntry === 'string'
+          ? accessorThisEntry
+          : (accessorThisEntry as { type?: string }).type
+        : null;
+      if (objName) {
+        const objMethodEntry = typeMap.get(`${objName}.${call.name}`);
+        const targetFn = objMethodEntry
+          ? typeof objMethodEntry === 'string'
+            ? objMethodEntry
+            : (objMethodEntry as { type?: string }).type
+          : null;
+        if (targetFn) {
+          const resolved = lookup
+            .byName(targetFn)
+            .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+          if (resolved.length > 0) return resolved;
+        }
+      }
+    }
+
     const exact = lookup
       .byName(call.name)
       .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
     if (exact.length > 0) return exact;
 
-    // For this/self/super receiver: try same-class method lookup via callerName.
+    // Try same-class method lookup via callerName.
     // e.g. `this.area()` inside `Shape.describe` → try `Shape.area`.
+    // Also covers no-receiver calls inside class methods, e.g. `IsValidEmail(x)` inside
+    // `Validators.ValidateUser` → try `Validators.IsValidEmail` (C#/Java static siblings).
     // This seeds the initial edge that runChaPostPass later expands to subclass overrides.
-    if (call.receiver && callerName) {
+    //
+    // For JS/TS, bare (no-receiver) calls are module-scoped — there is no implicit class
+    // binding. Skip the same-class fallback for bare calls in those languages to prevent
+    // false positives (e.g. `flush()` inside `Processor.run` must not resolve to
+    // `Processor.flush`). this.method() calls are unaffected: they still reach the fallback
+    // because `call.receiver === 'this'` is truthy, not a bare call.
+    const isBareCall = !call.receiver;
+    if (callerName && !(isBareCall && isModuleScopedLanguage(relPath))) {
       const dotIdx = callerName.lastIndexOf('.');
       if (dotIdx > -1) {
-        const callerClass = callerName.slice(0, dotIdx);
+        // Extract only the segment immediately before the method name so that
+        // 'Namespace.ClassName.method' yields 'ClassName', not 'Namespace.ClassName'.
+        // Symbols are stored under their bare class name, not their qualified path.
+        const prevDot = callerName.lastIndexOf('.', dotIdx - 1);
+        const callerClass = callerName.slice(prevDot + 1, dotIdx);
         const qualifiedName = `${callerClass}.${call.name}`;
         const sameClass = lookup
           .byName(qualifiedName)

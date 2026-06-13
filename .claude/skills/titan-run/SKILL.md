@@ -1,7 +1,7 @@
 ---
 name: titan-run
-description: Run the full Titan Paradigm pipeline end-to-end by dispatching each phase to sub-agents with fresh context windows. Orchestrates recon → gauntlet → sync → forge → grind automatically.
-argument-hint: <path (default: .)> <--skip-recon> <--skip-gauntlet> <--start-from recon|gauntlet|sync|forge|grind> <--gauntlet-batch-size 5> <--yes>
+description: Run the full Titan Paradigm pipeline end-to-end by dispatching each phase to sub-agents with fresh context windows. Orchestrates recon → gauntlet → sync → forge → grind (+ repo-provided parity audit) automatically.
+argument-hint: <path (default: .)> <--skip-recon> <--skip-gauntlet> <--start-from recon|gauntlet|sync|forge|grind|parity|close> <--gauntlet-batch-size 5> <--yes>
 allowed-tools: Agent, Read, Bash, Glob, Write, Edit
 ---
 
@@ -16,7 +16,7 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
 - `<path>` → target path (passed to recon)
 - `--skip-recon` → skip recon (assumes artifacts exist)
 - `--skip-gauntlet` → skip gauntlet (assumes artifacts exist)
-- `--start-from <phase>` → jump to phase: `recon`, `gauntlet`, `sync`, `forge`, `grind`
+- `--start-from <phase>` → jump to phase: `recon`, `gauntlet`, `sync`, `forge`, `grind`, `parity`, `close`
 - `--gauntlet-batch-size <N>` → batch size for gauntlet (default: 5)
 - `--yes` → skip all confirmation prompts in the orchestrator (pre-pipeline, forge checkpoint, and resume prompts) and in forge (per-phase confirmation)
 
@@ -50,7 +50,7 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['<PHASE>']=s.phaseTimestamps['<PHASE>']||{};s.phaseTimestamps['<PHASE>'].completedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));"
    ```
 
-   Replace `<PHASE>` with `recon`, `gauntlet`, `sync`, `forge`, or `close`. **Run the start command immediately before dispatching each phase's first sub-agent, and the completion command immediately after post-phase validation passes.** If resuming a phase (e.g., gauntlet loop iteration 2+), do NOT overwrite `startedAt` — only set it if it doesn't already exist.
+   Replace `<PHASE>` with `recon`, `gauntlet`, `sync`, `forge`, `grind`, `parity`, or `close`. **Run the start command immediately before dispatching each phase's first sub-agent, and the completion command immediately after post-phase validation passes.** If resuming a phase (e.g., gauntlet loop iteration 2+), do NOT overwrite `startedAt` — only set it if it doesn't already exist.
 
    **Timestamp validation:** After recording `completedAt` for any phase, verify `startedAt < completedAt`:
    ```bash
@@ -639,7 +639,7 @@ Record `phaseTimestamps.forge.completedAt`.
 
 Grind runs after forge to close the adoption loop. Forge extracts helpers; grind wires them into consumers and removes dead code. Without grind, the dead symbol count inflates with every forge phase.
 
-**Skip if:** `--start-from` is `close`, or `titan-state.json → grind.completedPhases` already covers all forge phases.
+**Skip if:** `--start-from` is `parity` or `close`, or `titan-state.json → grind.completedPhases` already covers all forge phases.
 
 ### 4.5a. Pre-loop check
 
@@ -742,6 +742,63 @@ Record `phaseTimestamps.grind.completedAt`.
 
 ---
 
+## Step 4.6 — PARITY (conditional, repo-provided)
+
+Some repos ship multiple implementations of the same logic that must stay in lockstep (e.g. a dual native/WASM engine, a client and server copy of a validator). Forge and grind edit code across the tree; this step verifies those edits didn't leave one implementation behind.
+
+**titan-run is repo-agnostic** — never assume the target repo has engines, fixtures, or any parity surface. The contract: a repo opts in by shipping its own `/parity` skill at `.claude/skills/parity/SKILL.md` (wrapping whatever audit mechanism it uses internally). No skill → no parity phase.
+
+### 4.6a. Detect the repo's parity mechanism
+
+```bash
+test -f .claude/skills/parity/SKILL.md && echo "PARITY SKILL FOUND" || echo "NO PARITY SKILL"
+```
+
+- **NO PARITY SKILL** → print `"PARITY skipped — repo provides no /parity skill."` and continue to Step 5. Absence is normal for most repos; do not warn.
+- **PARITY SKILL FOUND** → continue below.
+
+**Skip also if:** `--start-from` is `close`, or the pipeline made no code changes this run (`titan-state.json → execution.commits` empty/absent AND no grind adoption commits) — unless `--start-from parity` was given explicitly, which always runs the audit.
+
+### 4.6b. Record phase start
+
+Record `phaseTimestamps.parity.startedAt`.
+
+```bash
+headBefore=$(git rev-parse HEAD)
+```
+
+### 4.6c. Run Pre-Agent Gate (G1-G4)
+
+### 4.6d. Dispatch sub-agent
+
+```
+Agent → "Run /parity. Read .claude/skills/parity/SKILL.md and follow it exactly.
+         Skip worktree check — already handled.
+         Audit every surface the skill covers. Fix any divergence introduced by
+         recent commits at the root cause, commit the fixes, and re-verify until
+         the audit is clean. If a divergence pre-dates this run (verify via
+         git log on the relevant files), follow the skill's and repo's rules for
+         pre-existing findings (typically: file an issue, don't expand scope)."
+```
+
+### 4.6e. Post-phase validation
+
+After the agent returns:
+
+```bash
+headAfter=$(git rev-parse HEAD)
+```
+
+- `git status --short` → the working tree must be clean. The sub-agent commits its fixes; uncommitted changes mean it stopped mid-fix → **stop** and report.
+- If the agent fixed divergences, run V16-style commit audit: `git log --oneline $headBefore..$headAfter` and print the parity-fix commits.
+- If the agent reports divergences introduced by THIS run that it could not fix → **stop**: "PARITY failed — this run introduced implementation drift. Fix before CLOSE or revert the offending commits." Pre-existing divergences filed as issues are not blockers; print the issue URLs.
+
+Print: `"PARITY complete: <clean | N divergences fixed | N pre-existing filed as issues>"`
+
+Record `phaseTimestamps.parity.completedAt`.
+
+---
+
 ## Step 5 — CLOSE (report + PRs)
 
 After forge completes, dispatch `/titan-close` to produce the final report with before/after metrics and split commits into focused PRs.
@@ -778,6 +835,7 @@ Record `phaseTimestamps.close.completedAt`.
 - **NDJSON corrupt lines:** Warn but continue — partial results are better than none. The corrupt lines are logged so the user knows which targets to re-audit.
 - **Merge conflict detected by pre-agent gate:** Stop immediately with the conflicting files listed.
 - **Tests fail after forge phase:** Stop immediately. Print the failing phase's commits so the user can revert.
+- **Parity audit fails on drift introduced by this run:** Stop before CLOSE. Retry with `/titan-run --start-from parity` after fixing or reverting.
 - **Validation failure (any V-check marked FAILED):** Stop with details. Warn-level V-checks are logged but don't stop the pipeline.
 
 ---
@@ -786,7 +844,7 @@ Record `phaseTimestamps.close.completedAt`.
 
 - **You are the orchestrator, not the executor.** Never run codegraph commands, edit source files, or make commits yourself. Only spawn sub-agents and read state files. Exceptions (pure validation/snapshot, no code changes): the post-forge test run (V13), NDJSON integrity checks, the V3 baseline snapshot check (`codegraph snapshot list`), and the pre-forge architectural snapshot capture (Step 3.5a) are run directly by the orchestrator.
 - **Run the Pre-Agent Gate (G1-G4) before EVERY sub-agent.** No exceptions.
-- **One sub-agent at a time.** Phases are sequential — recon before gauntlet, gauntlet before sync, sync before forge, forge before grind, grind before close.
+- **One sub-agent at a time.** Phases are sequential — recon before gauntlet, gauntlet before sync, sync before forge, forge before grind, grind before parity (when the repo provides one), parity before close.
 - **Fresh context per sub-agent.** This is the whole point — each sub-agent gets a clean context window.
 - **Read AND validate state files after every sub-agent.** Trust the on-disk state, not the sub-agent's text output — but verify the state is structurally sound.
 - **Back up state before every sub-agent.** The `.bak` file is your safety net against mid-write crashes.

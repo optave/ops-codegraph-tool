@@ -292,7 +292,7 @@ function extractCppParameters(paramListNode: TreeSitterNode | null): SubDeclarat
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
-    if (!param || param.type !== 'parameter_declaration') continue;
+    if (param?.type !== 'parameter_declaration') continue;
     const nameNode = param.childForFieldName('declarator');
     if (nameNode) {
       const name = unwrapCppDeclaratorName(nameNode);
@@ -309,7 +309,7 @@ function extractCppClassFields(classNode: TreeSitterNode): SubDeclaration[] {
   if (!body) return fields;
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
-    if (!member || member.type !== 'field_declaration') continue;
+    if (member?.type !== 'field_declaration') continue;
     const nameNode = member.childForFieldName('declarator');
     if (nameNode) {
       const name = unwrapCppDeclaratorName(nameNode);
@@ -330,7 +330,7 @@ function extractCppEnumEntries(enumNode: TreeSitterNode): SubDeclaration[] {
   if (!body) return entries;
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
-    if (!member || member.type !== 'enumerator') continue;
+    if (member?.type !== 'enumerator') continue;
     const nameNode = member.childForFieldName('name');
     if (nameNode) {
       entries.push({ name: nameNode.text, kind: 'constant', line: member.startPosition.row + 1 });

@@ -135,7 +135,7 @@ async function reparseBarrelFiles(
   // which only runs on the original (changed + reverse-dep) fileSymbols. Barrel
   // candidates are merged here *after* insertNodes, so wiping those kinds
   // would permanently drop them (mirrors the Rust orchestrator's Stage 6b
-  // delete in build_pipeline.rs).
+  // delete in domain/graph/builder/pipeline.rs).
   const deleteOutgoingEdges = db.prepare(
     `DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)
      AND kind NOT IN ('contains', 'parameter_of')`,

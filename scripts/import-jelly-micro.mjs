@@ -203,7 +203,7 @@ function buildNameMap(src, filename) {
 
 // ── Jelly → expected-edges conversion ────────────────────────────────────────
 
-const SCHEMA = '../../expected-edges.schema.json';
+const SCHEMA = '../../../expected-edges.schema.json';
 
 /**
  * Convert a Jelly .json call graph + .js source to codegraph expected-edges format.

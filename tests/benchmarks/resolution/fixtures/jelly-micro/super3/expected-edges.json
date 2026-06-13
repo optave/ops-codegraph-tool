@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: super3",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/super3.js",
+  "edges": [
+    {
+      "source": {
+        "name": "foo",
+        "file": "super3.js"
+      },
+      "target": {
+        "name": "m2",
+        "file": "super3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "m2",
+        "file": "super3.js"
+      },
+      "target": {
+        "name": "m1",
+        "file": "super3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "m1",
+        "file": "super3.js"
+      },
+      "target": {
+        "name": "m3",
+        "file": "super3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

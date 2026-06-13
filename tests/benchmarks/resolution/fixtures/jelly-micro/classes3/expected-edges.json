@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Jelly micro-test: classes3",
+  "source": "https://github.com/cs-au-dk/jelly/blob/master/tests/micro/classes3.js",
+  "edges": [
+    {
+      "source": {
+        "name": "C",
+        "file": "classes3.js"
+      },
+      "target": {
+        "name": "Parser",
+        "file": "classes3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    },
+    {
+      "source": {
+        "name": "C",
+        "file": "classes3.js"
+      },
+      "target": {
+        "name": "<anon@3:16>",
+        "file": "classes3.js"
+      },
+      "kind": "calls",
+      "mode": "static"
+    }
+  ]
+}

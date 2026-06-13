@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2022]  # pinned: node-gyp cannot detect VS2026 on windows-latest; revert once node-gyp supports VS ≥ 18
     runs-on: ${{ matrix.os }}
     name: Native host build (${{ matrix.os }})
     steps:
@@ -97,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2022]  # pinned: node-gyp cannot detect VS2026 on windows-latest; revert once node-gyp supports VS ≥ 18
         node-version: [22]
 
     runs-on: ${{ matrix.os }}
@@ -180,6 +180,12 @@ jobs:
         # abort the audit before it can report real vulnerabilities.
         run: npm audit --omit=dev --audit-level=high --package-lock-only
 
+      - name: Audit dev dependencies (critical only)
+        # Catches malware/critical advisories in devDependencies (e.g. GHSA-rphw-c8qj-jv84).
+        # Scoped to critical only — high/moderate in devDeps are acceptable noise since
+        # they never reach production. --package-lock-only avoids installing packages.
+        run: npm audit --audit-level=critical --package-lock-only
+
   verify-imports:
     runs-on: ubuntu-latest
     name: Verify dynamic imports
@@ -215,7 +221,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2022]  # pinned: node-gyp cannot detect VS2026 on windows-latest; revert once node-gyp supports VS ≥ 18
 
     runs-on: ${{ matrix.os }}
     name: Engine parity (${{ matrix.os }})

@@ -161,21 +161,22 @@ describe('formatDropExtensionSummary', () => {
  * the JS and Rust sides would mis-classify drops (real native failures shown
  * as info, parser-limit gaps shown as warn). The native addon doesn't expose
  * its own metadata, so we parse the Rust source instead and assert the two
- * lists agree at build time. If `parser_registry.rs` is ever refactored, this
+ * lists agree at build time. If `domain/parser.rs` is ever refactored, this
  * test fails loudly so the maintainer notices.
  */
 describe('NATIVE_SUPPORTED_EXTENSIONS drift guard', () => {
-  it('matches the extension set in crates/codegraph-core/src/parser_registry.rs', () => {
+  it('matches the extension set in crates/codegraph-core/src/domain/parser.rs', () => {
     const registryPath = path.join(
       REPO_ROOT,
       'crates',
       'codegraph-core',
       'src',
-      'parser_registry.rs',
+      'domain',
+      'parser.rs',
     );
     const src = fs.readFileSync(registryPath, 'utf8');
     const fromExtStart = src.indexOf('pub fn from_extension');
-    expect(fromExtStart, 'from_extension not found in parser_registry.rs').toBeGreaterThan(-1);
+    expect(fromExtStart, 'from_extension not found in domain/parser.rs').toBeGreaterThan(-1);
     // Slice from `pub fn from_extension` to the next `pub fn` (boundary of
     // the next method) so we don't accidentally pick up extensions from
     // unrelated functions like `from_lang_id` (which contains lang_id
@@ -207,11 +208,11 @@ describe('NATIVE_SUPPORTED_EXTENSIONS drift guard', () => {
     const onlyInJs = [...jsExts].filter((e) => !normalized.has(e));
     expect(
       onlyInRust,
-      `Extensions in parser_registry.rs but missing from NATIVE_SUPPORTED_EXTENSIONS: ${onlyInRust.join(', ')}`,
+      `Extensions in domain/parser.rs but missing from NATIVE_SUPPORTED_EXTENSIONS: ${onlyInRust.join(', ')}`,
     ).toEqual([]);
     expect(
       onlyInJs,
-      `Extensions in NATIVE_SUPPORTED_EXTENSIONS but missing from parser_registry.rs: ${onlyInJs.join(', ')}`,
+      `Extensions in NATIVE_SUPPORTED_EXTENSIONS but missing from domain/parser.rs: ${onlyInJs.join(', ')}`,
     ).toEqual([]);
   });
 });
@@ -222,7 +223,7 @@ describe('NATIVE_SUPPORTED_EXTENSIONS drift guard', () => {
  * Acceptance criterion from #1071 (tracked in #1121): a CI gate prevents
  * future drift between the JS `LANGUAGE_REGISTRY` and the Rust extractor
  * coverage. The existing drift guard above covers
- * `NATIVE_SUPPORTED_EXTENSIONS ↔ parser_registry.rs`, but the link from
+ * `NATIVE_SUPPORTED_EXTENSIONS ↔ domain/parser.rs`, but the link from
  * `LANGUAGE_REGISTRY` (the source of truth for languages we support at all)
  * to `NATIVE_SUPPORTED_EXTENSIONS` (the hand-maintained mirror of the Rust
  * enum) had no test — silently adding a WASM-only language would degrade the
