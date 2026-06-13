@@ -1198,11 +1198,16 @@ const INLINE_BACKFILL_THRESHOLD = 16;
  *
  * Returns symbols with `_tree` set so `runAnalyses` can run AST/CFG/dataflow
  * visitors via the unified walker (mirrors how WASM-engine results behaved
- * before the worker pool was introduced).
+ * before the worker pool was introduced), unless `symbolsOnly` is true — in
+ * that case `_tree` is not set, skipping all analysis visitor walks. Use
+ * `symbolsOnly` when only definitions/calls/typeMap are needed (e.g. the
+ * this/super dispatch post-pass) to avoid the analysis overhead on the inline
+ * path, matching the optimization already applied to the worker-pool path.
  */
 async function parseFilesWasmInline(
   filePaths: string[],
   rootDir: string,
+  symbolsOnly = false,
 ): Promise<Map<string, ExtractorOutput>> {
   const result = new Map<string, ExtractorOutput>();
   if (filePaths.length === 0) return result;
@@ -1220,7 +1225,18 @@ async function parseFilesWasmInline(
     if (!extracted) continue;
     const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
     const symbols = extracted.symbols as ExtractorOutput & { _tree?: unknown; _langId?: string };
-    symbols._tree = extracted.tree;
+    // When symbolsOnly=true, skip setting _tree so runAnalyses does not run
+    // AST/complexity/CFG/dataflow visitor walks — only definitions/calls/typeMap
+    // are needed by callers like the this/super dispatch post-pass.
+    if (!symbolsOnly) {
+      symbols._tree = extracted.tree;
+    } else if (typeof (extracted.tree as any)?.delete === 'function') {
+      // Free the WASM-backed tree immediately — web-tree-sitter trees are backed
+      // by WASM linear memory and require explicit disposal.  When symbolsOnly is
+      // true the tree is never stored anywhere, so we must delete it here to
+      // avoid leaking WASM heap on every incremental rebuild.
+      (extracted.tree as any).delete();
+    }
     symbols._langId = extracted.langId;
     result.set(relPath, symbols);
   }
@@ -1246,7 +1262,7 @@ export async function parseFilesWasmForBackfill(
   opts: { symbolsOnly?: boolean } = {},
 ): Promise<Map<string, ExtractorOutput>> {
   if (filePaths.length <= INLINE_BACKFILL_THRESHOLD) {
-    return parseFilesWasmInline(filePaths, rootDir);
+    return parseFilesWasmInline(filePaths, rootDir, opts.symbolsOnly);
   }
   return parseFilesWasm(filePaths, rootDir, opts.symbolsOnly ? EXTRACT_ONLY : FULL_ANALYSIS);
 }
