@@ -1,0 +1,113 @@
+name: Perf Canary
+
+# Lightweight per-PR build-time regression gate for PRs that touch the
+# extractor, graph-builder, or native Rust layers — the parts of the codebase
+# that caused the v3.12.0 regressions (+1827% 1-file rebuild, +98% full build).
+#
+# Only the incremental-benchmark suite is run (full build + no-op + 1-file
+# rebuild for both engines). The regression guard uses BENCH_CANARY=1 mode,
+# which applies a 50% threshold instead of the full suite's 25% — enough
+# to catch catastrophic regressions while tolerating CI runner variance.
+#
+# This is intentionally separate from the full pre-publish-benchmark job in
+# ci.yml, which runs unconditionally on every PR and measures the complete
+# suite. The canary completes in roughly 5–10 minutes; the full suite takes
+# 20–60 minutes.
+
+on:
+  pull_request:
+    paths:
+      - "src/extractors/**"
+      - "src/domain/graph/**"
+      - "crates/**"
+      - "scripts/benchmark.ts"
+      - "scripts/incremental-benchmark.ts"
+      - "scripts/lib/bench-config.ts"
+      - "scripts/lib/fork-engine.ts"
+      - "scripts/update-incremental-report.ts"
+      - "tests/benchmarks/regression-guard.test.ts"
+
+permissions: {}
+
+concurrency:
+  group: perf-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf-canary:
+    name: Perf canary (incremental tiers)
+    runs-on: ubuntu-latest
+    env:
+      CODEGRAPH_FAST_SKIP_DIAG: "1"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/codegraph-core
+
+      - name: Install napi-rs CLI
+        timeout-minutes: 5
+        run: npm install -g @napi-rs/cli@3
+
+      - name: Build native addon
+        working-directory: crates/codegraph-core
+        run: napi build --release
+
+      - name: Install dependencies
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm install && break
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::npm install attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            else
+              echo "::error::npm install failed after 3 attempts"
+              exit 1
+            fi
+          done
+
+      - name: Install native addon over published binary
+        run: node scripts/ci-install-native.mjs
+
+      # Build dist/ so benchmarks load the same compiled JS that ships to npm,
+      # matching the methodology used by the full pre-publish-benchmark gate.
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run incremental benchmark
+        timeout-minutes: 15
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts --version dev --dist > incremental-canary-result.json
+
+      - name: Update incremental report
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-incremental-report.ts incremental-canary-result.json
+
+      - name: Regression guard (50% threshold)
+        env:
+          RUN_REGRESSION_GUARD: "1"
+          BENCH_CANARY: "1"
+        run: npm run test:regression-guard
+
+      - name: Upload canary result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: incremental-canary-result
+          path: incremental-canary-result.json
+          if-no-files-found: warn
