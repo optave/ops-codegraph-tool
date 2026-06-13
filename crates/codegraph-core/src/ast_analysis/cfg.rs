@@ -659,10 +659,6 @@ impl<'a> CfgBuilder<'a> {
         }
     }
 
-    fn start_line_of(&self, block_idx: u32) -> Option<u32> {
-        self.blocks.iter().find(|b| b.index == block_idx).and_then(|b| b.start_line)
-    }
-
     /// Get statement children from a block or statement list.
     fn get_statements<'b>(&self, node: &Node<'b>) -> Vec<Node<'b>> {
         let kind = node.kind();

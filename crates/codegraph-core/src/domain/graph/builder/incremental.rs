@@ -10,7 +10,6 @@ use crate::types::FileSymbols;
 
 struct CacheEntry {
     tree: Tree,
-    lang: LanguageKind,
 }
 
 /// Cache of parse trees for incremental parsing.
@@ -51,7 +50,7 @@ impl ParseTreeCache {
 
         let symbols = extract_symbols(lang, &tree, source_bytes, &file_path);
 
-        self.entries.insert(file_path, CacheEntry { tree, lang });
+        self.entries.insert(file_path, CacheEntry { tree });
 
         Some(symbols)
     }
