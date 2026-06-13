@@ -523,7 +523,10 @@ function runPostNativeCha(
       if (row) gateAFired = true;
     }
 
-    // Gate B: calls from changed-file sources to class-kind targets?
+    // Gate B: calls from changed-file sources to instantiable-kind targets?
+    //   Checks the same kind set as Gate A (class/interface/trait/struct/record)
+    //   so that future CHA extensions to struct/record kinds correctly trigger
+    //   the full scan when RTA evidence grows in a changed file.
     let gateBFired = false;
     if (!gateAFired) {
       for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
@@ -534,7 +537,8 @@ function runPostNativeCha(
             `SELECT 1 FROM edges e
              JOIN nodes src ON e.source_id = src.id
              JOIN nodes tgt ON e.target_id = tgt.id
-             WHERE e.kind = 'calls' AND tgt.kind = 'class'
+             WHERE e.kind = 'calls'
+             AND tgt.kind IN ('class', 'interface', 'trait', 'struct', 'record')
              AND src.file IN (${ph})
              LIMIT 1`,
           )

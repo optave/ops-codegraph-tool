@@ -4,7 +4,6 @@ import type {
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
-  TypeMapEntry,
 } from '../types.js';
 import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
@@ -363,10 +362,30 @@ function extractCppClassFields(classNode: TreeSitterNode): SubDeclaration[] {
  * into typeMap would cause spurious receiver edges (e.g. `int x` → `int`).
  */
 const CPP_PRIMITIVE_TYPES = new Set([
-  'int', 'long', 'short', 'unsigned', 'signed', 'float', 'double',
-  'char', 'bool', 'void', 'wchar_t', 'auto', 'size_t', 'uint8_t',
-  'uint16_t', 'uint32_t', 'uint64_t', 'int8_t', 'int16_t', 'int32_t',
-  'int64_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t',
+  'int',
+  'long',
+  'short',
+  'unsigned',
+  'signed',
+  'float',
+  'double',
+  'char',
+  'bool',
+  'void',
+  'wchar_t',
+  'auto',
+  'size_t',
+  'uint8_t',
+  'uint16_t',
+  'uint32_t',
+  'uint64_t',
+  'int8_t',
+  'int16_t',
+  'int32_t',
+  'int64_t',
+  'ptrdiff_t',
+  'intptr_t',
+  'uintptr_t',
 ]);
 
 function isPrimitiveCppType(typeName: string): boolean {
