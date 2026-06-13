@@ -1253,8 +1253,7 @@ async function parseFilesWasmInline(
 /**
  * Backfill helper: small batches use the inline (main-thread) path; larger
  * batches keep the worker-pool isolation against tree-sitter WASM crashes
- * (#965). Threshold matches typical engine-parity drop sizes (a few fixture
- * files in one or two languages).
+ * (#965). See INLINE_BACKFILL_THRESHOLD for threshold rationale.
  *
  * `opts.symbolsOnly` skips the AST/complexity/CFG/dataflow visitors in the
  * worker (and their result serialization across the thread boundary) for
