@@ -407,9 +407,11 @@ async function runPostNativeAnalysis(
  *   - array → incremental; two cheap gate queries decide scope:
  *       Gate A: any class/interface/trait/struct/record nodes in changed files?
  *               If yes, a new implementor may have appeared — full scan required.
- *       Gate B: any `calls` edges from changed-file sources targeting class-kind
- *               nodes? If yes, the RTA set may have grown, enabling previously
- *               filtered expansions in unchanged caller files — full scan required.
+ *       Gate B: any `calls` edges from changed-file sources targeting class/constructor/
+ *               function-kind nodes? If yes, the RTA set may have grown (older native
+ *               engine versions store constructor calls under constructor/function kinds),
+ *               enabling previously filtered expansions in unchanged caller files —
+ *               full scan required.
  *       If neither gate fires: scope `callToMethods` to `src.file IN changedFiles`
  *       (safe because no hierarchy or RTA evidence changed).
  *
@@ -499,9 +501,11 @@ function runPostNativeCha(
   //   valid expansions, so the full scan is required.
   //
   // Gate B: did a changed file add new RTA evidence (`new ConcreteX()`)?
-  //   A new `calls` edge to a class-kind target means the instantiated set grew —
-  //   previously RTA-filtered expansions in unchanged caller files become
-  //   admissible, so the full scan is required.
+  //   A new `calls` edge to a class/constructor/function-kind target means the
+  //   instantiated set may have grown (older native engine versions store constructor
+  //   calls under constructor/function kinds rather than class) — previously
+  //   RTA-filtered expansions in unchanged caller files become admissible, so the
+  //   full scan is required.
   //
   // If neither gate fires, the hierarchy and RTA set are unchanged for all files
   // outside changedFiles, so restricting to changed-file sources is safe.
@@ -524,7 +528,11 @@ function runPostNativeCha(
       if (row) gateAFired = true;
     }
 
-    // Gate B: calls from changed-file sources to class-kind targets?
+    // Gate B: calls from changed-file sources to class/constructor/function-kind targets?
+    // Mirrors the two-tier RTA collection above: primary checks class-kind, but
+    // older native engine versions store constructor calls under constructor/function
+    // kinds. If either tier has new evidence, the instantiated set may have grown and
+    // a full scan is required.
     let gateBFired = false;
     if (!gateAFired) {
       for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
@@ -535,7 +543,8 @@ function runPostNativeCha(
             `SELECT 1 FROM edges e
              JOIN nodes src ON e.source_id = src.id
              JOIN nodes tgt ON e.target_id = tgt.id
-             WHERE e.kind = 'calls' AND tgt.kind = 'class'
+             WHERE e.kind = 'calls'
+             AND tgt.kind IN ('class', 'constructor', 'function')
              AND src.file IN (${ph})
              LIMIT 1`,
           )
