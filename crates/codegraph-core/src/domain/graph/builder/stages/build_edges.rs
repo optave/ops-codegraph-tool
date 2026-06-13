@@ -360,50 +360,55 @@ fn resolve_via_points_to<'a>(
     }
 }
 
+/// Per-call-site inputs for `emit_pts_alias_edges`.
+/// Groups the lookup parameters so the function stays within the argument-count limit.
+struct PtsAliasCtx<'a> {
+    pts: &'a HashMap<String, HashSet<String>>,
+    lookup_name: &'a str,
+    call_line: u32,
+    caller_id: u32,
+    caller_name: &'a str,
+    is_dynamic: u32,
+    rel_path: &'a str,
+    imported_names: &'a HashMap<&'a str, &'a str>,
+    type_map: &'a HashMap<&'a str, (&'a str, f64)>,
+}
+
 /// Resolve each pts alias of `lookup_name` and emit hop-penalised call edges.
 /// Shared by the no-receiver gate and the receiver-key (`rest.prop()`) fallback;
 /// mirrors the alias-emission loops in buildFileCallEdges (build-edges.ts).
-#[allow(clippy::too_many_arguments)]
 fn emit_pts_alias_edges<'a>(
     ctx: &EdgeContext<'a>,
-    pts: &HashMap<String, HashSet<String>>,
-    lookup_name: &str,
-    call_line: u32,
-    caller_id: u32,
-    caller_name: &str,
-    is_dynamic: u32,
-    rel_path: &str,
-    imported_names: &HashMap<&str, &str>,
-    type_map: &HashMap<&str, (&str, f64)>,
+    alias_ctx: &PtsAliasCtx<'_>,
     seen_edges: &HashSet<u64>,
     pts_edge_map: &mut HashMap<u64, usize>,
     edges: &mut Vec<ComputedEdge>,
 ) {
-    for alias in resolve_via_points_to(lookup_name, pts) {
-        let alias_imported_from = imported_names.get(alias).copied();
+    for alias in resolve_via_points_to(alias_ctx.lookup_name, alias_ctx.pts) {
+        let alias_imported_from = alias_ctx.imported_names.get(alias).copied();
         let alias_call = CallInfo {
             name: alias.to_string(),
-            line: call_line,
+            line: alias_ctx.call_line,
             dynamic: Some(true),
             receiver: None,
         };
         let mut alias_targets = resolve_call_targets(
-            ctx, &alias_call, rel_path, alias_imported_from, type_map, caller_name,
+            ctx, &alias_call, alias_ctx.rel_path, alias_imported_from, alias_ctx.type_map, alias_ctx.caller_name,
         );
-        sort_targets_by_confidence(&mut alias_targets, rel_path, alias_imported_from);
+        sort_targets_by_confidence(&mut alias_targets, alias_ctx.rel_path, alias_imported_from);
         for t in &alias_targets {
-            let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
-            if t.id != caller_id && !seen_edges.contains(&edge_key) && !pts_edge_map.contains_key(&edge_key) {
-                let conf = resolve::compute_confidence(rel_path, &t.file, alias_imported_from)
+            let edge_key = ((alias_ctx.caller_id as u64) << 32) | (t.id as u64);
+            if t.id != alias_ctx.caller_id && !seen_edges.contains(&edge_key) && !pts_edge_map.contains_key(&edge_key) {
+                let conf = resolve::compute_confidence(alias_ctx.rel_path, &t.file, alias_imported_from)
                     - PROPAGATION_HOP_PENALTY;
                 if conf > 0.0 {
                     pts_edge_map.insert(edge_key, edges.len());
                     edges.push(ComputedEdge {
-                        source_id: caller_id,
+                        source_id: alias_ctx.caller_id,
                         target_id: t.id,
                         kind: "calls".to_string(),
                         confidence: conf,
-                        dynamic: is_dynamic,
+                        dynamic: alias_ctx.is_dynamic,
                     });
                 }
             }
@@ -593,8 +598,21 @@ fn process_file<'a>(
                 };
                 if let Some(lookup_name) = lookup_name {
                     emit_pts_alias_edges(
-                        ctx, pts, &lookup_name, call.line, caller_id, caller_name, is_dynamic,
-                        rel_path, &imported_names, &type_map, &seen_edges, &mut pts_edge_map, edges,
+                        ctx,
+                        &PtsAliasCtx {
+                            pts,
+                            lookup_name: &lookup_name,
+                            call_line: call.line,
+                            caller_id,
+                            caller_name,
+                            is_dynamic,
+                            rel_path,
+                            imported_names: &imported_names,
+                            type_map: &type_map,
+                        },
+                        &seen_edges,
+                        &mut pts_edge_map,
+                        edges,
                     );
                 }
             }
@@ -609,8 +627,21 @@ fn process_file<'a>(
                     let receiver_key = format!("{}.{}", receiver, call.name);
                     if pts.contains_key(receiver_key.as_str()) {
                         emit_pts_alias_edges(
-                            ctx, pts, &receiver_key, call.line, caller_id, caller_name, is_dynamic,
-                            rel_path, &imported_names, &type_map, &seen_edges, &mut pts_edge_map, edges,
+                            ctx,
+                            &PtsAliasCtx {
+                                pts,
+                                lookup_name: &receiver_key,
+                                call_line: call.line,
+                                caller_id,
+                                caller_name,
+                                is_dynamic,
+                                rel_path,
+                                imported_names: &imported_names,
+                                type_map: &type_map,
+                            },
+                            &seen_edges,
+                            &mut pts_edge_map,
+                            edges,
                         );
                     }
                 }
