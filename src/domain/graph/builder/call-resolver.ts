@@ -93,7 +93,7 @@ export function findCaller(
 
   for (const def of definitions) {
     if (def.line <= call.line) {
-      const end = def.endLine || Infinity;
+      const end = def.endLine ?? Infinity;
       if (call.line <= end) {
         const span = end === Infinity ? Infinity : end - def.line;
         if (CALLABLE_KINDS.has(def.kind)) {
