@@ -702,7 +702,7 @@ async function runPostNativeThisDispatch(
   changedFiles: string[] | undefined,
   isFullBuild: boolean,
 ): Promise<{ elapsedMs: number; targetIds: Set<number>; affectedFiles: Set<string> }> {
-  const t0 = Date.now();
+  const t0 = performance.now();
   const targetIds = new Set<number>();
   // Files containing endpoints of newly inserted edges — lets the caller scope
   // role re-classification to the nodes whose fan-in/out actually changed.
@@ -934,7 +934,7 @@ async function runPostNativeThisDispatch(
     (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
 
-  return { elapsedMs: Date.now() - t0, targetIds, affectedFiles };
+  return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
 }
 
 interface PostPassTimings {
