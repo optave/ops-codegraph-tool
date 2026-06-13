@@ -90,7 +90,8 @@ try {
 	if (typeof parser.disposeParsers === 'function') disposeParsers = parser.disposeParsers;
 } catch { /* older release — no worker pool to dispose */ }
 
-const INCREMENTAL_RUNS = 3;
+const WARMUP_RUNS = 2;
+const INCREMENTAL_RUNS = 5;
 const QUERY_RUNS = 5;
 const QUERY_WARMUP_RUNS = 3;
 const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
@@ -154,6 +155,9 @@ const dbSizeBytes = fs.statSync(dbPath).size;
 console.error(`  [${engine}] Benchmarking no-op rebuild...`);
 let noopRebuildMs = null;
 try {
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		await buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE });
+	}
 	const noopTimings = [];
 	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
 		const start = performance.now();
@@ -170,6 +174,10 @@ const original = fs.readFileSync(PROBE_FILE, 'utf8');
 let oneFileRebuildMs = null;
 let oneFilePhases = null;
 try {
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		fs.writeFileSync(PROBE_FILE, original + `\n// warmup-${i}\n`);
+		await buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE });
+	}
 	const oneFileRuns = [];
 	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
