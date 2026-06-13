@@ -9,6 +9,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/snapshot-pre-bash.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/check-readme.sh\"",
             "timeout": 10
           },
@@ -79,6 +84,11 @@
       {
         "matcher": "Bash",
         "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/track-bash-writes.sh\"",
+            "timeout": 5
+          },
           {
             "type": "command",
             "command": "p=\"${CLAUDE_PROJECT_DIR}\"; [ -d \"$p/.claude/hooks\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -d \"$p/.claude/hooks\" ] || exit 0; bash \"$p/.claude/hooks/track-moves.sh\"",
