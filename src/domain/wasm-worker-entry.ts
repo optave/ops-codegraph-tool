@@ -115,6 +115,7 @@ const COMMON_QUERY_PATTERNS: string[] = [
   '(variable_declarator name: (identifier) @varfn_name value: (generator_function) @varfn_value)',
   '(method_definition name: (property_identifier) @meth_name) @meth_node',
   '(method_definition name: (private_property_identifier) @meth_name) @meth_node',
+  '(method_definition name: (computed_property_name) @meth_name) @meth_node',
   '(import_statement source: (string) @imp_source) @imp_node',
   '(export_statement) @exp_node',
   '(call_expression function: (identifier) @callfn_name) @callfn_node',
@@ -125,11 +126,17 @@ const COMMON_QUERY_PATTERNS: string[] = [
   '(expression_statement (assignment_expression left: (member_expression) @assign_left right: (_) @assign_right)) @assign_node',
 ];
 
-const JS_CLASS_PATTERN: string = '(class_declaration name: (identifier) @cls_name) @cls_node';
+const JS_CLASS_PATTERNS: string[] = [
+  '(class_declaration name: (identifier) @cls_name) @cls_node',
+  // class expressions: `return class Foo extends Bar { ... }` or `const X = class Foo { ... }`
+  '(class name: (identifier) @cls_name) @cls_node',
+];
 
 const TS_EXTRA_PATTERNS: string[] = [
   '(class_declaration name: (type_identifier) @cls_name) @cls_node',
   '(abstract_class_declaration name: (type_identifier) @cls_name) @cls_node',
+  // class expressions: `return class Foo extends Bar { ... }`
+  '(class name: (type_identifier) @cls_name) @cls_node',
   '(interface_declaration name: (type_identifier) @iface_name) @iface_node',
   '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
 ];
@@ -433,7 +440,7 @@ async function loadLanguageLazy(entry: LanguageRegistryEntry): Promise<Parser | 
       const isTS = entry.id === 'typescript' || entry.id === 'tsx';
       const patterns = isTS
         ? [...COMMON_QUERY_PATTERNS, ...TS_EXTRA_PATTERNS]
-        : [...COMMON_QUERY_PATTERNS, JS_CLASS_PATTERN];
+        : [...COMMON_QUERY_PATTERNS, ...JS_CLASS_PATTERNS];
       _queries.set(entry.id, new Query(lang, patterns.join('\n')));
     }
     return parser;

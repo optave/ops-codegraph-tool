@@ -1265,4 +1265,118 @@ describe('JavaScript parser', () => {
       );
     });
   });
+
+  describe('computed method name extraction (#1471)', () => {
+    it('extracts computed getter method from object literal', () => {
+      const symbols = parseJS(`const obj = { get ['property7']() {} };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: "['property7']", kind: 'method' }),
+      );
+    });
+
+    it('extracts computed setter method with parameter from object literal', () => {
+      const symbols = parseJS(`const obj = { set ['property8'](value) {} };`);
+      const def = symbols.definitions.find((d) => d.name === "['property8']");
+      expect(def).toBeDefined();
+      expect(def).toMatchObject({ kind: 'method' });
+      expect(def!.children).toContainEqual(
+        expect.objectContaining({ name: 'value', kind: 'parameter' }),
+      );
+    });
+
+    it('extracts computed regular method with parameter from object literal', () => {
+      const symbols = parseJS(`const obj = { ['property9'](parameters) {} };`);
+      const def = symbols.definitions.find((d) => d.name === "['property9']");
+      expect(def).toBeDefined();
+      expect(def!.children).toContainEqual(
+        expect.objectContaining({ name: 'parameters', kind: 'parameter' }),
+      );
+    });
+
+    it('extracts computed generator method from object literal', () => {
+      const symbols = parseJS(`const obj = { *['generator10'](parameters) {} };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: "['generator10']", kind: 'method' }),
+      );
+    });
+
+    it('extracts computed async method from object literal', () => {
+      const symbols = parseJS(`const obj = { async ['property11'](parameters) {} };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: "['property11']", kind: 'method' }),
+      );
+    });
+  });
+
+  describe('class expression inside function extraction (#1471)', () => {
+    it('extracts named class expression returned from a function', () => {
+      const symbols = parseJS(
+        `function mixin() { return class PostMixin extends A { constructor() { super(); } }; }`,
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'PostMixin', kind: 'class' }),
+      );
+    });
+
+    it('records extends relationship for class expression inside function', () => {
+      const symbols = parseJS(`function mixin() { return class PostMixin extends A { m() {} }; }`);
+      expect(symbols.classes).toContainEqual(
+        expect.objectContaining({ name: 'PostMixin', extends: 'A' }),
+      );
+    });
+
+    it('extracts class field properties as children of class expression', () => {
+      const symbols = parseJS(
+        `function mixin() { return class PostMixin extends A { w = 1; eee = this; }; }`,
+      );
+      const pm = symbols.definitions.find((d) => d.name === 'PostMixin');
+      expect(pm).toBeDefined();
+      expect(pm!.children).toContainEqual(expect.objectContaining({ name: 'w', kind: 'property' }));
+      expect(pm!.children).toContainEqual(
+        expect.objectContaining({ name: 'eee', kind: 'property' }),
+      );
+    });
+  });
+
+  describe('array destructuring constant extraction (#1471)', () => {
+    it('extracts const array pattern as a single constant node', () => {
+      const symbols = parseJS(`const [x, y] = new Set([() => {}, () => {}]);`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: '[x, y]', kind: 'constant' }),
+      );
+    });
+
+    it('does not extract let or var array destructuring', () => {
+      const symbols = parseJS(`let [a, b] = [1, 2];`);
+      expect(symbols.definitions.every((d) => d.name !== '[a, b]')).toBe(true);
+    });
+  });
+
+  describe('prototype method parameter extraction (#1471)', () => {
+    it('extracts parameters from Foo.prototype.bar = (x, y) => arrow', () => {
+      const symbols = parseJS(`function Arit() {}\nArit.prototype.sum = (x, y) => x + y;`);
+      const def = symbols.definitions.find((d) => d.name === 'Arit.sum');
+      expect(def).toBeDefined();
+      expect(def!.children).toContainEqual(
+        expect.objectContaining({ name: 'x', kind: 'parameter' }),
+      );
+      expect(def!.children).toContainEqual(
+        expect.objectContaining({ name: 'y', kind: 'parameter' }),
+      );
+    });
+
+    it('extracts parameters from Foo.prototype.bar = function(key, value)', () => {
+      const symbols = parseJS(
+        `function Foo() {}\nFoo.prototype.add = function(key, value) { this[key] = value; };`,
+      );
+      const def = symbols.definitions.find((d) => d.name === 'Foo.add');
+      expect(def).toBeDefined();
+      expect(def!.children).toContainEqual(
+        expect.objectContaining({ name: 'key', kind: 'parameter' }),
+      );
+      expect(def!.children).toContainEqual(
+        expect.objectContaining({ name: 'value', kind: 'parameter' }),
+      );
+    });
+  });
 });
