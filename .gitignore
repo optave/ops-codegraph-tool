@@ -6,6 +6,9 @@ dist/
 coverage/
 .env
 grammars/*.wasm
+crates/codegraph-core/index.js
+crates/codegraph-core/index.d.ts
+crates/codegraph-core/*.node
 .claude/session-edits.log
 .claude/worktrees/
 generated/DEPENDENCIES.md
