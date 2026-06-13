@@ -1,7 +1,7 @@
 ---
 name: titan-run
 description: Run the full Titan Paradigm pipeline end-to-end by dispatching each phase to sub-agents with fresh context windows. Orchestrates recon → gauntlet → sync → forge → grind (+ repo-provided parity audit) automatically.
-argument-hint: <path (default: .)> <--skip-recon> <--skip-gauntlet> <--start-from recon|gauntlet|sync|forge|grind|parity> <--gauntlet-batch-size 5> <--yes>
+argument-hint: <path (default: .)> <--skip-recon> <--skip-gauntlet> <--start-from recon|gauntlet|sync|forge|grind|parity|close> <--gauntlet-batch-size 5> <--yes>
 allowed-tools: Agent, Read, Bash, Glob, Write, Edit
 ---
 
@@ -16,7 +16,7 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
 - `<path>` → target path (passed to recon)
 - `--skip-recon` → skip recon (assumes artifacts exist)
 - `--skip-gauntlet` → skip gauntlet (assumes artifacts exist)
-- `--start-from <phase>` → jump to phase: `recon`, `gauntlet`, `sync`, `forge`, `grind`, `parity`
+- `--start-from <phase>` → jump to phase: `recon`, `gauntlet`, `sync`, `forge`, `grind`, `parity`, `close`
 - `--gauntlet-batch-size <N>` → batch size for gauntlet (default: 5)
 - `--yes` → skip all confirmation prompts in the orchestrator (pre-pipeline, forge checkpoint, and resume prompts) and in forge (per-phase confirmation)
 
@@ -50,7 +50,7 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['<PHASE>']=s.phaseTimestamps['<PHASE>']||{};s.phaseTimestamps['<PHASE>'].completedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));"
    ```
 
-   Replace `<PHASE>` with `recon`, `gauntlet`, `sync`, `forge`, `parity`, or `close`. **Run the start command immediately before dispatching each phase's first sub-agent, and the completion command immediately after post-phase validation passes.** If resuming a phase (e.g., gauntlet loop iteration 2+), do NOT overwrite `startedAt` — only set it if it doesn't already exist.
+   Replace `<PHASE>` with `recon`, `gauntlet`, `sync`, `forge`, `grind`, `parity`, or `close`. **Run the start command immediately before dispatching each phase's first sub-agent, and the completion command immediately after post-phase validation passes.** If resuming a phase (e.g., gauntlet loop iteration 2+), do NOT overwrite `startedAt` — only set it if it doesn't already exist.
 
    **Timestamp validation:** After recording `completedAt` for any phase, verify `startedAt < completedAt`:
    ```bash
