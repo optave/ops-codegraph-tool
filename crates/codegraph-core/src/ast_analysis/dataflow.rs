@@ -908,8 +908,8 @@ fn find_binding(scope_stack: &[ScopeFrame], name: &str) -> Option<BindingInfo> {
         }
         if let Some(local) = scope.locals.get(name) {
             let confidence = match local {
-                LocalSource::CallReturn { .. } => 0.9,
-                LocalSource::Destructured { .. } => 0.8,
+                LocalSource::CallReturn => 0.9,
+                LocalSource::Destructured => 0.8,
             };
             return Some(BindingInfo {
                 binding_type: "local".to_string(),
