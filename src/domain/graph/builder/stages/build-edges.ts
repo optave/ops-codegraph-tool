@@ -45,7 +45,13 @@ import {
 import type { ChaContext } from '../cha.js';
 import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
-import { BUILTIN_RECEIVERS, batchInsertEdges, runChaPostPass } from '../helpers.js';
+import {
+  BUILTIN_RECEIVERS,
+  batchInsertEdges,
+  CHA_DISPATCH_PENALTY,
+  CHA_TYPED_DISPATCH_CONFIDENCE,
+  runChaPostPass,
+} from '../helpers.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -100,9 +106,6 @@ interface NativeEdge {
   confidence: number;
   dynamic: number;
 }
-
-/** Phase 8.5: confidence penalty applied to CHA-dispatch edges. */
-export const CHA_DISPATCH_PENALTY = 0.1;
 
 // ── Node lookup setup ───────────────────────────────────────────────────
 
@@ -735,13 +738,12 @@ function buildChaPostPass(
       for (const t of chaTargets) {
         const edgeKey = `${caller.id}|${t.id}`;
         if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
-          // Typed-receiver (interface/CHA) dispatch: use the same hardcoded 0.8 that
-          // runChaPostPass (helpers.ts) and runPostNativeCha (native-orchestrator.ts)
-          // use — file proximity is not meaningful for virtual dispatch confidence.
+          // Typed-receiver (interface/CHA) dispatch: use CHA_TYPED_DISPATCH_CONFIDENCE
+          // — file proximity is not meaningful for virtual dispatch confidence.
           // this/super dispatch keeps computeConfidence-based proximity scoring to
           // match runPostNativeThisDispatch (native-orchestrator.ts).
           const conf = isTypedReceiverDispatch
-            ? 0.8
+            ? CHA_TYPED_DISPATCH_CONFIDENCE
             : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenByPair.add(edgeKey);
@@ -1327,13 +1329,12 @@ function buildFileCallEdges(
       for (const t of chaTargets) {
         const edgeKey = `${caller.id}|${t.id}`;
         if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
-          // Typed-receiver (interface/CHA) dispatch: use the same hardcoded 0.8 that
-          // runChaPostPass (helpers.ts) and runPostNativeCha (native-orchestrator.ts)
-          // use — file proximity is not meaningful for virtual dispatch confidence.
+          // Typed-receiver (interface/CHA) dispatch: use CHA_TYPED_DISPATCH_CONFIDENCE
+          // — file proximity is not meaningful for virtual dispatch confidence.
           // this/super dispatch keeps computeConfidence-based proximity scoring to
-          // match runPostNativeThisDispatch (native-orchestrator.ts line 906).
+          // match runPostNativeThisDispatch (native-orchestrator.ts).
           const conf = isTypedReceiverDispatch
-            ? 0.8
+            ? CHA_TYPED_DISPATCH_CONFIDENCE
             : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenCallEdges.add(edgeKey);
