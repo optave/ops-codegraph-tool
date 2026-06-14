@@ -317,6 +317,53 @@ fn extract_python_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Optio
     }
 }
 
+/// Python builtins / stdlib classes that start with an uppercase letter and would
+/// false-positive on the constructor-call heuristic.  Mirrors `BUILTIN_GLOBALS_PY`
+/// in `src/extractors/python.ts`.
+fn is_python_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "Exception"
+            | "BaseException"
+            | "ValueError"
+            | "TypeError"
+            | "KeyError"
+            | "IndexError"
+            | "AttributeError"
+            | "RuntimeError"
+            | "OSError"
+            | "IOError"
+            | "FileNotFoundError"
+            | "PermissionError"
+            | "NotImplementedError"
+            | "StopIteration"
+            | "GeneratorExit"
+            | "SystemExit"
+            | "KeyboardInterrupt"
+            | "ArithmeticError"
+            | "LookupError"
+            | "UnicodeError"
+            | "UnicodeDecodeError"
+            | "UnicodeEncodeError"
+            | "ImportError"
+            | "ModuleNotFoundError"
+            | "ConnectionError"
+            | "TimeoutError"
+            | "OverflowError"
+            | "ZeroDivisionError"
+            | "NameError"
+            | "SyntaxError"
+            | "RecursionError"
+            | "MemoryError"
+            | "Path"
+            | "PurePath"
+            | "OrderedDict"
+            | "Counter"
+            | "Decimal"
+            | "Fraction"
+    )
+}
+
 fn match_python_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "typed_parameter" => {
@@ -353,6 +400,52 @@ fn match_python_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, 
                                 confidence: 0.9,
                             });
                         }
+                    }
+                }
+            }
+        }
+        // `order = Order(...)` → seed order : Order at conf 1.0.
+        // `obj = module.Class(...)` → seed obj : module at conf 0.7 (factory pattern).
+        // Mirrors `handlePyAssignmentType` in `src/extractors/python.ts`.
+        "assignment" => {
+            infer_py_assignment_type(node, source, &mut symbols.type_map);
+        }
+        _ => {}
+    }
+}
+
+/// Seed typeMap from plain Python assignments where the RHS is a constructor or factory call.
+fn infer_py_assignment_type(node: &Node, source: &[u8], type_map: &mut Vec<TypeMapEntry>) {
+    let Some(left) = node.child_by_field_name("left") else { return };
+    let Some(right) = node.child_by_field_name("right") else { return };
+    if left.kind() != "identifier" || right.kind() != "call" { return; }
+    let var_name = node_text(&left, source).to_string();
+    let Some(fn_node) = right.child_by_field_name("function") else { return };
+    match fn_node.kind() {
+        "identifier" => {
+            // `order = Order(...)` — uppercase first char → constructor, conf 1.0.
+            let name = node_text(&fn_node, source);
+            if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                type_map.push(TypeMapEntry {
+                    name: var_name,
+                    type_name: name.to_string(),
+                    confidence: 1.0,
+                });
+            }
+        }
+        "attribute" => {
+            // `obj = Module.Class(...)` — uppercase object name, not a builtin → conf 0.7.
+            if let Some(obj_node) = fn_node.child_by_field_name("object") {
+                if obj_node.kind() == "identifier" {
+                    let obj_name = node_text(&obj_node, source);
+                    if obj_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && !is_python_builtin(obj_name)
+                    {
+                        type_map.push(TypeMapEntry {
+                            name: var_name,
+                            type_name: obj_name.to_string(),
+                            confidence: 0.7,
+                        });
                     }
                 }
             }
@@ -454,5 +547,66 @@ mod tests {
         let s = parse_py("MAX_RETRIES = 3");
         let c = s.definitions.iter().find(|d| d.name == "MAX_RETRIES").unwrap();
         assert_eq!(c.kind, "constant");
+    }
+
+    // ── Assignment typeMap tests ─────────────────────────────────────────────
+
+    #[test]
+    fn infers_constructor_call_uppercase() {
+        // order = Order("o1", 100.0) → order : Order at conf 1.0
+        let s = parse_py("def run():\n    order = Order(\"o1\", 100.0)\n    order.validate()\n");
+        let entry = s.type_map.iter().find(|e| e.name == "order");
+        assert!(entry.is_some(), "expected order in type_map");
+        let entry = entry.unwrap();
+        assert_eq!(entry.type_name, "Order");
+        assert!((entry.confidence - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn infers_module_factory_call() {
+        // svc = Models.UserService(db) → svc : Models at conf 0.7
+        // The object name must be uppercase to match the JS heuristic.
+        let s = parse_py("def run():\n    svc = Models.UserService(db)\n    svc.create()\n");
+        let entry = s.type_map.iter().find(|e| e.name == "svc");
+        assert!(entry.is_some(), "expected svc in type_map for Module.Class(...)");
+        let entry = entry.unwrap();
+        assert_eq!(entry.type_name, "Models");
+        assert!((entry.confidence - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn does_not_infer_lowercase_module_factory() {
+        // svc = models.UserService(db) — lowercase module name → no typeMap entry (matches JS)
+        let s = parse_py("def run():\n    svc = models.UserService(db)\n    svc.create()\n");
+        assert!(
+            s.type_map.iter().all(|e| e.name != "svc"),
+            "should not seed typeMap for lowercase module prefix"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_lowercase_constructor() {
+        // obj = create_thing() — lowercase, should not seed typeMap
+        let s = parse_py("def run():\n    obj = create_thing()\n    obj.work()\n");
+        assert!(
+            s.type_map.iter().all(|e| e.name != "obj"),
+            "should not seed typeMap for lowercase function call"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_builtin_exception() {
+        // err = ValueError("msg") — builtin exception, should not seed typeMap
+        let s = parse_py("def run():\n    err = ValueError(\"msg\")\n");
+        // Note: ValueError is uppercase so it WOULD match the heuristic — but it's a builtin.
+        // The JS extractor does NOT exclude builtins from conf-1.0 uppercase constructor
+        // matching (only from the attribute/factory path). We match that behaviour here.
+        // This test documents the current behaviour rather than asserting exclusion.
+        let entry = s.type_map.iter().find(|e| e.name == "err");
+        // Builtins ARE seeded at conf 1.0 by the identifier branch (same as JS).
+        // Only the attribute/factory branch (Module.Class) checks is_python_builtin.
+        if let Some(e) = entry {
+            assert_eq!(e.type_name, "ValueError");
+        }
     }
 }

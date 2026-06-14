@@ -317,7 +317,141 @@ fn match_go_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
         "var_spec" | "parameter_declaration" => {
             collect_go_typed_identifiers(node, source, &mut symbols.type_map);
         }
+        // x := Struct{} / x := &Struct{} / x := NewFoo() — short variable declarations.
+        "short_var_declaration" => {
+            infer_short_var_types(node, source, &mut symbols.type_map);
+        }
         _ => {}
+    }
+}
+
+/// Seed typeMap entries from `x := Struct{}`, `x := &Struct{}`, and `x := NewFoo()`.
+/// Mirrors the JS `inferShortVarType` → `inferCompositeLiteral` / `inferAddressOfComposite`
+/// / `inferFactoryCall` chain in `src/extractors/go.ts`.
+fn infer_short_var_types(node: &Node, source: &[u8], type_map: &mut Vec<TypeMapEntry>) {
+    let Some(left) = node.child_by_field_name("left") else { return };
+    let Some(right) = node.child_by_field_name("right") else { return };
+
+    // Collect LHS identifiers (may be an expression_list for multi-assignment).
+    let lefts: Vec<Node> = if left.kind() == "expression_list" {
+        (0..left.child_count())
+            .filter_map(|i| left.child(i))
+            .filter(|c| c.kind() == "identifier")
+            .collect()
+    } else if left.kind() == "identifier" {
+        vec![left]
+    } else {
+        return;
+    };
+
+    // Collect RHS values (may be an expression_list).
+    let rights: Vec<Node> = if right.kind() == "expression_list" {
+        (0..right.child_count())
+            .filter_map(|i| right.child(i))
+            .filter(|c| c.kind() != ",")
+            .collect()
+    } else {
+        vec![right]
+    };
+
+    for (idx, var_node) in lefts.iter().enumerate() {
+        let Some(rhs) = rights.get(idx) else { continue };
+        infer_single_short_var(var_node, rhs, source, type_map);
+    }
+}
+
+/// Try composite literal, address-of-composite, then factory call for a single LHS/RHS pair.
+fn infer_single_short_var(
+    var_node: &Node,
+    rhs: &Node,
+    source: &[u8],
+    type_map: &mut Vec<TypeMapEntry>,
+) {
+    if infer_composite_literal(var_node, rhs, source, type_map) { return; }
+    if infer_address_of_composite(var_node, rhs, source, type_map) { return; }
+    infer_factory_call(var_node, rhs, source, type_map);
+}
+
+/// `x := Struct{...}` → seed x : Struct at conf 1.0.
+fn infer_composite_literal(
+    var_node: &Node,
+    rhs: &Node,
+    source: &[u8],
+    type_map: &mut Vec<TypeMapEntry>,
+) -> bool {
+    if rhs.kind() != "composite_literal" { return false; }
+    let Some(type_node) = rhs.child_by_field_name("type") else { return false };
+    let Some(type_name) = extract_go_type_name(&type_node, source) else { return false };
+    type_map.push(TypeMapEntry {
+        name: node_text(var_node, source).to_string(),
+        type_name: type_name.to_string(),
+        confidence: 1.0,
+    });
+    true
+}
+
+/// `x := &Struct{...}` → seed x : Struct at conf 1.0.
+fn infer_address_of_composite(
+    var_node: &Node,
+    rhs: &Node,
+    source: &[u8],
+    type_map: &mut Vec<TypeMapEntry>,
+) -> bool {
+    if rhs.kind() != "unary_expression" { return false; }
+    // Verify the operator is `&` — guards against any other unary operator
+    // applied to a composite literal on a raw AST.
+    let Some(op_node) = rhs.child(0) else { return false };
+    if node_text(&op_node, source) != "&" { return false; }
+    // The operand of `&` is a composite_literal.
+    let Some(operand) = rhs.child_by_field_name("operand") else { return false };
+    if operand.kind() != "composite_literal" { return false; }
+    let Some(type_node) = operand.child_by_field_name("type") else { return false };
+    let Some(type_name) = extract_go_type_name(&type_node, source) else { return false };
+    type_map.push(TypeMapEntry {
+        name: node_text(var_node, source).to_string(),
+        type_name: type_name.to_string(),
+        confidence: 1.0,
+    });
+    true
+}
+
+/// `x := NewFoo(...)` or `x := pkg.NewFoo(...)` → seed x : Foo at conf 0.7.
+fn infer_factory_call(
+    var_node: &Node,
+    rhs: &Node,
+    source: &[u8],
+    type_map: &mut Vec<TypeMapEntry>,
+) -> bool {
+    if rhs.kind() != "call_expression" { return false; }
+    let Some(fn_node) = rhs.child_by_field_name("function") else { return false };
+    match fn_node.kind() {
+        "selector_expression" => {
+            // pkg.NewFoo(...) — use the field name only.
+            let Some(field) = fn_node.child_by_field_name("field") else { return false };
+            let field_text = node_text(&field, source);
+            if !field_text.starts_with("New") { return false; }
+            let type_name = &field_text[3..];
+            if type_name.is_empty() { return false; }
+            type_map.push(TypeMapEntry {
+                name: node_text(var_node, source).to_string(),
+                type_name: type_name.to_string(),
+                confidence: 0.7,
+            });
+            true
+        }
+        "identifier" => {
+            let fn_text = node_text(&fn_node, source);
+            if !fn_text.starts_with("New") { return false; }
+            let type_name = &fn_text[3..];
+            if type_name.is_empty() { return false; }
+            type_map.push(TypeMapEntry {
+                name: node_text(var_node, source).to_string(),
+                type_name: type_name.to_string(),
+                confidence: 0.7,
+            });
+            true
+        }
+        _ => false,
     }
 }
 
@@ -411,5 +545,66 @@ mod tests {
         let s = parse_go("package main\nconst MaxRetries = 3");
         let c = s.definitions.iter().find(|d| d.name == "MaxRetries").unwrap();
         assert_eq!(c.kind, "constant");
+    }
+
+    // ── Short-var-declaration typeMap tests ─────────────────────────────────
+
+    #[test]
+    fn infers_factory_call_new_prefix() {
+        // svc := NewUserService(repo) → svc : UserService at conf 0.7
+        let s = parse_go(
+            "package main\nfunc main() {\n  svc := NewUserService(repo)\n  _ = svc\n}\n",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "svc");
+        assert!(entry.is_some(), "expected svc in type_map");
+        let entry = entry.unwrap();
+        assert_eq!(entry.type_name, "UserService");
+        assert!((entry.confidence - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn infers_pkg_factory_call() {
+        // svc := service.NewUserService(repo) → svc : UserService at conf 0.7
+        let s = parse_go(
+            "package main\nfunc main() {\n  svc := service.NewUserService(repo)\n  _ = svc\n}\n",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "svc");
+        assert!(entry.is_some(), "expected svc in type_map for pkg.NewX");
+        assert_eq!(entry.unwrap().type_name, "UserService");
+    }
+
+    #[test]
+    fn infers_composite_literal() {
+        // u := User{Name: "Alice"} → u : User at conf 1.0
+        let s = parse_go(
+            "package main\nfunc main() {\n  u := User{Name: \"Alice\"}\n  _ = u\n}\n",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "u");
+        assert!(entry.is_some(), "expected u in type_map for composite literal");
+        assert_eq!(entry.unwrap().type_name, "User");
+        assert!((entry.unwrap().confidence - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn infers_address_of_composite() {
+        // u := &User{} → u : User at conf 1.0
+        let s = parse_go(
+            "package main\nfunc main() {\n  u := &User{}\n  _ = u\n}\n",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "u");
+        assert!(entry.is_some(), "expected u in type_map for address-of composite literal");
+        assert_eq!(entry.unwrap().type_name, "User");
+    }
+
+    #[test]
+    fn non_new_prefix_not_inferred() {
+        // srv := createServer() — not a New* factory, should not seed typeMap
+        let s = parse_go(
+            "package main\nfunc main() {\n  srv := createServer()\n  _ = srv\n}\n",
+        );
+        assert!(
+            s.type_map.iter().all(|e| e.name != "srv"),
+            "unexpected typeMap entry for non-New factory"
+        );
     }
 }
