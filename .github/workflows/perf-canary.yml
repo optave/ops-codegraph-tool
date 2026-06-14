@@ -19,6 +19,7 @@ on:
     paths:
       - "src/extractors/**"
       - "src/domain/graph/**"
+      - "src/domain/parser.ts"
       - "crates/**"
       - "scripts/benchmark.ts"
       - "scripts/incremental-benchmark.ts"
