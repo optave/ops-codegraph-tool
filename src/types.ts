@@ -1268,8 +1268,16 @@ export interface BuildResult {
     edgesMs: number;
     structureMs: number;
     rolesMs: number;
+    /** Wall-clock time for the CHA expansion post-pass (native path only). */
+    chaMs?: number;
     /** Wall-clock time for the this/super dispatch WASM post-pass (native path only). */
     thisDispatchMs?: number;
+    /** Wall-clock time for the dropped-language gap detection + backfill (native path only). */
+    gapDetectMs?: number;
+    /** Wall-clock time for role re-classification after JS edge-writing post-passes (native path only). */
+    reclassifyMs?: number;
+    /** Wall-clock time for the technique-column backfill on native-written edges (native path only). */
+    techniqueBackfillMs?: number;
     astMs: number;
     complexityMs: number;
     cfgMs: number;

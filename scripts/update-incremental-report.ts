@@ -161,6 +161,55 @@ for (const engineKey of ['native', 'wasm']) {
 	md += `| Full build | ${formatMs(e.fullBuildMs)} |\n`;
 	md += `| No-op rebuild | ${e.noopRebuildMs != null ? formatMs(e.noopRebuildMs) : 'n/a'} |\n`;
 	md += `| 1-file rebuild | ${e.oneFileRebuildMs != null ? formatMs(e.oneFileRebuildMs) : 'n/a'} |\n\n`;
+
+	// 1-file rebuild phase breakdown — skipped when phases are unavailable (older
+	// benchmark entries that predate per-phase tracking, or failed runs).
+	const ph = e.oneFilePhases;
+	if (ph && typeof ph === 'object') {
+		md += `<details><summary>1-file rebuild phase breakdown (${engineKey})</summary>\n\n`;
+		md += '| Phase | Time |\n';
+		md += '|-------|-----:|\n';
+		// Core Rust pipeline phases (present for both engines)
+		const corePhases = [
+			['setup', 'setupMs'],
+			['collect', 'collectMs'],
+			['detect', 'detectMs'],
+			['parse', 'parseMs'],
+			['insert', 'insertMs'],
+			['resolve', 'resolveMs'],
+			['edges', 'edgesMs'],
+			['structure', 'structureMs'],
+			['roles', 'rolesMs'],
+		];
+		for (const [label, key] of corePhases) {
+			if (ph[key] != null) md += `| ${label} | ${formatMs(ph[key])} |\n`;
+		}
+		// Native-only JS post-pass phases (only present when engine=native)
+		if (engineKey === 'native') {
+			const nativePostPhases = [
+				['gap detect + backfill', 'gapDetectMs'],
+				['CHA expansion', 'chaMs'],
+				['this/super dispatch', 'thisDispatchMs'],
+				['role reclassify', 'reclassifyMs'],
+				['technique backfill', 'techniqueBackfillMs'],
+			];
+			for (const [label, key] of nativePostPhases) {
+				if (ph[key] != null) md += `| ${label} | ${formatMs(ph[key])} |\n`;
+			}
+		}
+		// Analysis phases (present for both engines)
+		const analysisPhases = [
+			['ast', 'astMs'],
+			['complexity', 'complexityMs'],
+			['cfg', 'cfgMs'],
+			['dataflow', 'dataflowMs'],
+			['finalize', 'finalizeMs'],
+		];
+		for (const [label, key] of analysisPhases) {
+			if (ph[key] != null) md += `| ${label} | ${formatMs(ph[key])} |\n`;
+		}
+		md += '\n</details>\n\n';
+	}
 }
 
 const r = latest.resolve;

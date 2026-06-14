@@ -716,7 +716,7 @@ async function runPostNativeThisDispatch(
   changedFiles: string[] | undefined,
   isFullBuild: boolean,
 ): Promise<{ elapsedMs: number; targetIds: Set<number>; affectedFiles: Set<string> }> {
-  const t0 = Date.now();
+  const t0 = performance.now();
   const targetIds = new Set<number>();
   // Files containing endpoints of newly inserted edges — lets the caller scope
   // role re-classification to the nodes whose fan-in/out actually changed.
@@ -948,7 +948,15 @@ async function runPostNativeThisDispatch(
     (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
 
-  return { elapsedMs: Date.now() - t0, targetIds, affectedFiles };
+  return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
+}
+
+interface PostPassTimings {
+  gapDetectMs: number;
+  chaMs: number;
+  thisDispatchMs: number;
+  reclassifyMs: number;
+  techniqueBackfillMs: number;
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -956,7 +964,7 @@ function formatNativeTimingResult(
   p: Record<string, number>,
   structurePatchMs: number,
   analysisTiming: { astMs: number; complexityMs: number; cfgMs: number; dataflowMs: number },
-  thisDispatchMs: number,
+  postPass: PostPassTimings,
 ): BuildResult {
   return {
     phases: {
@@ -969,7 +977,11 @@ function formatNativeTimingResult(
       edgesMs: +(p.edgesMs ?? 0).toFixed(1),
       structureMs: +((p.structureMs ?? 0) + structurePatchMs).toFixed(1),
       rolesMs: +(p.rolesMs ?? 0).toFixed(1),
-      thisDispatchMs: +thisDispatchMs.toFixed(1),
+      gapDetectMs: +postPass.gapDetectMs.toFixed(1),
+      chaMs: +postPass.chaMs.toFixed(1),
+      thisDispatchMs: +postPass.thisDispatchMs.toFixed(1),
+      reclassifyMs: +postPass.reclassifyMs.toFixed(1),
+      techniqueBackfillMs: +postPass.techniqueBackfillMs.toFixed(1),
       astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
       complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
       cfgMs: +(analysisTiming.cfgMs ?? 0).toFixed(1),
@@ -1508,8 +1520,14 @@ export async function tryNativeOrchestrator(
       ctx.db = openDb(ctx.dbPath);
       ctx.nativeFirstProxy = false;
     } else if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
-      // DB reopen failed — return partial result
-      return formatNativeTimingResult(p, 0, analysisTiming, 0);
+      // DB reopen failed — return partial result (no post-pass phases completed)
+      return formatNativeTimingResult(p, 0, analysisTiming, {
+        gapDetectMs: 0,
+        chaMs: 0,
+        thisDispatchMs: 0,
+        reclassifyMs: 0,
+        techniqueBackfillMs: 0,
+      });
     }
   }
 
@@ -1531,6 +1549,7 @@ export async function tryNativeOrchestrator(
   // gated below.
   const removedCount = result.removedCount ?? 0;
   const changedCount = result.changedCount ?? 0;
+  const gapDetectStart = performance.now();
   const gap = detectDroppedLanguageGap(ctx);
   if (
     result.isFullBuild ||
@@ -1541,6 +1560,7 @@ export async function tryNativeOrchestrator(
   ) {
     await backfillNativeDroppedFiles(ctx, gap);
   }
+  const gapDetectMs = performance.now() - gapDetectStart;
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
   // Returns the affected files so role re-classification below can be scoped to
@@ -1549,11 +1569,13 @@ export async function tryNativeOrchestrator(
   // Function-as-object-property methods (`fn.method = function() {}`) are extracted
   // natively by the Rust engine (#1432) and resolved in-build by its edge builder, so
   // no WASM re-parse post-pass is needed for them. `Foo.prototype.bar = fn` likewise.
+  const chaStart = performance.now();
   const { newEdgeCount: chaEdgeCount, affectedFiles: chaAffectedFiles } = runPostNativeCha(
     ctx.db as unknown as BetterSqlite3Database,
     // null = full build (scan all call→method edges); array = incremental (gate queries decide scope)
     result.isFullBuild ? null : (result.changedFiles ?? null),
   );
+  const chaMs = performance.now() - chaStart;
 
   // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
   // whose raw receiver info the Rust pipeline does not persist to DB.
@@ -1576,6 +1598,7 @@ export async function tryNativeOrchestrator(
   // files restores correctness without re-running the classifier over the
   // whole graph (which cost ~130ms per build on codegraph itself and was a
   // major part of the v3.12.0 native full-build benchmark regression).
+  let reclassifyMs = 0;
   if (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0) {
     const affectedFiles = [...new Set([...chaAffectedFiles, ...thisDispatchAffectedFiles])];
     // When edges were inserted but all their endpoint nodes have null `file`
@@ -1584,6 +1607,7 @@ export async function tryNativeOrchestrator(
     // case — scoped classification with an empty set would be a no-op, leaving
     // roles stale for those nodes.
     const scopedFiles = affectedFiles.length > 0 ? affectedFiles : null;
+    const reclassifyStart = performance.now();
     try {
       const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
         classifyNodeRoles: (
@@ -1600,13 +1624,16 @@ export async function tryNativeOrchestrator(
     } catch (err) {
       debug(`Post-pass role re-classification failed: ${toErrorMessage(err)}`);
     }
+    reclassifyMs = performance.now() - reclassifyStart;
   }
 
   // Backfill the `technique` column on `calls` edges written by the Rust
   // orchestrator, which does not write the column. Runs after all edge-writing
   // phases (including the WASM dropped-language backfill, CHA post-pass, and
   // this/super dispatch) so every new edge in this build cycle gets a label.
+  const techniqueBackfillStart = performance.now();
   backfillEdgeTechniquesAfterNativeOrchestrator(ctx.db, !!result.isFullBuild, result.changedFiles);
+  const techniqueBackfillMs = performance.now() - techniqueBackfillStart;
 
   // Re-count nodes/edges now that all edge-writing post-passes have run: the
   // Rust orchestrator captured its counts before the JS post-passes added
@@ -1651,5 +1678,11 @@ export async function tryNativeOrchestrator(
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, thisDispatchMs);
+  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, {
+    gapDetectMs,
+    chaMs,
+    thisDispatchMs,
+    reclassifyMs,
+    techniqueBackfillMs,
+  });
 }
