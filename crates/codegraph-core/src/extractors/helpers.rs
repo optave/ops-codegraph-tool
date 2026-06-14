@@ -958,7 +958,7 @@ pub fn extract_simple_parameters(
 
 // ── Type-map helpers ───────────────────────────────────────────────────────
 
-/// Merge a type-map entry into the sink with first-write-wins semantics,
+/// Merge a type-map entry into the sink with highest-confidence-wins semantics,
 /// matching `setTypeMapEntry` in `src/extractors/helpers.ts`.
 ///
 /// If the key already exists with equal-or-higher confidence the new entry is
@@ -997,8 +997,8 @@ pub fn set_type_map_entry(
 /// the default confidence of `0.9` shared by every Rust extractor.
 ///
 /// Delegates to [`set_type_map_entry`] so duplicate keys are deduplicated with
-/// first-write-wins semantics, matching `setTypeMapEntry` in
-/// `src/extractors/helpers.ts`.
+/// highest-confidence-wins semantics (first-write-wins at the uniform 0.9
+/// confidence), matching `setTypeMapEntry` in `src/extractors/helpers.ts`.
 pub fn push_type_map_entry(
     symbols: &mut FileSymbols,
     name: impl Into<String>,
