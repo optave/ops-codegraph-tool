@@ -1538,26 +1538,16 @@ export async function tryNativeOrchestrator(
   // stale native binaries). WASM handles those — backfill via WASM so both
   // engines process the same file set (#967).
   //
-  // Detect the gap once (fs walk + 2 DB queries, ~20–30ms) and use it for
-  // both gating and the backfill itself. On dirty incrementals/full builds
-  // the orchestrator signals trigger backfill, so the walk happens once
-  // (instead of redundantly inside backfill). On quiet incrementals we
-  // still pay the walk so we can detect brand-new files in dropped-language
-  // extensions — a gap that the orchestrator's `detect_removed_files`
-  // filter (#1070) leaves open (#1083, #1091). The pre-check is cheap
-  // because the expensive part (WASM re-parse of the missing set) is
-  // gated below.
-  const removedCount = result.removedCount ?? 0;
-  const changedCount = result.changedCount ?? 0;
+  // Detect the gap once (fs walk + 2 DB queries) and use it for both gating
+  // and the backfill itself. On quiet incrementals we still pay the walk so
+  // we can detect brand-new files in dropped-language extensions — a gap that
+  // the orchestrator's `detect_removed_files` filter (#1070) leaves open
+  // (#1083, #1091). The pre-check is cheap because the expensive part (WASM
+  // re-parse of the missing set) is gated below.
   const gapDetectStart = performance.now();
   const gap = detectDroppedLanguageGap(ctx);
-  if (
-    result.isFullBuild ||
-    removedCount > 0 ||
-    changedCount > 0 ||
-    gap.missingAbs.length > 0 ||
-    gap.staleRel.length > 0
-  ) {
+  const backfillHappened = gap.missingAbs.length > 0 || gap.staleRel.length > 0;
+  if (backfillHappened) {
     await backfillNativeDroppedFiles(ctx, gap);
   }
   const gapDetectMs = performance.now() - gapDetectStart;
@@ -1638,19 +1628,27 @@ export async function tryNativeOrchestrator(
   // Re-count nodes/edges now that all edge-writing post-passes have run: the
   // Rust orchestrator captured its counts before the JS post-passes added
   // edges, so both its summary and build_meta under-report (#1452).
+  //
+  // Fast path: skip the COUNT(*) scan when no post-pass wrote any edges.
+  // COUNT(*) on large tables (50K+ edges) is non-trivial, especially via the
+  // NativeDbProxy napi-rs round-trip. When all post-passes were no-ops, the
+  // Rust orchestrator's counts are still accurate — no re-count needed.
   let finalNodeCount = result.nodeCount ?? 0;
   let finalEdgeCount = result.edgeCount ?? 0;
-  try {
-    const counts = (ctx.db as unknown as BetterSqlite3Database)
-      .prepare('SELECT (SELECT COUNT(*) FROM nodes) AS n, (SELECT COUNT(*) FROM edges) AS e')
-      .get() as { n: number; e: number };
-    if (counts.n !== finalNodeCount || counts.e !== finalEdgeCount) {
-      finalNodeCount = counts.n;
-      finalEdgeCount = counts.e;
-      setBuildMeta(ctx.db, { node_count: finalNodeCount, edge_count: finalEdgeCount });
+  const postPassWroteData = backfillHappened || chaEdgeCount > 0 || thisDispatchTargetIds.size > 0;
+  if (postPassWroteData) {
+    try {
+      const counts = (ctx.db as unknown as BetterSqlite3Database)
+        .prepare('SELECT (SELECT COUNT(*) FROM nodes) AS n, (SELECT COUNT(*) FROM edges) AS e')
+        .get() as { n: number; e: number };
+      if (counts.n !== finalNodeCount || counts.e !== finalEdgeCount) {
+        finalNodeCount = counts.n;
+        finalEdgeCount = counts.e;
+        setBuildMeta(ctx.db, { node_count: finalNodeCount, edge_count: finalEdgeCount });
+      }
+    } catch (err) {
+      debug(`Post-pass node/edge re-count failed: ${toErrorMessage(err)}`);
     }
-  } catch (err) {
-    debug(`Post-pass node/edge re-count failed: ${toErrorMessage(err)}`);
   }
   info(
     `Native build orchestrator completed: ${finalNodeCount} nodes, ${finalEdgeCount} edges, ${result.fileCount ?? 0} files`,

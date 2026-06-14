@@ -1181,12 +1181,25 @@ async function parseFilesWasm(
 /**
  * Files at or below this count use the inline parse path (no worker spawn).
  *
- * Sized for typical engine-parity drops: a handful of fixture files in one
- * or two languages (the recurring HCL case is 4 files). Above this, the
- * worker-pool's IPC + crash-isolation cost (#965) is amortized over enough
- * parse work to be worth paying; below it, the ~1–2s cold-start dominates.
+ * The worker pool exists for crash safety (#965): exotic (non-required) WASM
+ * grammars can trigger uncatchable V8 fatal errors that would kill the main
+ * process. Running them in a worker means only the worker dies; the pool
+ * detects the exit, skips the file, respawns, and continues.
+ *
+ * JS/TS/TSX are required-tier grammars — they have never triggered the V8
+ * fatal crash class and are safe to run inline. The primary hot caller
+ * (this/super dispatch post-pass) exclusively handles JS/TS/TSX files and
+ * measured ~55–64ms/file through the pool vs ~8–10ms/file inline (#1435);
+ * IPC overhead scales linearly with file count, not amortised.
+ *
+ * The threshold is set high enough to keep typical this-dispatch batches
+ * (≤ 18 files on the codegraph corpus) on the inline path, while still
+ * routing truly large exotic-language drops (rare; typical HCL case is 4
+ * files) through the pool for crash isolation. Exotic-language drops are
+ * almost always well under this limit anyway, so they benefit from the
+ * inline fast path too without meaningful crash risk increase.
  */
-const INLINE_BACKFILL_THRESHOLD = 16;
+const INLINE_BACKFILL_THRESHOLD = 32;
 
 /**
  * Inline WASM parse (no worker) for small file batches.
@@ -1246,8 +1259,7 @@ async function parseFilesWasmInline(
 /**
  * Backfill helper: small batches use the inline (main-thread) path; larger
  * batches keep the worker-pool isolation against tree-sitter WASM crashes
- * (#965). Threshold matches typical engine-parity drop sizes (a few fixture
- * files in one or two languages).
+ * (#965). See INLINE_BACKFILL_THRESHOLD for threshold rationale.
  *
  * `opts.symbolsOnly` skips the AST/complexity/CFG/dataflow visitors in the
  * worker (and their result serialization across the thread boundary) for
