@@ -833,6 +833,46 @@ const user = repo.findById('alice');
     });
   });
 
+  // Explicit guard for the class expression (None) path in handleFieldDefTypeMap /
+  // enclosing_type_map_class (#1500). `const Foo = class { ... }` produces a
+  // tree-sitter `class` node (not `class_declaration`), so the enclosing-class
+  // lookup returns null/None and the bare-key branch fires at confidence 0.9.
+  // The normalize() loop above strips typeMap from the structural comparison,
+  // so a regression here would slip through undetected without this explicit guard.
+  it('TS — class expression field annotation seeds bare typeMap keys at 0.9, no class-scoped key (issue #1500)', () => {
+    const code = `
+const Foo = class {
+  private repo: Repo;
+  run() { this.repo.save(); }
+};
+`;
+    const wasm = wasmExtract(code, 'service.ts');
+    // WASM: typeMap is a Map<string, TypeMapEntry>
+    expect(wasm?.typeMap).toBeInstanceOf(Map);
+    expect(wasm?.typeMap?.get('repo')).toEqual({ type: 'Repo', confidence: 0.9 });
+    expect(wasm?.typeMap?.get('this.repo')).toEqual({ type: 'Repo', confidence: 0.9 });
+    expect(wasm?.typeMap?.has('Foo.repo')).toBe(false);
+
+    if (!hasNative) return;
+    const raw = nativeExtract(code, 'service.ts');
+    // Native: typeMap is a raw Vec<TypeMapEntry> array of { name, typeName, confidence }.
+    // patchTypeMap() (called in production) converts it to a Map — here we assert the
+    // raw extraction to verify the Rust None branch fires correctly.
+    const entries = raw?.typeMap as Array<{ name: string; typeName: string; confidence: number }>;
+    expect(Array.isArray(entries)).toBe(true);
+    const repoEntry = entries?.find((e) => e.name === 'repo');
+    expect(repoEntry, 'native typeMap missing bare "repo" key').toBeDefined();
+    expect(repoEntry).toMatchObject({ name: 'repo', typeName: 'Repo', confidence: 0.9 });
+    const thisRepoEntry = entries?.find((e) => e.name === 'this.repo');
+    expect(thisRepoEntry, 'native typeMap missing "this.repo" key').toBeDefined();
+    expect(thisRepoEntry).toMatchObject({ name: 'this.repo', typeName: 'Repo', confidence: 0.9 });
+    const scopedEntry = entries?.find((e) => e.name === 'Foo.repo');
+    expect(
+      scopedEntry,
+      'native typeMap must NOT contain "Foo.repo" for class expressions',
+    ).toBeUndefined();
+  });
+
   // Explicit guard for the WASM Python fix in #1189. The structural parity
   // loop above strips `self` from both sides via normalize(), so a regression
   // where WASM re-emits self/cls would slip through. Assert it directly.
