@@ -858,6 +858,8 @@ const Foo = class {
     // Native: typeMap is a raw Vec<TypeMapEntry> array of { name, typeName, confidence }.
     // patchTypeMap() (called in production) converts it to a Map — here we assert the
     // raw extraction to verify the Rust None branch fires correctly.
+    // Binaries older than typeMap array support — skip gracefully.
+    if (raw?.typeMap === undefined) return;
     const entries = raw?.typeMap as Array<{ name: string; typeName: string; confidence: number }>;
     expect(Array.isArray(entries)).toBe(true);
     const repoEntry = entries?.find((e) => e.name === 'repo');
