@@ -88,9 +88,13 @@ export function nearHelper() { return 0; }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
-function readEdgesWithConfidence(
-  dbPath: string,
-): Array<{ source: string; source_file: string; target: string; target_file: string; confidence: number }> {
+function readEdgesWithConfidence(dbPath: string): Array<{
+  source: string;
+  source_file: string;
+  target: string;
+  target_file: string;
+  confidence: number;
+}> {
   const db = new Database(dbPath, { readonly: true });
   try {
     return db
@@ -168,8 +172,7 @@ describe('confidence-sorted dedup: multi-target byName resolution (#1519)', () =
   it('far-target edge (other/helper.js) has confidence < 0.7 (different-directory proximity)', () => {
     const edges = readEdgesWithConfidence(path.join(tmpDir, '.codegraph', 'graph.db'));
     const farEdge = edges.find(
-      (e) =>
-        e.source === 'process' && e.target === 'helper' && e.target_file === 'other/helper.js',
+      (e) => e.source === 'process' && e.target === 'helper' && e.target_file === 'other/helper.js',
     );
     expect(farEdge).toBeDefined();
     // computeConfidence: different parent directory → 0.3 or 0.5.
@@ -183,8 +186,7 @@ describe('confidence-sorted dedup: multi-target byName resolution (#1519)', () =
       (e) => e.source === 'process' && e.target === 'helper' && e.target_file === 'src/helper.js',
     );
     const farEdge = edges.find(
-      (e) =>
-        e.source === 'process' && e.target === 'helper' && e.target_file === 'other/helper.js',
+      (e) => e.source === 'process' && e.target === 'helper' && e.target_file === 'other/helper.js',
     );
     expect(nearEdge).toBeDefined();
     expect(farEdge).toBeDefined();
@@ -220,10 +222,7 @@ describe('confidence-sorted dedup: pts alias loop ordering (#1519)', () => {
     // The local definition (same file, confidence 1.0 before penalty) must beat
     // the far definition in other/nearHelper.js (confidence 0.3 before penalty).
     const nearEdge = edges.find(
-      (e) =>
-        e.source === 'run' &&
-        e.target === 'nearHelper' &&
-        e.target_file === 'src/consumer.js',
+      (e) => e.source === 'run' && e.target === 'nearHelper' && e.target_file === 'src/consumer.js',
     );
     expect(
       nearEdge,
@@ -234,16 +233,11 @@ describe('confidence-sorted dedup: pts alias loop ordering (#1519)', () => {
   it('pts edge to local nearHelper has confidence > pts edge to far nearHelper (if both exist)', () => {
     const edges = readEdgesWithConfidence(path.join(tmpDir, '.codegraph', 'graph.db'));
     const localEdge = edges.find(
-      (e) =>
-        e.source === 'run' &&
-        e.target === 'nearHelper' &&
-        e.target_file === 'src/consumer.js',
+      (e) => e.source === 'run' && e.target === 'nearHelper' && e.target_file === 'src/consumer.js',
     );
     const farEdge = edges.find(
       (e) =>
-        e.source === 'run' &&
-        e.target === 'nearHelper' &&
-        e.target_file === 'other/nearHelper.js',
+        e.source === 'run' && e.target === 'nearHelper' && e.target_file === 'other/nearHelper.js',
     );
     // If both edges are present, the local one must have higher confidence.
     // The sort at build-edges.ts:1215-1222 ensures highest-confidence aliasTargets
