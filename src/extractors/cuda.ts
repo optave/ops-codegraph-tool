@@ -5,7 +5,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
+import { extractModifierVisibility, findChild, nodeEndLine, setTypeMapEntry } from './helpers.js';
 
 /**
  * Extract symbols from CUDA files.
@@ -229,10 +229,14 @@ function handleCudaDeclaration(node: TreeSitterNode, ctx: ExtractorOutput): void
     } else if (kind === 'identifier') {
       nameNode = child;
     }
+    // Note: pointer_declarator / reference_declarator children (e.g. `UserService *svc;`)
+    // are intentionally skipped here — they are also skipped by the native Rust
+    // match_c_family_type_map helper, which only handles 'init_declarator' and
+    // 'identifier' children. Both engines have the same scope for this case.
     if (!nameNode) continue;
     const varName = extractCudaFieldName(nameNode);
     if (varName) {
-      ctx.typeMap.set(varName, { type: typeName, confidence: 0.9 });
+      setTypeMapEntry(ctx.typeMap, varName, typeName, 0.9);
     }
   }
 }

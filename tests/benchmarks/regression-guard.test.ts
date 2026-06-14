@@ -277,6 +277,19 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   exemption above (which was a WASM metric; this is native). Exempt this
  *   release; remove once 3.13.0+ data confirms the steady-state.
  *
+ * - 3.12.0:No-op rebuild — CI runner variance on a sub-50ms native metric.
+ *   The 3.12.0 baseline captures noopRebuildMs=30 (build benchmark) and
+ *   noopRebuildMs=23 (incremental benchmark); the per-PR gate re-measures
+ *   dev on a fresh runner and lands at 48ms (+60%) and 48ms (+109%) on run
+ *   27457266151 — both exceed the NOISY_METRIC_THRESHOLD of 50% due to
+ *   sub-50ms variance on shared runners. This PR (#1487) adds warmup runs to
+ *   benchmark.ts on the no-op and 1-file rebuild tiers; on a true no-op
+ *   rebuild no files are re-parsed and build-edges.ts is never reached, so
+ *   none of the code changes in this branch execute on the hot path. The
+ *   delta is entirely shared-runner scheduling noise. Same shape and root
+ *   cause as 3.11.2:No-op rebuild. Exempt this release; remove once
+ *   3.13.0+ data confirms the steady-state.
+ *
  * - 3.12.0:Full build — root-caused residual feature cost of the Phase 8.x
  *   resolution work on the native engine. The v3.12.0 publish gate first
  *   measured 2231 → 3333 (+49%). Local A/B against a v3.11.2 baseline worktree
@@ -309,6 +322,18 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   3.11.2:1-file rebuild entry above. Remove once #1440 lands warmups and
  *   3.13+ data confirms the steady state.
  *
+ * - 3.12.0:No-op rebuild — CI runner variance on a sub-30ms native metric.
+ *   The 3.12.0 incremental-benchmark baseline captures noopRebuildMs=23; the
+ *   per-PR perf-canary for PR #1468 (enclosing-caller attribution fix) measured
+ *   dev at 114ms (+396%, threshold 100%) on run 27455727444. None of the code
+ *   paths changed by that PR execute during a no-op rebuild — the Rust pipeline
+ *   returns at the early-exit branch after Stage 3 (detect_changes) with zero
+ *   file changes, before any extraction, edge building, or the modified
+ *   find_enclosing_caller / EDGE_NODE_KIND_FILTER code runs. Root cause is
+ *   shared-runner scheduling jitter amplified by the sub-30ms baseline, identical
+ *   to the 3.11.2:No-op rebuild pattern. Remove once 3.13+ data confirms the
+ *   steady-state.
+ *
  * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
  * handled structurally by WASM_TIMING_THRESHOLD (see above). The 3.11.x
  * entries that remain are kept because they trip the *native* engine too
@@ -328,6 +353,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.11.2:No-op rebuild',
   '3.11.2:1-file rebuild',
   '3.11.2:Full build',
+  '3.12.0:No-op rebuild',
   '3.12.0:Full build',
   '3.12.0:1-file rebuild',
   // tree-sitter-erlang devDependency removed (GHSA-rphw-c8qj-jv84 — malware).

@@ -188,8 +188,9 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // New fixture languages — no parser or call resolution yet
   // objc: class-method static calls and same-class calls resolve at 100% precision, 46% recall.
   //   Expected-edges now use full ObjC selectors (createUserWithId:name:email:, isValidEmail:, etc.)
-  //   matching what the ObjC extractor emits. Receiver-typed instance message sends
-  //   are not yet resolved — tracked as FNs. Precision 1.0 acts as ratchet against future FPs.
+  //   matching what the ObjC extractor emits. Constructor message sends (initWithRepository:) and
+  //   receiver-typed instance message sends are not yet resolved — tracked as FNs.
+  //   Precision 1.0 acts as ratchet against future FPs.
   objc: { precision: 1.0, recall: 0.4 },
   cuda: { precision: 0.0, recall: 0.0 },
   groovy: { precision: 0.0, recall: 0.0 },

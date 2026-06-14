@@ -49,13 +49,14 @@ import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
   batchInsertNodes,
+  CHA_DISPATCH_PENALTY,
+  CHA_TYPED_DISPATCH_CONFIDENCE,
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
-import { CHA_DISPATCH_PENALTY } from './build-edges.js';
 import { closeNativeDb } from './native-db-lifecycle.js';
 
 // ── Native orchestrator types ──────────────────────────────────────────
@@ -406,9 +407,11 @@ async function runPostNativeAnalysis(
  *   - array → incremental; two cheap gate queries decide scope:
  *       Gate A: any class/interface/trait/struct/record nodes in changed files?
  *               If yes, a new implementor may have appeared — full scan required.
- *       Gate B: any `calls` edges from changed-file sources targeting class-kind
- *               nodes? If yes, the RTA set may have grown, enabling previously
- *               filtered expansions in unchanged caller files — full scan required.
+ *       Gate B: any `calls` edges from changed-file sources targeting
+ *               class/constructor/function-kind nodes? If yes, the RTA set may
+ *               have grown (also covers the older-schema fallback where
+ *               constructor calls target `constructor`/`function` nodes instead
+ *               of `class` nodes) — full scan required.
  *       If neither gate fires: scope `callToMethods` to `src.file IN changedFiles`
  *       (safe because no hierarchy or RTA evidence changed).
  *
@@ -496,11 +499,16 @@ function runPostNativeCha(
   //   A new `extends`/`implements` edge means a previously-untracked implementor
   //   is now in the hierarchy — unchanged call sites in OTHER files may gain new
   //   valid expansions, so the full scan is required.
+  //   Note: *removed* class nodes are safe — Rust's `purge_changed_files` runs
+  //   before this post-pass and deletes stale nodes and their hierarchy edges, so
+  //   Gate A queries the post-purge DB. A deleted class returns no row here, which
+  //   is correct: its stale CHA edges were already cleaned up by the Rust purge.
   //
   // Gate B: did a changed file add new RTA evidence (`new ConcreteX()`)?
-  //   A new `calls` edge to a class-kind target means the instantiated set grew —
-  //   previously RTA-filtered expansions in unchanged caller files become
-  //   admissible, so the full scan is required.
+  //   A new `calls` edge to a class/constructor/function-kind target means the
+  //   instantiated set grew — previously RTA-filtered expansions in unchanged
+  //   caller files become admissible, so the full scan is required.
+  //   (`constructor`/`function` cover the older native engine fallback schema.)
   //
   // If neither gate fires, the hierarchy and RTA set are unchanged for all files
   // outside changedFiles, so restricting to changed-file sources is safe.
@@ -523,10 +531,10 @@ function runPostNativeCha(
       if (row) gateAFired = true;
     }
 
-    // Gate B: calls from changed-file sources to instantiable-kind targets?
-    //   Checks the same kind set as Gate A (class/interface/trait/struct/record)
-    //   so that future CHA extensions to struct/record kinds correctly trigger
-    //   the full scan when RTA evidence grows in a changed file.
+    // Gate B: calls from changed-file sources to class/instantiable-kind targets
+    // (also covers older-schema fallback and future CHA extensions to struct/record).
+    // Includes class/interface/trait/struct/record (future CHA extension safety) and
+    // constructor/function (older native engine schema fallback).
     let gateBFired = false;
     if (!gateAFired) {
       for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
@@ -538,7 +546,7 @@ function runPostNativeCha(
              JOIN nodes src ON e.source_id = src.id
              JOIN nodes tgt ON e.target_id = tgt.id
              WHERE e.kind = 'calls'
-             AND tgt.kind IN ('class', 'interface', 'trait', 'struct', 'record')
+             AND tgt.kind IN ('class', 'interface', 'trait', 'struct', 'record', 'constructor', 'function')
              AND src.file IN (${ph})
              LIMIT 1`,
           )
@@ -560,9 +568,8 @@ function runPostNativeCha(
   }
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
-  // Include the caller node's file so confidence can be computed file-pair-aware,
-  // using computeConfidence(callerFile, targetFile, null) - CHA_DISPATCH_PENALTY.
-  // (The WASM path in runChaPostPass still uses a hardcoded 0.8 — see TODO there.)
+  // Include caller_file and method_file so affectedFiles can be populated for
+  // incremental role reclassification; confidence uses CHA_TYPED_DISPATCH_CONFIDENCE matching runChaPostPass.
   // When scopeToChangedFiles is true, restrict to call sites in the changed files
   // (safe because no hierarchy or RTA evidence changed outside those files).
   let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
@@ -659,13 +666,7 @@ function runPostNativeCha(
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            // Compute confidence file-pair-aware using computeConfidence - CHA_DISPATCH_PENALTY.
-            // (WASM path runChaPostPass uses 0.8; alignment tracked in helpers.ts TODO.)
-            // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
-            const conf =
-              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) -
-              CHA_DISPATCH_PENALTY;
-            if (conf <= 0) continue;
+            const conf = CHA_TYPED_DISPATCH_CONFIDENCE;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newEdgeCount++;
             if (caller_file) affectedFiles.add(caller_file);
@@ -709,7 +710,7 @@ async function runPostNativeThisDispatch(
   changedFiles: string[] | undefined,
   isFullBuild: boolean,
 ): Promise<{ elapsedMs: number; targetIds: Set<number>; affectedFiles: Set<string> }> {
-  const t0 = Date.now();
+  const t0 = performance.now();
   const targetIds = new Set<number>();
   // Files containing endpoints of newly inserted edges — lets the caller scope
   // role re-classification to the nodes whose fan-in/out actually changed.
@@ -942,7 +943,7 @@ async function runPostNativeThisDispatch(
     (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
 
-  return { elapsedMs: Date.now() - t0, targetIds, affectedFiles };
+  return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
 }
 
 interface PostPassTimings {
@@ -1540,10 +1541,10 @@ export async function tryNativeOrchestrator(
   // re-parse of the missing set) is gated below.
   const gapDetectStart = performance.now();
   const gap = detectDroppedLanguageGap(ctx);
-  if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {
+  const backfillHappened = gap.missingAbs.length > 0 || gap.staleRel.length > 0;
+  if (backfillHappened) {
     await backfillNativeDroppedFiles(ctx, gap);
   }
-  const backfillHappened = gap.missingAbs.length > 0 || gap.staleRel.length > 0;
   const gapDetectMs = performance.now() - gapDetectStart;
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
