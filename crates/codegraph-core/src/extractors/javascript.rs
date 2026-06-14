@@ -964,12 +964,17 @@ fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             let inner = name_node.child(1);
             match inner {
                 Some(inner) if inner.kind() == "string" => {
+                    // Use the string_fragment child to get the content without quotes.
+                    let s = extract_string_fragment(&inner, source).unwrap_or("");
+                    if s.is_empty() { return; }
+                    method_name_owned = s.to_string();
+                    &method_name_owned
+                }
+                Some(inner) if inner.kind() == "string_fragment" => {
+                    // string_fragment is already quote-free (direct child of computed_property_name).
                     let s = node_text(&inner, source);
-                    let stripped = s.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
-                        .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-                        .unwrap_or(s);
-                    if stripped.is_empty() { return; }
-                    method_name_owned = stripped.to_string();
+                    if s.is_empty() { return; }
+                    method_name_owned = s.to_string();
                     &method_name_owned
                 }
                 _ => return, // non-string computed key — skip
