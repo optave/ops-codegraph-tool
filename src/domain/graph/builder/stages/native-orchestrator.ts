@@ -401,12 +401,28 @@ async function runPostNativeAnalysis(
  * Note: `this`/`super` dispatch is handled separately by `runPostNativeThisDispatch`,
  * which WASM-re-parses JS/TS files to obtain raw call site receiver info.
  *
+ * `changedFiles` controls candidate scoping on incremental builds:
+ *   - null  → full build; scan all call→method edges (existing behaviour).
+ *   - array → incremental; two cheap gate queries decide scope:
+ *       Gate A: any class/interface/trait/struct/record nodes in changed files?
+ *               If yes, a new implementor may have appeared — full scan required.
+ *       Gate B: any `calls` edges from changed-file sources targeting
+ *               class/constructor/function-kind nodes? If yes, the RTA set may
+ *               have grown (also covers the older-schema fallback where
+ *               constructor calls target `constructor`/`function` nodes instead
+ *               of `class` nodes) — full scan required.
+ *       If neither gate fires: scope `callToMethods` to `src.file IN changedFiles`
+ *       (safe because no hierarchy or RTA evidence changed).
+ *
  * Returns the count of newly inserted CHA edges plus the set of files containing
  * the new edges' endpoints, so the caller can scope role re-classification to the
  * nodes whose fan-in/out actually changed. A zero count means no edges were added
  * and role re-classification is unnecessary.
  */
-function runPostNativeCha(db: BetterSqlite3Database): {
+function runPostNativeCha(
+  db: BetterSqlite3Database,
+  changedFiles: string[] | null,
+): {
   newEdgeCount: number;
   affectedFiles: Set<string>;
 } {
@@ -474,19 +490,127 @@ function runPostNativeCha(db: BetterSqlite3Database): {
     debug('runPostNativeCha: no constructor-call evidence found — proceeding without RTA filter');
   }
 
+  // ── Incremental candidate scoping ──────────────────────────────────────────
+  // On incremental builds, two gate queries decide whether to restrict the
+  // candidate scan to changed-file call sites or run the full graph scan.
+  //
+  // Gate A: did a changed file add/change a class hierarchy node?
+  //   A new `extends`/`implements` edge means a previously-untracked implementor
+  //   is now in the hierarchy — unchanged call sites in OTHER files may gain new
+  //   valid expansions, so the full scan is required.
+  //   Note: *removed* class nodes are safe — Rust's `purge_changed_files` runs
+  //   before this post-pass and deletes stale nodes and their hierarchy edges, so
+  //   Gate A queries the post-purge DB. A deleted class returns no row here, which
+  //   is correct: its stale CHA edges were already cleaned up by the Rust purge.
+  //
+  // Gate B: did a changed file add new RTA evidence (`new ConcreteX()`)?
+  //   A new `calls` edge to a class/constructor/function-kind target means the
+  //   instantiated set grew — previously RTA-filtered expansions in unchanged
+  //   caller files become admissible, so the full scan is required.
+  //   (`constructor`/`function` cover the older native engine fallback schema.)
+  //
+  // If neither gate fires, the hierarchy and RTA set are unchanged for all files
+  // outside changedFiles, so restricting to changed-file sources is safe.
+  let scopeToChangedFiles = false; // true → add WHERE src.file IN changedFiles
+  if (changedFiles !== null && changedFiles.length > 0) {
+    // Gate A: class/interface/trait/struct/record nodes in changed files?
+    const CHUNK_SIZE = 500;
+    let gateAFired = false;
+    for (let i = 0; i < changedFiles.length && !gateAFired; i += CHUNK_SIZE) {
+      const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+      const ph = chunk.map(() => '?').join(',');
+      const row = db
+        .prepare(
+          `SELECT 1 FROM nodes
+           WHERE file IN (${ph})
+           AND kind IN ('class', 'interface', 'trait', 'struct', 'record')
+           LIMIT 1`,
+        )
+        .get(...chunk);
+      if (row) gateAFired = true;
+    }
+
+    // Gate B: calls from changed-file sources to class-kind targets (or
+    // constructor/function-kind targets in the older native engine fallback schema)?
+    // Mirrors the two-shape RTA seed: primary checks `tgt.kind = 'class'`; older
+    // native engine schemas record constructor calls against `constructor`/`function`
+    // kinds instead. Including all three kinds here prevents Gate B from silently
+    // passing on older-schema DBs, which would incorrectly set scopeToChangedFiles
+    // and miss CHA edges whose RTA evidence lives in the fallback-schema rows.
+    let gateBFired = false;
+    if (!gateAFired) {
+      for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
+        const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+        const ph = chunk.map(() => '?').join(',');
+        const row = db
+          .prepare(
+            `SELECT 1 FROM edges e
+             JOIN nodes src ON e.source_id = src.id
+             JOIN nodes tgt ON e.target_id = tgt.id
+             WHERE e.kind = 'calls'
+             AND tgt.kind IN ('class', 'constructor', 'function')
+             AND src.file IN (${ph})
+             LIMIT 1`,
+          )
+          .get(...chunk);
+        if (row) gateBFired = true;
+      }
+    }
+
+    if (!gateAFired && !gateBFired) {
+      scopeToChangedFiles = true;
+      debug(
+        `runPostNativeCha: neither gate fired — scoping candidate scan to ${changedFiles.length} changed file(s)`,
+      );
+    } else {
+      debug(
+        `runPostNativeCha: ${gateAFired ? 'Gate A (hierarchy)' : 'Gate B (RTA)'} fired — running full scan`,
+      );
+    }
+  }
+
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
   // Include the caller node's file so confidence can be computed file-pair-aware,
   // matching the WASM path's computeConfidence(callerFile, targetFile, null) - CHA_DISPATCH_PENALTY formula.
-  const callToMethods = db
-    .prepare(`
-      SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
-      FROM edges e
-      JOIN nodes tgt ON e.target_id = tgt.id
-      JOIN nodes src ON e.source_id = src.id
-      WHERE e.kind = 'calls' AND tgt.kind = 'method'
-      AND INSTR(tgt.name, '.') > 0
-    `)
-    .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  // When scopeToChangedFiles is true, restrict to call sites in the changed files
+  // (safe because no hierarchy or RTA evidence changed outside those files).
+  let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  if (scopeToChangedFiles && changedFiles && changedFiles.length > 0) {
+    const CHUNK_SIZE = 500;
+    const rows: Array<{ source_id: number; method_name: string; caller_file: string | null }> = [];
+    for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
+      const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+      const ph = chunk.map(() => '?').join(',');
+      const chunkRows = db
+        .prepare(
+          `SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+           FROM edges e
+           JOIN nodes tgt ON e.target_id = tgt.id
+           JOIN nodes src ON e.source_id = src.id
+           WHERE e.kind = 'calls' AND tgt.kind = 'method'
+           AND INSTR(tgt.name, '.') > 0
+           AND src.file IN (${ph})`,
+        )
+        .all(...chunk) as Array<{
+        source_id: number;
+        method_name: string;
+        caller_file: string | null;
+      }>;
+      rows.push(...chunkRows);
+    }
+    callToMethods = rows;
+  } else {
+    callToMethods = db
+      .prepare(`
+        SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+        FROM edges e
+        JOIN nodes tgt ON e.target_id = tgt.id
+        JOIN nodes src ON e.source_id = src.id
+        WHERE e.kind = 'calls' AND tgt.kind = 'method'
+        AND INSTR(tgt.name, '.') > 0
+      `)
+      .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  }
 
   // Seed seen-pairs only from the source_ids we'll be expanding — avoids loading every
   // call edge in the DB (which would be O(all edges)) for large codebases.
@@ -592,7 +716,7 @@ async function runPostNativeThisDispatch(
   changedFiles: string[] | undefined,
   isFullBuild: boolean,
 ): Promise<{ elapsedMs: number; targetIds: Set<number>; affectedFiles: Set<string> }> {
-  const t0 = Date.now();
+  const t0 = performance.now();
   const targetIds = new Set<number>();
   // Files containing endpoints of newly inserted edges — lets the caller scope
   // role re-classification to the nodes whose fan-in/out actually changed.
@@ -824,7 +948,15 @@ async function runPostNativeThisDispatch(
     (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
 
-  return { elapsedMs: Date.now() - t0, targetIds, affectedFiles };
+  return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
+}
+
+interface PostPassTimings {
+  gapDetectMs: number;
+  chaMs: number;
+  thisDispatchMs: number;
+  reclassifyMs: number;
+  techniqueBackfillMs: number;
 }
 
 /** Format timing result from native orchestrator phases + JS post-processing. */
@@ -832,7 +964,7 @@ function formatNativeTimingResult(
   p: Record<string, number>,
   structurePatchMs: number,
   analysisTiming: { astMs: number; complexityMs: number; cfgMs: number; dataflowMs: number },
-  thisDispatchMs: number,
+  postPass: PostPassTimings,
 ): BuildResult {
   return {
     phases: {
@@ -845,7 +977,11 @@ function formatNativeTimingResult(
       edgesMs: +(p.edgesMs ?? 0).toFixed(1),
       structureMs: +((p.structureMs ?? 0) + structurePatchMs).toFixed(1),
       rolesMs: +(p.rolesMs ?? 0).toFixed(1),
-      thisDispatchMs: +thisDispatchMs.toFixed(1),
+      gapDetectMs: +postPass.gapDetectMs.toFixed(1),
+      chaMs: +postPass.chaMs.toFixed(1),
+      thisDispatchMs: +postPass.thisDispatchMs.toFixed(1),
+      reclassifyMs: +postPass.reclassifyMs.toFixed(1),
+      techniqueBackfillMs: +postPass.techniqueBackfillMs.toFixed(1),
       astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
       complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
       cfgMs: +(analysisTiming.cfgMs ?? 0).toFixed(1),
@@ -1384,8 +1520,14 @@ export async function tryNativeOrchestrator(
       ctx.db = openDb(ctx.dbPath);
       ctx.nativeFirstProxy = false;
     } else if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
-      // DB reopen failed — return partial result
-      return formatNativeTimingResult(p, 0, analysisTiming, 0);
+      // DB reopen failed — return partial result (no post-pass phases completed)
+      return formatNativeTimingResult(p, 0, analysisTiming, {
+        gapDetectMs: 0,
+        chaMs: 0,
+        thisDispatchMs: 0,
+        reclassifyMs: 0,
+        techniqueBackfillMs: 0,
+      });
     }
   }
 
@@ -1396,27 +1538,19 @@ export async function tryNativeOrchestrator(
   // stale native binaries). WASM handles those — backfill via WASM so both
   // engines process the same file set (#967).
   //
-  // Detect the gap once (fs walk + 2 DB queries, ~20–30ms) and use it for
-  // both gating and the backfill itself. On dirty incrementals/full builds
-  // the orchestrator signals trigger backfill, so the walk happens once
-  // (instead of redundantly inside backfill). On quiet incrementals we
-  // still pay the walk so we can detect brand-new files in dropped-language
-  // extensions — a gap that the orchestrator's `detect_removed_files`
-  // filter (#1070) leaves open (#1083, #1091). The pre-check is cheap
-  // because the expensive part (WASM re-parse of the missing set) is
-  // gated below.
-  const removedCount = result.removedCount ?? 0;
-  const changedCount = result.changedCount ?? 0;
+  // Detect the gap once (fs walk + 2 DB queries) and use it for both gating
+  // and the backfill itself. On quiet incrementals we still pay the walk so
+  // we can detect brand-new files in dropped-language extensions — a gap that
+  // the orchestrator's `detect_removed_files` filter (#1070) leaves open
+  // (#1083, #1091). The pre-check is cheap because the expensive part (WASM
+  // re-parse of the missing set) is gated below.
+  const gapDetectStart = performance.now();
   const gap = detectDroppedLanguageGap(ctx);
-  if (
-    result.isFullBuild ||
-    removedCount > 0 ||
-    changedCount > 0 ||
-    gap.missingAbs.length > 0 ||
-    gap.staleRel.length > 0
-  ) {
+  const backfillHappened = gap.missingAbs.length > 0 || gap.staleRel.length > 0;
+  if (backfillHappened) {
     await backfillNativeDroppedFiles(ctx, gap);
   }
+  const gapDetectMs = performance.now() - gapDetectStart;
 
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
   // Returns the affected files so role re-classification below can be scoped to
@@ -1425,9 +1559,13 @@ export async function tryNativeOrchestrator(
   // Function-as-object-property methods (`fn.method = function() {}`) are extracted
   // natively by the Rust engine (#1432) and resolved in-build by its edge builder, so
   // no WASM re-parse post-pass is needed for them. `Foo.prototype.bar = fn` likewise.
+  const chaStart = performance.now();
   const { newEdgeCount: chaEdgeCount, affectedFiles: chaAffectedFiles } = runPostNativeCha(
     ctx.db as unknown as BetterSqlite3Database,
+    // null = full build (scan all call→method edges); array = incremental (gate queries decide scope)
+    result.isFullBuild ? null : (result.changedFiles ?? null),
   );
+  const chaMs = performance.now() - chaStart;
 
   // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
   // whose raw receiver info the Rust pipeline does not persist to DB.
@@ -1450,6 +1588,7 @@ export async function tryNativeOrchestrator(
   // files restores correctness without re-running the classifier over the
   // whole graph (which cost ~130ms per build on codegraph itself and was a
   // major part of the v3.12.0 native full-build benchmark regression).
+  let reclassifyMs = 0;
   if (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0) {
     const affectedFiles = [...new Set([...chaAffectedFiles, ...thisDispatchAffectedFiles])];
     // When edges were inserted but all their endpoint nodes have null `file`
@@ -1458,6 +1597,7 @@ export async function tryNativeOrchestrator(
     // case — scoped classification with an empty set would be a no-op, leaving
     // roles stale for those nodes.
     const scopedFiles = affectedFiles.length > 0 ? affectedFiles : null;
+    const reclassifyStart = performance.now();
     try {
       const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
         classifyNodeRoles: (
@@ -1474,30 +1614,41 @@ export async function tryNativeOrchestrator(
     } catch (err) {
       debug(`Post-pass role re-classification failed: ${toErrorMessage(err)}`);
     }
+    reclassifyMs = performance.now() - reclassifyStart;
   }
 
   // Backfill the `technique` column on `calls` edges written by the Rust
   // orchestrator, which does not write the column. Runs after all edge-writing
   // phases (including the WASM dropped-language backfill, CHA post-pass, and
   // this/super dispatch) so every new edge in this build cycle gets a label.
+  const techniqueBackfillStart = performance.now();
   backfillEdgeTechniquesAfterNativeOrchestrator(ctx.db, !!result.isFullBuild, result.changedFiles);
+  const techniqueBackfillMs = performance.now() - techniqueBackfillStart;
 
   // Re-count nodes/edges now that all edge-writing post-passes have run: the
   // Rust orchestrator captured its counts before the JS post-passes added
   // edges, so both its summary and build_meta under-report (#1452).
+  //
+  // Fast path: skip the COUNT(*) scan when no post-pass wrote any edges.
+  // COUNT(*) on large tables (50K+ edges) is non-trivial, especially via the
+  // NativeDbProxy napi-rs round-trip. When all post-passes were no-ops, the
+  // Rust orchestrator's counts are still accurate — no re-count needed.
   let finalNodeCount = result.nodeCount ?? 0;
   let finalEdgeCount = result.edgeCount ?? 0;
-  try {
-    const counts = (ctx.db as unknown as BetterSqlite3Database)
-      .prepare('SELECT (SELECT COUNT(*) FROM nodes) AS n, (SELECT COUNT(*) FROM edges) AS e')
-      .get() as { n: number; e: number };
-    if (counts.n !== finalNodeCount || counts.e !== finalEdgeCount) {
-      finalNodeCount = counts.n;
-      finalEdgeCount = counts.e;
-      setBuildMeta(ctx.db, { node_count: finalNodeCount, edge_count: finalEdgeCount });
+  const postPassWroteData = backfillHappened || chaEdgeCount > 0 || thisDispatchTargetIds.size > 0;
+  if (postPassWroteData) {
+    try {
+      const counts = (ctx.db as unknown as BetterSqlite3Database)
+        .prepare('SELECT (SELECT COUNT(*) FROM nodes) AS n, (SELECT COUNT(*) FROM edges) AS e')
+        .get() as { n: number; e: number };
+      if (counts.n !== finalNodeCount || counts.e !== finalEdgeCount) {
+        finalNodeCount = counts.n;
+        finalEdgeCount = counts.e;
+        setBuildMeta(ctx.db, { node_count: finalNodeCount, edge_count: finalEdgeCount });
+      }
+    } catch (err) {
+      debug(`Post-pass node/edge re-count failed: ${toErrorMessage(err)}`);
     }
-  } catch (err) {
-    debug(`Post-pass node/edge re-count failed: ${toErrorMessage(err)}`);
   }
   info(
     `Native build orchestrator completed: ${finalNodeCount} nodes, ${finalEdgeCount} edges, ${result.fileCount ?? 0} files`,
@@ -1525,5 +1676,11 @@ export async function tryNativeOrchestrator(
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, thisDispatchMs);
+  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, {
+    gapDetectMs,
+    chaMs,
+    thisDispatchMs,
+    reclassifyMs,
+    techniqueBackfillMs,
+  });
 }

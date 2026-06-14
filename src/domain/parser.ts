@@ -1181,12 +1181,25 @@ async function parseFilesWasm(
 /**
  * Files at or below this count use the inline parse path (no worker spawn).
  *
- * Sized for typical engine-parity drops: a handful of fixture files in one
- * or two languages (the recurring HCL case is 4 files). Above this, the
- * worker-pool's IPC + crash-isolation cost (#965) is amortized over enough
- * parse work to be worth paying; below it, the ~1–2s cold-start dominates.
+ * The worker pool exists for crash safety (#965): exotic (non-required) WASM
+ * grammars can trigger uncatchable V8 fatal errors that would kill the main
+ * process. Running them in a worker means only the worker dies; the pool
+ * detects the exit, skips the file, respawns, and continues.
+ *
+ * JS/TS/TSX are required-tier grammars — they have never triggered the V8
+ * fatal crash class and are safe to run inline. The primary hot caller
+ * (this/super dispatch post-pass) exclusively handles JS/TS/TSX files and
+ * measured ~55–64ms/file through the pool vs ~8–10ms/file inline (#1435);
+ * IPC overhead scales linearly with file count, not amortised.
+ *
+ * The threshold is set high enough to keep typical this-dispatch batches
+ * (≤ 18 files on the codegraph corpus) on the inline path, while still
+ * routing truly large exotic-language drops (rare; typical HCL case is 4
+ * files) through the pool for crash isolation. Exotic-language drops are
+ * almost always well under this limit anyway, so they benefit from the
+ * inline fast path too without meaningful crash risk increase.
  */
-const INLINE_BACKFILL_THRESHOLD = 16;
+const INLINE_BACKFILL_THRESHOLD = 32;
 
 /**
  * Inline WASM parse (no worker) for small file batches.
@@ -1198,11 +1211,16 @@ const INLINE_BACKFILL_THRESHOLD = 16;
  *
  * Returns symbols with `_tree` set so `runAnalyses` can run AST/CFG/dataflow
  * visitors via the unified walker (mirrors how WASM-engine results behaved
- * before the worker pool was introduced).
+ * before the worker pool was introduced), unless `symbolsOnly` is true — in
+ * that case `_tree` is not set, skipping all analysis visitor walks. Use
+ * `symbolsOnly` when only definitions/calls/typeMap are needed (e.g. the
+ * this/super dispatch post-pass) to avoid the analysis overhead on the inline
+ * path, matching the optimization already applied to the worker-pool path.
  */
 async function parseFilesWasmInline(
   filePaths: string[],
   rootDir: string,
+  symbolsOnly = false,
 ): Promise<Map<string, ExtractorOutput>> {
   const result = new Map<string, ExtractorOutput>();
   if (filePaths.length === 0) return result;
@@ -1220,7 +1238,18 @@ async function parseFilesWasmInline(
     if (!extracted) continue;
     const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
     const symbols = extracted.symbols as ExtractorOutput & { _tree?: unknown; _langId?: string };
-    symbols._tree = extracted.tree;
+    // When symbolsOnly=true, skip setting _tree so runAnalyses does not run
+    // AST/complexity/CFG/dataflow visitor walks — only definitions/calls/typeMap
+    // are needed by callers like the this/super dispatch post-pass.
+    if (!symbolsOnly) {
+      symbols._tree = extracted.tree;
+    } else if (typeof (extracted.tree as any)?.delete === 'function') {
+      // Free the WASM-backed tree immediately — web-tree-sitter trees are backed
+      // by WASM linear memory and require explicit disposal.  When symbolsOnly is
+      // true the tree is never stored anywhere, so we must delete it here to
+      // avoid leaking WASM heap on every incremental rebuild.
+      (extracted.tree as any).delete();
+    }
     symbols._langId = extracted.langId;
     result.set(relPath, symbols);
   }
@@ -1230,8 +1259,7 @@ async function parseFilesWasmInline(
 /**
  * Backfill helper: small batches use the inline (main-thread) path; larger
  * batches keep the worker-pool isolation against tree-sitter WASM crashes
- * (#965). Threshold matches typical engine-parity drop sizes (a few fixture
- * files in one or two languages).
+ * (#965). See INLINE_BACKFILL_THRESHOLD for threshold rationale.
  *
  * `opts.symbolsOnly` skips the AST/complexity/CFG/dataflow visitors in the
  * worker (and their result serialization across the thread boundary) for
@@ -1246,7 +1274,7 @@ export async function parseFilesWasmForBackfill(
   opts: { symbolsOnly?: boolean } = {},
 ): Promise<Map<string, ExtractorOutput>> {
   if (filePaths.length <= INLINE_BACKFILL_THRESHOLD) {
-    return parseFilesWasmInline(filePaths, rootDir);
+    return parseFilesWasmInline(filePaths, rootDir, opts.symbolsOnly);
   }
   return parseFilesWasm(filePaths, rootDir, opts.symbolsOnly ? EXTRACT_ONLY : FULL_ANALYSIS);
 }

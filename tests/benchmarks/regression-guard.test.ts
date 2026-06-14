@@ -17,6 +17,16 @@ import { describe, expect, test } from 'vitest';
 // ── Configuration ────────────────────────────────────────────────────────
 
 /**
+ * When BENCH_CANARY=1, only incremental-benchmark checks run and all timing
+ * thresholds are raised to 50%. This mode is used by the per-PR perf-canary
+ * workflow (.github/workflows/perf-canary.yml) which runs only on PRs
+ * touching src/extractors/, src/domain/graph/, or crates/. The looser
+ * threshold absorbs CI runner variance while still catching the class of
+ * catastrophic regressions that hit v3.12.0 (+98%/+1827%).
+ */
+const BENCH_CANARY = process.env.BENCH_CANARY === '1';
+
+/**
  * Maximum allowed regression (as a fraction, e.g. 0.25 = 25%).
  *
  * Why 25%: The report script warns at 15%, but timing benchmarks have
@@ -26,8 +36,10 @@ import { describe, expect, test } from 'vitest';
  *
  * Genuinely high-variance sub-30ms metrics get a wider tolerance via
  * `NOISY_METRICS` below — see that set's docstring for rationale.
+ *
+ * In BENCH_CANARY mode this is overridden to 0.5 (50%) — see above.
  */
-const REGRESSION_THRESHOLD = 0.25;
+const REGRESSION_THRESHOLD = BENCH_CANARY ? 0.5 : 0.25;
 
 /**
  * Wider regression threshold applied to metrics in NOISY_METRICS.
@@ -41,8 +53,11 @@ const REGRESSION_THRESHOLD = 0.25;
  * Keeping the global threshold at 25% means a regression in the 30–100ms
  * range is still caught (e.g. 50ms→63ms = +26%, flagged), while sub-30ms
  * metrics in this set get the wider 50% allowance.
+ *
+ * In BENCH_CANARY mode this is overridden to 1.0 (100%) — the canary's
+ * purpose is to catch gross regressions (+50%+), not sub-30ms jitter.
  */
-const NOISY_METRIC_THRESHOLD = 0.5;
+const NOISY_METRIC_THRESHOLD = BENCH_CANARY ? 1.0 : 0.5;
 
 /**
  * Metric labels treated as high-variance and given the NOISY_METRIC_THRESHOLD
@@ -86,8 +101,12 @@ const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild', 'fnDep
  * v3.0.1–3.4.0), which 75% still flags, while absorbing the ≤71% shared-runner
  * jitter. Size metrics (DB bytes/file) are engine-independent and excluded from
  * this widening via SIZE_METRICS below — they keep the strict threshold.
+ *
+ * In BENCH_CANARY mode this is overridden to 1.5 (150%) — the canary targets
+ * gross regressions only, and WASM incremental metrics have extreme variance
+ * on shared runners.
  */
-const WASM_TIMING_THRESHOLD = 0.75;
+const WASM_TIMING_THRESHOLD = BENCH_CANARY ? 1.5 : 0.75;
 
 /**
  * Metric labels that measure size/count rather than wall-clock time. These are
@@ -622,6 +641,10 @@ interface IncrementalEntry {
 // in the default `npm test` run so docs commits that merge already-recorded
 // regressed history into main don't trigger false failures — by then the
 // release has already passed the gate.
+//
+// When BENCH_CANARY=1 (set by .github/workflows/perf-canary.yml), only the
+// incremental-benchmark suite runs and thresholds are raised to 50% — see
+// the BENCH_CANARY constant above.
 const RUN_REGRESSION_GUARD = process.env.RUN_REGRESSION_GUARD === '1';
 
 describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
@@ -641,7 +664,9 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
   // Warn when KNOWN_REGRESSIONS entries are stale (more than 1 minor version
   // behind the current package version).  This makes the stale-exemption
   // problem self-detecting rather than requiring manual bookkeeping.
-  test('KNOWN_REGRESSIONS entries are not stale', () => {
+  // Skipped in canary mode — this check is maintenance-only and irrelevant
+  // for a lightweight build-time regression gate.
+  test.skipIf(BENCH_CANARY)('KNOWN_REGRESSIONS entries are not stale', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const pkgVersion: string = JSON.parse(
       fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'),
@@ -670,18 +695,22 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
     ).toBe(0);
   });
 
-  // Validate newest-first ordering assumption for all history arrays
-  test('build history is sorted newest-first', () => {
+  // Validate newest-first ordering assumption for all history arrays.
+  // Build/query ordering checks are skipped in canary mode (only incremental
+  // history is updated by the canary workflow).
+  test.skipIf(BENCH_CANARY)('build history is sorted newest-first', () => {
     assertNewestFirst(buildHistory, 'Build benchmark');
   });
-  test('query history is sorted newest-first', () => {
+  test.skipIf(BENCH_CANARY)('query history is sorted newest-first', () => {
     assertNewestFirst(queryHistory, 'Query benchmark');
   });
   test('incremental history is sorted newest-first', () => {
     assertNewestFirst(incrementalHistory, 'Incremental benchmark');
   });
 
-  describe('build benchmarks', () => {
+  // In canary mode only the incremental suite runs — build/query/resolution
+  // benchmarks are not measured by the perf-canary workflow.
+  describe.skipIf(BENCH_CANARY)('build benchmarks', () => {
     for (const engineKey of ['native', 'wasm'] as const) {
       const pair = findLatestPair(buildHistory, (e) => e[engineKey] != null);
       if (!pair) continue;
@@ -714,7 +743,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
     });
   });
 
-  describe('query benchmarks', () => {
+  describe.skipIf(BENCH_CANARY)('query benchmarks', () => {
     for (const engineKey of ['native', 'wasm'] as const) {
       const pair = findLatestPair(queryHistory, (e) => e[engineKey] != null);
       if (!pair) continue;
@@ -817,7 +846,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
     });
   });
 
-  describe('resolution benchmarks', () => {
+  describe.skipIf(BENCH_CANARY)('resolution benchmarks', () => {
     /**
      * Resolution precision/recall regression thresholds.
      * These are percentage-point drops (not relative %) because resolution
