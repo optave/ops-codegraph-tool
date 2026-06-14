@@ -16,6 +16,7 @@ import {
   nodeStartLine,
   pushCall,
   pushImport,
+  setTypeMapEntry,
 } from './helpers.js';
 
 /**
@@ -273,13 +274,13 @@ function handleJavaLocalVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): voi
     const child = node.child(i);
     if (child?.type === 'variable_declarator') {
       const nameNode = child.childForFieldName('name');
-      // Use direct Map.set (last-wins) for local variable declarations.
-      // Local variable types are method-scoped and should override any
-      // prior entry (e.g. a same-named constructor parameter). Using
-      // setTypeMapEntry (first-wins on tie) would let a constructor
-      // parameter type block a local variable's more-specific concrete type.
-      if (nameNode && ctx.typeMap)
-        ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
+      // Use setTypeMapEntry (first-wins on tie) to match Rust extractor semantics.
+      // The typeMap is flat per-file without method scoping, so a local variable
+      // in one method (e.g. `InMemoryUserRepository repo` in `createDefault()`) must
+      // not override a parameter binding set by an earlier method
+      // (e.g. `UserRepository repo` constructor param). First-wins preserves the
+      // interface/abstract type annotation that drives correct CHA dispatch.
+      if (nameNode && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
     }
   }
 }

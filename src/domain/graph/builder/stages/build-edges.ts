@@ -709,6 +709,7 @@ function buildChaPostPass(
 
       const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
       let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+      let isTypedReceiverDispatch = false;
 
       if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
         chaTargets = resolveThisDispatch(
@@ -727,13 +728,21 @@ function buildChaPostPass(
           : null;
         if (typeName) {
           chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+          isTypedReceiverDispatch = true;
         }
       }
 
       for (const t of chaTargets) {
         const edgeKey = `${caller.id}|${t.id}`;
         if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
-          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          // Typed-receiver (interface/CHA) dispatch: use the same hardcoded 0.8 that
+          // runChaPostPass (helpers.ts) and runPostNativeCha (native-orchestrator.ts)
+          // use — file proximity is not meaningful for virtual dispatch confidence.
+          // this/super dispatch keeps computeConfidence-based proximity scoring to
+          // match runPostNativeThisDispatch (native-orchestrator.ts).
+          const conf = isTypedReceiverDispatch
+            ? 0.8
+            : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenByPair.add(edgeKey);
             allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
@@ -1294,6 +1303,7 @@ function buildFileCallEdges(
     // For typed receiver calls: expand to all instantiated concrete implementations.
     if (chaCtx && call.receiver) {
       let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+      let isTypedReceiverDispatch = false;
       if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
         chaTargets = resolveThisDispatch(
           call.name,
@@ -1311,12 +1321,20 @@ function buildFileCallEdges(
           : null;
         if (typeName) {
           chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+          isTypedReceiverDispatch = true;
         }
       }
       for (const t of chaTargets) {
         const edgeKey = `${caller.id}|${t.id}`;
         if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
-          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          // Typed-receiver (interface/CHA) dispatch: use the same hardcoded 0.8 that
+          // runChaPostPass (helpers.ts) and runPostNativeCha (native-orchestrator.ts)
+          // use — file proximity is not meaningful for virtual dispatch confidence.
+          // this/super dispatch keeps computeConfidence-based proximity scoring to
+          // match runPostNativeThisDispatch (native-orchestrator.ts line 906).
+          const conf = isTypedReceiverDispatch
+            ? 0.8
+            : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenCallEdges.add(edgeKey);
             allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
@@ -1487,7 +1505,7 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
  * their import targets. Falls back to loading ALL nodes for full builds or
  * larger incremental changes.
  */
-const NODE_KIND_FILTER_SQL = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`;
+const NODE_KIND_FILTER_SQL = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant','variable')`;
 
 function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolean } {
   const { db, fileSymbols, isFullBuild, batchResolved } = ctx;

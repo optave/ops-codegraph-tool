@@ -127,6 +127,7 @@ pub struct ComputedEdge {
 /// Internal struct for caller resolution (def line range → node ID).
 struct DefWithId<'a> {
     name: &'a str,
+    kind: &'a str,
     line: u32,
     end_line: u32,
     node_id: Option<u32>,
@@ -473,7 +474,7 @@ fn process_file<'a>(
         let node_id = file_nodes.iter()
             .find(|n| n.name == d.name && n.kind == d.kind && n.line == d.line)
             .map(|n| n.id);
-        DefWithId { name: &d.name, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
+        DefWithId { name: &d.name, kind: &d.kind, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
 
     // Phase 8.3: build pts map for alias resolution — mirrors buildPointsToMapForFile.
@@ -654,25 +655,76 @@ fn process_file<'a>(
     emit_hierarchy_edges(ctx, file_input, rel_path, edges);
 }
 
+/// Callable definition kinds — only function/method bodies act as enclosing
+/// caller scopes.  Variable/constant bindings are a lower-priority fallback
+/// tier for top-level bindings like Haskell `main = do …` (kind `variable`).
+/// Mirrors `CALLABLE_KINDS` / `TOP_LEVEL_BINDING_KINDS` in call-resolver.ts.
+fn is_callable_kind(kind: &str) -> bool {
+    kind == "function" || kind == "method"
+}
+
+fn is_top_level_binding_kind(kind: &str) -> bool {
+    kind == "variable" || kind == "constant"
+}
+
 /// Find the narrowest enclosing definition for a call at the given line.
-/// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call is at file scope.
+///
+/// Two-pass strategy (mirrors the updated `findCaller` in call-resolver.ts):
+///   Pass 1 — narrowest enclosing function/method.  Local variable declarations
+///             inside a function body must not shadow the enclosing function.
+///   Pass 2 — widest (outermost) enclosing variable/constant binding.  Used as
+///             fallback when no function/method encloses the call (e.g. Haskell
+///             top-level `main = do …` is a `bind` node with kind `variable`).
+///
+/// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call
+/// falls back to file scope.
 fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_id: u32) -> (u32, &'a str) {
-    let mut caller_id = file_node_id;
-    let mut caller_name = "";
-    let mut caller_span = u32::MAX;
+    let mut fn_caller_id: Option<u32> = None;
+    let mut fn_caller_name = "";
+    let mut fn_caller_span = u32::MAX;
+
+    // For variable/constant bindings we pick the WIDEST span (outermost binding),
+    // not the narrowest, so that nested `let` bindings inside `main`'s do-block
+    // do not shadow `main` itself.  The outermost enclosing variable is the
+    // "function-like" top-level binding (e.g. Haskell `main = do …`).
+    // var_caller_span starts at 0 — any real spanning binding has span >= 0
+    // and we overwrite only when span is strictly greater.
+    let mut var_caller_id: Option<u32> = None;
+    let mut var_caller_name = "";
+    // Using i64 so the initial sentinel (-1) is always beaten by a real span (>= 0).
+    let mut var_caller_span: i64 = -1;
+
     for def in defs {
         if def.line <= call_line && call_line <= def.end_line {
-            let span = def.end_line - def.line;
-            if span < caller_span {
-                if let Some(id) = def.node_id {
-                    caller_id = id;
-                    caller_name = def.name;
-                    caller_span = span;
+            let span = def.end_line.saturating_sub(def.line);
+            if is_callable_kind(def.kind) {
+                if span < fn_caller_span {
+                    if let Some(id) = def.node_id {
+                        fn_caller_id = Some(id);
+                        fn_caller_name = def.name;
+                        fn_caller_span = span;
+                    }
+                }
+            } else if is_top_level_binding_kind(def.kind) {
+                if (span as i64) > var_caller_span {
+                    if let Some(id) = def.node_id {
+                        var_caller_id = Some(id);
+                        var_caller_name = def.name;
+                        var_caller_span = span as i64;
+                    }
                 }
             }
         }
     }
-    (caller_id, caller_name)
+
+    // Prefer function/method over variable/constant binding.
+    if let Some(id) = fn_caller_id {
+        return (id, fn_caller_name);
+    }
+    if let Some(id) = var_caller_id {
+        return (id, var_caller_name);
+    }
+    (file_node_id, "")
 }
 
 /// Multi-strategy call target resolution: import-aware → same-file → type-aware → scoped.

@@ -667,12 +667,10 @@ function runPostNativeCha(
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - CHA_DISPATCH_PENALTY)
-            // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
-            const conf =
-              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) -
-              CHA_DISPATCH_PENALTY;
-            if (conf <= 0) continue;
+            // Use the same hardcoded 0.8 that runChaPostPass (helpers.ts) uses for
+            // DB-level CHA dispatch edges. This aligns the native orchestrator path
+            // with the WASM and hybrid paths, which both go through runChaPostPass.
+            const conf = 0.8;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newEdgeCount++;
             if (caller_file) affectedFiles.add(caller_file);
@@ -949,6 +947,14 @@ async function runPostNativeThisDispatch(
   }
 
   return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
+}
+
+interface PostPassTimings {
+  gapDetectMs: number;
+  chaMs: number;
+  thisDispatchMs: number;
+  reclassifyMs: number;
+  techniqueBackfillMs: number;
 }
 
 interface PostPassTimings {

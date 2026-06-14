@@ -322,19 +322,17 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   3.11.2:1-file rebuild entry above. Remove once #1440 lands warmups and
  *   3.13+ data confirms the steady state.
  *
- * - 3.12.0:No-op rebuild — CI runner variance on a sub-30ms native incremental
- *   metric. The 3.12.0 baseline captures native noopRebuildMs=23 in the
- *   incremental benchmark. The per-PR perf-canary gate (#1433) re-measured dev
- *   on a fresh shared runner (PR #1498) and landed at 112ms (+387%, NOISY
- *   threshold 100%). The per-PR canary is a new workflow firing for the first
- *   time on this corpus — it builds the native addon from source before running
- *   the benchmark, and the runner was under shared load. No changes in PR #1498
- *   touch the no-op rebuild hot path (no change to collect_files, detect_removed_files,
- *   earlyExit logic, or detectDroppedLanguageGap). The Rust changes are a refactor
- *   of emit_pts_alias_edges (no logic change) and additive typeMap entries in the
- *   Go and Python extractors, neither of which run during a no-op rebuild.
- *   Same shape and root cause as 3.11.2:No-op rebuild. Exempt this release;
- *   remove once 3.13+ incremental data confirms the steady state.
+ * - 3.12.0:No-op rebuild — CI runner variance on a sub-30ms native metric.
+ *   The 3.12.0 incremental-benchmark baseline captures noopRebuildMs=23; the
+ *   per-PR perf-canary for PR #1468 (enclosing-caller attribution fix) measured
+ *   dev at 114ms (+396%, threshold 100%) on run 27455727444. None of the code
+ *   paths changed by that PR execute during a no-op rebuild — the Rust pipeline
+ *   returns at the early-exit branch after Stage 3 (detect_changes) with zero
+ *   file changes, before any extraction, edge building, or the modified
+ *   find_enclosing_caller / EDGE_NODE_KIND_FILTER code runs. Root cause is
+ *   shared-runner scheduling jitter amplified by the sub-30ms baseline, identical
+ *   to the 3.11.2:No-op rebuild pattern. Remove once 3.13+ data confirms the
+ *   steady-state.
  *
  * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
  * handled structurally by WASM_TIMING_THRESHOLD (see above). The 3.11.x
@@ -358,7 +356,6 @@ const KNOWN_REGRESSIONS = new Set([
   '3.12.0:No-op rebuild',
   '3.12.0:Full build',
   '3.12.0:1-file rebuild',
-  '3.12.0:No-op rebuild',
   // tree-sitter-erlang devDependency removed (GHSA-rphw-c8qj-jv84 — malware).
   // The erlang WASM is no longer built, so erlang resolution drops to 0%.
   // These entries exempt the expected precision/recall drop on every build
