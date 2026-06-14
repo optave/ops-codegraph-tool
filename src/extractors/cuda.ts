@@ -229,6 +229,10 @@ function handleCudaDeclaration(node: TreeSitterNode, ctx: ExtractorOutput): void
     } else if (kind === 'identifier') {
       nameNode = child;
     }
+    // Note: pointer_declarator / reference_declarator children (e.g. `UserService *svc;`)
+    // are intentionally skipped here — they are also skipped by the native Rust
+    // match_c_family_type_map helper, which only handles 'init_declarator' and
+    // 'identifier' children. Both engines have the same scope for this case.
     if (!nameNode) continue;
     const varName = extractCudaFieldName(nameNode);
     if (varName) {

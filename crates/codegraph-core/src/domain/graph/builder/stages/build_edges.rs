@@ -765,9 +765,10 @@ fn resolve_call_targets<'a>(
         // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) avoids
         // same-name rest-binding collisions across functions in the same file (#1358).
         let rest_param_key = format!("{}::{}", caller_name, effective_receiver);
-        // Class-scoped key (`ClassName.prop`) seeded by `this.prop = new Ctor()`
-        // property writes — prevents false edges when multiple classes define the
-        // same property name (issue #1323). Only consulted for `this.` receivers.
+        // Class-scoped key (`ClassName.prop`) seeded by `this.prop = new Ctor()` and
+        // field annotations — prevents false edges when multiple classes define the same
+        // property name (issues #1323, #1458). Consulted first for `this.` receivers so
+        // bare fallback keys (confidence 0.6) don't shadow the correct per-class entry.
         let class_scoped_key = if receiver.starts_with("this.") && !caller_name.is_empty() {
             caller_name
                 .rfind('.')
@@ -775,10 +776,10 @@ fn resolve_call_targets<'a>(
         } else {
             None
         };
-        let type_lookup = type_map.get(effective_receiver)
+        let type_lookup = class_scoped_key.as_deref().and_then(|k| type_map.get(k))
+            .or_else(|| type_map.get(effective_receiver))
             .or_else(|| type_map.get(receiver.as_str()))
-            .or_else(|| if caller_name.is_empty() { None } else { type_map.get(rest_param_key.as_str()) })
-            .or_else(|| class_scoped_key.as_deref().and_then(|k| type_map.get(k)));
+            .or_else(|| if caller_name.is_empty() { None } else { type_map.get(rest_param_key.as_str()) });
         // Inline new-expression receiver: `(new Foo).bar()` — extract the constructor name
         // when no typeMap entry exists for the complex receiver expression.
         // Mirrors the regex `/^\(?\s*new\s+([A-Z_$][A-Za-z0-9_$]*)/` in call-resolver.ts.
