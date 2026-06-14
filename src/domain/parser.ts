@@ -1264,8 +1264,8 @@ async function parseFilesWasmInline(
  * `opts.symbolsOnly` skips the AST/complexity/CFG/dataflow visitors in the
  * worker (and their result serialization across the thread boundary) for
  * callers that only consume definitions/calls/typeMap — the native
- * orchestrator's prototype-methods and this-dispatch post-passes. Callers
- * that ingest the files into the DB (dropped-language backfill) must keep
+ * orchestrator's this-dispatch post-pass. Callers that ingest the files into
+ * the DB (dropped-language backfill) must keep
  * the default full analysis.
  */
 export async function parseFilesWasmForBackfill(
