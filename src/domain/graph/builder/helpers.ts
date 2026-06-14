@@ -464,13 +464,14 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
 
   const callToMethods = db
     .prepare(
-      `SELECT e.source_id, tgt.name AS method_name
+      `SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name
        FROM edges e
        JOIN nodes tgt ON e.target_id = tgt.id
+       JOIN nodes src ON e.source_id = src.id
        WHERE e.kind = 'calls' AND tgt.kind = 'method'
        AND INSTR(tgt.name, '.') > 0`,
     )
-    .all() as Array<{ source_id: number; method_name: string }>;
+    .all() as Array<{ source_id: number; caller_name: string; method_name: string }>;
 
   const seen = new Set<string>();
   // Scope deduplication to only the source_ids we are about to expand, avoiding
@@ -497,11 +498,24 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
   const findMethodStmt = db.prepare(`SELECT id FROM nodes WHERE name = ? AND kind = 'method'`);
   const newEdges: Array<[number, number, string, number, number, string]> = [];
 
-  for (const { source_id, method_name } of callToMethods) {
+  for (const { source_id, caller_name, method_name } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
     if (dotIdx === -1) continue;
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
+
+    // Super-dispatch guard: if the caller's class is itself a direct child of
+    // typeName (i.e. callerClass extends typeName), the existing edge is a
+    // super.method() call going up the hierarchy — not an interface dispatch.
+    // Expanding it to sibling subclasses of typeName would produce false edges:
+    // those siblings are unrelated to the caller and would never be invoked by
+    // that super call. Skip CHA expansion entirely for super-dispatch edges.
+    const callerDotIdx = caller_name.indexOf('.');
+    if (callerDotIdx !== -1) {
+      const callerClass = caller_name.slice(0, callerDotIdx);
+      const directChildrenOfType = implementors.get(typeName);
+      if (directChildrenOfType?.includes(callerClass)) continue;
+    }
 
     // BFS over the implementors map — handles multi-level hierarchies where
     // abstract/non-instantiated classes sit between the call-site type and

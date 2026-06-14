@@ -572,16 +572,26 @@ function runPostNativeCha(
   // incremental role reclassification; confidence uses CHA_TYPED_DISPATCH_CONFIDENCE matching runChaPostPass.
   // When scopeToChangedFiles is true, restrict to call sites in the changed files
   // (safe because no hierarchy or RTA evidence changed outside those files).
-  let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  let callToMethods: Array<{
+    source_id: number;
+    caller_name: string;
+    method_name: string;
+    caller_file: string | null;
+  }>;
   if (scopeToChangedFiles && changedFiles && changedFiles.length > 0) {
     const CHUNK_SIZE = 500;
-    const rows: Array<{ source_id: number; method_name: string; caller_file: string | null }> = [];
+    const rows: Array<{
+      source_id: number;
+      caller_name: string;
+      method_name: string;
+      caller_file: string | null;
+    }> = [];
     for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
       const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
       const ph = chunk.map(() => '?').join(',');
       const chunkRows = db
         .prepare(
-          `SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+          `SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name, src.file AS caller_file
            FROM edges e
            JOIN nodes tgt ON e.target_id = tgt.id
            JOIN nodes src ON e.source_id = src.id
@@ -591,6 +601,7 @@ function runPostNativeCha(
         )
         .all(...chunk) as Array<{
         source_id: number;
+        caller_name: string;
         method_name: string;
         caller_file: string | null;
       }>;
@@ -600,14 +611,19 @@ function runPostNativeCha(
   } else {
     callToMethods = db
       .prepare(`
-        SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+        SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name, src.file AS caller_file
         FROM edges e
         JOIN nodes tgt ON e.target_id = tgt.id
         JOIN nodes src ON e.source_id = src.id
         WHERE e.kind = 'calls' AND tgt.kind = 'method'
         AND INSTR(tgt.name, '.') > 0
       `)
-      .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+      .all() as Array<{
+      source_id: number;
+      caller_name: string;
+      method_name: string;
+      caller_file: string | null;
+    }>;
   }
 
   // Seed seen-pairs only from the source_ids we'll be expanding — avoids loading every
@@ -635,11 +651,24 @@ function runPostNativeCha(
   const newEdges: Array<[number, number, string, number, number, string]> = [];
   let newEdgeCount = 0;
 
-  for (const { source_id, method_name, caller_file } of callToMethods) {
+  for (const { source_id, caller_name, method_name, caller_file } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
     if (dotIdx === -1) continue;
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
+
+    // Super-dispatch guard: if the caller's class is itself a direct child of
+    // typeName (i.e. callerClass extends typeName), the existing edge is a
+    // super.method() call going up the hierarchy — not an interface dispatch.
+    // Expanding it to sibling subclasses of typeName would produce false edges:
+    // those siblings are unrelated to the caller and would never be invoked by
+    // that super call. Skip CHA expansion entirely for super-dispatch edges.
+    const callerDotIdx = caller_name.indexOf('.');
+    if (callerDotIdx !== -1) {
+      const callerClass = caller_name.slice(0, callerDotIdx);
+      const directChildrenOfType = implementors.get(typeName);
+      if (directChildrenOfType?.includes(callerClass)) continue;
+    }
 
     // BFS over the implementors map — handles multi-level hierarchies where
     // abstract/non-instantiated classes sit between the call-site type and
