@@ -13,6 +13,7 @@ impl SymbolExtractor for JavaExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_java_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &JAVA_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_java_type_map);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }

@@ -34,6 +34,7 @@ impl SymbolExtractor for CudaExtractor {
         // fires for CUDA files just like it does for C++ files. Mirrors the
         // third walk in `cpp.rs`.
         walk_tree(&tree.root_node(), source, &mut symbols, match_cuda_type_map);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }

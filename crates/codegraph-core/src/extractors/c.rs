@@ -13,6 +13,7 @@ impl SymbolExtractor for CExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_c_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &C_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_c_type_map);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }

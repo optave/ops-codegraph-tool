@@ -41,6 +41,9 @@ impl SymbolExtractor for JsExtractor {
         // Phase 8.3c–8.3f: points-to bindings (params, this-rebinding, arrays,
         // spread, for-of, object rest/props) for the pts constraint solver.
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_pts_bindings);
+        // Collapse duplicate keys accumulated during the tree walks (O(n)).
+        dedup_type_map(&mut symbols.type_map);
+        dedup_type_map(&mut symbols.return_type_map);
         symbols
     }
 }
@@ -635,12 +638,10 @@ fn find_return_new_expr_type<'a>(body: &Node<'a>, source: &'a [u8]) -> Option<&'
     None
 }
 
-/// Insert `(fn_name → type_name)` into `return_type_map`, keeping the highest-confidence entry.
+/// Append a `(fn_name → type_name)` entry to `return_type_map`.
+/// Deduplication (highest-confidence-wins) is handled in bulk by
+/// [`dedup_type_map`] at the end of `extract()`.
 fn push_return_type_entry(symbols: &mut FileSymbols, fn_name: &str, type_name: &str, confidence: f64) {
-    if let Some(pos) = symbols.return_type_map.iter().position(|e| e.name == fn_name) {
-        if symbols.return_type_map[pos].confidence >= confidence { return; }
-        symbols.return_type_map.swap_remove(pos);
-    }
     symbols.return_type_map.push(TypeMapEntry {
         name: fn_name.to_string(),
         type_name: type_name.to_string(),
