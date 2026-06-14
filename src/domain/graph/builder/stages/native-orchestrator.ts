@@ -49,14 +49,14 @@ import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
   batchInsertNodes,
-  CHA_DISPATCH_CONFIDENCE,
+  CHA_DISPATCH_PENALTY,
+  CHA_TYPED_DISPATCH_CONFIDENCE,
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
-import { CHA_DISPATCH_PENALTY } from './build-edges.js';
 import { closeNativeDb } from './native-db-lifecycle.js';
 
 // ── Native orchestrator types ──────────────────────────────────────────
@@ -572,7 +572,7 @@ function runPostNativeCha(
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
   // Include caller_file and method_file so affectedFiles can be populated for
-  // incremental role reclassification; confidence is CHA_DISPATCH_CONFIDENCE matching runChaPostPass.
+  // incremental role reclassification; confidence uses CHA_TYPED_DISPATCH_CONFIDENCE matching runChaPostPass.
   // When scopeToChangedFiles is true, restrict to call sites in the changed files
   // (safe because no hierarchy or RTA evidence changed outside those files).
   let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
@@ -668,7 +668,7 @@ function runPostNativeCha(
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            const conf = CHA_DISPATCH_CONFIDENCE;
+            const conf = CHA_TYPED_DISPATCH_CONFIDENCE;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newEdgeCount++;
             if (caller_file) affectedFiles.add(caller_file);
@@ -945,14 +945,6 @@ async function runPostNativeThisDispatch(
   }
 
   return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
-}
-
-interface PostPassTimings {
-  gapDetectMs: number;
-  chaMs: number;
-  thisDispatchMs: number;
-  reclassifyMs: number;
-  techniqueBackfillMs: number;
 }
 
 interface PostPassTimings {
