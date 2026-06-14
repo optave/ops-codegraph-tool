@@ -721,6 +721,7 @@ function buildChaPostPass(
           call.receiver,
           chaCtx,
           lookup,
+          relPath,
         );
       } else {
         const typeEntry = typeMap.get(call.receiver);
@@ -1313,6 +1314,7 @@ function buildFileCallEdges(
           call.receiver,
           chaCtx,
           lookup,
+          relPath,
         );
       } else if (!BUILTIN_RECEIVERS.has(call.receiver)) {
         const typeEntry = typeMap.get(call.receiver);
