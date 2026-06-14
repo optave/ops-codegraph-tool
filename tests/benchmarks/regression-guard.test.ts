@@ -44,26 +44,27 @@ const REGRESSION_THRESHOLD = BENCH_CANARY ? 0.5 : 0.25;
 /**
  * Wider regression threshold applied to metrics in NOISY_METRICS.
  *
- * Sub-30ms timing metrics (no-op rebuild, 1-file rebuild, fnDeps depth 1)
- * routinely jitter ±10ms from CI runner load, GC pauses, and OS scheduling,
- * which translates to ±50%+ on small absolute numbers. The MIN_ABSOLUTE_DELTA
- * floor (10ms) filters trivial noise but cannot distinguish a 10–14ms
- * "real" jitter event from a regression on these specific metrics.
+ * Short-latency timing metrics (no-op rebuild, 1-file rebuild, fnDeps depth 1)
+ * that routinely jitter ±10–50ms from CI runner load, GC pauses, and OS
+ * scheduling — translating to ±25–155%+ on sub-100ms baselines. The
+ * MIN_ABSOLUTE_DELTA floor (10ms) filters trivial noise but cannot distinguish
+ * a 10–14ms "real" jitter event from a regression on these specific metrics.
  *
- * Keeping the global threshold at 25% means a regression in the 30–100ms
- * range is still caught (e.g. 50ms→63ms = +26%, flagged), while sub-30ms
- * metrics in this set get the wider 50% allowance.
+ * Keeping the global threshold at 25% means a regression in the 100–500ms
+ * range is still caught (e.g. 200ms→253ms = +26%, flagged), while the
+ * high-jitter metrics in this set get the wider 50% allowance.
  *
  * In BENCH_CANARY mode this is overridden to 1.0 (100%) — the canary's
- * purpose is to catch gross regressions (+50%+), not sub-30ms jitter.
+ * purpose is to catch gross regressions (+50%+), not short-latency jitter.
  */
 const NOISY_METRIC_THRESHOLD = BENCH_CANARY ? 1.0 : 0.5;
 
 /**
  * Metric labels treated as high-variance and given the NOISY_METRIC_THRESHOLD
  * tolerance instead of the default REGRESSION_THRESHOLD. Add a metric here
- * only when its baseline is consistently sub-30ms and CI variance has been
- * empirically shown to exceed 25%.
+ * only when CI variance has been empirically shown to exceed 25% due to runner
+ * jitter (±10–50ms absolute) that dominates the percentage on short-ish
+ * sub-200ms baselines — document the evidence in the entry below.
  *
  * - `No-op rebuild`: native baselines across releases span 15–30ms
  *   (3.11.0: 15ms, 3.11.2: 19–25ms, 3.12.0: 23–30ms depending on suite).
@@ -104,7 +105,7 @@ const NOISY_METRIC_THRESHOLD = BENCH_CANARY ? 1.0 : 0.5;
  *   CI consistently measures +40–60% on this sub-30ms metric while the
  *   absolute delta (~13ms) is at the noise floor for shared runners.
  *   Methodology already discards 3 warmup runs (#1077). Same pattern as
- *   No-op rebuild and 1-file rebuild — sub-30ms baseline amplified by
+ *   No-op rebuild and 1-file rebuild — short-latency baseline amplified by
  *   ±10ms runner jitter into a percentage swing that looks like regression.
  */
 const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild', 'fnDeps depth 1']);
