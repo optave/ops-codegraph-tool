@@ -158,6 +158,7 @@ const COMMON_QUERY_PATTERNS: string[] = [
   '(variable_declarator name: (identifier) @varfn_name value: (generator_function) @varfn_value)',
   '(method_definition name: (property_identifier) @meth_name) @meth_node',
   '(method_definition name: (private_property_identifier) @meth_name) @meth_node',
+  '(method_definition name: (computed_property_name) @meth_name) @meth_node',
   '(import_statement source: (string) @imp_source) @imp_node',
   '(export_statement) @exp_node',
   '(call_expression function: (identifier) @callfn_name) @callfn_node',
