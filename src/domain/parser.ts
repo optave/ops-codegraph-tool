@@ -1243,6 +1243,12 @@ async function parseFilesWasmInline(
     // are needed by callers like the this/super dispatch post-pass.
     if (!symbolsOnly) {
       symbols._tree = extracted.tree;
+    } else if (typeof (extracted.tree as any)?.delete === 'function') {
+      // Free the WASM-backed tree immediately — web-tree-sitter trees are backed
+      // by WASM linear memory and require explicit disposal.  When symbolsOnly is
+      // true the tree is never stored anywhere, so we must delete it here to
+      // avoid leaking WASM heap on every incremental rebuild.
+      (extracted.tree as any).delete();
     }
     symbols._langId = extracted.langId;
     result.set(relPath, symbols);
@@ -1253,8 +1259,7 @@ async function parseFilesWasmInline(
 /**
  * Backfill helper: small batches use the inline (main-thread) path; larger
  * batches keep the worker-pool isolation against tree-sitter WASM crashes
- * (#965). Threshold matches typical engine-parity drop sizes (a few fixture
- * files in one or two languages).
+ * (#965). See INLINE_BACKFILL_THRESHOLD for threshold rationale.
  *
  * `opts.symbolsOnly` skips the AST/complexity/CFG/dataflow visitors in the
  * worker (and their result serialization across the thread boundary) for

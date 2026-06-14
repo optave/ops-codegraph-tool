@@ -368,6 +368,9 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
   }
 }
 
+/** Confidence assigned to CHA-expanded interface/abstract dispatch edges. */
+export const CHA_DISPATCH_CONFIDENCE = 0.8;
+
 /**
  * CHA (Class Hierarchy Analysis) post-pass.
  *
