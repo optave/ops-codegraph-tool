@@ -9,7 +9,8 @@ describe('Erlang parser', () => {
 
   beforeAll(async () => {
     parsers = await createParsers();
-    if (!parsers.get('erlang')) {
+    const erlangParser = parsers.get('erlang');
+    if (!erlangParser) {
       erlangAvailable = false;
       return;
     }
@@ -19,8 +20,7 @@ describe('Erlang parser', () => {
     // successfully but produces generic `attribute` nodes, causing all extractions to
     // return empty. Treat that as "unavailable" so tests skip rather than fail.
     try {
-      const parser = parsers.get('erlang');
-      const tree = parser.parse('-module(probe).');
+      const tree = erlangParser.parse('-module(probe).');
       const result = extractErlangSymbols(tree, 'probe.erl');
       erlangAvailable = result.definitions.some((d) => d.name === 'probe' && d.kind === 'module');
     } catch {
