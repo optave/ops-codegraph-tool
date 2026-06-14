@@ -5,7 +5,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
+import { extractModifierVisibility, findChild, nodeEndLine, setTypeMapEntry } from './helpers.js';
 
 /**
  * Extract symbols from CUDA files.
@@ -236,7 +236,7 @@ function handleCudaDeclaration(node: TreeSitterNode, ctx: ExtractorOutput): void
     if (!nameNode) continue;
     const varName = extractCudaFieldName(nameNode);
     if (varName) {
-      ctx.typeMap.set(varName, { type: typeName, confidence: 0.9 });
+      setTypeMapEntry(ctx.typeMap, varName, typeName, 0.9);
     }
   }
 }
