@@ -1222,6 +1222,19 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         handle_dynamic_import(node, &fn_node, source, symbols);
         return;
     }
+    // `this(args)` and `super(args)` — the callee is `this`/`super` used as a
+    // function, not a named identifier.  The `this` call record is emitted by
+    // collect_this_call_and_bindings (called from match_js_pts_bindings).
+    // Neither case should emit callback-reference calls for the arguments, because
+    // those arguments are values passed *to* the rebound function — not callbacks
+    // of the enclosing scope.  Without this guard, identifier arguments like `b`
+    // in `this(b)` or `a` in `super(a)` become spurious dynamic calls that the
+    // pts resolver resolves to globally-defined functions with the same name in
+    // other files, producing false cross-file call edges.
+    // Mirrors the early-return guard in the TS handleCallExpr (javascript.ts:1135).
+    if fn_node.kind() == "this" || fn_node.kind() == "super" {
+        return;
+    }
     if let Some(call_info) = extract_call_info(&fn_node, node, source) {
         symbols.calls.push(call_info);
     }
@@ -4095,6 +4108,51 @@ mod tests {
         let b = s.this_call_bindings.iter().find(|b| b.callee == "invoker");
         assert!(b.is_some(), "this_call_bindings should contain invoker→handler; got: {:?}", s.this_call_bindings);
         assert_eq!(b.unwrap().this_arg, "handler");
+    }
+
+    /// `this(b)` must NOT emit `b` as a dynamic callback-reference call.
+    /// Without the early-return guard, `b` would be emitted as a dynamic call
+    /// and the pts resolver would match any globally-defined function named `b`,
+    /// producing false cross-file call edges (issue #1511).
+    #[test]
+    fn this_call_args_do_not_emit_callback_reference_calls() {
+        let s = parse_js(
+            "function foo(b) { return this(b); }\n\
+             foo.call((a) => a, () => {});",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "this"),
+            "this() must be recorded; got: {:?}",
+            s.calls.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "b"),
+            "argument `b` of this(b) must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+    }
+
+    /// `super(a)` must NOT emit `a` as a dynamic callback-reference call.
+    /// Same root cause as this(b): the callee `super` is not a named identifier,
+    /// so extract_callback_reference_calls must not run on the arguments.
+    #[test]
+    fn super_call_args_do_not_emit_callback_reference_calls() {
+        let s = parse_js(
+            "class E { constructor(c) { this.cc = c; } }\n\
+             class G extends E {\n\
+               constructor(a, b) { super(a); this.bb = b; }\n\
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "a"),
+            "argument `a` of super(a) must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "b"),
+            "argument `b` of this.bb = b must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
     }
 
     #[test]
