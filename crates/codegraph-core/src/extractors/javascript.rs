@@ -954,7 +954,29 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name_node) = node.child_by_field_name("name") {
-        let method_name = node_text(&name_node, source);
+        // For computed property names (`['methodName']`), extract the inner string
+        // literal so the stored name matches the plain identifier used at call sites
+        // (e.g. `obj.methodName()`).  Non-string computed keys like `[Symbol.iterator]`
+        // cannot be resolved at dot-notation call sites, so we skip them.
+        let method_name_owned: String;
+        let method_name: &str = if name_node.kind() == "computed_property_name" {
+            // child(0)='[', child(1)=string literal, child(2)=']'
+            let inner = name_node.child(1);
+            match inner {
+                Some(inner) if inner.kind() == "string" => {
+                    let s = node_text(&inner, source);
+                    let stripped = s.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+                        .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                        .unwrap_or(s);
+                    if stripped.is_empty() { return; }
+                    method_name_owned = stripped.to_string();
+                    &method_name_owned
+                }
+                _ => return, // non-string computed key — skip
+            }
+        } else {
+            node_text(&name_node, source)
+        };
         let parent_class = find_parent_class(node, source);
         let full_name = match parent_class {
             Some(cls) => format!("{}.{}", cls, method_name),

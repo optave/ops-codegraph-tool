@@ -1266,17 +1266,17 @@ describe('JavaScript parser', () => {
     });
   });
 
-  describe('computed method name extraction (#1471)', () => {
-    it('extracts computed getter method from object literal', () => {
+  describe('computed method name extraction (#1471, #1517)', () => {
+    it('extracts computed getter with plain name (strips brackets+quotes)', () => {
       const symbols = parseJS(`const obj = { get ['property7']() {} };`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: "['property7']", kind: 'method' }),
+        expect.objectContaining({ name: 'property7', kind: 'method' }),
       );
     });
 
-    it('extracts computed setter method with parameter from object literal', () => {
+    it('extracts computed setter with plain name and preserves parameter', () => {
       const symbols = parseJS(`const obj = { set ['property8'](value) {} };`);
-      const def = symbols.definitions.find((d) => d.name === "['property8']");
+      const def = symbols.definitions.find((d) => d.name === 'property8');
       expect(def).toBeDefined();
       expect(def).toMatchObject({ kind: 'method' });
       expect(def!.children).toContainEqual(
@@ -1284,27 +1284,46 @@ describe('JavaScript parser', () => {
       );
     });
 
-    it('extracts computed regular method with parameter from object literal', () => {
+    it('extracts computed regular method with plain name and preserves parameter', () => {
       const symbols = parseJS(`const obj = { ['property9'](parameters) {} };`);
-      const def = symbols.definitions.find((d) => d.name === "['property9']");
+      const def = symbols.definitions.find((d) => d.name === 'property9');
       expect(def).toBeDefined();
       expect(def!.children).toContainEqual(
         expect.objectContaining({ name: 'parameters', kind: 'parameter' }),
       );
     });
 
-    it('extracts computed generator method from object literal', () => {
+    it('extracts computed generator method with plain name', () => {
       const symbols = parseJS(`const obj = { *['generator10'](parameters) {} };`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: "['generator10']", kind: 'method' }),
+        expect.objectContaining({ name: 'generator10', kind: 'method' }),
       );
     });
 
-    it('extracts computed async method from object literal', () => {
+    it('extracts computed async method with plain name', () => {
       const symbols = parseJS(`const obj = { async ['property11'](parameters) {} };`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: "['property11']", kind: 'method' }),
+        expect.objectContaining({ name: 'property11', kind: 'method' }),
       );
+    });
+
+    it('extracts computed class method with plain name', () => {
+      const symbols = parseJS(`class MyClass { ['myMethod']() { return 1; } }`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'MyClass.myMethod', kind: 'method' }),
+      );
+    });
+
+    it('does not extract non-string computed key (Symbol.iterator)', () => {
+      const symbols = parseJS(`class MyClass { [Symbol.iterator]() {} }`);
+      const def = symbols.definitions.find((d) => d.name.includes('iterator'));
+      expect(def).toBeUndefined();
+    });
+
+    it('does not use the bracketed form in the stored name', () => {
+      const symbols = parseJS(`const obj = { ['property7']() {} };`);
+      const def = symbols.definitions.find((d) => d.name.includes('['));
+      expect(def).toBeUndefined();
     });
   });
 
