@@ -958,22 +958,53 @@ pub fn extract_simple_parameters(
 
 // ── Type-map helpers ───────────────────────────────────────────────────────
 
-/// Record a parameter name → type binding in the type-map sink, using
-/// the default confidence of `0.9` shared by every Rust extractor.
-pub fn push_type_map_entry(
+/// Merge a type-map entry into the sink with first-write-wins semantics,
+/// matching `setTypeMapEntry` in `src/extractors/helpers.ts`.
+///
+/// If the key already exists with equal-or-higher confidence the new entry is
+/// silently dropped; otherwise the old entry is replaced.  This prevents
+/// duplicate entries from accumulating when the same bare key is written
+/// multiple times (e.g. two class expressions in one file that both define a
+/// field with the same name).
+///
+/// Mirrors `setTypeMapEntry` in `src/extractors/helpers.ts`.
+pub fn set_type_map_entry(
     symbols: &mut FileSymbols,
     name: impl Into<String>,
     type_name: impl Into<String>,
+    confidence: f64,
 ) {
     let name = name.into();
     if name.is_empty() {
         return;
     }
+    // Scan for an existing entry with the same key.
+    if let Some(existing) = symbols.type_map.iter_mut().find(|e| e.name == name) {
+        if confidence > existing.confidence {
+            existing.type_name = type_name.into();
+            existing.confidence = confidence;
+        }
+        return;
+    }
     symbols.type_map.push(TypeMapEntry {
         name,
         type_name: type_name.into(),
-        confidence: 0.9,
+        confidence,
     });
+}
+
+/// Record a parameter name → type binding in the type-map sink, using
+/// the default confidence of `0.9` shared by every Rust extractor.
+///
+/// Delegates to [`set_type_map_entry`] so duplicate keys are deduplicated with
+/// first-write-wins semantics, matching `setTypeMapEntry` in
+/// `src/extractors/helpers.ts`.
+pub fn push_type_map_entry(
+    symbols: &mut FileSymbols,
+    name: impl Into<String>,
+    type_name: impl Into<String>,
+) {
+    set_type_map_entry(symbols, name, type_name, 0.9);
 }
 
 /// C-family `declaration` / `parameter_declaration` type-map matcher.
