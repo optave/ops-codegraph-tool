@@ -669,12 +669,25 @@ fn is_top_level_binding_kind(kind: &str) -> bool {
 
 /// Find the narrowest enclosing definition for a call at the given line.
 ///
-/// Two-pass strategy (mirrors the updated `findCaller` in call-resolver.ts):
+/// Two-pass strategy (mirrors `findCaller` in call-resolver.ts):
 ///   Pass 1 — narrowest enclosing function/method.  Local variable declarations
 ///             inside a function body must not shadow the enclosing function.
 ///   Pass 2 — widest (outermost) enclosing variable/constant binding.  Used as
 ///             fallback when no function/method encloses the call (e.g. Haskell
 ///             top-level `main = do …` is a `bind` node with kind `variable`).
+///
+/// Tie-breaking in Pass 1: when two callable definitions have the same span,
+/// prefer the bare (unqualified) name over the dot-containing qualified name.
+/// Object-literal methods are extracted twice by the Rust extractor — once as
+/// `o1.f(function)` from `extract_object_literal_functions` (called eagerly
+/// inside `handle_var_decl`) and once as `f(method)` from `handle_method_def`
+/// (called later during the child walk). The WASM extractor emits `f(method)`
+/// first (query captures run before the walk-phase `extractObjectLiteralFunctions`),
+/// so WASM's strict-less-than tie-break naturally picks the bare name.
+/// Applying the same preference here aligns native attribution with WASM and with
+/// the jelly-micro ground-truth expected-edges (which use bare `f`/`g` names).
+/// Names with angle brackets (e.g. `B.<static:36:2>`) are synthetic static-block
+/// nodes excluded from the bare-preference rule.
 ///
 /// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call
 /// falls back to file scope.
@@ -698,7 +711,16 @@ fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_i
         if def.line <= call_line && call_line <= def.end_line {
             let span = def.end_line.saturating_sub(def.line);
             if is_callable_kind(def.kind) {
-                if span < fn_caller_span {
+                // On a strict span improvement always take the new candidate.
+                // On a tie, prefer bare names over qualified names (dot-containing, no angle
+                // brackets) so native matches WASM: both pick `f(method)` over `o1.f(function)`
+                // when an object-literal method is extracted under both names at the same line.
+                let is_improvement = span < fn_caller_span;
+                let is_tie_prefer_bare = span == fn_caller_span
+                    && !def.name.contains('.')
+                    && fn_caller_name.contains('.')
+                    && !fn_caller_name.contains('<');
+                if is_improvement || is_tie_prefer_bare {
                     if let Some(id) = def.node_id {
                         fn_caller_id = Some(id);
                         fn_caller_name = def.name;
