@@ -33,13 +33,20 @@
     },
     {
       "source": { "name": "UserService.getUser", "file": "UserService.java" },
+      "target": { "name": "UserRepository.findById", "file": "UserRepository.java" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "repo.findById() — static type is UserRepository interface; interface declaration edge"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "UserService.java" },
       "target": {
         "name": "InMemoryUserRepository.findById",
         "file": "InMemoryUserRepository.java"
       },
       "kind": "calls",
       "mode": "interface-dispatched",
-      "notes": "repo.findById() — typed as UserRepository interface, resolved to InMemoryUserRepository"
+      "notes": "repo.findById() — CHA expansion of UserRepository to concrete InMemoryUserRepository"
     },
     {
       "source": { "name": "UserService.createUser", "file": "UserService.java" },
@@ -50,10 +57,17 @@
     },
     {
       "source": { "name": "UserService.createUser", "file": "UserService.java" },
+      "target": { "name": "UserRepository.save", "file": "UserRepository.java" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "repo.save() — static type is UserRepository interface; interface declaration edge"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "UserService.java" },
       "target": { "name": "InMemoryUserRepository.save", "file": "InMemoryUserRepository.java" },
       "kind": "calls",
       "mode": "interface-dispatched",
-      "notes": "repo.save() — typed as UserRepository interface, resolved to InMemoryUserRepository"
+      "notes": "repo.save() — CHA expansion of UserRepository to concrete InMemoryUserRepository"
     },
     {
       "source": { "name": "UserService.createUser", "file": "UserService.java" },
@@ -71,10 +85,17 @@
     },
     {
       "source": { "name": "UserService.removeUser", "file": "UserService.java" },
+      "target": { "name": "UserRepository.delete", "file": "UserRepository.java" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "repo.delete() — static type is UserRepository interface; interface declaration edge"
+    },
+    {
+      "source": { "name": "UserService.removeUser", "file": "UserService.java" },
       "target": { "name": "InMemoryUserRepository.delete", "file": "InMemoryUserRepository.java" },
       "kind": "calls",
       "mode": "interface-dispatched",
-      "notes": "repo.delete() — typed as UserRepository interface, resolved to InMemoryUserRepository"
+      "notes": "repo.delete() — CHA expansion of UserRepository to concrete InMemoryUserRepository"
     },
     {
       "source": { "name": "UserService.createDefault", "file": "UserService.java" },

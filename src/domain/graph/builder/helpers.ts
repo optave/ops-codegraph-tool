@@ -48,6 +48,13 @@ export const BUILTIN_RECEIVERS: Set<string> = new Set([
   'require',
 ]);
 
+/** Phase 8.5: confidence penalty applied to CHA-dispatch edges. */
+export const CHA_DISPATCH_PENALTY = 0.1;
+/** Phase 8.5: fixed confidence for typed-receiver (interface/CHA) dispatch edges.
+ *  File proximity is not meaningful for virtual dispatch — all three engine paths
+ *  (WASM inline, WASM post-pass, native post-pass) must agree on this value. */
+export const CHA_TYPED_DISPATCH_CONFIDENCE = 0.8;
+
 /** Check if a directory entry should be skipped (ignored dirs, dotfiles). */
 function shouldSkipEntry(entry: fs.Dirent, extraIgnore: Set<string> | null): boolean {
   if (entry.name.startsWith('.') && entry.name !== '.') {
@@ -361,6 +368,9 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
   }
 }
 
+/** Confidence assigned to CHA-expanded interface/abstract dispatch edges. */
+export const CHA_DISPATCH_CONFIDENCE = 0.8;
+
 /**
  * CHA (Class Hierarchy Analysis) post-pass.
  *
@@ -511,10 +521,18 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
           const qualifiedName = `${cls}.${methodSuffix}`;
           const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
           for (const methodNode of methodNodes) {
+            if (methodNode.id === source_id) continue; // skip self-loops
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            newEdges.push([source_id, methodNode.id, 'calls', 0.8, 0, 'cha']);
+            newEdges.push([
+              source_id,
+              methodNode.id,
+              'calls',
+              CHA_TYPED_DISPATCH_CONFIDENCE,
+              0,
+              'cha',
+            ]);
           }
         }
 

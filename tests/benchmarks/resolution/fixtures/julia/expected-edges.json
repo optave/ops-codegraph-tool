@@ -4,109 +4,109 @@
   "description": "Hand-annotated call edges for Julia resolution benchmark",
   "edges": [
     {
-      "source": { "name": "main", "file": "main.jl" },
-      "target": { "name": "new_repo", "file": "repository.jl" },
+      "source": { "name": "App.main", "file": "main.jl" },
+      "target": { "name": "Repository.new_repo", "file": "repository.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Repository.new_repo() — qualified call to Repository module"
+      "notes": "Repository.new_repo() — qualified call to Repository module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "main", "file": "main.jl" },
-      "target": { "name": "create_user", "file": "service.jl" },
+      "source": { "name": "App.main", "file": "main.jl" },
+      "target": { "name": "Service.create_user", "file": "service.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Service.create_user() — qualified call to Service module"
+      "notes": "Service.create_user() — qualified call to Service module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "main", "file": "main.jl" },
-      "target": { "name": "get_user", "file": "service.jl" },
+      "source": { "name": "App.main", "file": "main.jl" },
+      "target": { "name": "Service.get_user", "file": "service.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Service.get_user() — qualified call to Service module"
+      "notes": "Service.get_user() — qualified call to Service module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "main", "file": "main.jl" },
-      "target": { "name": "remove_user", "file": "service.jl" },
+      "source": { "name": "App.main", "file": "main.jl" },
+      "target": { "name": "Service.remove_user", "file": "service.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Service.remove_user() — qualified call to Service module"
+      "notes": "Service.remove_user() — qualified call to Service module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "main", "file": "main.jl" },
-      "target": { "name": "summary", "file": "service.jl" },
+      "source": { "name": "App.main", "file": "main.jl" },
+      "target": { "name": "Service.summary", "file": "service.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Service.summary() — qualified call to Service module"
+      "notes": "Service.summary() — qualified call to Service module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "create_user", "file": "service.jl" },
-      "target": { "name": "validate_name", "file": "validators.jl" },
+      "source": { "name": "Service.create_user", "file": "service.jl" },
+      "target": { "name": "Validators.validate_name", "file": "validators.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Validators.validate_name() — qualified call to Validators module"
+      "notes": "Validators.validate_name() — qualified call to Validators module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "create_user", "file": "service.jl" },
-      "target": { "name": "validate_email", "file": "validators.jl" },
+      "source": { "name": "Service.create_user", "file": "service.jl" },
+      "target": { "name": "Validators.validate_email", "file": "validators.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Validators.validate_email() — qualified call to Validators module"
+      "notes": "Validators.validate_email() — qualified call to Validators module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "create_user", "file": "service.jl" },
-      "target": { "name": "save", "file": "repository.jl" },
+      "source": { "name": "Service.create_user", "file": "service.jl" },
+      "target": { "name": "Repository.save", "file": "repository.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Repository.save() — qualified call to Repository module"
+      "notes": "Repository.save() — qualified call to Repository module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "get_user", "file": "service.jl" },
-      "target": { "name": "find_by_id", "file": "repository.jl" },
+      "source": { "name": "Service.get_user", "file": "service.jl" },
+      "target": { "name": "Repository.find_by_id", "file": "repository.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Repository.find_by_id() — qualified call to Repository module"
+      "notes": "Repository.find_by_id() — qualified call to Repository module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "remove_user", "file": "service.jl" },
-      "target": { "name": "delete", "file": "repository.jl" },
+      "source": { "name": "Service.remove_user", "file": "service.jl" },
+      "target": { "name": "Repository.delete", "file": "repository.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Repository.delete() — qualified call to Repository module"
+      "notes": "Repository.delete() — qualified call to Repository module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "summary", "file": "service.jl" },
-      "target": { "name": "count", "file": "repository.jl" },
+      "source": { "name": "Service.summary", "file": "service.jl" },
+      "target": { "name": "Repository.count", "file": "repository.jl" },
       "kind": "calls",
       "mode": "module-function",
-      "notes": "Repository.count() — qualified call to Repository module"
+      "notes": "Repository.count() — qualified call to Repository module; extractor emits module-qualified names"
     },
     {
-      "source": { "name": "summary", "file": "service.jl" },
-      "target": { "name": "format_summary", "file": "service.jl" },
+      "source": { "name": "Service.summary", "file": "service.jl" },
+      "target": { "name": "Service.format_summary", "file": "service.jl" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-file call to private helper function"
+      "notes": "Same-file call to private helper function — extractor emits module-qualified names"
     },
     {
-      "source": { "name": "validate_name", "file": "validators.jl" },
-      "target": { "name": "check_length", "file": "validators.jl" },
+      "source": { "name": "Validators.validate_name", "file": "validators.jl" },
+      "target": { "name": "Validators.check_length", "file": "validators.jl" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-file call to private helper function"
+      "notes": "Same-file call to private helper function — extractor emits module-qualified names"
     },
     {
-      "source": { "name": "validate_email", "file": "validators.jl" },
-      "target": { "name": "contains_at", "file": "validators.jl" },
+      "source": { "name": "Validators.validate_email", "file": "validators.jl" },
+      "target": { "name": "Validators.contains_at", "file": "validators.jl" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-file call to private helper function"
+      "notes": "Same-file call to private helper function — extractor emits module-qualified names"
     },
     {
-      "source": { "name": "count", "file": "repository.jl" },
-      "target": { "name": "count_entries", "file": "repository.jl" },
+      "source": { "name": "Repository.count", "file": "repository.jl" },
+      "target": { "name": "Repository.count_entries", "file": "repository.jl" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "Same-file call to private helper function"
+      "notes": "Same-file call to private helper function — extractor emits module-qualified names"
     }
   ]
 }

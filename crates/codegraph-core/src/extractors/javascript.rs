@@ -202,8 +202,13 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
             }
         }
         // TypeScript class field declarations: `private repo: Repository<User>`
-        // Seeds both "repo" and "this.repo" so that `this.repo.method()` calls
-        // can be resolved to the interface/class type via the type map.
+        // Seeds a class-scoped key `ClassName.field` (confidence 0.9) as the primary
+        // entry so that two classes with identically-named fields don't overwrite each
+        // other's typeMap entry (issue #1458). The resolver's `CallerClass.X` fallback
+        // looks up exactly this key.
+        // Bare `field` and `this.field` keys are kept at lower confidence (0.6) as
+        // fallbacks for single-class files where the resolver may lack callerClass context.
+        // Mirrors handleFieldDefTypeMap in src/extractors/javascript.ts.
         "public_field_definition" | "field_definition" => {
             let name_node = node.child_by_field_name("name")
                 .or_else(|| node.child_by_field_name("property"))
@@ -216,9 +221,33 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                     let field_name = node_text(&name_node, source).to_string();
                     if let Some(type_anno) = find_child(node, "type_annotation") {
                         if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
-                            push_type_map_entry(symbols, field_name.clone(), type_name.to_string());
-                            // "this.fieldName" key resolves `this.repo.method()` calls.
-                            push_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string());
+                            match enclosing_type_map_class(node, source) {
+                                Some(class_name) => {
+                                    // Primary: class-scoped key prevents cross-class collision.
+                                    push_type_map_entry(
+                                        symbols,
+                                        format!("{}.{}", class_name, field_name),
+                                        type_name.to_string(),
+                                    );
+                                    // Fallback bare keys at lower confidence.
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: field_name.clone(),
+                                        type_name: type_name.to_string(),
+                                        confidence: 0.6,
+                                    });
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: format!("this.{}", field_name),
+                                        type_name: type_name.to_string(),
+                                        confidence: 0.6,
+                                    });
+                                }
+                                None => {
+                                    // No enclosing class declaration (e.g. class expression)
+                                    // — use bare keys only at full confidence.
+                                    push_type_map_entry(symbols, field_name.clone(), type_name.to_string());
+                                    push_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string());
+                                }
+                            }
                         }
                     }
                 }
@@ -2946,6 +2975,15 @@ mod tests {
         JsExtractor.extract(&tree, code.as_bytes(), "test.js")
     }
 
+    fn parse_ts(code: &str) -> FileSymbols {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        JsExtractor.extract(&tree, code.as_bytes(), "test.ts")
+    }
+
     #[test]
     fn finds_function_declaration() {
         let s = parse_js("function greet(name) { return name; }");
@@ -3567,6 +3605,38 @@ mod tests {
             s.type_map
         );
         assert_eq!(tm.unwrap().type_name, "HttpClient");
+    }
+
+    /// Issue #1458: two classes with identically-named field annotations must
+    /// produce separate class-scoped typeMap keys, not overwrite each other.
+    /// Mirrors the TS `prevents cross-class collision` test.
+    #[test]
+    fn field_annotation_multi_class_seeds_separate_scoped_keys() {
+        let s = parse_ts(
+            "class OrderService {\n\
+               private repo: OrderRepository;\n\
+             }\n\
+             class UserService {\n\
+               private repo: UserRepository;\n\
+             }",
+        );
+        let order_entry = s.type_map.iter().find(|t| t.name == "OrderService.repo");
+        assert!(
+            order_entry.is_some(),
+            "type_map should contain 'OrderService.repo'; got: {:?}",
+            s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        assert_eq!(order_entry.unwrap().type_name, "OrderRepository");
+        assert_eq!(order_entry.unwrap().confidence, 0.9);
+
+        let user_entry = s.type_map.iter().find(|t| t.name == "UserService.repo");
+        assert!(
+            user_entry.is_some(),
+            "type_map should contain 'UserService.repo'; got: {:?}",
+            s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        assert_eq!(user_entry.unwrap().type_name, "UserRepository");
+        assert_eq!(user_entry.unwrap().confidence, 0.9);
     }
 
     /// Issue #1453 (edge 4): `const f = fn.bind(ctx)` must record a

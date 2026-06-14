@@ -4,88 +4,95 @@
   "description": "Hand-annotated call edges for Objective-C resolution benchmark",
   "edges": [
     {
+      "source": { "name": "main", "file": "main.m" },
+      "target": { "name": "run", "file": "main.m" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "main() calls run() — plain C function call; extractor sees both as plain functions"
+    },
+    {
       "source": { "name": "run", "file": "main.m" },
-      "target": { "name": "UserService.initWithRepository", "file": "Service.m" },
+      "target": { "name": "UserService.initWithRepository:", "file": "Service.m" },
       "kind": "calls",
       "mode": "constructor",
-      "notes": "[[UserService alloc] initWithRepository:repo] — message send constructor"
+      "notes": "[[UserService alloc] initWithRepository:repo] — message send constructor; full selector includes trailing colon"
     },
     {
       "source": { "name": "run", "file": "main.m" },
-      "target": { "name": "UserService.createUserWithId", "file": "Service.m" },
+      "target": { "name": "UserService.createUserWithId:name:email:", "file": "Service.m" },
       "kind": "calls",
       "mode": "receiver-typed",
-      "notes": "[svc createUserWithId:...] — message send on UserService instance"
+      "notes": "[svc createUserWithId:name:email:...] — message send on UserService instance; full multi-part selector"
     },
     {
       "source": { "name": "run", "file": "main.m" },
-      "target": { "name": "UserService.getUserWithId", "file": "Service.m" },
+      "target": { "name": "UserService.getUserWithId:", "file": "Service.m" },
       "kind": "calls",
       "mode": "receiver-typed",
-      "notes": "[svc getUserWithId:...] — message send on UserService instance"
+      "notes": "[svc getUserWithId:...] — message send on UserService instance; full selector includes trailing colon"
     },
     {
       "source": { "name": "run", "file": "main.m" },
-      "target": { "name": "UserService.removeUserWithId", "file": "Service.m" },
+      "target": { "name": "UserService.removeUserWithId:", "file": "Service.m" },
       "kind": "calls",
       "mode": "receiver-typed",
-      "notes": "[svc removeUserWithId:...] — message send on UserService instance"
+      "notes": "[svc removeUserWithId:...] — message send on UserService instance; full selector includes trailing colon"
     },
     {
       "source": { "name": "run", "file": "main.m" },
-      "target": { "name": "Validators.isValidEmail", "file": "Validators.m" },
+      "target": { "name": "Validators.isValidEmail:", "file": "Validators.m" },
       "kind": "calls",
       "mode": "static",
-      "notes": "[Validators isValidEmail:...] — class method message send"
+      "notes": "[Validators isValidEmail:...] — class method message send; full selector includes trailing colon"
     },
     {
-      "source": { "name": "UserService.createUserWithId", "file": "Service.m" },
-      "target": { "name": "Validators.isValidEmail", "file": "Validators.m" },
+      "source": { "name": "UserService.createUserWithId:name:email:", "file": "Service.m" },
+      "target": { "name": "Validators.isValidEmail:", "file": "Validators.m" },
       "kind": "calls",
       "mode": "static",
-      "notes": "[Validators isValidEmail:...] — class method message send"
+      "notes": "[Validators isValidEmail:...] — class method message send; full selector includes trailing colon"
     },
     {
-      "source": { "name": "UserService.createUserWithId", "file": "Service.m" },
-      "target": { "name": "Validators.isValidName", "file": "Validators.m" },
+      "source": { "name": "UserService.createUserWithId:name:email:", "file": "Service.m" },
+      "target": { "name": "Validators.isValidName:", "file": "Validators.m" },
       "kind": "calls",
       "mode": "static",
-      "notes": "[Validators isValidName:...] — class method message send"
+      "notes": "[Validators isValidName:...] — class method message send; full selector includes trailing colon"
     },
     {
-      "source": { "name": "UserService.createUserWithId", "file": "Service.m" },
-      "target": { "name": "UserRepository.saveWithId", "file": "Repository.m" },
+      "source": { "name": "UserService.createUserWithId:name:email:", "file": "Service.m" },
+      "target": { "name": "UserRepository.saveWithId:name:", "file": "Repository.m" },
       "kind": "calls",
       "mode": "receiver-typed",
-      "notes": "[_repo saveWithId:...] — message send on UserRepository ivar"
+      "notes": "[_repo saveWithId:name:...] — message send on UserRepository ivar; full selector"
     },
     {
-      "source": { "name": "UserService.getUserWithId", "file": "Service.m" },
-      "target": { "name": "UserRepository.findById", "file": "Repository.m" },
+      "source": { "name": "UserService.getUserWithId:", "file": "Service.m" },
+      "target": { "name": "UserRepository.findById:", "file": "Repository.m" },
       "kind": "calls",
       "mode": "receiver-typed",
-      "notes": "[_repo findById:...] — message send on UserRepository ivar"
+      "notes": "[_repo findById:...] — message send on UserRepository ivar; full selector includes trailing colon"
     },
     {
-      "source": { "name": "UserService.removeUserWithId", "file": "Service.m" },
-      "target": { "name": "UserRepository.deleteWithId", "file": "Repository.m" },
+      "source": { "name": "UserService.removeUserWithId:", "file": "Service.m" },
+      "target": { "name": "UserRepository.deleteWithId:", "file": "Repository.m" },
       "kind": "calls",
       "mode": "receiver-typed",
-      "notes": "[_repo deleteWithId:...] — message send on UserRepository ivar"
+      "notes": "[_repo deleteWithId:...] — message send on UserRepository ivar; full selector includes trailing colon"
     },
     {
-      "source": { "name": "Validators.validateUser", "file": "Validators.m" },
-      "target": { "name": "Validators.isValidName", "file": "Validators.m" },
+      "source": { "name": "Validators.validateUser:email:", "file": "Validators.m" },
+      "target": { "name": "Validators.isValidName:", "file": "Validators.m" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "[self isValidName:...] — same-class class method call"
+      "notes": "[self isValidName:...] — same-class class method call; full selector includes trailing colon"
     },
     {
-      "source": { "name": "Validators.validateUser", "file": "Validators.m" },
-      "target": { "name": "Validators.isValidEmail", "file": "Validators.m" },
+      "source": { "name": "Validators.validateUser:email:", "file": "Validators.m" },
+      "target": { "name": "Validators.isValidEmail:", "file": "Validators.m" },
       "kind": "calls",
       "mode": "same-file",
-      "notes": "[self isValidEmail:...] — same-class class method call"
+      "notes": "[self isValidEmail:...] — same-class class method call; full selector includes trailing colon"
     }
   ]
 }

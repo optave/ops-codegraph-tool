@@ -49,13 +49,14 @@ import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
   batchInsertNodes,
+  CHA_DISPATCH_PENALTY,
+  CHA_TYPED_DISPATCH_CONFIDENCE,
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
-import { CHA_DISPATCH_PENALTY } from './build-edges.js';
 import { closeNativeDb } from './native-db-lifecycle.js';
 
 // ── Native orchestrator types ──────────────────────────────────────────
@@ -530,13 +531,10 @@ function runPostNativeCha(
       if (row) gateAFired = true;
     }
 
-    // Gate B: calls from changed-file sources to class-kind targets (or
-    // constructor/function-kind targets in the older native engine fallback schema)?
-    // Mirrors the two-shape RTA seed: primary checks `tgt.kind = 'class'`; older
-    // native engine schemas record constructor calls against `constructor`/`function`
-    // kinds instead. Including all three kinds here prevents Gate B from silently
-    // passing on older-schema DBs, which would incorrectly set scopeToChangedFiles
-    // and miss CHA edges whose RTA evidence lives in the fallback-schema rows.
+    // Gate B: calls from changed-file sources to class/instantiable-kind targets
+    // (also covers older-schema fallback and future CHA extensions to struct/record).
+    // Includes class/interface/trait/struct/record (future CHA extension safety) and
+    // constructor/function (older native engine schema fallback).
     let gateBFired = false;
     if (!gateAFired) {
       for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
@@ -548,7 +546,7 @@ function runPostNativeCha(
              JOIN nodes src ON e.source_id = src.id
              JOIN nodes tgt ON e.target_id = tgt.id
              WHERE e.kind = 'calls'
-             AND tgt.kind IN ('class', 'constructor', 'function')
+             AND tgt.kind IN ('class', 'interface', 'trait', 'struct', 'record', 'constructor', 'function')
              AND src.file IN (${ph})
              LIMIT 1`,
           )
@@ -570,8 +568,8 @@ function runPostNativeCha(
   }
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
-  // Include the caller node's file so confidence can be computed file-pair-aware,
-  // matching the WASM path's computeConfidence(callerFile, targetFile, null) - CHA_DISPATCH_PENALTY formula.
+  // Include caller_file and method_file so affectedFiles can be populated for
+  // incremental role reclassification; confidence uses CHA_TYPED_DISPATCH_CONFIDENCE matching runChaPostPass.
   // When scopeToChangedFiles is true, restrict to call sites in the changed files
   // (safe because no hierarchy or RTA evidence changed outside those files).
   let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
@@ -664,15 +662,11 @@ function runPostNativeCha(
             method_file: string | null;
           }>;
           for (const methodNode of methodNodes) {
+            if (methodNode.id === source_id) continue; // skip self-loops
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            // Compute confidence file-pair-aware (mirrors WASM path: computeConfidence - CHA_DISPATCH_PENALTY)
-            // Skip zero-confidence edges to match buildFileCallEdges / buildChaPostPass behaviour.
-            const conf =
-              computeConfidence(caller_file ?? '', methodNode.method_file ?? '', null) -
-              CHA_DISPATCH_PENALTY;
-            if (conf <= 0) continue;
+            const conf = CHA_TYPED_DISPATCH_CONFIDENCE;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newEdgeCount++;
             if (caller_file) affectedFiles.add(caller_file);
@@ -916,6 +910,7 @@ async function runPostNativeThisDispatch(
       );
 
       for (const t of targets) {
+        if (t.id === callerRow.id) continue; // skip self-loops
         const key = `${callerRow.id}|${t.id}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -1538,26 +1533,16 @@ export async function tryNativeOrchestrator(
   // stale native binaries). WASM handles those — backfill via WASM so both
   // engines process the same file set (#967).
   //
-  // Detect the gap once (fs walk + 2 DB queries, ~20–30ms) and use it for
-  // both gating and the backfill itself. On dirty incrementals/full builds
-  // the orchestrator signals trigger backfill, so the walk happens once
-  // (instead of redundantly inside backfill). On quiet incrementals we
-  // still pay the walk so we can detect brand-new files in dropped-language
-  // extensions — a gap that the orchestrator's `detect_removed_files`
-  // filter (#1070) leaves open (#1083, #1091). The pre-check is cheap
-  // because the expensive part (WASM re-parse of the missing set) is
-  // gated below.
-  const removedCount = result.removedCount ?? 0;
-  const changedCount = result.changedCount ?? 0;
+  // Detect the gap once (fs walk + 2 DB queries) and use it for both gating
+  // and the backfill itself. On quiet incrementals we still pay the walk so
+  // we can detect brand-new files in dropped-language extensions — a gap that
+  // the orchestrator's `detect_removed_files` filter (#1070) leaves open
+  // (#1083, #1091). The pre-check is cheap because the expensive part (WASM
+  // re-parse of the missing set) is gated below.
   const gapDetectStart = performance.now();
   const gap = detectDroppedLanguageGap(ctx);
-  if (
-    result.isFullBuild ||
-    removedCount > 0 ||
-    changedCount > 0 ||
-    gap.missingAbs.length > 0 ||
-    gap.staleRel.length > 0
-  ) {
+  const backfillHappened = gap.missingAbs.length > 0 || gap.staleRel.length > 0;
+  if (backfillHappened) {
     await backfillNativeDroppedFiles(ctx, gap);
   }
   const gapDetectMs = performance.now() - gapDetectStart;
@@ -1638,19 +1623,27 @@ export async function tryNativeOrchestrator(
   // Re-count nodes/edges now that all edge-writing post-passes have run: the
   // Rust orchestrator captured its counts before the JS post-passes added
   // edges, so both its summary and build_meta under-report (#1452).
+  //
+  // Fast path: skip the COUNT(*) scan when no post-pass wrote any edges.
+  // COUNT(*) on large tables (50K+ edges) is non-trivial, especially via the
+  // NativeDbProxy napi-rs round-trip. When all post-passes were no-ops, the
+  // Rust orchestrator's counts are still accurate — no re-count needed.
   let finalNodeCount = result.nodeCount ?? 0;
   let finalEdgeCount = result.edgeCount ?? 0;
-  try {
-    const counts = (ctx.db as unknown as BetterSqlite3Database)
-      .prepare('SELECT (SELECT COUNT(*) FROM nodes) AS n, (SELECT COUNT(*) FROM edges) AS e')
-      .get() as { n: number; e: number };
-    if (counts.n !== finalNodeCount || counts.e !== finalEdgeCount) {
-      finalNodeCount = counts.n;
-      finalEdgeCount = counts.e;
-      setBuildMeta(ctx.db, { node_count: finalNodeCount, edge_count: finalEdgeCount });
+  const postPassWroteData = backfillHappened || chaEdgeCount > 0 || thisDispatchTargetIds.size > 0;
+  if (postPassWroteData) {
+    try {
+      const counts = (ctx.db as unknown as BetterSqlite3Database)
+        .prepare('SELECT (SELECT COUNT(*) FROM nodes) AS n, (SELECT COUNT(*) FROM edges) AS e')
+        .get() as { n: number; e: number };
+      if (counts.n !== finalNodeCount || counts.e !== finalEdgeCount) {
+        finalNodeCount = counts.n;
+        finalEdgeCount = counts.e;
+        setBuildMeta(ctx.db, { node_count: finalNodeCount, edge_count: finalEdgeCount });
+      }
+    } catch (err) {
+      debug(`Post-pass node/edge re-count failed: ${toErrorMessage(err)}`);
     }
-  } catch (err) {
-    debug(`Post-pass node/edge re-count failed: ${toErrorMessage(err)}`);
   }
   info(
     `Native build orchestrator completed: ${finalNodeCount} nodes, ${finalEdgeCount} edges, ${result.fileCount ?? 0} files`,

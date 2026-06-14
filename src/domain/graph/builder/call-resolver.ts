@@ -47,6 +47,22 @@ export function isModuleScopedLanguage(relPath: string): boolean {
 
 // ── Shared resolution functions ──────────────────────────────────────────
 
+/**
+ * Callable definition kinds — variable/constant bindings are NOT callable
+ * in the function-as-enclosing-scope sense (they are local declarations, not
+ * function bodies). Top-level variable bindings (e.g. Haskell `main = do …`)
+ * are handled separately as a fallback tier.
+ */
+const CALLABLE_KINDS = new Set(['function', 'method']);
+
+/**
+ * Variable-like binding kinds that may act as top-level callers when no
+ * enclosing function/method exists (e.g. Haskell top-level `main` is a
+ * `bind` node → kind `variable`).  Local variable declarations inside a
+ * function body must NOT win over the enclosing function.
+ */
+const TOP_LEVEL_BINDING_KINDS = new Set(['variable', 'constant']);
+
 export function findCaller(
   lookup: CallNodeLookup,
   call: { line: number },
@@ -59,26 +75,63 @@ export function findCaller(
   relPath: string,
   fileNodeRow: { id: number },
 ): { id: number; callerName: string | null } {
-  let caller: { id: number } | null = null;
-  let callerName: string | null = null;
-  let callerSpan = Infinity;
+  // Pass 1: find the narrowest enclosing function/method.
+  let fnCaller: { id: number } | null = null;
+  let fnCallerName: string | null = null;
+  let fnCallerSpan = Infinity;
+
+  // Pass 2: find the widest (outermost) enclosing variable/constant binding.
+  // Used as fallback when no function/method encloses the call site
+  // (e.g. Haskell `main = do …` is a `bind` node with kind `variable`).
+  // We pick the WIDEST span (outermost binding), not the narrowest, so that
+  // nested `let` bindings inside `main`'s do-block do not shadow `main`
+  // itself as the attributing caller.  The outermost enclosing variable is
+  // the "function-like" top-level binding.
+  let varCaller: { id: number } | null = null;
+  let varCallerName: string | null = null;
+  let varCallerSpan = -1; // looking for WIDEST span, so start at -1
+
   for (const def of definitions) {
     if (def.line <= call.line) {
-      const end = def.endLine || Infinity;
+      const end = def.endLine ?? Infinity;
       if (call.line <= end) {
-        const span = end - def.line;
-        if (span < callerSpan) {
-          const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
-          if (row) {
-            caller = row;
-            callerName = def.name;
-            callerSpan = span;
+        const span = end === Infinity ? Infinity : end - def.line;
+        if (CALLABLE_KINDS.has(def.kind)) {
+          if (span < fnCallerSpan) {
+            const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
+            if (row) {
+              fnCaller = row;
+              fnCallerName = def.name;
+              fnCallerSpan = span;
+            }
+          }
+        } else if (TOP_LEVEL_BINDING_KINDS.has(def.kind)) {
+          if (span > varCallerSpan) {
+            const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
+            if (row) {
+              varCaller = row;
+              varCallerName = def.name;
+              varCallerSpan = span;
+            }
           }
         }
       }
     }
   }
-  return { ...(caller ?? fileNodeRow), callerName };
+
+  // Prefer function/method enclosing scope over variable binding.
+  // If a function/method encloses the call, use it — local variable
+  // declarations inside the function body must not shadow it.
+  // Only fall back to a variable/constant binding when the call is at
+  // top-level scope (no enclosing function/method found), which handles
+  // languages like Haskell where `main` is a top-level `bind` node.
+  if (fnCaller) {
+    return { ...fnCaller, callerName: fnCallerName };
+  }
+  if (varCaller) {
+    return { ...varCaller, callerName: varCallerName };
+  }
+  return { ...fileNodeRow, callerName: null };
 }
 
 export function resolveByMethodOrGlobal(
@@ -94,22 +147,25 @@ export function resolveByMethodOrGlobal(
     const effectiveReceiver = call.receiver.startsWith('this.')
       ? call.receiver.slice('this.'.length)
       : call.receiver;
-    // For this.prop receivers, also try the class-scoped key (ClassName.prop) seeded by
-    // handlePropWriteTypeMap — prevents false edges when multiple classes define the same
-    // property name (issue #1323).
-    let typeEntry =
-      typeMap.get(effectiveReceiver) ??
-      typeMap.get(call.receiver) ??
-      // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) to avoid
-      // same-name rest-binding collision across functions in the same file (#1358).
-      (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
-    if (!typeEntry && call.receiver.startsWith('this.') && callerName) {
+    // For this.prop receivers, prefer the class-scoped key (ClassName.prop) seeded by
+    // handlePropWriteTypeMap / handleFieldDefTypeMap — prevents false edges when multiple
+    // classes define the same property name (issues #1323, #1458).
+    // Class-scoped lookup runs first so bare fallback keys (confidence 0.6) don't shadow
+    // the correct per-class entry when callerName is available.
+    let typeEntry: unknown;
+    if (call.receiver.startsWith('this.') && callerName) {
       const dotIdx = callerName.lastIndexOf('.');
       if (dotIdx > -1) {
         const callerClass = callerName.slice(0, dotIdx);
         typeEntry = typeMap.get(`${callerClass}.${effectiveReceiver}`);
       }
     }
+    typeEntry ??=
+      typeMap.get(effectiveReceiver) ??
+      typeMap.get(call.receiver) ??
+      // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) to avoid
+      // same-name rest-binding collision across functions in the same file (#1358).
+      (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry

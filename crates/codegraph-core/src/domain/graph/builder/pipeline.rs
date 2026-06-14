@@ -1115,7 +1115,7 @@ fn builtin_call_receivers() -> Vec<String> {
     .collect()
 }
 
-const EDGE_NODE_KIND_FILTER: &str = "kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')";
+const EDGE_NODE_KIND_FILTER: &str = "kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant','variable')";
 
 /// For the scoped (incremental, small-batch) path of the edge builder,
 /// compute the set of files that must be loaded: changed/reverse-dep files

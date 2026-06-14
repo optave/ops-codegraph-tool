@@ -45,7 +45,13 @@ import {
 import type { ChaContext } from '../cha.js';
 import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
-import { BUILTIN_RECEIVERS, batchInsertEdges, runChaPostPass } from '../helpers.js';
+import {
+  BUILTIN_RECEIVERS,
+  batchInsertEdges,
+  CHA_DISPATCH_PENALTY,
+  CHA_TYPED_DISPATCH_CONFIDENCE,
+  runChaPostPass,
+} from '../helpers.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -100,9 +106,6 @@ interface NativeEdge {
   confidence: number;
   dynamic: number;
 }
-
-/** Phase 8.5: confidence penalty applied to CHA-dispatch edges. */
-export const CHA_DISPATCH_PENALTY = 0.1;
 
 // ── Node lookup setup ───────────────────────────────────────────────────
 
@@ -709,6 +712,7 @@ function buildChaPostPass(
 
       const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
       let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+      let isTypedReceiverDispatch = false;
 
       if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
         chaTargets = resolveThisDispatch(
@@ -727,13 +731,20 @@ function buildChaPostPass(
           : null;
         if (typeName) {
           chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+          isTypedReceiverDispatch = true;
         }
       }
 
       for (const t of chaTargets) {
         const edgeKey = `${caller.id}|${t.id}`;
         if (t.id !== caller.id && !seenByPair.has(edgeKey)) {
-          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          // Typed-receiver (interface/CHA) dispatch: use CHA_TYPED_DISPATCH_CONFIDENCE
+          // — file proximity is not meaningful for virtual dispatch confidence.
+          // this/super dispatch keeps computeConfidence-based proximity scoring to
+          // match runPostNativeThisDispatch (native-orchestrator.ts).
+          const conf = isTypedReceiverDispatch
+            ? CHA_TYPED_DISPATCH_CONFIDENCE
+            : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenByPair.add(edgeKey);
             allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
@@ -1294,6 +1305,7 @@ function buildFileCallEdges(
     // For typed receiver calls: expand to all instantiated concrete implementations.
     if (chaCtx && call.receiver) {
       let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+      let isTypedReceiverDispatch = false;
       if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
         chaTargets = resolveThisDispatch(
           call.name,
@@ -1311,12 +1323,19 @@ function buildFileCallEdges(
           : null;
         if (typeName) {
           chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+          isTypedReceiverDispatch = true;
         }
       }
       for (const t of chaTargets) {
         const edgeKey = `${caller.id}|${t.id}`;
         if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
-          const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+          // Typed-receiver (interface/CHA) dispatch: use CHA_TYPED_DISPATCH_CONFIDENCE
+          // — file proximity is not meaningful for virtual dispatch confidence.
+          // this/super dispatch keeps computeConfidence-based proximity scoring to
+          // match runPostNativeThisDispatch (native-orchestrator.ts).
+          const conf = isTypedReceiverDispatch
+            ? CHA_TYPED_DISPATCH_CONFIDENCE
+            : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenCallEdges.add(edgeKey);
             allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
@@ -1487,7 +1506,7 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
  * their import targets. Falls back to loading ALL nodes for full builds or
  * larger incremental changes.
  */
-const NODE_KIND_FILTER_SQL = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`;
+const NODE_KIND_FILTER_SQL = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant','variable')`;
 
 function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolean } {
   const { db, fileSymbols, isFullBuild, batchResolved } = ctx;

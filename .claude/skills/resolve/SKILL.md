@@ -68,6 +68,7 @@ echo "Detected repo: $REPO"
 
 # Verify PR exists and is open
 gh pr view "$PR_NUMBER" --repo "$REPO" --json number,state,headRefName,baseRefName \
+
   --jq '"PR #\(.number) [\(.state)] \(.headRefName) → \(.baseRefName)"' \
   || { echo "ERROR: PR #$PR_NUMBER not found or inaccessible"; exit 1; }
 ```
@@ -85,6 +86,7 @@ mkdir -p .codegraph/resolve
 trap 'rm -rf .codegraph/resolve' ERR
 echo "$REPO" > .codegraph/resolve/repo
 gh pr view "$PR_NUMBER" --repo "$REPO" \
+
   --json number,headRefName,baseRefName,title,body \
   > .codegraph/resolve/pr-meta.json \
   || { echo "ERROR: failed to fetch PR #$PR_NUMBER metadata"; exit 1; }
@@ -105,6 +107,7 @@ echo "Pre-flight passed. PR: $(jq -r '.title' .codegraph/resolve/pr-meta.json)"
 
 **Exit condition:** Git repo confirmed, `gh` and `jq` available, repo slug detected, PR exists, metadata written to `.codegraph/resolve/`.
 
+
 ---
 
 ## Phase 1 — Branch Setup and Conflict Surface
@@ -119,6 +122,7 @@ REPO=$(cat .codegraph/resolve/repo)
 
 echo "Checking out PR branch: $HEAD_BRANCH"
 gh pr checkout "$PR_NUMBER" --repo "$REPO" \
+
   || { echo "ERROR: failed to check out PR #$PR_NUMBER"; exit 1; }
 
 echo "Fetching latest origin/$BASE_BRANCH..."
@@ -183,6 +187,7 @@ REPO=$(cat .codegraph/resolve/repo)
 # both become different keys, unlike tr '/' '_')
 file_key() { printf '%s' "$1" | sha1sum | cut -c1-16; }
 
+
 # Find all commits that came in from the base branch and touched conflicting files
 mkdir -p .codegraph/resolve/incoming-prs
 CONFLICTING_FILES=$(cat .codegraph/resolve/conflicting-files.txt)
@@ -194,6 +199,7 @@ while IFS= read -r FILE; do
   echo "[$i/$TOTAL] Tracing incoming changes: $FILE"
   KEY=$(file_key "$FILE")
 
+
   # Commits from origin/<base> that are not yet in the PR branch (what came in from main)
   # 2>/dev/null: suppress git's "unknown revision" if ORIG_HEAD or MERGE_HEAD are temporarily unavailable — the empty file case is handled below
   git log --oneline "$ORIG_HEAD..$MERGE_HEAD" -- "$FILE" \
@@ -204,6 +210,7 @@ while IFS= read -r FILE; do
   else
     echo "  Incoming commits touching $FILE:"
     cat ".codegraph/resolve/incoming-commits-$KEY.txt"
+
   fi
 done < .codegraph/resolve/conflicting-files.txt
 ```
@@ -219,6 +226,7 @@ file_key() { printf '%s' "$1" | sha1sum | cut -c1-16; }
 while IFS= read -r FILE; do
   KEY=$(file_key "$FILE")
   COMMIT_FILE=".codegraph/resolve/incoming-commits-$KEY.txt"
+
   [ -f "$COMMIT_FILE" ] || continue
 
   while IFS= read -r COMMIT_LINE; do
@@ -235,6 +243,7 @@ while IFS= read -r FILE; do
     # gh api returns empty array if commit is not associated with a PR
     # 2>/dev/null: suppress gh's "HTTP 422" or network error output — the || clause writes an empty array so later steps handle it gracefully
     gh api "repos/$REPO/commits/$SHA/pulls" \
+
       --jq '[.[] | {number: .number, title: .title, body: .body, state: .state}]' \
       > "$PR_FILE" 2>/dev/null || echo '[]' > "$PR_FILE"
 
@@ -252,6 +261,7 @@ Fetch full descriptions and diffs for each source PR:
 
 ```bash
 REPO=$(cat .codegraph/resolve/repo)
+
 mkdir -p .codegraph/resolve/source-pr-diffs
 
 for PR_FILE in .codegraph/resolve/source-prs/*.json; do
@@ -268,6 +278,7 @@ for PR_FILE in .codegraph/resolve/source-prs/*.json; do
       echo "Fetching source PR #$SOURCE_PR description..."
       # 2>/dev/null: suppress gh's auth/network error text — the || clause writes a stub so the skill continues gracefully
       gh pr view "$SOURCE_PR" --repo "$REPO" \
+
         --json number,title,body,baseRefName,headRefName \
         > "$META_FILE" 2>/dev/null \
         || { echo "WARN: could not fetch PR #$SOURCE_PR metadata — skipping"; echo '{}' > "$META_FILE"; }
@@ -277,6 +288,7 @@ for PR_FILE in .codegraph/resolve/source-prs/*.json; do
       echo "Fetching source PR #$SOURCE_PR diff..."
       # 2>/dev/null: suppress gh's auth/network error text — the || clause creates an empty file so the skill continues gracefully
       gh pr diff "$SOURCE_PR" --repo "$REPO" \
+
         > "$DIFF_FILE" 2>/dev/null \
         || { echo "WARN: could not fetch PR #$SOURCE_PR diff — skipping"; touch "$DIFF_FILE"; }
     fi
@@ -358,6 +370,7 @@ i=0
 
 file_key() { printf '%s' "$1" | sha1sum | cut -c1-16; }
 
+
 while IFS= read -r FILE; do
   i=$((i + 1))
   echo "=== [$i/$TOTAL] Resolving: $FILE ==="
@@ -380,6 +393,7 @@ while IFS= read -r FILE; do
   # Show which source PRs touched this file (from Phase: Conflict Archaeology)
   KEY=$(file_key "$FILE")
   COMMIT_FILE=".codegraph/resolve/incoming-commits-$KEY.txt"
+
   if [ -s "$COMMIT_FILE" ]; then
     while IFS= read -r COMMIT_LINE; do
       SHA=$(echo "$COMMIT_LINE" | awk '{print $1}')
@@ -487,6 +501,7 @@ Run tests and lint to confirm the resolution didn't break anything.
 echo "=== Detecting test runner ==="
 if [ -f "pnpm-lock.yaml" ] && command -v pnpm > /dev/null 2>&1; then TEST_CMD="pnpm test"
 elif [ -f "pnpm-lock.yaml" ]; then TEST_CMD="npx pnpm test"
+
 elif [ -f "yarn.lock" ] && command -v yarn > /dev/null 2>&1; then TEST_CMD="yarn test"
 elif [ -f "package.json" ]; then TEST_CMD="npm test"
 else
@@ -497,6 +512,7 @@ if [ -n "$TEST_CMD" ]; then
   echo "Running: $TEST_CMD"
   eval "$TEST_CMD" || { echo "ERROR: tests failed after conflict resolution — fix before committing"; exit 1; }
 fi
+
 ```
 
 ```bash
@@ -505,6 +521,7 @@ if [ -f "biome.json" ] && command -v npx > /dev/null 2>&1; then
   # Point biome at . and let biome.json's files.include/files.ignore govern scope
   LINT_CMD="npx biome check --reporter=summary ."
 elif ls eslint.config.* > /dev/null 2>&1; then
+
   LINT_CMD="npx eslint ."
 elif [ -f "package.json" ] && grep -q '"lint"' package.json; then
   LINT_CMD="npm run lint"
@@ -516,6 +533,7 @@ if [ -n "$LINT_CMD" ]; then
   echo "Running: $LINT_CMD"
   eval "$LINT_CMD" || { echo "ERROR: lint failed after conflict resolution — fix before committing"; exit 1; }
 fi
+
 ```
 
 **Exit condition:** Tests and lint pass (or were not applicable). No new failures introduced by the resolution.
@@ -581,3 +599,4 @@ echo "Conflict resolution complete."
 - **No co-author lines** in commit messages.
 - **No Claude Code references** in commit messages or comments.
 - **Cleanup:** `.codegraph/resolve/` is created during the skill, removed automatically on any error exit (via `trap`), and removed after a successful push. If a crash left both `.codegraph/resolve/` stale **and** an in-progress merge (MERGE_HEAD), run `git merge --abort && rm -rf .codegraph/resolve` before re-running — Phase 0 will detect the leftover MERGE_HEAD and remind you.
+
