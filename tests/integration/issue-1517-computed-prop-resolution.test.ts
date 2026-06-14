@@ -19,6 +19,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildGraph } from '../../src/domain/graph/builder.js';
+import { isNativeAvailable } from '../../src/infrastructure/native.js';
 
 const FIXTURE = {
   'service.js': `
@@ -103,7 +104,7 @@ function readNodes(dbPath: string) {
   }
 }
 
-describe('computed property name method resolution (#1517)', () => {
+describe('computed property name method resolution (#1517) — WASM', () => {
   it('stores computed class method under plain name (no brackets)', () => {
     const dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
     const nodes = readNodes(dbPath);
@@ -176,3 +177,54 @@ describe('computed property name method resolution (#1517)', () => {
     ).toBeDefined();
   });
 });
+
+// ── Native engine parity ────────────────────────────────────────────────────
+// Guards that handle_method_def in Rust applies the same bracket-stripping as
+// the four WASM paths. Skipped when the native addon is not installed.
+
+describe.skipIf(!isNativeAvailable())(
+  'computed property name method resolution (#1517) — native',
+  () => {
+    let nativeTmpDir: string;
+
+    beforeAll(async () => {
+      nativeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1517-native-'));
+      for (const [rel, content] of Object.entries(FIXTURE)) {
+        fs.writeFileSync(path.join(nativeTmpDir, rel), content);
+      }
+      await buildGraph(nativeTmpDir, { engine: 'native', incremental: false, skipRegistry: true });
+    }, 60_000);
+
+    afterAll(() => {
+      fs.rmSync(nativeTmpDir, { recursive: true, force: true });
+    });
+
+    it('stores computed class method under plain name (no brackets)', () => {
+      const nodes = readNodes(path.join(nativeTmpDir, '.codegraph', 'graph.db'));
+      const node = nodes.find((n) => n.name === 'ApiClient.fetchData');
+      expect(
+        node,
+        'ApiClient.fetchData missing in native output — handle_method_def may not strip brackets',
+      ).toBeDefined();
+      expect(node!.kind).toBe('method');
+    });
+
+    it('does not store any node with brackets in its name from computed keys', () => {
+      const nodes = readNodes(path.join(nativeTmpDir, '.codegraph', 'graph.db'));
+      const bracketed = nodes.filter((n) => n.name.includes('['));
+      expect(
+        bracketed,
+        `Native output has bracket-leaked nodes: ${bracketed.map((n) => n.name).join(', ')}`,
+      ).toHaveLength(0);
+    });
+
+    it('resolves call to computed class method at dot-notation call site', () => {
+      const edges = readCallEdges(path.join(nativeTmpDir, '.codegraph', 'graph.db'));
+      const edge = edges.find((e) => e.tgt === 'ApiClient.fetchData');
+      expect(
+        edge,
+        'No native call edge to ApiClient.fetchData — computed method not resolvable in native engine',
+      ).toBeDefined();
+    });
+  },
+);
