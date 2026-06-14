@@ -959,22 +959,6 @@ interface PostPassTimings {
   techniqueBackfillMs: number;
 }
 
-interface PostPassTimings {
-  gapDetectMs: number;
-  chaMs: number;
-  thisDispatchMs: number;
-  reclassifyMs: number;
-  techniqueBackfillMs: number;
-}
-
-interface PostPassTimings {
-  gapDetectMs: number;
-  chaMs: number;
-  thisDispatchMs: number;
-  reclassifyMs: number;
-  techniqueBackfillMs: number;
-}
-
 /** Format timing result from native orchestrator phases + JS post-processing. */
 function formatNativeTimingResult(
   p: Record<string, number>,
