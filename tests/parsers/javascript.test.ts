@@ -256,6 +256,23 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.get('repo')?.confidence).toBe(0.6);
     });
 
+    it('class expression (None path) seeds bare keys at 0.9, not a class-scoped key (issue #1500)', () => {
+      // `const Foo = class { ... }` is a class expression — tree-sitter emits
+      // a `class` node (not `class_declaration`), so enclosing_type_map_class /
+      // typeMapClass returns null/None and the None branch fires.
+      const symbols = parseTS(`
+        const Foo = class {
+          private repo: Repo;
+          run() { this.repo.save(); }
+        };
+      `);
+      // None path: bare keys at full confidence (0.9), no class-scoped key.
+      expect(symbols.typeMap.get('repo')).toEqual({ type: 'Repo', confidence: 0.9 });
+      expect(symbols.typeMap.get('this.repo')).toEqual({ type: 'Repo', confidence: 0.9 });
+      // Must NOT produce a class-scoped key (no class name is available).
+      expect(symbols.typeMap.has('Foo.repo')).toBe(false);
+    });
+
     it('returns empty typeMap when no annotations', () => {
       const symbols = parseJS(`const x = 42; function foo(a, b) {}`);
       expect(symbols.typeMap).toBeInstanceOf(Map);

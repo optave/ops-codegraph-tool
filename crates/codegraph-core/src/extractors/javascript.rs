@@ -224,28 +224,21 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                             match enclosing_type_map_class(node, source) {
                                 Some(class_name) => {
                                     // Primary: class-scoped key prevents cross-class collision.
-                                    push_type_map_entry(
+                                    set_type_map_entry(
                                         symbols,
                                         format!("{}.{}", class_name, field_name),
                                         type_name.to_string(),
+                                        0.9,
                                     );
                                     // Fallback bare keys at lower confidence.
-                                    symbols.type_map.push(TypeMapEntry {
-                                        name: field_name.clone(),
-                                        type_name: type_name.to_string(),
-                                        confidence: 0.6,
-                                    });
-                                    symbols.type_map.push(TypeMapEntry {
-                                        name: format!("this.{}", field_name),
-                                        type_name: type_name.to_string(),
-                                        confidence: 0.6,
-                                    });
+                                    set_type_map_entry(symbols, field_name.clone(), type_name.to_string(), 0.6);
+                                    set_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string(), 0.6);
                                 }
                                 None => {
                                     // No enclosing class declaration (e.g. class expression)
                                     // — use bare keys only at full confidence.
-                                    push_type_map_entry(symbols, field_name.clone(), type_name.to_string());
-                                    push_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string());
+                                    set_type_map_entry(symbols, field_name.clone(), type_name.to_string(), 0.9);
+                                    set_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string(), 0.9);
                                 }
                             }
                         }
