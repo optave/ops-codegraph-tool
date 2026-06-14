@@ -2975,6 +2975,15 @@ mod tests {
         JsExtractor.extract(&tree, code.as_bytes(), "test.js")
     }
 
+    fn parse_ts(code: &str) -> FileSymbols {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        JsExtractor.extract(&tree, code.as_bytes(), "test.ts")
+    }
+
     #[test]
     fn finds_function_declaration() {
         let s = parse_js("function greet(name) { return name; }");
@@ -3596,6 +3605,38 @@ mod tests {
             s.type_map
         );
         assert_eq!(tm.unwrap().type_name, "HttpClient");
+    }
+
+    /// Issue #1458: two classes with identically-named field annotations must
+    /// produce separate class-scoped typeMap keys, not overwrite each other.
+    /// Mirrors the TS `prevents cross-class collision` test.
+    #[test]
+    fn field_annotation_multi_class_seeds_separate_scoped_keys() {
+        let s = parse_ts(
+            "class OrderService {\n\
+               private repo: OrderRepository;\n\
+             }\n\
+             class UserService {\n\
+               private repo: UserRepository;\n\
+             }",
+        );
+        let order_entry = s.type_map.iter().find(|t| t.name == "OrderService.repo");
+        assert!(
+            order_entry.is_some(),
+            "type_map should contain 'OrderService.repo'; got: {:?}",
+            s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        assert_eq!(order_entry.unwrap().type_name, "OrderRepository");
+        assert_eq!(order_entry.unwrap().confidence, 0.9);
+
+        let user_entry = s.type_map.iter().find(|t| t.name == "UserService.repo");
+        assert!(
+            user_entry.is_some(),
+            "type_map should contain 'UserService.repo'; got: {:?}",
+            s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        assert_eq!(user_entry.unwrap().type_name, "UserRepository");
+        assert_eq!(user_entry.unwrap().confidence, 0.9);
     }
 
     /// Issue #1453 (edge 4): `const f = fn.bind(ctx)` must record a

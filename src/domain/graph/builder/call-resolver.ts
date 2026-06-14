@@ -93,7 +93,7 @@ export function findCaller(
 
   for (const def of definitions) {
     if (def.line <= call.line) {
-      const end = def.endLine || Infinity;
+      const end = def.endLine ?? Infinity;
       if (call.line <= end) {
         const span = end === Infinity ? Infinity : end - def.line;
         if (CALLABLE_KINDS.has(def.kind)) {
@@ -147,22 +147,25 @@ export function resolveByMethodOrGlobal(
     const effectiveReceiver = call.receiver.startsWith('this.')
       ? call.receiver.slice('this.'.length)
       : call.receiver;
-    // For this.prop receivers, also try the class-scoped key (ClassName.prop) seeded by
-    // handlePropWriteTypeMap — prevents false edges when multiple classes define the same
-    // property name (issue #1323).
-    let typeEntry =
-      typeMap.get(effectiveReceiver) ??
-      typeMap.get(call.receiver) ??
-      // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) to avoid
-      // same-name rest-binding collision across functions in the same file (#1358).
-      (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
-    if (!typeEntry && call.receiver.startsWith('this.') && callerName) {
+    // For this.prop receivers, prefer the class-scoped key (ClassName.prop) seeded by
+    // handlePropWriteTypeMap / handleFieldDefTypeMap — prevents false edges when multiple
+    // classes define the same property name (issues #1323, #1458).
+    // Class-scoped lookup runs first so bare fallback keys (confidence 0.6) don't shadow
+    // the correct per-class entry when callerName is available.
+    let typeEntry: unknown;
+    if (call.receiver.startsWith('this.') && callerName) {
       const dotIdx = callerName.lastIndexOf('.');
       if (dotIdx > -1) {
         const callerClass = callerName.slice(0, dotIdx);
         typeEntry = typeMap.get(`${callerClass}.${effectiveReceiver}`);
       }
     }
+    typeEntry ??=
+      typeMap.get(effectiveReceiver) ??
+      typeMap.get(call.receiver) ??
+      // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) to avoid
+      // same-name rest-binding collision across functions in the same file (#1358).
+      (callerName ? typeMap.get(`${callerName}::${effectiveReceiver}`) : undefined);
     let typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
