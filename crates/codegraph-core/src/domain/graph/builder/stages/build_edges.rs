@@ -140,6 +140,11 @@ struct EdgeContext<'a> {
     nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
     receiver_kinds: HashSet<&'a str>,
+    /// Same-file receiver lookup also accepts `function` to handle pre-ES6
+    /// function constructors (e.g. `function C() {}` with `C.prototype = { … }`).
+    /// Global fallback keeps the narrower set to avoid false positives from
+    /// unrelated same-named functions in other files.
+    receiver_kinds_same_file: HashSet<&'a str>,
 }
 
 impl<'a> EdgeContext<'a> {
@@ -158,7 +163,17 @@ impl<'a> EdgeContext<'a> {
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        Self { nodes_by_name, nodes_by_name_and_file, nodes_by_file, builtin_set, receiver_kinds }
+        let receiver_kinds_same_file: HashSet<&str> =
+            ["class", "struct", "interface", "type", "module", "function"]
+                .iter().copied().collect();
+        Self {
+            nodes_by_name,
+            nodes_by_name_and_file,
+            nodes_by_file,
+            builtin_set,
+            receiver_kinds,
+            receiver_kinds_same_file,
+        }
     }
 }
 
@@ -1035,16 +1050,15 @@ fn emit_receiver_edge(
     let type_entry = type_map.get(receiver.as_str());
     let effective_receiver = type_entry.map(|&(t, _)| t).unwrap_or(receiver.as_str());
 
-    // Filter-before: apply receiver_kinds to same-file candidates first, then
-    // fall back to global candidates (also filtered) only when same-file yields
-    // nothing.  This prevents an imported name emitted as kind='function' in the
-    // importing file from blocking the fallback to the actual class/struct/etc.
-    // node in the defining file.
+    // Same-file candidates use receiver_kinds_same_file (includes "function") so
+    // that pre-ES6 function constructors (e.g. `function C() {}`) in the same
+    // file are matched.  Global fallback uses the narrower receiver_kinds to
+    // avoid false positives from unrelated same-named functions in other files.
     let samefile_candidates: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
         .get(&(effective_receiver, rel_path))
         .cloned().unwrap_or_default()
         .into_iter()
-        .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
+        .filter(|n| ctx.receiver_kinds_same_file.contains(n.kind.as_str()))
         .collect();
     let receiver_nodes: Vec<&NodeInfo> = if !samefile_candidates.is_empty() {
         samefile_candidates
