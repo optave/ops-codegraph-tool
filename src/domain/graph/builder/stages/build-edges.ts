@@ -1201,7 +1201,15 @@ function buildFileCallEdges(
           importedNames,
           typeMap as Map<string, unknown>,
         );
-        for (const t of aliasTargets) {
+        const sortedAliasTargets =
+          aliasTargets.length > 1
+            ? [...aliasTargets].sort(
+                (a, b) =>
+                  computeConfidence(relPath, b.file, aliasFrom ?? null) -
+                  computeConfidence(relPath, a.file, aliasFrom ?? null),
+              )
+            : aliasTargets;
+        for (const t of sortedAliasTargets) {
           const edgeKey = `${caller.id}|${t.id}`;
           if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
             const conf =
@@ -1237,7 +1245,15 @@ function buildFileCallEdges(
             importedNames,
             typeMap as Map<string, unknown>,
           );
-          for (const t of aliasTargets) {
+          const sortedAliasTargets =
+            aliasTargets.length > 1
+              ? [...aliasTargets].sort(
+                  (a, b) =>
+                    computeConfidence(relPath, b.file, aliasFrom ?? null) -
+                    computeConfidence(relPath, a.file, aliasFrom ?? null),
+                )
+              : aliasTargets;
+          for (const t of sortedAliasTargets) {
             const edgeKey = `${caller.id}|${t.id}`;
             if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
               const conf =
