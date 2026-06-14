@@ -49,13 +49,14 @@ import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
   batchInsertNodes,
+  CHA_DISPATCH_PENALTY,
+  CHA_TYPED_DISPATCH_CONFIDENCE,
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
-import { CHA_DISPATCH_PENALTY } from './build-edges.js';
 import { closeNativeDb } from './native-db-lifecycle.js';
 
 // ── Native orchestrator types ──────────────────────────────────────────
@@ -570,8 +571,8 @@ function runPostNativeCha(
   }
 
   // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
-  // Include the caller node's file so confidence can be computed file-pair-aware,
-  // matching the WASM path's computeConfidence(callerFile, targetFile, null) - CHA_DISPATCH_PENALTY formula.
+  // Include caller_file and method_file so affectedFiles can be populated for
+  // incremental role reclassification; confidence uses CHA_TYPED_DISPATCH_CONFIDENCE matching runChaPostPass.
   // When scopeToChangedFiles is true, restrict to call sites in the changed files
   // (safe because no hierarchy or RTA evidence changed outside those files).
   let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
@@ -667,10 +668,7 @@ function runPostNativeCha(
             const key = `${source_id}|${methodNode.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            // Use the same hardcoded 0.8 that runChaPostPass (helpers.ts) uses for
-            // DB-level CHA dispatch edges. This aligns the native orchestrator path
-            // with the WASM and hybrid paths, which both go through runChaPostPass.
-            const conf = 0.8;
+            const conf = CHA_TYPED_DISPATCH_CONFIDENCE;
             newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
             newEdgeCount++;
             if (caller_file) affectedFiles.add(caller_file);

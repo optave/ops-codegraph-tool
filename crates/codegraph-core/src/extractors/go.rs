@@ -398,6 +398,10 @@ fn infer_address_of_composite(
     type_map: &mut Vec<TypeMapEntry>,
 ) -> bool {
     if rhs.kind() != "unary_expression" { return false; }
+    // Verify the operator is `&` — guards against any other unary operator
+    // applied to a composite literal on a raw AST.
+    let Some(op_node) = rhs.child(0) else { return false };
+    if node_text(&op_node, source) != "&" { return false; }
     // The operand of `&` is a composite_literal.
     let Some(operand) = rhs.child_by_field_name("operand") else { return false };
     if operand.kind() != "composite_literal" { return false; }
