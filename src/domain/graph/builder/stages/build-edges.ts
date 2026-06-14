@@ -1293,6 +1293,7 @@ function buildFileCallEdges(
         relPath,
         typeMap as Map<string, unknown>,
         seenCallEdges,
+        importedNames,
       );
       if (recv) {
         allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0, null]);

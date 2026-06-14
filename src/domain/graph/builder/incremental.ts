@@ -620,6 +620,7 @@ function buildCallEdges(
         relPath,
         typeMap,
         seenCallEdges,
+        importedNames,
       );
       if (recv) {
         stmts.insertEdge.run(recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0);
