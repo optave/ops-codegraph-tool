@@ -1,36 +1,33 @@
 /**
- * Regression test for #1519: confidence-sorted dedup in WASM build-edges stage.
+ * Confidence-value sanity tests for the sorted multi-target resolution path (#1519).
  *
  * PR #1486 added a descending-confidence sort to the `targets` array in
  * buildFileCallEdges (build-edges.ts lines 1126-1132) before the emit loop,
- * and matching sorts to the Phase 8.3 and 8.3f pts alias loops.
+ * and matching sorts to the Phase 8.3 pts alias loops.
  *
- * The sort guarantees that when `targets` contains multiple entries for the same
- * call site — whether pointing to different nodes or (in edge cases) the same
- * node via different resolution paths — the highest-confidence candidate is
- * processed first by the `seenCallEdges` / `ptsEdgeRows` dedup guard. Without the
- * sort, insertion order of nodes in the DB could cause the lower-confidence
- * candidate to win the dedup slot.
+ * WHAT THESE TESTS GUARD
+ * ──────────────────────
+ * Both fixtures resolve multiple candidates with distinct node IDs (different
+ * files → different graph nodes). The `seenCallEdges` / `ptsEdgeRows` dedup key
+ * is `${caller.id}|${t.id}`, so dedup never fires across distinct nodes.
  *
- * Scenario tested here: a function `process` calls `helper()` without importing it.
- * Two files define a function named `helper`:
- *   - src/helper.js  (same directory as the caller → computeConfidence returns 0.7)
- *   - other/helper.js (different directory → computeConfidence returns 0.3)
+ * These tests therefore verify the confidence SCORING invariant:
+ *   • A near-directory target always receives a higher confidence value than a
+ *     far-directory target for the same call site.
+ *   • Both edges are emitted (neither is suppressed by sort logic).
  *
- * resolveByMethodOrGlobal → byName('helper') returns both nodes. After the sort,
- * src/helper.js comes first (0.7 > 0.3). Both edges are emitted; the test asserts:
- *   1. The edge to the near target (src/helper.js) has confidence ≥ 0.7.
- *   2. The edge to the far target (other/helper.js) has confidence ≤ 0.5.
- *   3. The near-target edge is NOT absent — the sort must not suppress it.
+ * WHAT THESE TESTS DO NOT GUARD
+ * ──────────────────────────────
+ * The dedup-winning path — where the same node ID appears twice in `targets`
+ * via different resolution strategies — is not exercised here. In that scenario
+ * the sort determines which confidence value reaches the `seenCallEdges` guard
+ * first and wins; these tests would remain green even if the sort were removed.
+ * A dedicated fixture for that path is tracked in #1547.
  *
- * If the sort were removed, the DB insertion order could put the far target first,
- * but since both targets have different node IDs, both edges would still be emitted
- * — the regression being tested is the confidence VALUE stored on each edge and the
- * ordering invariant that the sort provides to the dedup guard.
- *
- * Additionally, a pts alias scenario (Phase 8.3) is tested: two candidates resolve
- * to the same alias target name; the sort ensures the highest-confidence candidate
- * wins the `ptsEdgeRows` dedup slot (only one pts edge is stored per edgeKey).
+ * Scenario tested: `process` calls `helper()` without an import.
+ * Two definitions exist:
+ *   - src/helper.js  (same directory as caller → computeConfidence ≥ 0.7)
+ *   - other/helper.js (different directory → computeConfidence < 0.7)
  */
 
 import fs from 'node:fs';
