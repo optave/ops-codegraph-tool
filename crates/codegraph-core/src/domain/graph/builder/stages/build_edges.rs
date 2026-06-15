@@ -163,9 +163,10 @@ impl<'a> EdgeContext<'a> {
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        let receiver_kinds_same_file: HashSet<&str> =
-            ["class", "struct", "interface", "type", "module", "function"]
-                .iter().copied().collect();
+        // Derived from receiver_kinds so future additions propagate automatically,
+        // mirroring the TypeScript spread `{ ...RECEIVER_KINDS, function }`.
+        let mut receiver_kinds_same_file = receiver_kinds.clone();
+        receiver_kinds_same_file.insert("function");
         Self {
             nodes_by_name,
             nodes_by_name_and_file,
