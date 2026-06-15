@@ -48,9 +48,9 @@ export const BUILTIN_RECEIVERS: Set<string> = new Set([
   'require',
 ]);
 
-/** Phase 8.5: confidence penalty applied to CHA-dispatch edges. */
+/** Phase 8.6: confidence penalty applied to CHA-dispatch edges. */
 export const CHA_DISPATCH_PENALTY = 0.1;
-/** Phase 8.5: fixed confidence for typed-receiver (interface/CHA) dispatch edges.
+/** Phase 8.6: fixed confidence for typed-receiver (interface/CHA) dispatch edges.
  *  File proximity is not meaningful for virtual dispatch — all three engine paths
  *  (WASM inline, WASM post-pass, native post-pass) must agree on this value. */
 export const CHA_TYPED_DISPATCH_CONFIDENCE = 0.8;
@@ -470,7 +470,7 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
        JOIN nodes src ON e.source_id = src.id
        WHERE e.kind = 'calls' AND tgt.kind = 'method'
        AND INSTR(tgt.name, '.') > 0
-       AND (e.technique IS NULL OR e.technique != 'super-dispatch')`,
+       AND (e.technique IS NULL OR e.technique != 'cha-expanded')`,
     )
     .all() as Array<{ source_id: number; caller_name: string; method_name: string }>;
 
@@ -533,7 +533,7 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
               'calls',
               CHA_TYPED_DISPATCH_CONFIDENCE,
               0,
-              'cha',
+              'cha-expanded',
             ]);
           }
         }
