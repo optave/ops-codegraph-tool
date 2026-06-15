@@ -374,7 +374,7 @@ export function resolveReceiverEdge(
   relPath: string,
   typeMap: Map<string, unknown>,
   seenCallEdges: Set<string>,
-  importedNames?: ReadonlyMap<string, string>,
+  importedNames: ReadonlyMap<string, string>,
 ): { callerId: number; receiverId: number; confidence: number } | null {
   const typeEntry = typeMap.get(call.receiver);
   const typeName = typeEntry

@@ -16,7 +16,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { CallNodeLookup } from '../../src/domain/graph/builder/call-resolver.js';
-import { resolveByMethodOrGlobal } from '../../src/domain/graph/builder/call-resolver.js';
+import {
+  resolveByMethodOrGlobal,
+  resolveReceiverEdge,
+} from '../../src/domain/graph/builder/call-resolver.js';
 
 function makeLookup(
   methodMap: Record<string, Array<{ id: number; file: string; kind: string }>>,
@@ -206,5 +209,82 @@ describe('resolveByMethodOrGlobal — bare-call JS/TS module-scope guard (#1407)
     );
     // C# is not module-scoped → same-class fallback runs → Processor.Flush found
     expect(result).toEqual([csMethod]);
+  });
+});
+
+// ── resolveReceiverEdge ──────────────────────────────────────────────────────
+
+/**
+ * Build a CallNodeLookup where:
+ *  - `sameFile` is keyed by `"name:file"` and returned by `byNameAndFile`
+ *  - `global` is keyed by `"name"` and returned by `byName`
+ */
+function makeReceiverLookup(
+  sameFile: Record<string, Array<{ id: number; file: string; kind: string }>>,
+  global: Record<string, Array<{ id: number; file: string; kind: string }>>,
+): CallNodeLookup {
+  return {
+    byNameAndFile(name, file) {
+      return sameFile[`${name}:${file}`] ?? [];
+    },
+    byName(name) {
+      return global[name] ?? [];
+    },
+    isBarrel() {
+      return false;
+    },
+    resolveBarrel() {
+      return null;
+    },
+    nodeId() {
+      return undefined;
+    },
+  };
+}
+
+describe('resolveReceiverEdge — local function constructor blocks global class (#1539)', () => {
+  // Scenario: file "a.ts" defines `function Cache(){}` (kind='function').
+  // File "b.ts" has a class `Cache` (kind='class').
+  // A call in "a.ts" uses `new Cache()` — the same-file function constructor must
+  // win; the cross-file class must NOT become the receiver edge target.
+  const localFn = { id: 1, file: 'a.ts', kind: 'function' };
+  const globalClass = { id: 2, file: 'b.ts', kind: 'class' };
+
+  it('local function constructor blocks cross-file class when not an import artifact', () => {
+    const lookup = makeReceiverLookup(
+      { 'Cache:a.ts': [localFn] },
+      { Cache: [localFn, globalClass] },
+    );
+    const result = resolveReceiverEdge(
+      lookup,
+      { name: 'get', receiver: 'Cache' },
+      { id: 99 },
+      'a.ts',
+      new Map(),
+      new Set(),
+      new Map(), // Cache is NOT in importedNames — it is locally defined
+    );
+    // isLocalDefinition=true → candidates = sameFileCandidates filtered by RECEIVER_KINDS
+    // localFn.kind='function' is not in RECEIVER_KINDS → candidates empty → null
+    expect(result).toBeNull();
+  });
+
+  it('cross-file class wins when same-file node is an import artifact', () => {
+    // `Cache` appears in `a.ts` only because of `const { Cache } = require('./b')`
+    // — it seeds a kind='function' node in the importer. importedNames records it.
+    const lookup = makeReceiverLookup({ 'Cache:a.ts': [localFn] }, { Cache: [globalClass] });
+    const result = resolveReceiverEdge(
+      lookup,
+      { name: 'get', receiver: 'Cache' },
+      { id: 99 },
+      'a.ts',
+      new Map(),
+      new Set(),
+      new Map([['Cache', './b']]), // Cache IS in importedNames — it is an import artifact
+    );
+    // isLocalDefinition=false → candidates = global byName filtered by RECEIVER_KINDS
+    // globalClass.kind='class' IS in RECEIVER_KINDS → edge to id=2
+    expect(result).not.toBeNull();
+    expect(result?.receiverId).toBe(2);
   });
 });
