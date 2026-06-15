@@ -587,7 +587,7 @@ function runPostNativeCha(
            JOIN nodes src ON e.source_id = src.id
            WHERE e.kind = 'calls' AND tgt.kind = 'method'
            AND INSTR(tgt.name, '.') > 0
-           AND (e.technique IS NULL OR e.technique != 'cha')
+           AND (e.technique IS NULL OR e.technique != 'cha-expanded')
            AND src.file IN (${ph})`,
         )
         .all(...chunk) as Array<{
@@ -607,7 +607,7 @@ function runPostNativeCha(
         JOIN nodes src ON e.source_id = src.id
         WHERE e.kind = 'calls' AND tgt.kind = 'method'
         AND INSTR(tgt.name, '.') > 0
-        AND (e.technique IS NULL OR e.technique != 'cha')
+        AND (e.technique IS NULL OR e.technique != 'cha-expanded')
       `)
       .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
   }
@@ -669,7 +669,7 @@ function runPostNativeCha(
             if (seen.has(key)) continue;
             seen.add(key);
             const conf = CHA_TYPED_DISPATCH_CONFIDENCE;
-            newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha']);
+            newEdges.push([source_id, methodNode.id, 'calls', conf, 0, 'cha-expanded']);
             newEdgeCount++;
             if (caller_file) affectedFiles.add(caller_file);
             if (methodNode.method_file) affectedFiles.add(methodNode.method_file);
@@ -1581,9 +1581,30 @@ export async function tryNativeOrchestrator(
   }
   const gapDetectMs = performance.now() - gapDetectStart;
 
+  // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
+  // whose raw receiver info the Rust pipeline does not persist to DB.
+  // Runs BEFORE the CHA expansion pass so that super.method() → Parent.method edges
+  // (technique='cha') are in the DB when runPostNativeCha expands them to sibling
+  // class overrides (e.g. PostMixin.m → B.m when PostMixin and B both extend A).
+  const {
+    elapsedMs: thisDispatchMs,
+    targetIds: thisDispatchTargetIds,
+    affectedFiles: thisDispatchAffectedFiles,
+  } = await runPostNativeThisDispatch(
+    ctx.db as unknown as BetterSqlite3Database,
+    ctx.rootDir,
+    result.changedFiles,
+    !!result.isFullBuild,
+  );
+
   // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
   // Returns the affected files so role re-classification below can be scoped to
   // the nodes whose fan-in/out actually changed.
+  //
+  // Runs AFTER this/super dispatch so super.method() edges are already in the DB.
+  // The 'cha-expanded' technique tag on this pass's own output prevents re-expansion
+  // of those edges in subsequent incremental builds, while 'cha'-tagged edges from
+  // this/super dispatch remain eligible for expansion here.
   //
   // Function-as-object-property methods (`fn.method = function() {}`) are extracted
   // natively by the Rust engine (#1432) and resolved in-build by its edge builder, so
@@ -1595,19 +1616,6 @@ export async function tryNativeOrchestrator(
     result.isFullBuild ? null : (result.changedFiles ?? null),
   );
   const chaMs = performance.now() - chaStart;
-
-  // Phase 8.5: this/super dispatch — hybrid WASM re-parse to resolve call sites
-  // whose raw receiver info the Rust pipeline does not persist to DB.
-  const {
-    elapsedMs: thisDispatchMs,
-    targetIds: thisDispatchTargetIds,
-    affectedFiles: thisDispatchAffectedFiles,
-  } = await runPostNativeThisDispatch(
-    ctx.db as unknown as BetterSqlite3Database,
-    ctx.rootDir,
-    result.changedFiles,
-    !!result.isFullBuild,
-  );
 
   // Role re-classification after JS edge-writing post-passes.
   // The Rust orchestrator classifies roles before these post-passes (CHA,

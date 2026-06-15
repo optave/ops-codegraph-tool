@@ -469,7 +469,7 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
        JOIN nodes tgt ON e.target_id = tgt.id
        WHERE e.kind = 'calls' AND tgt.kind = 'method'
        AND INSTR(tgt.name, '.') > 0
-       AND (e.technique IS NULL OR e.technique != 'cha')`,
+       AND (e.technique IS NULL OR e.technique != 'cha-expanded')`,
     )
     .all() as Array<{ source_id: number; method_name: string }>;
 
@@ -532,7 +532,7 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
               'calls',
               CHA_TYPED_DISPATCH_CONFIDENCE,
               0,
-              'cha',
+              'cha-expanded',
             ]);
           }
         }
