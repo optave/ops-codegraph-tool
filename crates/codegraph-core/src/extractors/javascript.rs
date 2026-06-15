@@ -4235,7 +4235,7 @@ mod tests {
     /// `this(b)` must NOT emit `b` as a dynamic callback-reference call.
     /// Without the early-return guard, `b` would be emitted as a dynamic call
     /// and the pts resolver would match any globally-defined function named `b`,
-    /// producing false cross-file call edges (issue #1511).
+    /// producing false cross-file call edges (issue #1543).
     #[test]
     fn this_call_args_do_not_emit_callback_reference_calls() {
         let s = parse_js(
@@ -4254,25 +4254,25 @@ mod tests {
         );
     }
 
-    /// `super(a)` must NOT emit `a` as a dynamic callback-reference call.
+    /// `super(a, b)` must NOT emit `a` or `b` as dynamic callback-reference calls.
     /// Same root cause as this(b): the callee `super` is not a named identifier,
     /// so extract_callback_reference_calls must not run on the arguments.
     #[test]
     fn super_call_args_do_not_emit_callback_reference_calls() {
         let s = parse_js(
-            "class E { constructor(c) { this.cc = c; } }\n\
+            "class E { constructor(c, d) { this.cc = c; this.dd = d; } }\n\
              class G extends E {\n\
-               constructor(a, b) { super(a); this.bb = b; }\n\
+               constructor(a, b) { super(a, b); }\n\
              }",
         );
         assert!(
             !s.calls.iter().any(|c| c.name == "a"),
-            "argument `a` of super(a) must not become a callback-reference call; got: {:?}",
+            "argument `a` of super(a, b) must not become a callback-reference call; got: {:?}",
             s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
         );
         assert!(
             !s.calls.iter().any(|c| c.name == "b"),
-            "argument `b` of this.bb = b must not become a callback-reference call; got: {:?}",
+            "argument `b` of super(a, b) must not become a callback-reference call; got: {:?}",
             s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
         );
     }

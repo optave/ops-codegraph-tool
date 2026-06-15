@@ -748,7 +748,10 @@ function buildChaPostPass(
             : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenByPair.add(edgeKey);
-            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+            // Tag super-dispatch edges distinctly so runChaPostPass can exclude them
+            // from further CHA expansion (super calls are not virtual dispatch).
+            const technique = call.receiver === 'super' ? 'super-dispatch' : 'cha';
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, technique]);
           }
         }
       }
@@ -1012,11 +1015,6 @@ function buildFileCallEdges(
   // bind/alias entries, not for every locally-defined function or import that
   // buildPointsToMap seeds with a self-pointing entry.
   const fnRefBindingLhs = new Set(symbols.fnRefBindings?.map((b) => b.lhs) ?? []);
-  // Names that are locally defined in this file — used by resolveReceiverEdge to
-  // distinguish a genuine same-file function constructor from a destructured import
-  // re-emitted as kind="function" in the importing file (matches Rust local_def_names).
-  const localDefNames = new Set(symbols.definitions.map((d) => d.name));
-
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
@@ -1298,7 +1296,7 @@ function buildFileCallEdges(
         relPath,
         typeMap as Map<string, unknown>,
         seenCallEdges,
-        localDefNames,
+        importedNames,
       );
       if (recv) {
         allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0, null]);

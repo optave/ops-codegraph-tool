@@ -464,14 +464,15 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
 
   const callToMethods = db
     .prepare(
-      `SELECT e.source_id, tgt.name AS method_name
+      `SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name
        FROM edges e
        JOIN nodes tgt ON e.target_id = tgt.id
+       JOIN nodes src ON e.source_id = src.id
        WHERE e.kind = 'calls' AND tgt.kind = 'method'
        AND INSTR(tgt.name, '.') > 0
        AND (e.technique IS NULL OR e.technique != 'cha-expanded')`,
     )
-    .all() as Array<{ source_id: number; method_name: string }>;
+    .all() as Array<{ source_id: number; caller_name: string; method_name: string }>;
 
   const seen = new Set<string>();
   // Scope deduplication to only the source_ids we are about to expand, avoiding

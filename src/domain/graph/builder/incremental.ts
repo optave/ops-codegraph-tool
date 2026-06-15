@@ -530,10 +530,6 @@ function buildCallEdges(
     }
   }
 
-  // Names that are locally defined in this file — used by resolveReceiverEdge to
-  // distinguish a genuine same-file function constructor from a destructured import
-  // re-emitted as kind="function" in the importing file (matches full-build and Rust paths).
-  const localDefNames = new Set(symbols.definitions.map((d) => d.name));
   const seenCallEdges = new Set<string>();
   const lookup = makeIncrementalLookup(db, stmts);
   let edgesAdded = 0;
@@ -624,7 +620,7 @@ function buildCallEdges(
         relPath,
         typeMap,
         seenCallEdges,
-        localDefNames,
+        importedNames,
       );
       if (recv) {
         stmts.insertEdge.run(recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0);

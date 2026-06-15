@@ -572,16 +572,26 @@ function runPostNativeCha(
   // incremental role reclassification; confidence uses CHA_TYPED_DISPATCH_CONFIDENCE matching runChaPostPass.
   // When scopeToChangedFiles is true, restrict to call sites in the changed files
   // (safe because no hierarchy or RTA evidence changed outside those files).
-  let callToMethods: Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+  let callToMethods: Array<{
+    source_id: number;
+    caller_name: string;
+    method_name: string;
+    caller_file: string | null;
+  }>;
   if (scopeToChangedFiles && changedFiles && changedFiles.length > 0) {
     const CHUNK_SIZE = 500;
-    const rows: Array<{ source_id: number; method_name: string; caller_file: string | null }> = [];
+    const rows: Array<{
+      source_id: number;
+      caller_name: string;
+      method_name: string;
+      caller_file: string | null;
+    }> = [];
     for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
       const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
       const ph = chunk.map(() => '?').join(',');
       const chunkRows = db
         .prepare(
-          `SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+          `SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name, src.file AS caller_file
            FROM edges e
            JOIN nodes tgt ON e.target_id = tgt.id
            JOIN nodes src ON e.source_id = src.id
@@ -592,6 +602,7 @@ function runPostNativeCha(
         )
         .all(...chunk) as Array<{
         source_id: number;
+        caller_name: string;
         method_name: string;
         caller_file: string | null;
       }>;
@@ -601,7 +612,7 @@ function runPostNativeCha(
   } else {
     callToMethods = db
       .prepare(`
-        SELECT e.source_id, tgt.name AS method_name, src.file AS caller_file
+        SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name, src.file AS caller_file
         FROM edges e
         JOIN nodes tgt ON e.target_id = tgt.id
         JOIN nodes src ON e.source_id = src.id
@@ -609,7 +620,12 @@ function runPostNativeCha(
         AND INSTR(tgt.name, '.') > 0
         AND (e.technique IS NULL OR e.technique != 'cha-expanded')
       `)
-      .all() as Array<{ source_id: number; method_name: string; caller_file: string | null }>;
+      .all() as Array<{
+      source_id: number;
+      caller_name: string;
+      method_name: string;
+      caller_file: string | null;
+    }>;
   }
 
   // Seed seen-pairs only from the source_ids we'll be expanding — avoids loading every
@@ -950,7 +966,10 @@ async function runPostNativeThisDispatch(
         seen.add(key);
         const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
         if (conf <= 0) continue;
-        newEdges.push([callerRow.id, t.id, 'calls', conf, 0, 'cha']);
+        // Tag super-dispatch edges distinctly so runPostNativeCha can exclude them
+        // from further CHA expansion (super calls are not virtual dispatch).
+        const technique = call.receiver === 'super' ? 'super-dispatch' : 'cha';
+        newEdges.push([callerRow.id, t.id, 'calls', conf, 0, technique]);
         targetIds.add(t.id);
         affectedFiles.add(relPath);
         if (t.file) affectedFiles.add(t.file);
