@@ -787,23 +787,8 @@ async function runPostNativeThisDispatch(
           JOIN nodes tgt ON e.target_id = tgt.id
           WHERE e.kind = 'extends' AND tgt.file IS NOT NULL
           UNION
-          -- Files with func-prop method definitions (e.g. f.h = function(){this.g()}).
-          -- These methods use this-dispatch where the "class" is a plain function rather
-          -- than a real class, so they never appear in extends edges but still need
-          -- resolveThisDispatch to resolve this.method() through the function-object chain.
-          -- Only include files where a method's owner prefix is NOT a known class name —
-          -- this keeps the added set small (func-prop files only, not all class-method files).
-          SELECT n.file AS file
-          FROM nodes n
-          WHERE n.kind = 'method'
-          AND INSTR(n.name, '.') > 0
-          AND n.file IS NOT NULL
-          AND SUBSTR(n.name, 1, INSTR(n.name, '.') - 1) NOT IN (
-            -- AND name IS NOT NULL is required: NOT IN returns no rows if the
-            -- sub-select contains any NULL (SQL NULL semantics).
-            SELECT name FROM nodes WHERE kind IN ('class', 'struct', 'interface', 'type')
-            AND name IS NOT NULL
-          )
+          SELECT file FROM nodes
+          WHERE kind = 'method' AND INSTR(name, '.') > 0 AND file IS NOT NULL
         )
       `)
       .all() as Array<{ file: string }>;
