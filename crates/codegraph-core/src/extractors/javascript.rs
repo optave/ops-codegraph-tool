@@ -619,13 +619,16 @@ fn seed_objlit_type_map_entries(var_name: &str, obj_node: &Node, source: &[u8], 
                 }
             }
             "method_definition" => {
-                // Method shorthand: `obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
-                // Mirrors WASM: setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85).
+                // Method shorthand: `let obj = { baz() {} }` → typeMap['obj.baz'] = 'baz'
+                // Points to the bare-name definition so the two-step accessor dispatch resolves
+                // via the bare node (mirroring extract_object_literal_functions for const).
+                // For let/var, no qualified definition exists (match_js_objlit_qualified_method_defs
+                // is const-only), so pointing at 'obj.baz' would leave resolution broken.
                 let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
                 let qualified = format!("{}.{}", var_name, method_name);
                 symbols.type_map.push(TypeMapEntry {
-                    name: qualified.clone(),
-                    type_name: qualified,
+                    name: qualified,
+                    type_name: method_name.to_string(),
                     confidence: 0.85,
                 });
             }
@@ -4200,6 +4203,12 @@ mod tests {
         let tm = s_let_method.type_map.iter().find(|e| e.name == "obj.f");
         assert!(tm.is_some(), "let obj method: typeMap 'obj.f' missing; got: {:?}",
             s_let_method.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(tm.unwrap().type_name, "f",
+            "typeMap 'obj.f' must point at bare name 'f', not the qualified key");
+        let call = s_let_method.calls.iter().find(|c| c.name == "f" && c.receiver.as_deref() == Some("obj"));
+        assert!(call.is_some(),
+            "calls must contain obj.f() with receiver='obj'; got: {:?}",
+            s_let_method.calls.iter().map(|c| (&c.name, &c.receiver)).collect::<Vec<_>>());
 
         // Shorthand property: `var obj = { e4 }` → typeMap['obj.e4'] = 'e4'
         let s_var_shorthand = parse_js(
