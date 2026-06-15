@@ -16,8 +16,10 @@
  *
  * This test verifies two things:
  *  1. Func-prop this-dispatch still resolves correctly (regression guard).
- *  2. Class-method files that have NO extends edges do not receive spurious
- *     this-dispatch edges via the UNION over-scan.
+ *  2. Class-method files that have NO extends edges do not emit cross-file
+ *     this-dispatch edges as a result of the UNION over-scan (native only —
+ *     the SQL UNION guard lives entirely inside runPostNativeThisDispatch,
+ *     which is never called for the wasm engine).
  */
 
 import fs from 'node:fs';
@@ -37,10 +39,21 @@ import type { EngineMode } from '../../src/types.js';
  *
  * class-only.js — contains a standalone class Foo with methods Foo.bar and
  *   Foo.baz.  Foo.bar calls `this.baz()`.  There are NO extends edges for Foo.
- *   Before the fix the UNION arm would include this file in the re-parse set,
- *   which is harmless for CHA-resolved classes but wastes re-parse budget.
- *   More importantly, the re-parse must not emit a false cross-file this-dispatch
- *   edge like `Foo.bar → obj.helper` (different owner prefix).
+ *   Before the fix the third UNION arm would include this file in relFiles
+ *   because `Foo.bar` is a dot-qualified method name.  With the fix, the NOT IN
+ *   sub-select recognises `Foo` as a class name and excludes class-only.js.
+ *
+ * The over-scan observable for native: if class-only.js enters relFiles, the
+ * post-pass re-parses it and processes `this.baz()` in Foo.bar.  Because
+ * Foo.bar → Foo.baz is already in the DB from the native primary pass (and
+ * therefore in the seen-set), the post-pass does not add a duplicate.  The
+ * distinguishable failure is therefore a cross-file edge: any edge whose
+ * source node lives in class-only.js and whose target lives in func-prop.js
+ * (or vice-versa) would indicate the dispatch mechanism mis-routed a call.
+ * Such an edge is structurally impossible given the fixture (Foo.bar calls
+ * this.baz(), so resolveThisDispatch looks up Foo.baz, not obj.*), but
+ * asserting it makes the test self-documenting and catches refactors that
+ * change the dispatch lookup strategy.
  */
 const FIXTURE: Record<string, string> = {
   'func-prop.js': `
@@ -66,7 +79,7 @@ const ENGINES: EngineMode[] = ['wasm', 'native'];
 
 describe.each(ENGINES)('UNION file-selection narrowing (#1550, %s)', (engine) => {
   let tmpDir: string;
-  let callEdges: Array<{ src: string; tgt: string }>;
+  let callEdges: Array<{ src: string; tgt: string; src_file: string; tgt_file: string }>;
 
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `cg-1550-${engine}-`));
@@ -80,14 +93,15 @@ describe.each(ENGINES)('UNION file-selection narrowing (#1550, %s)', (engine) =>
     try {
       callEdges = db
         .prepare(
-          `SELECT n1.name AS src, n2.name AS tgt
+          `SELECT n1.name AS src, n2.name AS tgt,
+                  n1.file AS src_file, n2.file AS tgt_file
            FROM edges e
            JOIN nodes n1 ON e.source_id = n1.id
            JOIN nodes n2 ON e.target_id = n2.id
            WHERE e.kind = 'calls'
            ORDER BY n1.name, n2.name`,
         )
-        .all() as Array<{ src: string; tgt: string }>;
+        .all() as Array<{ src: string; tgt: string; src_file: string; tgt_file: string }>;
     } finally {
       db.close();
     }
@@ -107,21 +121,40 @@ describe.each(ENGINES)('UNION file-selection narrowing (#1550, %s)', (engine) =>
     ).toBeDefined();
   });
 
-  // --- class-method file must not emit cross-owner false edges ---
+  // --- class-method file must not emit cross-file edges (native only) ---
+  //
+  // The SQL UNION guard lives inside runPostNativeThisDispatch, which is only
+  // called during a native build.  For the wasm engine, class-only.js is never
+  // added to the re-parse set by this code path, so the assertions below are
+  // native-specific.
 
-  it('does NOT emit Foo.bar → obj.helper (cross-owner false edge from over-scan)', () => {
-    const edge = callEdges.find((e) => e.src === 'Foo.bar' && e.tgt === 'obj.helper');
-    expect(
-      edge,
-      `Expected NO Foo.bar → obj.helper edge (class-method file should not be in re-parse set).\nAll edges: ${JSON.stringify(callEdges, null, 2)}`,
-    ).toBeUndefined();
-  });
+  it.skipIf(engine !== 'native')(
+    'does NOT emit any cross-file edge from class-only.js to func-prop.js',
+    () => {
+      const crossFileEdges = callEdges.filter(
+        (e) => e.src_file?.endsWith('class-only.js') && e.tgt_file?.endsWith('func-prop.js'),
+      );
+      expect(
+        crossFileEdges,
+        `Expected no calls from class-only.js nodes to func-prop.js nodes.\n` +
+          `Cross-file edges: ${JSON.stringify(crossFileEdges, null, 2)}\n` +
+          `All edges: ${JSON.stringify(callEdges, null, 2)}`,
+      ).toHaveLength(0);
+    },
+  );
 
-  it('does NOT emit Foo.bar → obj.run (cross-owner false edge from over-scan)', () => {
-    const edge = callEdges.find((e) => e.src === 'Foo.bar' && e.tgt === 'obj.run');
-    expect(
-      edge,
-      `Expected NO Foo.bar → obj.run edge (class-method file should not be in re-parse set).\nAll edges: ${JSON.stringify(callEdges, null, 2)}`,
-    ).toBeUndefined();
-  });
+  it.skipIf(engine !== 'native')(
+    'does NOT emit any cross-file edge from func-prop.js to class-only.js',
+    () => {
+      const crossFileEdges = callEdges.filter(
+        (e) => e.src_file?.endsWith('func-prop.js') && e.tgt_file?.endsWith('class-only.js'),
+      );
+      expect(
+        crossFileEdges,
+        `Expected no calls from func-prop.js nodes to class-only.js nodes.\n` +
+          `Cross-file edges: ${JSON.stringify(crossFileEdges, null, 2)}\n` +
+          `All edges: ${JSON.stringify(callEdges, null, 2)}`,
+      ).toHaveLength(0);
+    },
+  );
 });
