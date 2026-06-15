@@ -138,6 +138,17 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                         if value_n.kind() == "call_expression" {
                             seed_object_create_entries(var_name, &value_n, source, symbols);
                         }
+                        // Phase 8.3f parity: seed composite typeMap keys for ALL object-literal
+                        // declarations (`const`, `let`, `var`) when at non-function scope.
+                        // Mirrors WASM handleVarDeclaratorTypeMap (no isConst guard there).
+                        // For `const`, extract_object_literal_functions already seeds these entries;
+                        // dedup_type_map collapses any duplicates at equal confidence.
+                        if value_n.kind() == "object" && find_parent_of_types(node, &[
+                            "function_declaration", "arrow_function", "function_expression",
+                            "method_definition", "generator_function_declaration", "generator_function",
+                        ]).is_none() {
+                            seed_objlit_type_map_entries(var_name, &value_n, source, symbols);
+                        }
                     }
                 }
             }
@@ -547,6 +558,74 @@ fn extract_object_literal_functions(
                 symbols.type_map.push(TypeMapEntry {
                     name: qualified,
                     type_name: method_name,
+                    confidence: 0.85,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Seed composite typeMap keys from an object literal for ALL declaration kinds
+/// (`const`, `let`, `var`) at non-function scope.
+///
+/// Mirrors WASM `handleVarDeclaratorTypeMap`'s object-literal branch (no `isConst` guard).
+/// Called from `match_js_type_map` so that `let obj = { f() {} }` and
+/// `var routes = { get: handler }` resolve correctly just like `const` variants.
+///
+/// For `const` declarations this produces the same entries as `extract_object_literal_functions`,
+/// but `dedup_type_map` collapses duplicates at equal confidence.
+fn seed_objlit_type_map_entries(var_name: &str, obj_node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    for i in 0..obj_node.child_count() {
+        let Some(child) = obj_node.child(i) else { continue };
+        match child.kind() {
+            "shorthand_property_identifier" => {
+                let prop_name = node_text(&child, source);
+                symbols.type_map.push(TypeMapEntry {
+                    name: format!("{}.{}", var_name, prop_name),
+                    type_name: prop_name.to_string(),
+                    confidence: 0.85,
+                });
+            }
+            "pair" => {
+                let Some(key_n) = child.child_by_field_name("key") else { continue };
+                let Some(val_n) = child.child_by_field_name("value") else { continue };
+                let key = if key_n.kind() == "string" {
+                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
+                } else {
+                    Some(node_text(&key_n, source).to_string())
+                };
+                let Some(key) = key else { continue };
+                let qualified = format!("{}.{}", var_name, key);
+                match val_n.kind() {
+                    "arrow_function" | "function_expression" | "function" => {
+                        // Store qualified name as value so the resolver finds the qualified def.
+                        // Mirrors WASM: setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85).
+                        symbols.type_map.push(TypeMapEntry {
+                            name: qualified.clone(),
+                            type_name: qualified,
+                            confidence: 0.85,
+                        });
+                    }
+                    "identifier" => {
+                        let target = node_text(&val_n, source);
+                        symbols.type_map.push(TypeMapEntry {
+                            name: qualified,
+                            type_name: target.to_string(),
+                            confidence: 0.85,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            "method_definition" => {
+                // Method shorthand: `obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
+                // Mirrors WASM: setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85).
+                let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
+                let qualified = format!("{}.{}", var_name, method_name);
+                symbols.type_map.push(TypeMapEntry {
+                    name: qualified.clone(),
+                    type_name: qualified,
                     confidence: 0.85,
                 });
             }
@@ -4106,6 +4185,64 @@ mod tests {
         let tm_f = s.type_map.iter().find(|e| e.name == "o1.f");
         assert!(tm_f.is_some(), "typeMap o1.f missing");
         assert_eq!(tm_f.unwrap().type_name, "f");
+    }
+
+    /// Issue #1551: `let` and `var` object-literal declarations must seed composite typeMap keys
+    /// just like `const` declarations. Regression test for the parity gap where native bailed
+    /// early for non-`const` declarations in the object-literal typeMap walk.
+    #[test]
+    fn let_var_objlit_seeds_type_map_entries() {
+        // Method shorthand: `let obj = { f() {} }` → typeMap['obj.f'] present
+        let s_let_method = parse_js(
+            "let obj = { f() { return 1; } };\n\
+             obj.f();",
+        );
+        let tm = s_let_method.type_map.iter().find(|e| e.name == "obj.f");
+        assert!(tm.is_some(), "let obj method: typeMap 'obj.f' missing; got: {:?}",
+            s_let_method.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+
+        // Shorthand property: `var obj = { e4 }` → typeMap['obj.e4'] = 'e4'
+        let s_var_shorthand = parse_js(
+            "function e4() {}\n\
+             var obj = { e4 };",
+        );
+        let tm2 = s_var_shorthand.type_map.iter().find(|e| e.name == "obj.e4");
+        assert!(tm2.is_some(), "var obj shorthand: typeMap 'obj.e4' missing; got: {:?}",
+            s_var_shorthand.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(tm2.unwrap().type_name, "e4");
+
+        // Pair with identifier value: `var routes = { get: handler }` → typeMap['routes.get'] = 'handler'
+        let s_var_pair = parse_js(
+            "function handler() {}\n\
+             var routes = { get: handler };",
+        );
+        let tm3 = s_var_pair.type_map.iter().find(|e| e.name == "routes.get");
+        assert!(tm3.is_some(), "var routes pair: typeMap 'routes.get' missing; got: {:?}",
+            s_var_pair.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(tm3.unwrap().type_name, "handler");
+
+        // Pair with arrow value: `let api = { save: () => {} }` → typeMap['api.save'] = 'api.save'
+        let s_let_arrow = parse_js(
+            "let api = { save: () => {} };\n\
+             api.save();",
+        );
+        let tm4 = s_let_arrow.type_map.iter().find(|e| e.name == "api.save");
+        assert!(tm4.is_some(), "let api arrow: typeMap 'api.save' missing; got: {:?}",
+            s_let_arrow.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(tm4.unwrap().type_name, "api.save");
+
+        // Scope guard: object literal inside a function body must NOT seed module-level typeMap.
+        let s_scoped = parse_js(
+            "function init() {\n\
+               let local = { run() {} };\n\
+               local.run();\n\
+             }",
+        );
+        assert!(
+            s_scoped.type_map.iter().all(|e| e.name != "local.run"),
+            "function-scoped let obj must not pollute typeMap; got: {:?}",
+            s_scoped.type_map.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
     }
 
     /// Phase 8.3e: call receiver is correctly recorded for obj.f() inside defProp body.

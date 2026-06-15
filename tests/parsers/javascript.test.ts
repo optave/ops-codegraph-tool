@@ -1007,6 +1007,15 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
     });
 
+    // Issue #1551: let/var object-literal method definitions must seed typeMap entries
+    it('seeds composite typeMap keys for let-declared object-literal method shorthand', () => {
+      const symbols = parseJS(`
+        let obj = { f() { return 1; } };
+        obj.f();
+      `);
+      expect(symbols.typeMap.get('obj.f')).toBeDefined();
+    });
+
     it('extracts rest binding from a class method', () => {
       const symbols = parseJS(`
         class Service {
