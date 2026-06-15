@@ -524,8 +524,8 @@ fn extract_object_literal_functions(
                 }
             }
             "method_definition" => {
-                let Some(name_n) = child.child_by_field_name("name") else { continue };
-                let qualified = format!("{}.{}", var_name, node_text(&name_n, source));
+                let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
+                let qualified = format!("{}.{}", var_name, method_name);
                 let body = child.child_by_field_name("body");
                 symbols.definitions.push(Definition {
                     name: qualified.clone(),
@@ -777,10 +777,10 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
         let Some(child) = obj_node.child(i) else { continue };
         match child.kind() {
             "method_definition" => {
-                let Some(name_node) = child.child_by_field_name("name") else { continue };
+                let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
                 let children = extract_js_parameters(&child, source);
                 symbols.definitions.push(Definition {
-                    name: format!("{}.{}", class_name, node_text(&name_node, source)),
+                    name: format!("{}.{}", class_name, method_name),
                     kind: "method".to_string(),
                     line: start_line(&child),
                     end_line: Some(end_line(&child)),
@@ -945,9 +945,38 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+/// Extract the plain method name from a `method_definition` node.
+///
+/// For computed property names (`['methodName']`), strips brackets and quotes from
+/// string-literal keys so the stored name matches the plain identifier used at call
+/// sites (`obj.methodName()`). Non-string computed keys like `[Symbol.iterator]`
+/// cannot be resolved at dot-notation call sites — returns `None` for those.
+fn resolve_method_def_name(node: &Node, source: &[u8]) -> Option<String> {
+    let name_node = node.child_by_field_name("name")?;
+    if name_node.kind() == "computed_property_name" {
+        // child(0)='[', child(1)=string literal, child(2)=']'
+        let inner = name_node.child(1)?;
+        match inner.kind() {
+            "string" => {
+                let s = extract_string_fragment(&inner, source).unwrap_or("");
+                if s.is_empty() { return None; }
+                Some(s.to_string())
+            }
+            "string_fragment" => {
+                let s = node_text(&inner, source);
+                if s.is_empty() { return None; }
+                Some(s.to_string())
+            }
+            _ => None, // non-string computed key — skip
+        }
+    } else {
+        Some(node_text(&name_node, source).to_string())
+    }
+}
+
 fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    if let Some(name_node) = node.child_by_field_name("name") {
-        let method_name = node_text(&name_node, source);
+    if let Some(method_name) = resolve_method_def_name(node, source) {
+        let method_name = method_name.as_str();
         let parent_class = find_parent_class(node, source);
         let full_name = match parent_class {
             Some(cls) => format!("{}.{}", cls, method_name),
@@ -1213,6 +1242,19 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(fn_node) = node.child_by_field_name("function") else { return };
     if fn_node.kind() == "import" {
         handle_dynamic_import(node, &fn_node, source, symbols);
+        return;
+    }
+    // `this(args)` and `super(args)` — the callee is `this`/`super` used as a
+    // function, not a named identifier.  The `this` call record is emitted by
+    // collect_this_call_and_bindings (called from match_js_pts_bindings).
+    // Neither case should emit callback-reference calls for the arguments, because
+    // those arguments are values passed *to* the rebound function — not callbacks
+    // of the enclosing scope.  Without this guard, identifier arguments like `b`
+    // in `this(b)` or `a` in `super(a)` become spurious dynamic calls that the
+    // pts resolver resolves to globally-defined functions with the same name in
+    // other files, producing false cross-file call edges.
+    // Mirrors the early-return guard in the TS handleCallExpr (javascript.ts:1135).
+    if fn_node.kind() == "this" || fn_node.kind() == "super" {
         return;
     }
     if let Some(call_info) = extract_call_info(&fn_node, node, source) {
@@ -4088,6 +4130,51 @@ mod tests {
         let b = s.this_call_bindings.iter().find(|b| b.callee == "invoker");
         assert!(b.is_some(), "this_call_bindings should contain invoker→handler; got: {:?}", s.this_call_bindings);
         assert_eq!(b.unwrap().this_arg, "handler");
+    }
+
+    /// `this(b)` must NOT emit `b` as a dynamic callback-reference call.
+    /// Without the early-return guard, `b` would be emitted as a dynamic call
+    /// and the pts resolver would match any globally-defined function named `b`,
+    /// producing false cross-file call edges (issue #1511).
+    #[test]
+    fn this_call_args_do_not_emit_callback_reference_calls() {
+        let s = parse_js(
+            "function foo(b) { return this(b); }\n\
+             foo.call((a) => a, () => {});",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "this"),
+            "this() must be recorded; got: {:?}",
+            s.calls.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "b"),
+            "argument `b` of this(b) must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+    }
+
+    /// `super(a)` must NOT emit `a` as a dynamic callback-reference call.
+    /// Same root cause as this(b): the callee `super` is not a named identifier,
+    /// so extract_callback_reference_calls must not run on the arguments.
+    #[test]
+    fn super_call_args_do_not_emit_callback_reference_calls() {
+        let s = parse_js(
+            "class E { constructor(c) { this.cc = c; } }\n\
+             class G extends E {\n\
+               constructor(a, b) { super(a); this.bb = b; }\n\
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "a"),
+            "argument `a` of super(a) must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "b"),
+            "argument `b` of this.bb = b must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
     }
 
     #[test]

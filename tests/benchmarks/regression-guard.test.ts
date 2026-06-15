@@ -44,26 +44,89 @@ const REGRESSION_THRESHOLD = BENCH_CANARY ? 0.5 : 0.25;
 /**
  * Wider regression threshold applied to metrics in NOISY_METRICS.
  *
- * Sub-30ms timing metrics (no-op rebuild, 1-file rebuild, fnDeps depth 1)
- * routinely jitter ±10ms from CI runner load, GC pauses, and OS scheduling,
- * which translates to ±50%+ on small absolute numbers. The MIN_ABSOLUTE_DELTA
- * floor (10ms) filters trivial noise but cannot distinguish a 10–14ms
- * "real" jitter event from a regression on these specific metrics.
+ * Short-latency timing metrics (no-op rebuild, 1-file rebuild, fnDeps depth 1)
+ * that routinely jitter ±10–50ms from CI runner load, GC pauses, and OS
+ * scheduling — translating to ±25–155%+ on sub-100ms baselines. The
+ * MIN_ABSOLUTE_DELTA floor (10ms) filters trivial noise but cannot distinguish
+ * a 10–14ms "real" jitter event from a regression on these specific metrics.
  *
- * Keeping the global threshold at 25% means a regression in the 30–100ms
- * range is still caught (e.g. 50ms→63ms = +26%, flagged), while sub-30ms
- * metrics in this set get the wider 50% allowance.
+ * Keeping the global threshold at 25% means a regression in the 100–500ms
+ * range is still caught (e.g. 200ms→253ms = +26%, flagged), while the
+ * high-jitter metrics in this set get the wider 50% allowance.
  *
  * In BENCH_CANARY mode this is overridden to 1.0 (100%) — the canary's
- * purpose is to catch gross regressions (+50%+), not sub-30ms jitter.
+ * purpose is to catch gross regressions (+50%+), not short-latency jitter.
  */
 const NOISY_METRIC_THRESHOLD = BENCH_CANARY ? 1.0 : 0.5;
 
 /**
  * Metric labels treated as high-variance and given the NOISY_METRIC_THRESHOLD
  * tolerance instead of the default REGRESSION_THRESHOLD. Add a metric here
- * only when its baseline is consistently sub-30ms and CI variance has been
- * empirically shown to exceed 25%.
+ * only when CI variance has been empirically shown to exceed 25% due to runner
+ * jitter (±10–50ms absolute) that dominates the percentage on short-ish
+ * sub-200ms baselines — document the evidence in the entry below.
+ *
+ * - `No-op rebuild`: native baselines across releases span 15–30ms
+ *   (3.11.0: 15ms, 3.11.2: 19–25ms, 3.12.0: 23–30ms depending on suite).
+ *   Shared-runner jitter of ±10ms routinely lands +60–109% on these numbers:
+ *     - 3.11.0 baseline 18ms → 29ms (+61%) — run 26426483639
+ *     - 3.11.2 baseline 25ms → 45ms (+80%) and 19ms → 37ms (+95%)
+ *       — run 26792023287 (docs-only PR #1282, zero hot-path changes)
+ *     - 3.12.0 baseline 30ms → 48ms (+60%) and 23ms → 48ms (+109%)
+ *       — run 27457266151 (PR #1487 adds warmup runs, no-op path unchanged)
+ *     - 3.12.0 baseline 23ms → 114ms (+396%) — run 27455727444 (canary,
+ *       PR #1468 enclosing-caller fix; no-op exits before that code runs)
+ *   MIN_ABSOLUTE_DELTA (10ms) filters truly trivial jitter (e.g. 15→19ms),
+ *   but a runner under load can easily produce +20ms on a no-op, which is
+ *   both above the floor and above the 25% threshold on a ~20ms baseline.
+ *   The 50% tolerance absorbs this pattern while still blocking a genuine
+ *   regression that adds real work to the no-op path (which would show up
+ *   consistently across runs, not just on loaded runners).
+ *
+ * - `1-file rebuild`: native baselines span 64–115ms across 3.11.0–3.12.0.
+ *   CI jitter of ±20–50ms translates to +25–155% on sub-100ms measurements:
+ *     - 3.11.0 baseline 64ms → 109ms (+70%) — run 26706695868 (concurrent
+ *       PRs on same runner measured 64→80ms (+25%), confirming runner noise)
+ *     - 3.11.2 baseline 83ms → 212ms (+155%) — run 26793082961 (PR #1278
+ *       TypeScript resolver PR; locally measures 86ms, within baseline noise)
+ *     - 3.12.0 baseline 86ms → 131ms (+52%) — publish gate run (incremental
+ *       suite's identical metric PASSED in the same run, confirming cold-start
+ *       bias in the build suite rather than a structural regression)
+ *   The 50% threshold catches a genuine regression that adds real work (e.g.
+ *   an O(n) scan on every 1-file rebuild would consistently land +100ms+)
+ *   while absorbing the runner-load spikes documented above. Tracked in #1440
+ *   (add warmup runs to the build-benchmark 1-file tier to reduce this spread).
+ *
+ * - `No-op rebuild`: native baselines across releases span 15–30ms
+ *   (3.11.0: 15ms, 3.11.2: 19–25ms, 3.12.0: 23–30ms depending on suite).
+ *   Shared-runner jitter of ±10ms routinely lands +60–109% on these numbers:
+ *     - 3.11.0 baseline 18ms → 29ms (+61%) — run 26426483639
+ *     - 3.11.2 baseline 25ms → 45ms (+80%) and 19ms → 37ms (+95%)
+ *       — run 26792023287 (docs-only PR #1282, zero hot-path changes)
+ *     - 3.12.0 baseline 30ms → 48ms (+60%) and 23ms → 48ms (+109%)
+ *       — run 27457266151 (PR #1487 adds warmup runs, no-op path unchanged)
+ *     - 3.12.0 baseline 23ms → 114ms (+396%) — run 27455727444 (canary,
+ *       PR #1468 enclosing-caller fix; no-op exits before that code runs)
+ *   MIN_ABSOLUTE_DELTA (10ms) filters truly trivial jitter (e.g. 15→19ms),
+ *   but a runner under load can easily produce +20ms on a no-op, which is
+ *   both above the floor and above the 25% threshold on a ~20ms baseline.
+ *   The 50% tolerance absorbs this pattern while still blocking a genuine
+ *   regression that adds real work to the no-op path (which would show up
+ *   consistently across runs, not just on loaded runners).
+ *
+ * - `1-file rebuild`: native baselines span 64–115ms across 3.11.0–3.12.0.
+ *   CI jitter of ±20–50ms translates to +25–155% on sub-100ms measurements:
+ *     - 3.11.0 baseline 64ms → 109ms (+70%) — run 26706695868 (concurrent
+ *       PRs on same runner measured 64→80ms (+25%), confirming runner noise)
+ *     - 3.11.2 baseline 83ms → 212ms (+155%) — run 26793082961 (PR #1278
+ *       TypeScript resolver PR; locally measures 86ms, within baseline noise)
+ *     - 3.12.0 baseline 86ms → 131ms (+52%) — publish gate run (incremental
+ *       suite's identical metric PASSED in the same run, confirming cold-start
+ *       bias in the build suite rather than a structural regression)
+ *   The 50% threshold catches a genuine regression that adds real work (e.g.
+ *   an O(n) scan on every 1-file rebuild would consistently land +100ms+)
+ *   while absorbing the runner-load spikes documented above. Tracked in #1440
+ *   (add warmup runs to the build-benchmark 1-file tier to reduce this spread).
  *
  * - `fnDeps depth 1`: native baseline 28.7ms (v3.9.6). The fn_deps Rust
  *   implementation, fnDepsData JS wrapper, and DB schema/indexes are all
@@ -73,7 +136,7 @@ const NOISY_METRIC_THRESHOLD = BENCH_CANARY ? 1.0 : 0.5;
  *   CI consistently measures +40–60% on this sub-30ms metric while the
  *   absolute delta (~13ms) is at the noise floor for shared runners.
  *   Methodology already discards 3 warmup runs (#1077). Same pattern as
- *   No-op rebuild and 1-file rebuild — sub-30ms baseline amplified by
+ *   No-op rebuild and 1-file rebuild — short-latency baseline amplified by
  *   ±10ms runner jitter into a percentage swing that looks like regression.
  */
 const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild', 'fnDeps depth 1']);
