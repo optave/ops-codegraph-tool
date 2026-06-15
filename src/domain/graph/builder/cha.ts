@@ -96,6 +96,14 @@ export function buildChaContext(fileSymbols: ReadonlyMap<string, ExtractorOutput
  * For `super`, resolution starts from the parent of the caller's class.
  * For `this`/`self`, resolution starts from the caller's own class and walks
  * up the inheritance chain (supporting inherited method lookup).
+ *
+ * When `callerFile` is provided, same-file method nodes are preferred: if the
+ * hierarchy walk finds a qualified method that exists in both the caller's own
+ * file AND in unrelated files (e.g. a class named `A` that appears in multiple
+ * fixture files), only the same-file nodes are returned.  This prevents
+ * cross-fixture false edges caused by accidental name collisions across
+ * unrelated files in the same project build.  When no same-file nodes exist,
+ * all found nodes are returned as before.
  */
 export function resolveThisDispatch(
   methodName: string,
@@ -103,6 +111,7 @@ export function resolveThisDispatch(
   receiver: 'this' | 'self' | 'super',
   chaCtx: ChaContext,
   lookup: CallNodeLookup,
+  callerFile?: string | null,
 ): ReadonlyArray<{ id: number; file: string }> {
   if (!callerName) return [];
   const dotIdx = callerName.indexOf('.');
@@ -119,7 +128,15 @@ export function resolveThisDispatch(
     visited.add(current);
     const qualified = `${current}.${methodName}`;
     const found = lookup.byName(qualified).filter((n) => n.kind === 'method');
-    if (found.length > 0) return found;
+    if (found.length > 0) {
+      // When the caller's file is known, prefer same-file nodes to avoid
+      // emitting cross-file edges to identically-named methods in unrelated
+      // files.  Only fall back to the full set when no same-file node exists.
+      if (callerFile && found.some((n) => n.file === callerFile)) {
+        return found.filter((n) => n.file === callerFile);
+      }
+      return found;
+    }
     current = chaCtx.parents.get(current);
   }
   return [];

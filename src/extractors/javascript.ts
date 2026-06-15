@@ -169,7 +169,19 @@ function handleClassCapture(
 
 /** Handle method_definition capture. */
 function handleMethodCapture(c: Record<string, TreeSitterNode>, definitions: Definition[]): void {
-  const methName = c.meth_name!.text;
+  const methNameNode = c.meth_name!;
+  let methName: string;
+  if (methNameNode.type === 'computed_property_name') {
+    // Extract the inner string literal from `['methodName']` or `["methodName"]`.
+    // Non-string computed keys (e.g. `[Symbol.iterator]`) cannot be resolved at
+    // dot-notation call sites, so skip them entirely.
+    const inner = methNameNode.child(1); // child(0)='[', child(1)=string, child(2)=']'
+    if (!inner || (inner.type !== 'string' && inner.type !== 'string_fragment')) return;
+    methName = inner.text.replace(/^['"]|['"]$/g, '');
+    if (!methName) return;
+  } else {
+    methName = methNameNode.text;
+  }
   const parentClass = findParentClass(c.meth_node!);
   const fullName = parentClass ? `${parentClass}.${methName}` : methName;
   const methChildren = extractParameters(c.meth_node!);
@@ -825,8 +837,20 @@ function handleClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (nameNode) {
+    let methName: string;
+    if (nameNode.type === 'computed_property_name') {
+      // Extract the inner string literal from `['methodName']` or `["methodName"]`.
+      // Non-string computed keys (e.g. `[Symbol.iterator]`) cannot be resolved at
+      // dot-notation call sites, so skip them entirely.
+      const inner = nameNode.child(1); // child(0)='[', child(1)=string, child(2)=']'
+      if (!inner || (inner.type !== 'string' && inner.type !== 'string_fragment')) return;
+      methName = inner.text.replace(/^['"]|['"]$/g, '');
+      if (!methName) return;
+    } else {
+      methName = nameNode.text;
+    }
     const parentClass = findParentClass(node);
-    const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+    const fullName = parentClass ? `${parentClass}.${methName}` : methName;
     const methChildren = extractParameters(node);
     const methVis = extractVisibility(node);
     ctx.definitions.push({
@@ -1084,8 +1108,19 @@ function extractObjectLiteralFunctions(
     } else if (child.type === 'method_definition') {
       const nameNode = child.childForFieldName('name');
       if (nameNode) {
+        let methodName: string;
+        if (nameNode.type === 'computed_property_name') {
+          // Strip brackets+quotes from `['methodName']` to get a resolvable name.
+          // Skip non-string computed keys (e.g. [Symbol.iterator]).
+          const inner = nameNode.child(1);
+          if (!inner || (inner.type !== 'string' && inner.type !== 'string_fragment')) continue;
+          methodName = inner.text.replace(/^['"]|['"]$/g, '');
+          if (!methodName) continue;
+        } else {
+          methodName = nameNode.text;
+        }
         definitions.push({
-          name: `${varName}.${nameNode.text}`,
+          name: `${varName}.${methodName}`,
           kind: 'function',
           line: nodeStartLine(child),
           endLine: nodeEndLine(child),
@@ -1832,9 +1867,23 @@ function runContextCollectorWalk(rootNode: TreeSitterNode, out: ContextCollector
         // Qualify with the enclosing class name so the PTS key matches
         // callerName from findCaller (which uses def.name = 'ClassName.method').
         const enclosingClass = classStack.length > 0 ? classStack[classStack.length - 1] : null;
-        const qualifiedName = enclosingClass ? `${enclosingClass}.${nameNode.text}` : nameNode.text;
-        funcStack.push(qualifiedName);
-        pushedFunc = true;
+        let rawName: string;
+        if (nameNode.type === 'computed_property_name') {
+          const inner = nameNode.child(1);
+          if (!inner || (inner.type !== 'string' && inner.type !== 'string_fragment')) {
+            // Non-string computed key — skip adding to funcStack (no resolvable name).
+            rawName = '';
+          } else {
+            rawName = inner.text.replace(/^['"]|['"]$/g, '');
+          }
+        } else {
+          rawName = nameNode.text;
+        }
+        if (rawName) {
+          const qualifiedName = enclosingClass ? `${enclosingClass}.${rawName}` : rawName;
+          funcStack.push(qualifiedName);
+          pushedFunc = true;
+        }
       }
     } else if (t === 'variable_declarator') {
       // `const process = (arr) => { ... }` — arrow/expression functions assigned

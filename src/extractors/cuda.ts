@@ -5,7 +5,13 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, nodeEndLine, setTypeMapEntry } from './helpers.js';
+import {
+  extractModifierVisibility,
+  findChild,
+  isCPrimitiveType,
+  nodeEndLine,
+  setTypeMapEntry,
+} from './helpers.js';
 
 /**
  * Extract symbols from CUDA files.
@@ -218,7 +224,7 @@ function handleCudaDeclaration(node: TreeSitterNode, ctx: ExtractorOutput): void
   if (!typeNode) return;
   const typeName = typeNode.text;
   // Skip primitive types — they are never class/struct receivers
-  if (isCudaPrimitiveType(typeName)) return;
+  if (isCPrimitiveType(typeName)) return;
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -409,42 +415,6 @@ function innerCudaDeclarator(node: TreeSitterNode): TreeSitterNode | null {
     }
   }
   return null;
-}
-
-/**
- * Primitive C/C++/CUDA types that are never class/struct receivers. Seeding
- * these into typeMap would produce spurious receiver edges (e.g. `int x` → `int`).
- */
-const CUDA_PRIMITIVE_TYPES = new Set([
-  'int',
-  'long',
-  'short',
-  'unsigned',
-  'signed',
-  'float',
-  'double',
-  'char',
-  'bool',
-  'void',
-  'wchar_t',
-  'auto',
-  'size_t',
-  'uint8_t',
-  'uint16_t',
-  'uint32_t',
-  'uint64_t',
-  'int8_t',
-  'int16_t',
-  'int32_t',
-  'int64_t',
-  'ptrdiff_t',
-  'intptr_t',
-  'uintptr_t',
-]);
-
-function isCudaPrimitiveType(typeName: string): boolean {
-  const base = typeName.split(/\s+/).pop() ?? typeName;
-  return CUDA_PRIMITIVE_TYPES.has(base) || CUDA_PRIMITIVE_TYPES.has(typeName);
 }
 
 function extractCudaEnumEntries(enumNode: TreeSitterNode): SubDeclaration[] {

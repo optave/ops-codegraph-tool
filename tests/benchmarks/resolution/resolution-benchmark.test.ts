@@ -85,6 +85,7 @@ const TECHNIQUE_MAP: Record<string, string> = {
   'class-inheritance': 'cha-rta',
   'class-hierarchy': 'cha-rta',
   'trait-dispatch': 'cha-rta',
+  'this-dispatch-func-prop': 'cha-rta',
   're-export': 'barrel',
   closure: 'points-to',
   'higher-order': 'points-to',

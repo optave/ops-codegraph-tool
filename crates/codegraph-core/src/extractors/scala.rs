@@ -13,6 +13,7 @@ impl SymbolExtractor for ScalaExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_scala_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &SCALA_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_scala_type_map);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }

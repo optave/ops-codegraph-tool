@@ -13,6 +13,7 @@ impl SymbolExtractor for PhpExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_php_node);
         walk_tree(&tree.root_node(), source, &mut symbols, match_php_type_map);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &PHP_AST_CONFIG);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }
