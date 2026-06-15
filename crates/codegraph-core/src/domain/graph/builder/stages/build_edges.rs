@@ -1050,23 +1050,38 @@ fn emit_receiver_edge(
     let type_entry = type_map.get(receiver.as_str());
     let effective_receiver = type_entry.map(|&(t, _)| t).unwrap_or(receiver.as_str());
 
-    // Same-file candidates use receiver_kinds_same_file (includes "function") so
-    // that pre-ES6 function constructors (e.g. `function C() {}`) in the same
-    // file are matched.  Global fallback uses the narrower receiver_kinds to
-    // avoid false positives from unrelated same-named functions in other files.
-    let samefile_candidates: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
+    // Three-tier receiver resolution:
+    //   1. Same-file class/struct/interface/type/module — highest priority.
+    //   2. Cross-file class/struct/interface/type/module — wins over same-file functions
+    //      so that a destructured import emitted as kind="function" in the importing
+    //      file does not shadow the actual class node in the defining file.
+    //   3. Same-file function constructors — last resort for pre-ES6 `function C() {}`
+    //      style constructors that have no cross-file class counterpart.
+    let samefile_class: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
         .get(&(effective_receiver, rel_path))
         .cloned().unwrap_or_default()
         .into_iter()
-        .filter(|n| ctx.receiver_kinds_same_file.contains(n.kind.as_str()))
+        .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
         .collect();
-    let receiver_nodes: Vec<&NodeInfo> = if !samefile_candidates.is_empty() {
-        samefile_candidates
+    let receiver_nodes: Vec<&NodeInfo> = if !samefile_class.is_empty() {
+        samefile_class
     } else {
-        ctx.nodes_by_name.get(effective_receiver).cloned().unwrap_or_default()
+        let global_class: Vec<&NodeInfo> = ctx.nodes_by_name.get(effective_receiver)
+            .cloned().unwrap_or_default()
             .into_iter()
             .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
-            .collect()
+            .collect();
+        if !global_class.is_empty() {
+            global_class
+        } else {
+            // Last resort: same-file function constructors (pre-ES6 style).
+            ctx.nodes_by_name_and_file
+                .get(&(effective_receiver, rel_path))
+                .cloned().unwrap_or_default()
+                .into_iter()
+                .filter(|n| ctx.receiver_kinds_same_file.contains(n.kind.as_str()))
+                .collect()
+        }
     };
 
     if let Some(recv_target) = receiver_nodes.first() {
