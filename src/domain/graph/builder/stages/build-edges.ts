@@ -748,7 +748,10 @@ function buildChaPostPass(
             : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
           if (conf > 0) {
             seenByPair.add(edgeKey);
-            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+            // Tag super-dispatch edges distinctly so runChaPostPass can exclude them
+            // from further CHA expansion (super calls are not virtual dispatch).
+            const technique = call.receiver === 'super' ? 'super-dispatch' : 'cha';
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, technique]);
           }
         }
       }

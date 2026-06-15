@@ -597,7 +597,7 @@ function runPostNativeCha(
            JOIN nodes src ON e.source_id = src.id
            WHERE e.kind = 'calls' AND tgt.kind = 'method'
            AND INSTR(tgt.name, '.') > 0
-           AND (e.technique IS NULL OR e.technique != 'cha')
+           AND (e.technique IS NULL OR e.technique != 'super-dispatch')
            AND src.file IN (${ph})`,
         )
         .all(...chunk) as Array<{
@@ -618,7 +618,7 @@ function runPostNativeCha(
         JOIN nodes src ON e.source_id = src.id
         WHERE e.kind = 'calls' AND tgt.kind = 'method'
         AND INSTR(tgt.name, '.') > 0
-        AND (e.technique IS NULL OR e.technique != 'cha')
+        AND (e.technique IS NULL OR e.technique != 'super-dispatch')
       `)
       .all() as Array<{
       source_id: number;
@@ -653,24 +653,11 @@ function runPostNativeCha(
   const newEdges: Array<[number, number, string, number, number, string]> = [];
   let newEdgeCount = 0;
 
-  for (const { source_id, caller_name, method_name, caller_file } of callToMethods) {
+  for (const { source_id, method_name, caller_file } of callToMethods) {
     const dotIdx = method_name.indexOf('.');
     if (dotIdx === -1) continue;
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
-
-    // Super-dispatch guard: if the caller's class is itself a direct child of
-    // typeName (i.e. callerClass extends typeName), the existing edge is a
-    // super.method() call going up the hierarchy — not an interface dispatch.
-    // Expanding it to sibling subclasses of typeName would produce false edges:
-    // those siblings are unrelated to the caller and would never be invoked by
-    // that super call. Skip CHA expansion entirely for super-dispatch edges.
-    const callerDotIdx = caller_name.indexOf('.');
-    if (callerDotIdx !== -1) {
-      const callerClass = caller_name.slice(0, callerDotIdx);
-      const directChildrenOfType = implementors.get(typeName);
-      if (directChildrenOfType?.includes(callerClass)) continue;
-    }
 
     // BFS over the implementors map — handles multi-level hierarchies where
     // abstract/non-instantiated classes sit between the call-site type and
@@ -979,7 +966,10 @@ async function runPostNativeThisDispatch(
         seen.add(key);
         const conf = computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
         if (conf <= 0) continue;
-        newEdges.push([callerRow.id, t.id, 'calls', conf, 0, 'cha']);
+        // Tag super-dispatch edges distinctly so runPostNativeCha can exclude them
+        // from further CHA expansion (super calls are not virtual dispatch).
+        const technique = call.receiver === 'super' ? 'super-dispatch' : 'cha';
+        newEdges.push([callerRow.id, t.id, 'calls', conf, 0, technique]);
         targetIds.add(t.id);
         affectedFiles.add(relPath);
         if (t.file) affectedFiles.add(t.file);
