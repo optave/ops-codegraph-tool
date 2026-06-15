@@ -367,15 +367,13 @@ export function resolveCallTargets(
  * Returns the edge tuple to insert, or null if nothing matched or the edge
  * was already seen.  Callers are responsible for the actual DB/array insert.
  *
- * Same-file candidates are filtered by RECEIVER_KINDS_SAME_FILE (which
- * includes `function` to handle pre-ES6 function constructors).  If no
- * same-file candidate matches, the lookup falls back to global candidates
- * filtered by the narrower RECEIVER_KINDS (no `function`) to avoid false
- * positives from unrelated same-named functions in other files.
- *
- * This means a local `function C() {}` in the same file always wins over a
- * `class C` defined in a different file — fixing cross-file receiver
- * non-determinism when multiple files define the same constructor name.
+ * Three-tier receiver resolution — mirrors the Rust emit_receiver_edge logic:
+ *   1. Same-file class/struct/interface/type/module — highest priority.
+ *   2. Same-file function that is locally defined (name in `localDefNames`) —
+ *      wins over cross-file class so that pre-ES6 `function C() {}` constructors
+ *      in the same file take priority. Destructured imports re-emitted as
+ *      kind="function" are excluded because their names are NOT in localDefNames.
+ *   3. Cross-file class/struct/interface/type/module — global fallback.
  */
 export function resolveReceiverEdge(
   lookup: CallNodeLookup,
@@ -384,6 +382,7 @@ export function resolveReceiverEdge(
   relPath: string,
   typeMap: Map<string, unknown>,
   seenCallEdges: Set<string>,
+  localDefNames?: ReadonlySet<string>,
 ): { callerId: number; receiverId: number; confidence: number } | null {
   const typeEntry = typeMap.get(call.receiver);
   const typeName = typeEntry
@@ -396,17 +395,20 @@ export function resolveReceiverEdge(
       ? ((typeEntry as { confidence?: number }).confidence ?? null)
       : null;
   const effectiveReceiver = typeName || call.receiver;
-  // Same-file candidates use RECEIVER_KINDS_SAME_FILE (includes 'function') so
-  // that pre-ES6 function constructors (e.g. `function C() {}`) in the same
-  // file are matched.  Global fallback uses the narrower RECEIVER_KINDS to
-  // avoid false positives from unrelated same-named functions in other files.
-  const sameFileCandidates = lookup
-    .byNameAndFile(effectiveReceiver, relPath)
-    .filter((n) => RECEIVER_KINDS_SAME_FILE.has(n.kind ?? ''));
+  const sameFileNodes = lookup.byNameAndFile(effectiveReceiver, relPath);
+  // Tier 1: same-file class/struct/interface/type/module
+  const sameFileClass = sameFileNodes.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  // Tier 2: same-file locally-defined function constructor (not a destructured import)
+  const sameFileFn = sameFileNodes.filter(
+    (n) => n.kind === 'function' && (!localDefNames || localDefNames.has(n.name ?? '')),
+  );
   const candidates =
-    sameFileCandidates.length > 0
-      ? sameFileCandidates
-      : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+    sameFileClass.length > 0
+      ? sameFileClass
+      : sameFileFn.length > 0
+        ? sameFileFn
+        : // Tier 3: cross-file class/struct/interface/type/module fallback
+          lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
   if (candidates.length === 0) return null;
   const recvTarget = candidates[0]!;
   const recvKey = `recv|${caller.id}|${recvTarget.id}`;
