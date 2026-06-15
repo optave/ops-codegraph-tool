@@ -398,10 +398,10 @@ export function resolveReceiverEdge(
   const sameFileNodes = lookup.byNameAndFile(effectiveReceiver, relPath);
   // Tier 1: same-file class/struct/interface/type/module
   const sameFileClass = sameFileNodes.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
-  // Tier 2: same-file locally-defined function constructor (not a destructured import)
-  const sameFileFn = sameFileNodes.filter(
-    (n) => n.kind === 'function' && (!localDefNames || localDefNames.has(n.name ?? '')),
-  );
+  // Tier 2: same-file locally-defined function constructor (not a destructured import).
+  // All nodes from byNameAndFile have name=effectiveReceiver, so check the name once.
+  const isLocallyDefined = !localDefNames || localDefNames.has(effectiveReceiver);
+  const sameFileFn = isLocallyDefined ? sameFileNodes.filter((n) => n.kind === 'function') : [];
   const candidates =
     sameFileClass.length > 0
       ? sameFileClass
