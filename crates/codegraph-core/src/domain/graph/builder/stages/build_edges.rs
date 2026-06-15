@@ -712,12 +712,14 @@ fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_i
             let span = def.end_line.saturating_sub(def.line);
             if is_callable_kind(def.kind) {
                 // On a strict span improvement always take the new candidate.
-                // On a tie, prefer bare names over qualified names (dot-containing, no angle
-                // brackets) so native matches WASM: both pick `f(method)` over `o1.f(function)`
-                // when an object-literal method is extracted under both names at the same line.
+                // On a tie, prefer bare names over qualified names so native matches WASM:
+                // both pick `f(method)` over `o1.f(function)` when an object-literal method
+                // is extracted under both names at the same line. Synthetic angle-bracket
+                // nodes (e.g. `B.<static:36:2>`) are excluded on both sides of the comparison.
                 let is_improvement = span < fn_caller_span;
                 let is_tie_prefer_bare = span == fn_caller_span
                     && !def.name.contains('.')
+                    && !def.name.contains('<')
                     && fn_caller_name.contains('.')
                     && !fn_caller_name.contains('<');
                 if is_improvement || is_tie_prefer_bare {
