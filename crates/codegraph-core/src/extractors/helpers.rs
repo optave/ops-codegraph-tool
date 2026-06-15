@@ -1012,22 +1012,27 @@ pub fn dedup_type_map(entries: &mut Vec<TypeMapEntry>) {
     if entries.len() <= 1 {
         return;
     }
+    use std::collections::hash_map::Entry;
     use std::collections::HashMap;
     // Drain all entries into a HashMap, keeping the highest-confidence value
-    // per key. On ties the first entry seen wins (insertion-order preserved
-    // by the `if conf > prev` guard), matching the previous first-write-wins
-    // behaviour of the old per-entry linear scan.
+    // per key. On ties the first entry seen wins (the `Occupied` arm only
+    // replaces on strict `>`), matching the previous first-write-wins
+    // behaviour of the old per-entry linear scan. The values are then
+    // sorted by name before being written back so the output is stable.
     let mut map: HashMap<String, TypeMapEntry> = HashMap::with_capacity(entries.len());
     for e in entries.drain(..) {
-        match map.get(&e.name) {
-            None => { map.insert(e.name.clone(), e); }
-            Some(prev) if e.confidence > prev.confidence => {
-                map.insert(e.name.clone(), e);
+        match map.entry(e.name.clone()) {
+            Entry::Vacant(slot) => { slot.insert(e); }
+            Entry::Occupied(mut slot) => {
+                if e.confidence > slot.get().confidence {
+                    *slot.get_mut() = e;
+                }
             }
-            _ => {}
         }
     }
-    entries.extend(map.into_values());
+    let mut out: Vec<TypeMapEntry> = map.into_values().collect();
+    out.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    entries.extend(out);
 }
 
 /// C-family `declaration` / `parameter_declaration` type-map matcher.
