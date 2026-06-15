@@ -390,7 +390,7 @@ async function runPostNativeAnalysis(
 }
 
 /**
- * Phase 8.5: CHA expansion post-pass for the native orchestrator path.
+ * Phase 8.6: CHA expansion post-pass for the native orchestrator path.
  *
  * The Rust build pipeline resolves typed receiver calls (e.g. `worker.doWork()`
  * where `worker: IWorker`) to the interface method declaration only.  This
@@ -1616,7 +1616,7 @@ export async function tryNativeOrchestrator(
     !!result.isFullBuild,
   );
 
-  // Phase 8.5: expand CHA call edges (interface dispatch → concrete implementations).
+  // Phase 8.6: expand CHA call edges (interface dispatch → concrete implementations).
   // Returns the affected files so role re-classification below can be scoped to
   // the nodes whose fan-in/out actually changed.
   //
