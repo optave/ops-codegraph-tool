@@ -1,14 +1,17 @@
 /**
- * Regression test for #1513: receiver edge for a function constructor must
- * point to the same-file definition when multiple files define the same name.
+ * Regression test for #1513 / #1539: a locally-defined function constructor
+ * must block the cross-file class fallback in receiver-edge resolution.
  *
  * Setup: two files both define a symbol named `C`.
  *   - a.js: `function C() {}` with `C.prototype = { foo: function(){} }`
  *             and a caller `run()` that does `new C(); v.foo()`
  *   - b.js: `class C { bar() {} }` — same name, different file
  *
- * Expected receiver edge: `a.js::run → C` where C is the one in a.js (kind=function),
- * NOT the class C in b.js.
+ * Expected behavior (#1539): the locally-defined `function C` in a.js owns the
+ * name, so no cross-file fallback to `class C` in b.js.  No receiver edge is
+ * emitted for `run` (the function constructor blocks the global class, and
+ * `function` kind is not in RECEIVER_KINDS so the same-file candidate set is
+ * empty after kind filtering).  Both engines must agree.
  */
 
 import fs from 'node:fs';
@@ -77,28 +80,25 @@ function getReceiverEdges(dbPath: string) {
   }
 }
 
-describe('receiver same-file priority over cross-file (#1513)', () => {
-  it('WASM: run() receiver edge targets C in a.js, not b.js', () => {
+describe('receiver same-file priority over cross-file (#1513 / #1539)', () => {
+  it('WASM: local function constructor blocks cross-file class — no receiver edge for run', () => {
     const edges = getReceiverEdges(path.join(tmpWasm, '.codegraph', 'graph.db'));
-    const edge = edges.find((e) => e.src === 'run');
-    expect(edge).toBeDefined();
-    expect(edge?.tgt).toBe('C');
-    expect(edge?.tgt_file).toBe('a.js');
+    const wrongEdge = edges.find((e) => e.src === 'run' && e.tgt_file === 'b.js');
+    expect(wrongEdge).toBeUndefined();
   });
 
-  it('Native: run() receiver edge targets C in a.js, not b.js', () => {
+  it('Native: local function constructor blocks cross-file class — no receiver edge for run', () => {
     const edges = getReceiverEdges(path.join(tmpNative, '.codegraph', 'graph.db'));
-    const edge = edges.find((e) => e.src === 'run');
-    expect(edge).toBeDefined();
-    expect(edge?.tgt).toBe('C');
-    expect(edge?.tgt_file).toBe('a.js');
+    const wrongEdge = edges.find((e) => e.src === 'run' && e.tgt_file === 'b.js');
+    expect(wrongEdge).toBeUndefined();
   });
 
-  it('WASM and native produce the same receiver edges', () => {
+  it('neither engine produces a cross-file receiver edge to b.js', () => {
     const wasmEdges = getReceiverEdges(path.join(tmpWasm, '.codegraph', 'graph.db'));
     const nativeEdges = getReceiverEdges(path.join(tmpNative, '.codegraph', 'graph.db'));
-    const wasmSet = new Set(wasmEdges.map((e) => `${e.src}→${e.tgt}@${e.tgt_file}`));
-    const nativeSet = new Set(nativeEdges.map((e) => `${e.src}→${e.tgt}@${e.tgt_file}`));
-    expect(wasmSet).toEqual(nativeSet);
+    const wasmWrongEdge = wasmEdges.find((e) => e.src === 'run' && e.tgt_file === 'b.js');
+    const nativeWrongEdge = nativeEdges.find((e) => e.src === 'run' && e.tgt_file === 'b.js');
+    expect(wasmWrongEdge).toBeUndefined();
+    expect(nativeWrongEdge).toBeUndefined();
   });
 });

@@ -24,18 +24,6 @@ export interface CallNodeLookup {
 export const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', 'module']);
 
 /**
- * Kinds accepted as receiver-type candidates when looking in the *same file*
- * as the call site.  Same-file scope makes the match unambiguous, so we also
- * accept `function` to handle pre-ES6 function constructors (e.g.
- * `function C() {}` with `C.prototype = { … }`) that are extracted as
- * `kind='function'` rather than `kind='class'`.
- *
- * Global (cross-file) lookups deliberately exclude `function` to avoid false
- * positives from unrelated same-named functions in other files.
- */
-export const RECEIVER_KINDS_SAME_FILE = new Set([...RECEIVER_KINDS, 'function']);
-
-/**
  * Languages where bare `foo()` calls inside a class method are lexically scoped
  * to the module, not the class — there is no implicit this/class binding.
  * For these languages, the same-class fallback must not run for bare (no-receiver)
@@ -367,13 +355,17 @@ export function resolveCallTargets(
  * Returns the edge tuple to insert, or null if nothing matched or the edge
  * was already seen.  Callers are responsible for the actual DB/array insert.
  *
- * Three-tier receiver resolution — mirrors the Rust emit_receiver_edge logic:
- *   1. Same-file class/struct/interface/type/module — highest priority.
- *   2. Same-file function that is locally defined (name in `localDefNames`) —
- *      wins over cross-file class so that pre-ES6 `function C() {}` constructors
- *      in the same file take priority. Destructured imports re-emitted as
- *      kind="function" are excluded because their names are NOT in localDefNames.
- *   3. Cross-file class/struct/interface/type/module — global fallback.
+ * Receiver resolution:
+ * 1. Look up same-file nodes for `effectiveReceiver` (unfiltered by kind).
+ * 2. If any same-file node exists AND `effectiveReceiver` is not in `importedNames`
+ *    (i.e. it is a locally-defined symbol, not an import artifact), apply
+ *    RECEIVER_KINDS and return the filtered set — no global fallback.
+ *    A local `function C(){}` means this file owns `C`; no cross-file class
+ *    should win over it (issue #1539).
+ * 3. If the same-file node IS an import artifact (e.g. destructured require),
+ *    or no same-file node exists at all, fall back to global candidates filtered
+ *    by RECEIVER_KINDS.  This preserves the pre-#1539 behaviour for cases where
+ *    an imported name appears as kind='function' in the importer file.
  */
 export function resolveReceiverEdge(
   lookup: CallNodeLookup,
@@ -382,7 +374,7 @@ export function resolveReceiverEdge(
   relPath: string,
   typeMap: Map<string, unknown>,
   seenCallEdges: Set<string>,
-  localDefNames?: ReadonlySet<string>,
+  importedNames: ReadonlyMap<string, string>,
 ): { callerId: number; receiverId: number; confidence: number } | null {
   const typeEntry = typeMap.get(call.receiver);
   const typeName = typeEntry
@@ -395,20 +387,15 @@ export function resolveReceiverEdge(
       ? ((typeEntry as { confidence?: number }).confidence ?? null)
       : null;
   const effectiveReceiver = typeName || call.receiver;
-  const sameFileNodes = lookup.byNameAndFile(effectiveReceiver, relPath);
-  // Tier 1: same-file class/struct/interface/type/module
-  const sameFileClass = sameFileNodes.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
-  // Tier 2: same-file locally-defined function constructor (not a destructured import).
-  // All nodes from byNameAndFile have name=effectiveReceiver, so check the name once.
-  const isLocallyDefined = !localDefNames || localDefNames.has(effectiveReceiver);
-  const sameFileFn = isLocallyDefined ? sameFileNodes.filter((n) => n.kind === 'function') : [];
-  const candidates =
-    sameFileClass.length > 0
-      ? sameFileClass
-      : sameFileFn.length > 0
-        ? sameFileFn
-        : // Tier 3: cross-file class/struct/interface/type/module fallback
-          lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  // Block global fallback only when the same-file node is a local definition,
+  // not when it's an import artifact (e.g. `const { C } = require(…)` seeds a
+  // kind='function' node in the importer but the real class lives elsewhere).
+  const sameFileAll = lookup.byNameAndFile(effectiveReceiver, relPath);
+  const isLocalDefinition = sameFileAll.length > 0 && !importedNames?.has(effectiveReceiver);
+  const sameFileCandidates = sameFileAll.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  const candidates = isLocalDefinition
+    ? sameFileCandidates
+    : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
   if (candidates.length === 0) return null;
   const recvTarget = candidates[0]!;
   const recvKey = `recv|${caller.id}|${recvTarget.id}`;

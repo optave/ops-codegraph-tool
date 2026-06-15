@@ -148,6 +148,19 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
     ).toBeDefined();
   });
 
+  it('super-dispatch: does NOT CHA-expand Lion.speak to sibling Tiger.speak', () => {
+    // Tiger is also a subclass of Animal (sibling to Lion). A super.speak() call
+    // in Lion.speak goes to Animal.speak — it must NOT be CHA-expanded to
+    // Tiger.speak (a sibling), which Lion would never invoke.
+    const edge = callEdges.find(
+      (e) => e.caller_name === 'Lion.speak' && e.callee_name === 'Tiger.speak',
+    );
+    expect(
+      edge,
+      `Expected NO Lion.speak → Tiger.speak edge (super-dispatch must not expand to sibling subclasses).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeUndefined();
+  });
+
   // ── transitive multi-level CHA (issue #1311) ───────────────────────────
   // Hierarchy: IJob → AbstractJob (non-instantiated) → PrintJob / ScanJob
   // resolveChaTargets must BFS through AbstractJob to reach the concrete types.
