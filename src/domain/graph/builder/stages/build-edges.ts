@@ -721,6 +721,7 @@ function buildChaPostPass(
           call.receiver,
           chaCtx,
           lookup,
+          relPath,
         );
       } else {
         const typeEntry = typeMap.get(call.receiver);
@@ -1011,7 +1012,6 @@ function buildFileCallEdges(
   // bind/alias entries, not for every locally-defined function or import that
   // buildPointsToMap seeds with a self-pointing entry.
   const fnRefBindingLhs = new Set(symbols.fnRefBindings?.map((b) => b.lhs) ?? []);
-
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
@@ -1314,6 +1314,7 @@ function buildFileCallEdges(
           call.receiver,
           chaCtx,
           lookup,
+          relPath,
         );
       } else if (!BUILTIN_RECEIVERS.has(call.receiver)) {
         const typeEntry = typeMap.get(call.receiver);

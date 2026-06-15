@@ -305,6 +305,49 @@ export function pushImport(
   ctx.imports.push(entry);
 }
 
+// ── C-family primitive types ───────────────────────────────────────────────
+
+/**
+ * Primitive C/C++/CUDA types that are never class/struct receivers. Seeding
+ * these into typeMap would produce spurious receiver edges (e.g. `int x` → `int`).
+ * Shared between the C++ and CUDA extractors to prevent divergence.
+ */
+export const C_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
+  'int',
+  'long',
+  'short',
+  'unsigned',
+  'signed',
+  'float',
+  'double',
+  'char',
+  'bool',
+  'void',
+  'wchar_t',
+  'auto',
+  'size_t',
+  'uint8_t',
+  'uint16_t',
+  'uint32_t',
+  'uint64_t',
+  'int8_t',
+  'int16_t',
+  'int32_t',
+  'int64_t',
+  'ptrdiff_t',
+  'intptr_t',
+  'uintptr_t',
+]);
+
+/**
+ * Return true when `typeName` is a primitive C/C++/CUDA type.
+ * Strips leading qualifiers (`const int` → `int`) before checking.
+ */
+export function isCPrimitiveType(typeName: string): boolean {
+  const base = typeName.split(/\s+/).pop() ?? typeName;
+  return C_PRIMITIVE_TYPES.has(base) || C_PRIMITIVE_TYPES.has(typeName);
+}
+
 // ── Parameter extraction ───────────────────────────────────────────────────
 
 /**

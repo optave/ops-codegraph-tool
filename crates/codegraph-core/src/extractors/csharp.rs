@@ -15,6 +15,7 @@ impl SymbolExtractor for CSharpExtractor {
         reclassify_csharp_implements(&mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &CSHARP_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_csharp_type_map);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }

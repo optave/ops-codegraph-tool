@@ -31,6 +31,13 @@ impl SymbolExtractor for JsExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_node);
+        // Emit qualified `obj.method(function)` definitions for object-literal shorthand
+        // methods AFTER match_js_node so that the bare `f(method)` node created by
+        // handle_method_def comes first in definitions — matching WASM ordering where
+        // handleMethodCapture (query path) runs before extractObjectLiteralFunctions
+        // (runCollectorWalk). Equal-span tie-break in findCaller keeps the first entry,
+        // so bare `f(method)` wins for call attribution in both engines.
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_objlit_qualified_method_defs);
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_type_map);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_return_type_map);
@@ -41,6 +48,9 @@ impl SymbolExtractor for JsExtractor {
         // Phase 8.3c–8.3f: points-to bindings (params, this-rebinding, arrays,
         // spread, for-of, object rest/props) for the pts constraint solver.
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_pts_bindings);
+        // Collapse duplicate keys accumulated during the tree walks (O(n)).
+        dedup_type_map(&mut symbols.type_map);
+        dedup_type_map(&mut symbols.return_type_map);
         symbols
     }
 }
@@ -524,28 +534,81 @@ fn extract_object_literal_functions(
                 }
             }
             "method_definition" => {
-                let Some(name_n) = child.child_by_field_name("name") else { continue };
-                let qualified = format!("{}.{}", var_name, node_text(&name_n, source));
-                let body = child.child_by_field_name("body");
-                symbols.definitions.push(Definition {
-                    name: qualified.clone(),
-                    kind: "function".to_string(),
-                    line: start_line(&child),
-                    end_line: Some(end_line(&child)),
-                    decorators: None,
-                    complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
-                    cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
-                    children: None,
-                });
-                // Seed typeMap so the two-step accessor dispatch can find the qualified def.
-                // `const obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
+                // The definition (`obj.baz(function)`) is emitted by the second-pass
+                // `match_js_objlit_qualified_method_defs` walker (runs after `match_js_node`)
+                // so that `handle_method_def`'s bare `baz(method)` node appears first in
+                // `definitions`. Only seed the typeMap entry here.
+                // Use resolve_method_def_name to strip brackets from computed string keys
+                // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]).
+                let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
+                let qualified = format!("{}.{}", var_name, method_name);
+                // typeMap['obj.baz'] = 'baz' — points to the bare-name definition so
+                // the two-step accessor dispatch resolves via the bare node.
                 symbols.type_map.push(TypeMapEntry {
-                    name: qualified.clone(),
-                    type_name: qualified,
+                    name: qualified,
+                    type_name: method_name,
                     confidence: 0.85,
                 });
             }
             _ => {}
+        }
+    }
+}
+
+/// Second-pass walker: emit qualified `obj.method(function)` definitions for
+/// `method_definition` children of object literals.
+///
+/// This must run AFTER the main `match_js_node` walk so that the bare `f(method)` node
+/// created by `handle_method_def` appears BEFORE the qualified `obj.f(function)` node
+/// in `symbols.definitions`. `findCaller` picks the narrowest-span enclosing definition;
+/// when spans are equal it keeps the first inserted one (strict `<`), so `f(method)` wins
+/// and call-edge attribution matches WASM (which runs `handleMethodCapture` via the query
+/// path before `extractObjectLiteralFunctions` via `runCollectorWalk`).
+///
+/// WASM produces both nodes — the qualified one via `extractObjectLiteralFunctions` and the
+/// bare one via `handleMethodCapture`. This pass mirrors that by adding only the qualified
+/// definitions, deferred so ordering is correct.
+fn match_js_objlit_qualified_method_defs(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    _depth: usize,
+) {
+    // Only lexical/variable declarations at non-function scope.
+    if !matches!(node.kind(), "lexical_declaration" | "variable_declaration") { return; }
+    if find_parent_of_types(node, &[
+        "function_declaration", "arrow_function", "function_expression",
+        "method_definition", "generator_function_declaration", "generator_function",
+    ]).is_some() {
+        return;
+    }
+    let is_const = node.child(0).map(|c| node_text(&c, source) == "const").unwrap_or(false);
+    if !is_const { return; }
+    for i in 0..node.child_count() {
+        let Some(declarator) = node.child(i) else { continue };
+        if declarator.kind() != "variable_declarator" { continue; }
+        let Some(name_n) = declarator.child_by_field_name("name") else { continue };
+        let Some(value_n) = declarator.child_by_field_name("value") else { continue };
+        if value_n.kind() != "object" || name_n.kind() != "identifier" { continue; }
+        let var_name = node_text(&name_n, source);
+        for j in 0..value_n.child_count() {
+            let Some(child) = value_n.child(j) else { continue };
+            if child.kind() != "method_definition" { continue; }
+            // Use resolve_method_def_name to strip brackets from computed string keys
+            // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]).
+            let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
+            let qualified = format!("{}.{}", var_name, method_name);
+            let body = child.child_by_field_name("body");
+            symbols.definitions.push(Definition {
+                name: qualified,
+                kind: "function".to_string(),
+                line: start_line(&child),
+                end_line: Some(end_line(&child)),
+                decorators: None,
+                complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
+                cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
+                children: None,
+            });
         }
     }
 }
@@ -635,12 +698,10 @@ fn find_return_new_expr_type<'a>(body: &Node<'a>, source: &'a [u8]) -> Option<&'
     None
 }
 
-/// Insert `(fn_name → type_name)` into `return_type_map`, keeping the highest-confidence entry.
+/// Append a `(fn_name → type_name)` entry to `return_type_map`.
+/// Deduplication (highest-confidence-wins) is handled in bulk by
+/// [`dedup_type_map`] at the end of `extract()`.
 fn push_return_type_entry(symbols: &mut FileSymbols, fn_name: &str, type_name: &str, confidence: f64) {
-    if let Some(pos) = symbols.return_type_map.iter().position(|e| e.name == fn_name) {
-        if symbols.return_type_map[pos].confidence >= confidence { return; }
-        symbols.return_type_map.swap_remove(pos);
-    }
     symbols.return_type_map.push(TypeMapEntry {
         name: fn_name.to_string(),
         type_name: type_name.to_string(),
@@ -777,10 +838,10 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
         let Some(child) = obj_node.child(i) else { continue };
         match child.kind() {
             "method_definition" => {
-                let Some(name_node) = child.child_by_field_name("name") else { continue };
+                let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
                 let children = extract_js_parameters(&child, source);
                 symbols.definitions.push(Definition {
-                    name: format!("{}.{}", class_name, node_text(&name_node, source)),
+                    name: format!("{}.{}", class_name, method_name),
                     kind: "method".to_string(),
                     line: start_line(&child),
                     end_line: Some(end_line(&child)),
@@ -945,9 +1006,38 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+/// Extract the plain method name from a `method_definition` node.
+///
+/// For computed property names (`['methodName']`), strips brackets and quotes from
+/// string-literal keys so the stored name matches the plain identifier used at call
+/// sites (`obj.methodName()`). Non-string computed keys like `[Symbol.iterator]`
+/// cannot be resolved at dot-notation call sites — returns `None` for those.
+fn resolve_method_def_name(node: &Node, source: &[u8]) -> Option<String> {
+    let name_node = node.child_by_field_name("name")?;
+    if name_node.kind() == "computed_property_name" {
+        // child(0)='[', child(1)=string literal, child(2)=']'
+        let inner = name_node.child(1)?;
+        match inner.kind() {
+            "string" => {
+                let s = extract_string_fragment(&inner, source).unwrap_or("");
+                if s.is_empty() { return None; }
+                Some(s.to_string())
+            }
+            "string_fragment" => {
+                let s = node_text(&inner, source);
+                if s.is_empty() { return None; }
+                Some(s.to_string())
+            }
+            _ => None, // non-string computed key — skip
+        }
+    } else {
+        Some(node_text(&name_node, source).to_string())
+    }
+}
+
 fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    if let Some(name_node) = node.child_by_field_name("name") {
-        let method_name = node_text(&name_node, source);
+    if let Some(method_name) = resolve_method_def_name(node, source) {
+        let method_name = method_name.as_str();
         let parent_class = find_parent_class(node, source);
         let full_name = match parent_class {
             Some(cls) => format!("{}.{}", cls, method_name),
@@ -1213,6 +1303,19 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(fn_node) = node.child_by_field_name("function") else { return };
     if fn_node.kind() == "import" {
         handle_dynamic_import(node, &fn_node, source, symbols);
+        return;
+    }
+    // `this(args)` and `super(args)` — the callee is `this`/`super` used as a
+    // function, not a named identifier.  The `this` call record is emitted by
+    // collect_this_call_and_bindings (called from match_js_pts_bindings).
+    // Neither case should emit callback-reference calls for the arguments, because
+    // those arguments are values passed *to* the rebound function — not callbacks
+    // of the enclosing scope.  Without this guard, identifier arguments like `b`
+    // in `this(b)` or `a` in `super(a)` become spurious dynamic calls that the
+    // pts resolver resolves to globally-defined functions with the same name in
+    // other files, producing false cross-file call edges.
+    // Mirrors the early-return guard in the TS handleCallExpr (javascript.ts:1135).
+    if fn_node.kind() == "this" || fn_node.kind() == "super" {
         return;
     }
     if let Some(call_info) = extract_call_info(&fn_node, node, source) {
@@ -3966,6 +4069,45 @@ mod tests {
         assert_eq!(e2.unwrap().type_name, "f2");
     }
 
+    /// Object literal shorthand method `{ f() {} }` must produce BOTH a bare `f(method)` node
+    /// (from handle_method_def, main walk) AND a qualified `o1.f(function)` node (from the
+    /// second-pass match_js_objlit_qualified_method_defs), with the bare node appearing FIRST.
+    /// findCaller's equal-span tie-break keeps the first entry, so `f(method)` wins for call
+    /// attribution — matching WASM where handleMethodCapture runs before extractObjectLiteralFunctions.
+    /// Issue #1538.
+    #[test]
+    fn object_literal_shorthand_method_bare_node_precedes_qualified() {
+        let s = parse_js(
+            "const o1 = {\n\
+               f() { this.g(); },\n\
+               g() { return 1; },\n\
+             };",
+        );
+        let names: Vec<_> = s.definitions.iter().map(|d| (&d.name, &d.kind)).collect();
+        let f_bare_pos = s.definitions.iter().position(|d| d.name == "f" && d.kind == "method");
+        let g_bare_pos = s.definitions.iter().position(|d| d.name == "g" && d.kind == "method");
+        let f_qual_pos = s.definitions.iter().position(|d| d.name == "o1.f" && d.kind == "function");
+        let g_qual_pos = s.definitions.iter().position(|d| d.name == "o1.g" && d.kind == "function");
+        assert!(f_bare_pos.is_some(), "bare f(method) missing; got: {:?}", names);
+        assert!(g_bare_pos.is_some(), "bare g(method) missing; got: {:?}", names);
+        assert!(f_qual_pos.is_some(), "qualified o1.f(function) missing; got: {:?}", names);
+        assert!(g_qual_pos.is_some(), "qualified o1.g(function) missing; got: {:?}", names);
+        assert!(
+            f_bare_pos.unwrap() < f_qual_pos.unwrap(),
+            "f(method) at {} must precede o1.f(function) at {} — equal-span tie-break",
+            f_bare_pos.unwrap(), f_qual_pos.unwrap()
+        );
+        assert!(
+            g_bare_pos.unwrap() < g_qual_pos.unwrap(),
+            "g(method) at {} must precede o1.g(function) at {}",
+            g_bare_pos.unwrap(), g_qual_pos.unwrap()
+        );
+        // typeMap entry must point to bare name for two-step accessor dispatch.
+        let tm_f = s.type_map.iter().find(|e| e.name == "o1.f");
+        assert!(tm_f.is_some(), "typeMap o1.f missing");
+        assert_eq!(tm_f.unwrap().type_name, "f");
+    }
+
     /// Phase 8.3e: call receiver is correctly recorded for obj.f() inside defProp body.
     #[test]
     fn call_receiver_for_define_property() {
@@ -4088,6 +4230,51 @@ mod tests {
         let b = s.this_call_bindings.iter().find(|b| b.callee == "invoker");
         assert!(b.is_some(), "this_call_bindings should contain invoker→handler; got: {:?}", s.this_call_bindings);
         assert_eq!(b.unwrap().this_arg, "handler");
+    }
+
+    /// `this(b)` must NOT emit `b` as a dynamic callback-reference call.
+    /// Without the early-return guard, `b` would be emitted as a dynamic call
+    /// and the pts resolver would match any globally-defined function named `b`,
+    /// producing false cross-file call edges (issue #1511).
+    #[test]
+    fn this_call_args_do_not_emit_callback_reference_calls() {
+        let s = parse_js(
+            "function foo(b) { return this(b); }\n\
+             foo.call((a) => a, () => {});",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "this"),
+            "this() must be recorded; got: {:?}",
+            s.calls.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "b"),
+            "argument `b` of this(b) must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+    }
+
+    /// `super(a)` must NOT emit `a` as a dynamic callback-reference call.
+    /// Same root cause as this(b): the callee `super` is not a named identifier,
+    /// so extract_callback_reference_calls must not run on the arguments.
+    #[test]
+    fn super_call_args_do_not_emit_callback_reference_calls() {
+        let s = parse_js(
+            "class E { constructor(c) { this.cc = c; } }\n\
+             class G extends E {\n\
+               constructor(a, b) { super(a); this.bb = b; }\n\
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "a"),
+            "argument `a` of super(a) must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "b"),
+            "argument `b` of this.bb = b must not become a callback-reference call; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
     }
 
     #[test]
