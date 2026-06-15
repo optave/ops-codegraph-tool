@@ -469,7 +469,8 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
        JOIN nodes tgt ON e.target_id = tgt.id
        JOIN nodes src ON e.source_id = src.id
        WHERE e.kind = 'calls' AND tgt.kind = 'method'
-       AND INSTR(tgt.name, '.') > 0`,
+       AND INSTR(tgt.name, '.') > 0
+       AND (e.technique IS NULL OR e.technique != 'cha')`,
     )
     .all() as Array<{ source_id: number; caller_name: string; method_name: string }>;
 

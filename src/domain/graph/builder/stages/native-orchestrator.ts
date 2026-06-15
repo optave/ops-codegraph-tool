@@ -597,6 +597,7 @@ function runPostNativeCha(
            JOIN nodes src ON e.source_id = src.id
            WHERE e.kind = 'calls' AND tgt.kind = 'method'
            AND INSTR(tgt.name, '.') > 0
+           AND (e.technique IS NULL OR e.technique != 'cha')
            AND src.file IN (${ph})`,
         )
         .all(...chunk) as Array<{
@@ -617,6 +618,7 @@ function runPostNativeCha(
         JOIN nodes src ON e.source_id = src.id
         WHERE e.kind = 'calls' AND tgt.kind = 'method'
         AND INSTR(tgt.name, '.') > 0
+        AND (e.technique IS NULL OR e.technique != 'cha')
       `)
       .all() as Array<{
       source_id: number;
@@ -730,8 +732,13 @@ const THIS_DISPATCH_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs'
  * `this`/`super` receivers, then resolves them through the class hierarchy stored
  * in DB `extends` edges — mirroring what `buildChaPostPass` does on the WASM path.
  *
- * Only runs when `extends` edges exist in the DB; if there is no inheritance
- * hierarchy there is nothing to resolve via `this`/`super` dispatch.
+ * Also handles function-as-object-property methods (`f.h = function() { this.g() }`):
+ * these use `this` to reference sibling properties on the same object (`f`), so
+ * `resolveThisDispatch` resolves them by treating the dot-prefix of the caller name
+ * (`f` from `f.h`) as the class and looking up `f.g` directly — no `extends` edge needed.
+ *
+ * Runs when either `extends` edges exist (class inheritance) OR dot-named `method`
+ * nodes exist (func-prop assignments); skips only when neither is present.
  */
 async function runPostNativeThisDispatch(
   db: BetterSqlite3Database,
@@ -744,26 +751,39 @@ async function runPostNativeThisDispatch(
   // Files containing endpoints of newly inserted edges — lets the caller scope
   // role re-classification to the nodes whose fan-in/out actually changed.
   const affectedFiles = new Set<string>();
-  // Fast guard: need at least one extends edge for this/super to have meaning
-  const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
-  if (!hasExtends) return { elapsedMs: 0, targetIds, affectedFiles };
 
-  // Build parents map: child class → direct parent class (from `extends` edges)
-  const parentRows = db
-    .prepare(`
-      SELECT src.name AS child_name, tgt.name AS parent_name
-      FROM edges e
-      JOIN nodes src ON e.source_id = src.id
-      JOIN nodes tgt ON e.target_id = tgt.id
-      WHERE e.kind = 'extends'
-    `)
-    .all() as Array<{ child_name: string; parent_name: string }>;
+  // Fast guard: need at least one extends edge (class inheritance) OR a dot-named
+  // method node (func-prop assignment: `f.h = function() { this.g() }`) for
+  // this/super dispatch to produce any edges.
+  const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
+  const hasFuncPropMethod = db
+    .prepare(`SELECT 1 FROM nodes WHERE kind = 'method' AND INSTR(name, '.') > 0 LIMIT 1`)
+    .get();
+  if (!hasExtends && !hasFuncPropMethod) return { elapsedMs: 0, targetIds, affectedFiles };
+
+  // Build parents map: child class → direct parent class (from `extends` edges).
+  // May be empty when only func-prop methods exist (no class inheritance) —
+  // resolveThisDispatch handles that case via direct class-prefix lookup.
+  const parentRows = hasExtends
+    ? (db
+        .prepare(`
+          SELECT src.name AS child_name, tgt.name AS parent_name
+          FROM edges e
+          JOIN nodes src ON e.source_id = src.id
+          JOIN nodes tgt ON e.target_id = tgt.id
+          WHERE e.kind = 'extends'
+        `)
+        .all() as Array<{ child_name: string; parent_name: string }>)
+    : [];
 
   const parents = new Map<string, string>();
   for (const row of parentRows) {
     if (!parents.has(row.child_name)) parents.set(row.child_name, row.parent_name);
   }
-  if (parents.size === 0) return { elapsedMs: 0, targetIds, affectedFiles };
+  // Note: parents may be empty when hasFuncPropMethod but !hasExtends — that is
+  // intentional. resolveThisDispatch still resolves `this.g()` inside `f.h` by
+  // treating `f` (the dot-prefix of callerName `f.h`) as the class and looking
+  // up `f.g` directly via lookup.byName(), without traversing the parents chain.
 
   const chaCtx: ChaContext = {
     implementors: new Map(), // not needed for this/super resolution
@@ -776,13 +796,11 @@ async function runPostNativeThisDispatch(
   // On a full build we do NOT re-parse every JS/TS file — that would WASM-parse
   // the entire project on top of the native pass, causing a massive regression
   // (measured: +358% ms/file on codegraph itself). Instead we restrict to files
-  // that are part of the class inheritance hierarchy: both subclass files (which
-  // contain `super.X()` calls dispatching to a parent) and parent-class files
-  // (whose method bodies contain `this.X()` calls that CHA must resolve). Any
-  // file not in the hierarchy has no `extends` relationship, so `this`/`super`
-  // calls in it either resolve locally (same-class dispatch, already handled by
-  // the direct-call edge) or have no class context — and will be skipped by
-  // `resolveThisDispatch` anyway.
+  // that are part of the class inheritance hierarchy (both subclass files with
+  // `super.X()` calls and parent-class files with `this.X()` calls) OR that
+  // contain dot-named method nodes (func-prop assignments whose bodies may call
+  // `this.sibling()`). Any file not in either set has no class or object context
+  // where `this`/`super` dispatch would produce new edges.
   let relFiles: string[];
   if (isFullBuild || !changedFiles) {
     const rows = db
@@ -797,6 +815,21 @@ async function runPostNativeThisDispatch(
           FROM edges e
           JOIN nodes tgt ON e.target_id = tgt.id
           WHERE e.kind = 'extends' AND tgt.file IS NOT NULL
+          UNION
+          -- Files with func-prop method definitions (e.g. f.h = function(){this.g()}).
+          -- Only include files where the method's owner prefix is NOT a known class name —
+          -- this keeps the re-parse set small (func-prop files only, not all class-method files).
+          -- AND name IS NOT NULL guards the NOT IN sub-select: if any class node had a NULL
+          -- name the entire NOT IN clause would silently return no rows (SQL NULL semantics).
+          SELECT n.file AS file
+          FROM nodes n
+          WHERE n.kind = 'method'
+          AND INSTR(n.name, '.') > 0
+          AND n.file IS NOT NULL
+          AND SUBSTR(n.name, 1, INSTR(n.name, '.') - 1) NOT IN (
+            SELECT name FROM nodes WHERE kind IN ('class', 'struct', 'interface', 'type')
+            AND name IS NOT NULL
+          )
         )
       `)
       .all() as Array<{ file: string }>;
@@ -936,6 +969,7 @@ async function runPostNativeThisDispatch(
         call.receiver as 'this' | 'super',
         chaCtx,
         lookup,
+        relPath,
       );
 
       for (const t of targets) {

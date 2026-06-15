@@ -355,13 +355,17 @@ export function resolveCallTargets(
  * Returns the edge tuple to insert, or null if nothing matched or the edge
  * was already seen.  Callers are responsible for the actual DB/array insert.
  *
- * Receiver resolution collects all same-file candidates first (no kind
- * filter), falls back to global candidates only when the same-file set is
- * entirely empty, then filters the chosen set by RECEIVER_KINDS.  This
- * matches the native Rust build path: if a file imports a name that happens
- * to be emitted as `kind='function'` in the importer, the same-file set is
- * non-empty and blocks the global fallback, so no receiver edge is emitted.
- * Keeping this behaviour identical to the Rust path maintains engine parity.
+ * Receiver resolution:
+ * 1. Look up same-file nodes for `effectiveReceiver` (unfiltered by kind).
+ * 2. If any same-file node exists AND `effectiveReceiver` is not in `importedNames`
+ *    (i.e. it is a locally-defined symbol, not an import artifact), apply
+ *    RECEIVER_KINDS and return the filtered set — no global fallback.
+ *    A local `function C(){}` means this file owns `C`; no cross-file class
+ *    should win over it (issue #1539).
+ * 3. If the same-file node IS an import artifact (e.g. destructured require),
+ *    or no same-file node exists at all, fall back to global candidates filtered
+ *    by RECEIVER_KINDS.  This preserves the pre-#1539 behaviour for cases where
+ *    an imported name appears as kind='function' in the importer file.
  */
 export function resolveReceiverEdge(
   lookup: CallNodeLookup,
@@ -370,6 +374,7 @@ export function resolveReceiverEdge(
   relPath: string,
   typeMap: Map<string, unknown>,
   seenCallEdges: Set<string>,
+  importedNames: ReadonlyMap<string, string>,
 ): { callerId: number; receiverId: number; confidence: number } | null {
   const typeEntry = typeMap.get(call.receiver);
   const typeName = typeEntry
@@ -382,18 +387,15 @@ export function resolveReceiverEdge(
       ? ((typeEntry as { confidence?: number }).confidence ?? null)
       : null;
   const effectiveReceiver = typeName || call.receiver;
-  // Filter-before: apply RECEIVER_KINDS to same-file candidates first, then
-  // fall back to global candidates (also filtered) only when same-file yields
-  // nothing.  This prevents an imported name emitted as kind='function' in the
-  // importing file from blocking the fallback to the actual class/struct/etc.
-  // node in the defining file.
-  const sameFileCandidates = lookup
-    .byNameAndFile(effectiveReceiver, relPath)
-    .filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
-  const candidates =
-    sameFileCandidates.length > 0
-      ? sameFileCandidates
-      : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  // Block global fallback only when the same-file node is a local definition,
+  // not when it's an import artifact (e.g. `const { C } = require(…)` seeds a
+  // kind='function' node in the importer but the real class lives elsewhere).
+  const sameFileAll = lookup.byNameAndFile(effectiveReceiver, relPath);
+  const isLocalDefinition = sameFileAll.length > 0 && !importedNames?.has(effectiveReceiver);
+  const sameFileCandidates = sameFileAll.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  const candidates = isLocalDefinition
+    ? sameFileCandidates
+    : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
   if (candidates.length === 0) return null;
   const recvTarget = candidates[0]!;
   const recvKey = `recv|${caller.id}|${recvTarget.id}`;
