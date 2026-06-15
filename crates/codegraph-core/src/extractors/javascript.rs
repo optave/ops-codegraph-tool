@@ -538,14 +538,15 @@ fn extract_object_literal_functions(
                 // `match_js_objlit_qualified_method_defs` walker (runs after `match_js_node`)
                 // so that `handle_method_def`'s bare `baz(method)` node appears first in
                 // `definitions`. Only seed the typeMap entry here.
-                let Some(name_n) = child.child_by_field_name("name") else { continue };
-                let method_name = node_text(&name_n, source);
+                // Use resolve_method_def_name to strip brackets from computed string keys
+                // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]).
+                let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
                 let qualified = format!("{}.{}", var_name, method_name);
                 // typeMap['obj.baz'] = 'baz' — points to the bare-name definition so
                 // the two-step accessor dispatch resolves via the bare node.
                 symbols.type_map.push(TypeMapEntry {
                     name: qualified,
-                    type_name: method_name.to_string(),
+                    type_name: method_name,
                     confidence: 0.85,
                 });
             }
@@ -593,8 +594,10 @@ fn match_js_objlit_qualified_method_defs(
         for j in 0..value_n.child_count() {
             let Some(child) = value_n.child(j) else { continue };
             if child.kind() != "method_definition" { continue; }
-            let Some(meth_name_n) = child.child_by_field_name("name") else { continue };
-            let qualified = format!("{}.{}", var_name, node_text(&meth_name_n, source));
+            // Use resolve_method_def_name to strip brackets from computed string keys
+            // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]).
+            let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
+            let qualified = format!("{}.{}", var_name, method_name);
             let body = child.child_by_field_name("body");
             symbols.definitions.push(Definition {
                 name: qualified,
