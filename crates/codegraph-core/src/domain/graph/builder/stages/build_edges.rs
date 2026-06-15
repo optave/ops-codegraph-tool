@@ -139,6 +139,9 @@ struct EdgeContext<'a> {
     nodes_by_name_and_file: HashMap<(&'a str, &'a str), Vec<&'a NodeInfo>>,
     nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
+    /// Cross-file / global fallback receiver kinds: class-like nodes only.
+    /// Same-file tier 2 (function constructors) is handled inline in
+    /// `emit_receiver_edge` by checking `n.kind == "function"` directly.
     receiver_kinds: HashSet<&'a str>,
 }
 
@@ -158,7 +161,13 @@ impl<'a> EdgeContext<'a> {
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        Self { nodes_by_name, nodes_by_name_and_file, nodes_by_file, builtin_set, receiver_kinds }
+        Self {
+            nodes_by_name,
+            nodes_by_name_and_file,
+            nodes_by_file,
+            builtin_set,
+            receiver_kinds,
+        }
     }
 }
 
@@ -476,6 +485,12 @@ fn process_file<'a>(
             .map(|n| n.id);
         DefWithId { name: &d.name, kind: &d.kind, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
+    // Names locally defined in this file — used by emit_receiver_edge to distinguish
+    // a genuine same-file function constructor from a destructured import re-emitted
+    // as kind="function" in the importing file.
+    let local_def_names: HashSet<&str> = file_input.definitions.iter()
+        .map(|d| d.name.as_str())
+        .collect();
 
     // Phase 8.3: build pts map for alias resolution — mirrors buildPointsToMapForFile.
     // Only callable (function/method) defs are seeded as concrete targets.
@@ -649,7 +664,7 @@ fn process_file<'a>(
             }
         }
 
-        emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &mut seen_edges, edges);
+        emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &local_def_names, &mut seen_edges, edges);
     }
 
     emit_hierarchy_edges(ctx, file_input, rel_path, edges);
@@ -1049,6 +1064,7 @@ fn emit_call_edges(
 fn emit_receiver_edge(
     ctx: &EdgeContext, call: &CallInfo, caller_id: u32, rel_path: &str,
     type_map: &HashMap<&str, (&str, f64)>,
+    local_def_names: &HashSet<&str>,
     seen_edges: &mut HashSet<u64>, edges: &mut Vec<ComputedEdge>,
 ) {
     let Some(ref receiver) = call.receiver else { return };
@@ -1059,24 +1075,35 @@ fn emit_receiver_edge(
     let type_entry = type_map.get(receiver.as_str());
     let effective_receiver = type_entry.map(|&(t, _)| t).unwrap_or(receiver.as_str());
 
-    // Filter-before: apply receiver_kinds to same-file candidates first, then
-    // fall back to global candidates (also filtered) only when same-file yields
-    // nothing.  This prevents an imported name emitted as kind='function' in the
-    // importing file from blocking the fallback to the actual class/struct/etc.
-    // node in the defining file.
-    let samefile_candidates: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
+    // Three-tier receiver resolution — mirrors WASM call-resolver.ts logic:
+    //   1. Same-file class/struct/interface/type/module — highest priority.
+    //   2. Same-file function that is locally defined in this file — wins over
+    //      cross-file class nodes so that pre-ES6 function constructors (`function C(){}`)
+    //      in the same file take priority. Locally-defined is checked against
+    //      `local_def_names` to exclude destructured imports re-emitted as kind="function".
+    //   3. Cross-file class/struct/interface/type/module — global fallback.
+    let same_file_nodes: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
         .get(&(effective_receiver, rel_path))
-        .cloned().unwrap_or_default()
-        .into_iter()
+        .cloned().unwrap_or_default();
+    let samefile_class: Vec<&NodeInfo> = same_file_nodes.iter().copied()
         .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
         .collect();
-    let receiver_nodes: Vec<&NodeInfo> = if !samefile_candidates.is_empty() {
-        samefile_candidates
+    let receiver_nodes: Vec<&NodeInfo> = if !samefile_class.is_empty() {
+        samefile_class
     } else {
-        ctx.nodes_by_name.get(effective_receiver).cloned().unwrap_or_default()
-            .into_iter()
-            .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
-            .collect()
+        // Check for a same-file locally-defined function constructor.
+        let samefile_fn: Vec<&NodeInfo> = same_file_nodes.iter().copied()
+            .filter(|n| n.kind == "function" && local_def_names.contains(n.name.as_str()))
+            .collect();
+        if !samefile_fn.is_empty() {
+            samefile_fn
+        } else {
+            // Fall back to any cross-file class/struct/interface candidate.
+            ctx.nodes_by_name.get(effective_receiver).cloned().unwrap_or_default()
+                .into_iter()
+                .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
+                .collect()
+        }
     };
 
     if let Some(recv_target) = receiver_nodes.first() {

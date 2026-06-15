@@ -24,6 +24,18 @@ export interface CallNodeLookup {
 export const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', 'module']);
 
 /**
+ * Kinds accepted as receiver-type candidates when looking in the *same file*
+ * as the call site.  Same-file scope makes the match unambiguous, so we also
+ * accept `function` to handle pre-ES6 function constructors (e.g.
+ * `function C() {}` with `C.prototype = { … }`) that are extracted as
+ * `kind='function'` rather than `kind='class'`.
+ *
+ * Global (cross-file) lookups deliberately exclude `function` to avoid false
+ * positives from unrelated same-named functions in other files.
+ */
+export const RECEIVER_KINDS_SAME_FILE = new Set([...RECEIVER_KINDS, 'function']);
+
+/**
  * Languages where bare `foo()` calls inside a class method are lexically scoped
  * to the module, not the class — there is no implicit this/class binding.
  * For these languages, the same-class fallback must not run for bare (no-receiver)
@@ -355,13 +367,13 @@ export function resolveCallTargets(
  * Returns the edge tuple to insert, or null if nothing matched or the edge
  * was already seen.  Callers are responsible for the actual DB/array insert.
  *
- * Receiver resolution collects all same-file candidates first (no kind
- * filter), falls back to global candidates only when the same-file set is
- * entirely empty, then filters the chosen set by RECEIVER_KINDS.  This
- * matches the native Rust build path: if a file imports a name that happens
- * to be emitted as `kind='function'` in the importer, the same-file set is
- * non-empty and blocks the global fallback, so no receiver edge is emitted.
- * Keeping this behaviour identical to the Rust path maintains engine parity.
+ * Three-tier receiver resolution — mirrors the Rust emit_receiver_edge logic:
+ *   1. Same-file class/struct/interface/type/module — highest priority.
+ *   2. Same-file function that is locally defined (name in `localDefNames`) —
+ *      wins over cross-file class so that pre-ES6 `function C() {}` constructors
+ *      in the same file take priority. Destructured imports re-emitted as
+ *      kind="function" are excluded because their names are NOT in localDefNames.
+ *   3. Cross-file class/struct/interface/type/module — global fallback.
  */
 export function resolveReceiverEdge(
   lookup: CallNodeLookup,
@@ -370,6 +382,7 @@ export function resolveReceiverEdge(
   relPath: string,
   typeMap: Map<string, unknown>,
   seenCallEdges: Set<string>,
+  localDefNames?: ReadonlySet<string>,
 ): { callerId: number; receiverId: number; confidence: number } | null {
   const typeEntry = typeMap.get(call.receiver);
   const typeName = typeEntry
@@ -382,18 +395,20 @@ export function resolveReceiverEdge(
       ? ((typeEntry as { confidence?: number }).confidence ?? null)
       : null;
   const effectiveReceiver = typeName || call.receiver;
-  // Filter-before: apply RECEIVER_KINDS to same-file candidates first, then
-  // fall back to global candidates (also filtered) only when same-file yields
-  // nothing.  This prevents an imported name emitted as kind='function' in the
-  // importing file from blocking the fallback to the actual class/struct/etc.
-  // node in the defining file.
-  const sameFileCandidates = lookup
-    .byNameAndFile(effectiveReceiver, relPath)
-    .filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  const sameFileNodes = lookup.byNameAndFile(effectiveReceiver, relPath);
+  // Tier 1: same-file class/struct/interface/type/module
+  const sameFileClass = sameFileNodes.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  // Tier 2: same-file locally-defined function constructor (not a destructured import).
+  // All nodes from byNameAndFile have name=effectiveReceiver, so check the name once.
+  const isLocallyDefined = !localDefNames || localDefNames.has(effectiveReceiver);
+  const sameFileFn = isLocallyDefined ? sameFileNodes.filter((n) => n.kind === 'function') : [];
   const candidates =
-    sameFileCandidates.length > 0
-      ? sameFileCandidates
-      : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+    sameFileClass.length > 0
+      ? sameFileClass
+      : sameFileFn.length > 0
+        ? sameFileFn
+        : // Tier 3: cross-file class/struct/interface/type/module fallback
+          lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
   if (candidates.length === 0) return null;
   const recvTarget = candidates[0]!;
   const recvKey = `recv|${caller.id}|${recvTarget.id}`;
