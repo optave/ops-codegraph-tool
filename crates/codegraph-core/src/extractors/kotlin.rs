@@ -13,6 +13,7 @@ impl SymbolExtractor for KotlinExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_kotlin_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &KOTLIN_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_kotlin_type_map);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }

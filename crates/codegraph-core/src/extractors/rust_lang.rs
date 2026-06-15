@@ -13,6 +13,7 @@ impl SymbolExtractor for RustExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_rust_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &RUST_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_rust_type_map);
+        dedup_type_map(&mut symbols.type_map);
         symbols
     }
 }

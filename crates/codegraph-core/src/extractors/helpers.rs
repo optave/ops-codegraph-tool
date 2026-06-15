@@ -958,14 +958,14 @@ pub fn extract_simple_parameters(
 
 // ── Type-map helpers ───────────────────────────────────────────────────────
 
-/// Merge a type-map entry into the sink with highest-confidence-wins semantics,
-/// matching `setTypeMapEntry` in `src/extractors/helpers.ts`.
+/// Append a raw type-map entry (name → type_name at the given confidence)
+/// without deduplication. Call [`dedup_type_map`] once after all entries
+/// have been pushed to collapse duplicates with highest-confidence-wins
+/// semantics.
 ///
-/// If the key already exists with equal-or-higher confidence the new entry is
-/// silently dropped; otherwise the old entry is replaced.  This prevents
-/// duplicate entries from accumulating when the same bare key is written
-/// multiple times (e.g. two class expressions in one file that both define a
-/// field with the same name).
+/// This is the write half of a two-phase approach: accumulate all entries
+/// cheaply (O(1) per write), then deduplicate once in O(n) at the end of
+/// extraction — avoiding the previous O(n²) scan-per-write pattern.
 ///
 /// Mirrors `setTypeMapEntry` in `src/extractors/helpers.ts`.
 pub fn set_type_map_entry(
@@ -978,14 +978,6 @@ pub fn set_type_map_entry(
     if name.is_empty() {
         return;
     }
-    // Scan for an existing entry with the same key.
-    if let Some(existing) = symbols.type_map.iter_mut().find(|e| e.name == name) {
-        if confidence > existing.confidence {
-            existing.type_name = type_name.into();
-            existing.confidence = confidence;
-        }
-        return;
-    }
     symbols.type_map.push(TypeMapEntry {
         name,
         type_name: type_name.into(),
@@ -996,15 +988,51 @@ pub fn set_type_map_entry(
 /// Record a parameter name → type binding in the type-map sink, using
 /// the default confidence of `0.9` shared by every Rust extractor.
 ///
-/// Delegates to [`set_type_map_entry`] so duplicate keys are deduplicated with
-/// highest-confidence-wins semantics (first-write-wins at the uniform 0.9
-/// confidence), matching `setTypeMapEntry` in `src/extractors/helpers.ts`.
+/// Delegates to [`set_type_map_entry`]. Call [`dedup_type_map`] once after
+/// all entries have been pushed to collapse duplicates.
 pub fn push_type_map_entry(
     symbols: &mut FileSymbols,
     name: impl Into<String>,
     type_name: impl Into<String>,
 ) {
     set_type_map_entry(symbols, name, type_name, 0.9);
+}
+
+/// Deduplicate a type-map `Vec` in-place, keeping the highest-confidence
+/// entry per key (first-write-wins on ties, matching `setTypeMapEntry` in
+/// `src/extractors/helpers.ts`).
+///
+/// This is the read half of the two-phase write-then-dedup approach used by
+/// all extractors. Call it once at the end of each `extract()` implementation
+/// after all tree-walk passes have completed, for both `symbols.type_map` and
+/// `symbols.return_type_map` when applicable.
+///
+/// Complexity: O(n) where n = number of entries (including duplicates).
+pub fn dedup_type_map(entries: &mut Vec<TypeMapEntry>) {
+    if entries.len() <= 1 {
+        return;
+    }
+    use std::collections::hash_map::Entry;
+    use std::collections::HashMap;
+    // Drain all entries into a HashMap, keeping the highest-confidence value
+    // per key. On ties the first entry seen wins (the `Occupied` arm only
+    // replaces on strict `>`), matching the previous first-write-wins
+    // behaviour of the old per-entry linear scan. The values are then
+    // sorted by name before being written back so the output is stable.
+    let mut map: HashMap<String, TypeMapEntry> = HashMap::with_capacity(entries.len());
+    for e in entries.drain(..) {
+        match map.entry(e.name.clone()) {
+            Entry::Vacant(slot) => { slot.insert(e); }
+            Entry::Occupied(mut slot) => {
+                if e.confidence > slot.get().confidence {
+                    *slot.get_mut() = e;
+                }
+            }
+        }
+    }
+    let mut out: Vec<TypeMapEntry> = map.into_values().collect();
+    out.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    entries.extend(out);
 }
 
 /// C-family `declaration` / `parameter_declaration` type-map matcher.
@@ -1059,5 +1087,78 @@ where
             push_type_map_entry(symbols, name, type_name);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::TypeMapEntry;
+
+    fn entry(name: &str, type_name: &str, confidence: f64) -> TypeMapEntry {
+        TypeMapEntry { name: name.to_string(), type_name: type_name.to_string(), confidence }
+    }
+
+    #[test]
+    fn dedup_empty() {
+        let mut v: Vec<TypeMapEntry> = vec![];
+        dedup_type_map(&mut v);
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn dedup_single() {
+        let mut v = vec![entry("x", "Foo", 0.9)];
+        dedup_type_map(&mut v);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].name, "x");
+    }
+
+    #[test]
+    fn dedup_no_duplicates() {
+        let mut v = vec![entry("x", "Foo", 0.9), entry("y", "Bar", 0.9)];
+        dedup_type_map(&mut v);
+        assert_eq!(v.len(), 2);
+    }
+
+    #[test]
+    fn dedup_keeps_highest_confidence() {
+        // Lower confidence written first, higher written second — higher wins.
+        let mut v = vec![
+            entry("x", "Low", 0.6),
+            entry("x", "High", 0.9),
+        ];
+        dedup_type_map(&mut v);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].type_name, "High");
+        assert_eq!(v[0].confidence, 0.9);
+    }
+
+    #[test]
+    fn dedup_first_write_wins_on_equal_confidence() {
+        // Two entries with equal confidence — first one wins.
+        let mut v = vec![
+            entry("x", "First", 0.9),
+            entry("x", "Second", 0.9),
+        ];
+        dedup_type_map(&mut v);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].type_name, "First");
+    }
+
+    #[test]
+    fn dedup_mixed_keys() {
+        let mut v = vec![
+            entry("a", "A1", 0.6),
+            entry("b", "B1", 0.9),
+            entry("a", "A2", 0.9),  // higher — wins for "a"
+            entry("b", "B2", 0.7),  // lower  — loses for "b"
+        ];
+        dedup_type_map(&mut v);
+        assert_eq!(v.len(), 2);
+        let a = v.iter().find(|e| e.name == "a").expect("a present");
+        let b = v.iter().find(|e| e.name == "b").expect("b present");
+        assert_eq!(a.type_name, "A2");
+        assert_eq!(b.type_name, "B1");
     }
 }

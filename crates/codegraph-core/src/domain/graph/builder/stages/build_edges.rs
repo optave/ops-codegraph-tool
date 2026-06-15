@@ -158,7 +158,13 @@ impl<'a> EdgeContext<'a> {
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        Self { nodes_by_name, nodes_by_name_and_file, nodes_by_file, builtin_set, receiver_kinds }
+        Self {
+            nodes_by_name,
+            nodes_by_name_and_file,
+            nodes_by_file,
+            builtin_set,
+            receiver_kinds,
+        }
     }
 }
 
@@ -476,7 +482,6 @@ fn process_file<'a>(
             .map(|n| n.id);
         DefWithId { name: &d.name, kind: &d.kind, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
-
     // Phase 8.3: build pts map for alias resolution — mirrors buildPointsToMapForFile.
     // Only callable (function/method) defs are seeded as concrete targets.
     let raw_fn_ref: &[FnRefBinding] = file_input.fn_ref_bindings.as_deref().unwrap_or(&[]);
@@ -649,7 +654,7 @@ fn process_file<'a>(
             }
         }
 
-        emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &mut seen_edges, edges);
+        emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &imported_names, &mut seen_edges, edges);
     }
 
     emit_hierarchy_edges(ctx, file_input, rel_path, edges);
@@ -669,12 +674,25 @@ fn is_top_level_binding_kind(kind: &str) -> bool {
 
 /// Find the narrowest enclosing definition for a call at the given line.
 ///
-/// Two-pass strategy (mirrors the updated `findCaller` in call-resolver.ts):
+/// Two-pass strategy (mirrors `findCaller` in call-resolver.ts):
 ///   Pass 1 — narrowest enclosing function/method.  Local variable declarations
 ///             inside a function body must not shadow the enclosing function.
 ///   Pass 2 — widest (outermost) enclosing variable/constant binding.  Used as
 ///             fallback when no function/method encloses the call (e.g. Haskell
 ///             top-level `main = do …` is a `bind` node with kind `variable`).
+///
+/// Tie-breaking in Pass 1: when two callable definitions have the same span,
+/// prefer the bare (unqualified) name over the dot-containing qualified name.
+/// Object-literal methods are extracted twice by the Rust extractor — once as
+/// `o1.f(function)` from `extract_object_literal_functions` (called eagerly
+/// inside `handle_var_decl`) and once as `f(method)` from `handle_method_def`
+/// (called later during the child walk). The WASM extractor emits `f(method)`
+/// first (query captures run before the walk-phase `extractObjectLiteralFunctions`),
+/// so WASM's strict-less-than tie-break naturally picks the bare name.
+/// Applying the same preference here aligns native attribution with WASM and with
+/// the jelly-micro ground-truth expected-edges (which use bare `f`/`g` names).
+/// Names with angle brackets (e.g. `B.<static:36:2>`) are synthetic static-block
+/// nodes excluded from the bare-preference rule.
 ///
 /// Returns `(caller_id, caller_name)` — `caller_name` is `""` when the call
 /// falls back to file scope.
@@ -698,7 +716,18 @@ fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_i
         if def.line <= call_line && call_line <= def.end_line {
             let span = def.end_line.saturating_sub(def.line);
             if is_callable_kind(def.kind) {
-                if span < fn_caller_span {
+                // On a strict span improvement always take the new candidate.
+                // On a tie, prefer bare names over qualified names so native matches WASM:
+                // both pick `f(method)` over `o1.f(function)` when an object-literal method
+                // is extracted under both names at the same line. Synthetic angle-bracket
+                // nodes (e.g. `B.<static:36:2>`) are excluded on both sides of the comparison.
+                let is_improvement = span < fn_caller_span;
+                let is_tie_prefer_bare = span == fn_caller_span
+                    && !def.name.contains('.')
+                    && !def.name.contains('<')
+                    && fn_caller_name.contains('.')
+                    && !fn_caller_name.contains('<');
+                if is_improvement || is_tie_prefer_bare {
                     if let Some(id) = def.node_id {
                         fn_caller_id = Some(id);
                         fn_caller_name = def.name;
@@ -1025,6 +1054,7 @@ fn emit_call_edges(
 fn emit_receiver_edge(
     ctx: &EdgeContext, call: &CallInfo, caller_id: u32, rel_path: &str,
     type_map: &HashMap<&str, (&str, f64)>,
+    imported_names: &HashMap<&str, &str>,
     seen_edges: &mut HashSet<u64>, edges: &mut Vec<ComputedEdge>,
 ) {
     let Some(ref receiver) = call.receiver else { return };
@@ -1035,20 +1065,24 @@ fn emit_receiver_edge(
     let type_entry = type_map.get(receiver.as_str());
     let effective_receiver = type_entry.map(|&(t, _)| t).unwrap_or(receiver.as_str());
 
-    // Filter-before: apply receiver_kinds to same-file candidates first, then
-    // fall back to global candidates (also filtered) only when same-file yields
-    // nothing.  This prevents an imported name emitted as kind='function' in the
-    // importing file from blocking the fallback to the actual class/struct/etc.
-    // node in the defining file.
-    let samefile_candidates: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
+    // Block global fallback only when the same-file node is a local definition,
+    // not when it's an import artifact (e.g. `const { C } = require(…)` seeds a
+    // kind="function" node in the importer but the real class lives elsewhere).
+    // A locally-defined `function C(){}` owns the name — no cross-file class
+    // should shadow it (issue #1539).  Mirror of JS resolveReceiverEdge logic.
+    let samefile_all: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
         .get(&(effective_receiver, rel_path))
-        .cloned().unwrap_or_default()
-        .into_iter()
+        .cloned().unwrap_or_default();
+    let is_local_definition = !samefile_all.is_empty()
+        && !imported_names.contains_key(effective_receiver);
+    let samefile_candidates: Vec<&NodeInfo> = samefile_all.iter()
+        .copied()
         .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
         .collect();
-    let receiver_nodes: Vec<&NodeInfo> = if !samefile_candidates.is_empty() {
+    let receiver_nodes: Vec<&NodeInfo> = if is_local_definition {
         samefile_candidates
     } else {
+        // Fall back to any cross-file class/struct/interface candidate.
         ctx.nodes_by_name.get(effective_receiver).cloned().unwrap_or_default()
             .into_iter()
             .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
@@ -1816,11 +1850,13 @@ mod call_edge_tests {
     }
 
     /// Regression: when the same file has a `kind="function"` node for the
-    /// effective receiver (e.g. `Calculator` imported via destructuring), the
-    /// same-file "function" node must NOT block the fallback to the global
-    /// class node in another file.  Filter-before semantics required.
+    /// effective receiver created by a destructured import (e.g.
+    /// `const { Calculator } = require('./utils')`), that import artifact must
+    /// NOT block the fallback to the global class node in another file.
+    /// The import must be listed in `imported_names` so the resolver knows it
+    /// is an import artifact, not a local function-constructor definition.
     #[test]
-    fn receiver_edge_filter_before_skips_same_file_function_node() {
+    fn receiver_edge_imported_function_node_falls_through_to_global_class() {
         let all_nodes = vec![
             node(1, "main",       "function", "index.js", 3),
             // Destructured import `const { Calculator } = require('./utils')` → kind "function" in index.js
@@ -1829,12 +1865,49 @@ mod call_edge_tests {
             node(3, "compute",    "method",   "utils.js", 3),
         ];
 
-        let files = vec![make_file(
+        let mut file = make_file(
             "index.js",
             10,
             vec![def("main", "function", 3, 8)],
             vec![call("compute", 7, Some("calc"))],
             vec![type_map_entry("calc", "Calculator", 1.0)],
+            vec![],
+        );
+        // Mark `Calculator` as an imported name so the resolver treats the
+        // same-file kind="function" node as an import artifact and falls through.
+        file.imported_names = vec![ImportedName { name: "Calculator".to_string(), file: "utils.js".to_string() }];
+
+        let edges = build_call_edges(vec![file], all_nodes, vec![]);
+
+        let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
+        assert!(
+            receiver_edge.is_some(),
+            "imported 'function' node must not block fallback to global class; got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+        let re = receiver_edge.unwrap();
+        assert_eq!(re.target_id, 2, "receiver edge must point to Calculator class (id=2), not import artifact (id=4)");
+    }
+
+    /// Issue #1539: `function C(){}` (function constructor) in the same file as
+    /// `var v = new C(); v.foo()` must block the global fallback to any cross-file
+    /// class `C`.  A locally-defined function constructor owns the name in its
+    /// file — no cross-file class should win over it.
+    #[test]
+    fn receiver_edge_local_function_ctor_blocks_global_class() {
+        let all_nodes = vec![
+            node(1, "C",     "function", "prototypes.js", 1),  // local function constructor
+            node(2, "C.foo", "method",   "prototypes.js", 3),
+            node(3, "C",     "class",    "classes.js",    1),  // cross-file class with same name
+        ];
+
+        // No imported_names — `C` is locally defined.
+        let files = vec![make_file(
+            "prototypes.js",
+            10,
+            vec![def("C", "function", 1, 2)],
+            vec![call("foo", 8, Some("v"))],
+            vec![type_map_entry("v", "C", 1.0)],
             vec![],
         )];
 
@@ -1842,12 +1915,10 @@ mod call_edge_tests {
 
         let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
         assert!(
-            receiver_edge.is_some(),
-            "same-file 'function' node must not block fallback to global class; got: {:?}",
+            receiver_edge.is_none(),
+            "local function constructor must block global class fallback — no receiver edge expected; got: {:?}",
             edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
         );
-        let re = receiver_edge.unwrap();
-        assert_eq!(re.target_id, 2, "receiver edge must point to Calculator class (id=2), not function (id=4)");
     }
 
     /// Issue #1453: `this.logger.error()` inside `UserService.create` where the
