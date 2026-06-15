@@ -492,6 +492,12 @@ fn process_file<'a>(
             .map(|n| n.id);
         DefWithId { name: &d.name, kind: &d.kind, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
     }).collect();
+    // Names locally defined in this file — used by emit_receiver_edge to distinguish
+    // a genuine same-file function constructor from a destructured import re-emitted
+    // as kind="function" in the importing file.
+    let local_def_names: HashSet<&str> = file_input.definitions.iter()
+        .map(|d| d.name.as_str())
+        .collect();
 
     // Phase 8.3: build pts map for alias resolution — mirrors buildPointsToMapForFile.
     // Only callable (function/method) defs are seeded as concrete targets.
@@ -665,7 +671,7 @@ fn process_file<'a>(
             }
         }
 
-        emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &mut seen_edges, edges);
+        emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &local_def_names, &mut seen_edges, edges);
     }
 
     emit_hierarchy_edges(ctx, file_input, rel_path, edges);
@@ -1041,6 +1047,7 @@ fn emit_call_edges(
 fn emit_receiver_edge(
     ctx: &EdgeContext, call: &CallInfo, caller_id: u32, rel_path: &str,
     type_map: &HashMap<&str, (&str, f64)>,
+    local_def_names: &HashSet<&str>,
     seen_edges: &mut HashSet<u64>, edges: &mut Vec<ComputedEdge>,
 ) {
     let Some(ref receiver) = call.receiver else { return };
@@ -1076,11 +1083,14 @@ fn emit_receiver_edge(
             global_class
         } else {
             // Last resort: same-file function constructors (pre-ES6 style).
+            // Only match nodes that are locally defined in this file — not destructured
+            // imports emitted as kind="function" in the importing file.
             ctx.nodes_by_name_and_file
                 .get(&(effective_receiver, rel_path))
                 .cloned().unwrap_or_default()
                 .into_iter()
-                .filter(|n| ctx.receiver_kinds_same_file.contains(n.kind.as_str()))
+                .filter(|n| ctx.receiver_kinds_same_file.contains(n.kind.as_str())
+                    && (n.kind != "function" || local_def_names.contains(n.name.as_str())))
                 .collect()
         }
     };
