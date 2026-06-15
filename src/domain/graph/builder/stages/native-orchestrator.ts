@@ -703,8 +703,13 @@ const THIS_DISPATCH_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs'
  * `this`/`super` receivers, then resolves them through the class hierarchy stored
  * in DB `extends` edges — mirroring what `buildChaPostPass` does on the WASM path.
  *
- * Only runs when `extends` edges exist in the DB; if there is no inheritance
- * hierarchy there is nothing to resolve via `this`/`super` dispatch.
+ * Also handles function-as-object-property methods (`f.h = function() { this.g() }`):
+ * these use `this` to reference sibling properties on the same object (`f`), so
+ * `resolveThisDispatch` resolves them by treating the dot-prefix of the caller name
+ * (`f` from `f.h`) as the class and looking up `f.g` directly — no `extends` edge needed.
+ *
+ * Runs when either `extends` edges exist (class inheritance) OR dot-named `method`
+ * nodes exist (func-prop assignments); skips only when neither is present.
  */
 async function runPostNativeThisDispatch(
   db: BetterSqlite3Database,
@@ -717,26 +722,37 @@ async function runPostNativeThisDispatch(
   // Files containing endpoints of newly inserted edges — lets the caller scope
   // role re-classification to the nodes whose fan-in/out actually changed.
   const affectedFiles = new Set<string>();
-  // Fast guard: need at least one extends edge for this/super to have meaning
-  const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
-  if (!hasExtends) return { elapsedMs: 0, targetIds, affectedFiles };
 
-  // Build parents map: child class → direct parent class (from `extends` edges)
-  const parentRows = db
-    .prepare(`
-      SELECT src.name AS child_name, tgt.name AS parent_name
-      FROM edges e
-      JOIN nodes src ON e.source_id = src.id
-      JOIN nodes tgt ON e.target_id = tgt.id
-      WHERE e.kind = 'extends'
-    `)
-    .all() as Array<{ child_name: string; parent_name: string }>;
+  // Fast guard: need at least one extends edge (class inheritance) OR a dot-named
+  // method node (func-prop assignment: `f.h = function() { this.g() }`) for
+  // this/super dispatch to produce any edges.
+  const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
+  const hasFuncPropMethod = db
+    .prepare(`SELECT 1 FROM nodes WHERE kind = 'method' AND INSTR(name, '.') > 0 LIMIT 1`)
+    .get();
+  if (!hasExtends && !hasFuncPropMethod) return { elapsedMs: 0, targetIds, affectedFiles };
+
+  // Build parents map: child class → direct parent class (from `extends` edges).
+  // May be empty when only func-prop methods exist (no class inheritance) —
+  // resolveThisDispatch handles that case via direct class-prefix lookup.
+  const parentRows = hasExtends
+    ? (db
+        .prepare(`
+          SELECT src.name AS child_name, tgt.name AS parent_name
+          FROM edges e
+          JOIN nodes src ON e.source_id = src.id
+          JOIN nodes tgt ON e.target_id = tgt.id
+          WHERE e.kind = 'extends'
+        `)
+        .all() as Array<{ child_name: string; parent_name: string }>)
+    : [];
 
   const parents = new Map<string, string>();
   for (const row of parentRows) {
     if (!parents.has(row.child_name)) parents.set(row.child_name, row.parent_name);
   }
-  if (parents.size === 0) return { elapsedMs: 0, targetIds, affectedFiles };
+  // Note: parents may be empty when hasFuncPropMethod but !hasExtends — intentional.
+  // resolveThisDispatch resolves `this.g()` inside `f.h` via direct class-prefix lookup.
 
   const chaCtx: ChaContext = {
     implementors: new Map(), // not needed for this/super resolution
@@ -783,7 +799,10 @@ async function runPostNativeThisDispatch(
           AND INSTR(n.name, '.') > 0
           AND n.file IS NOT NULL
           AND SUBSTR(n.name, 1, INSTR(n.name, '.') - 1) NOT IN (
+            -- AND name IS NOT NULL is required: NOT IN returns no rows if the
+            -- sub-select contains any NULL (SQL NULL semantics).
             SELECT name FROM nodes WHERE kind IN ('class', 'struct', 'interface', 'type')
+            AND name IS NOT NULL
           )
         )
       `)
