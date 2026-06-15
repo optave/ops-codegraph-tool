@@ -139,12 +139,10 @@ struct EdgeContext<'a> {
     nodes_by_name_and_file: HashMap<(&'a str, &'a str), Vec<&'a NodeInfo>>,
     nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
+    /// Cross-file / global fallback receiver kinds: class-like nodes only.
+    /// Same-file tier 2 (function constructors) is handled inline in
+    /// `emit_receiver_edge` by checking `n.kind == "function"` directly.
     receiver_kinds: HashSet<&'a str>,
-    /// Same-file receiver lookup also accepts `function` to handle pre-ES6
-    /// function constructors (e.g. `function C() {}` with `C.prototype = { … }`).
-    /// Global fallback keeps the narrower set to avoid false positives from
-    /// unrelated same-named functions in other files.
-    receiver_kinds_same_file: HashSet<&'a str>,
 }
 
 impl<'a> EdgeContext<'a> {
@@ -163,17 +161,12 @@ impl<'a> EdgeContext<'a> {
         let builtin_set: HashSet<&str> = builtin_receivers.iter().map(|s| s.as_str()).collect();
         let receiver_kinds: HashSet<&str> = ["class", "struct", "interface", "type", "module"]
             .iter().copied().collect();
-        // Derived from receiver_kinds so future additions propagate automatically,
-        // mirroring the TypeScript spread `{ ...RECEIVER_KINDS, function }`.
-        let mut receiver_kinds_same_file = receiver_kinds.clone();
-        receiver_kinds_same_file.insert("function");
         Self {
             nodes_by_name,
             nodes_by_name_and_file,
             nodes_by_file,
             builtin_set,
             receiver_kinds,
-            receiver_kinds_same_file,
         }
     }
 }
