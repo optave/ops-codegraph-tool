@@ -751,8 +751,10 @@ async function runPostNativeThisDispatch(
   for (const row of parentRows) {
     if (!parents.has(row.child_name)) parents.set(row.child_name, row.parent_name);
   }
-  // Note: parents may be empty when hasFuncPropMethod but !hasExtends — intentional.
-  // resolveThisDispatch resolves `this.g()` inside `f.h` via direct class-prefix lookup.
+  // Note: parents may be empty when hasFuncPropMethod but !hasExtends — that is
+  // intentional. resolveThisDispatch still resolves `this.g()` inside `f.h` by
+  // treating `f` (the dot-prefix of callerName `f.h`) as the class and looking
+  // up `f.g` directly via lookup.byName(), without traversing the parents chain.
 
   const chaCtx: ChaContext = {
     implementors: new Map(), // not needed for this/super resolution
@@ -765,13 +767,11 @@ async function runPostNativeThisDispatch(
   // On a full build we do NOT re-parse every JS/TS file — that would WASM-parse
   // the entire project on top of the native pass, causing a massive regression
   // (measured: +358% ms/file on codegraph itself). Instead we restrict to files
-  // that are part of the class inheritance hierarchy: both subclass files (which
-  // contain `super.X()` calls dispatching to a parent) and parent-class files
-  // (whose method bodies contain `this.X()` calls that CHA must resolve). Any
-  // file not in the hierarchy has no `extends` relationship, so `this`/`super`
-  // calls in it either resolve locally (same-class dispatch, already handled by
-  // the direct-call edge) or have no class context — and will be skipped by
-  // `resolveThisDispatch` anyway.
+  // that are part of the class inheritance hierarchy (both subclass files with
+  // `super.X()` calls and parent-class files with `this.X()` calls) OR that
+  // contain dot-named method nodes (func-prop assignments whose bodies may call
+  // `this.sibling()`). Any file not in either set has no class or object context
+  // where `this`/`super` dispatch would produce new edges.
   let relFiles: string[];
   if (isFullBuild || !changedFiles) {
     const rows = db
