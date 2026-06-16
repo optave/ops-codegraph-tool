@@ -1264,10 +1264,10 @@ async function backfillNativeDroppedFiles(
     // Split into real failures (WASM found symbols) and no-op drops (0 symbols
     // in both engines — likely gitignored or truly empty files the Rust engine
     // intentionally skipped while the JS filesystem walk found them on disk).
-    const realFailurePaths = byReason['native-extractor-failure'];
+    const allFailurePaths = byReason['native-extractor-failure'];
     const realFailureBuckets = new Map<string, string[]>();
     const silentDropBuckets = new Map<string, string[]>();
-    for (const [ext, paths] of realFailurePaths) {
+    for (const [ext, paths] of allFailurePaths) {
       for (const relPath of paths) {
         if (wasmFoundSymbols.has(relPath)) {
           let list = realFailureBuckets.get(ext);
