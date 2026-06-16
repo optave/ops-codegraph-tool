@@ -163,19 +163,19 @@ describe('structureData file limit', () => {
 describe('hotspotsData', () => {
   test('returns file hotspots ranked by fan-in', () => {
     const data = hotspotsData(dbPath, { metric: 'fan-in', level: 'file', limit: 5 });
-    expect(data).toHaveProperty('hotspots');
-    expect(data.hotspots.length).toBeGreaterThan(0);
-    expect(data.hotspots.length).toBeLessThanOrEqual(5);
+    expect(data).toHaveProperty('items');
+    expect(data.items.length).toBeGreaterThan(0);
+    expect(data.items.length).toBeLessThanOrEqual(5);
     // Should be sorted descending by fan-in
-    for (let i = 1; i < data.hotspots.length; i++) {
-      expect(data.hotspots[i - 1].fanIn).toBeGreaterThanOrEqual(data.hotspots[i].fanIn);
+    for (let i = 1; i < data.items.length; i++) {
+      expect(data.items[i - 1].fanIn).toBeGreaterThanOrEqual(data.items[i].fanIn);
     }
   });
 
   test('returns directory hotspots', () => {
     const data = hotspotsData(dbPath, { metric: 'fan-in', level: 'directory', limit: 5 });
-    expect(data).toHaveProperty('hotspots');
-    for (const h of data.hotspots) {
+    expect(data).toHaveProperty('items');
+    for (const h of data.items) {
       expect(h.kind).toBe('directory');
     }
   });
@@ -183,7 +183,7 @@ describe('hotspotsData', () => {
   test('supports coupling metric', () => {
     const data = hotspotsData(dbPath, { metric: 'coupling', level: 'file', limit: 3 });
     expect(data.metric).toBe('coupling');
-    expect(data.hotspots.length).toBeGreaterThan(0);
+    expect(data.items.length).toBeGreaterThan(0);
   });
 });
 
