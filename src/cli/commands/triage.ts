@@ -31,7 +31,7 @@ async function runHotspots(opts: CommandOpts, ctx: CliContext): Promise<void> {
     offset: opts.offset ? parseInt(opts.offset as string, 10) : undefined,
     noTests: ctx.resolveNoTests(opts),
   });
-  if (!ctx.outputResult(data, 'hotspots', opts)) {
+  if (!ctx.outputResult(data, 'items', opts)) {
     console.log(formatHotspots(data));
   }
 }

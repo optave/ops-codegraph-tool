@@ -163,10 +163,10 @@ describe('CLI smoke tests', () => {
   });
 
   // ─── Triage --level (formerly hotspots) ─────────────────────────────
-  test('triage --level file --json returns valid JSON with hotspots', () => {
+  test('triage --level file --json returns valid JSON with items', () => {
     const out = run('triage', '--level', 'file', '--db', dbPath, '--json');
     const data = JSON.parse(out);
-    expect(data).toHaveProperty('hotspots');
+    expect(data).toHaveProperty('items');
     expect(data).toHaveProperty('metric');
     expect(data).toHaveProperty('level');
   });
