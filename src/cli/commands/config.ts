@@ -15,7 +15,90 @@ import {
   REGISTRY_PATH,
   setUserConfigConsent,
 } from '../../infrastructure/registry.js';
+import { formatTable } from '../../presentation/table.js';
+import type { ConfigSource } from '../../types.js';
 import type { CommandDefinition } from '../types.js';
+
+/**
+ * Recursively flatten a nested config object to dot-notation key/value pairs.
+ * Arrays and null values are serialised to strings.
+ */
+function flattenConfig(
+  obj: Record<string, unknown>,
+  prefix = '',
+): Array<{ key: string; value: string }> {
+  const out: Array<{ key: string; value: string }> = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...flattenConfig(v as Record<string, unknown>, fullKey));
+    } else if (Array.isArray(v)) {
+      out.push({ key: fullKey, value: v.length === 0 ? '[]' : JSON.stringify(v) });
+    } else {
+      out.push({ key: fullKey, value: v === null ? 'null' : String(v) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Expand a top-level provenance map (e.g. { build: 'project' }) to cover every
+ * flattened dot-notation key (e.g. 'build.incremental' → 'project').
+ */
+function expandProvenance(
+  flatEntries: Array<{ key: string; value: string }>,
+  provenance: Record<string, ConfigSource>,
+): Map<string, ConfigSource> {
+  const map = new Map<string, ConfigSource>();
+  for (const { key } of flatEntries) {
+    // Walk from longest prefix to shortest to find the governing provenance key
+    const topLevel = key.split('.')[0] ?? key;
+    map.set(key, provenance[topLevel] ?? 'default');
+  }
+  return map;
+}
+
+/**
+ * Render the effective config as a human-readable Key/Value/Source table.
+ * Only rows that differ from default are shown unless all are defaults.
+ */
+function renderConfigTable(
+  config: Record<string, unknown>,
+  provenance: Record<string, ConfigSource>,
+): string {
+  const flat = flattenConfig(config);
+  const sourceMap = expandProvenance(flat, provenance);
+
+  // Show all entries — sorting non-defaults first, then alphabetically
+  const rows = flat
+    .slice()
+    .sort((a, b) => {
+      const sa = sourceMap.get(a.key) ?? 'default';
+      const sb = sourceMap.get(b.key) ?? 'default';
+      // Non-defaults first
+      if (sa !== 'default' && sb === 'default') return -1;
+      if (sa === 'default' && sb !== 'default') return 1;
+      return a.key.localeCompare(b.key);
+    })
+    .map(({ key, value }) => [key, value, sourceMap.get(key) ?? 'default']);
+
+  const keyWidth = Math.max(3, ...rows.map((r) => r[0]!.length));
+  const valWidth = Math.max(5, ...rows.map((r) => r[1]!.length));
+  // Source column is always short ('default', 'user', 'project', 'env')
+  const srcWidth = 7;
+
+  return (
+    formatTable({
+      columns: [
+        { header: 'Key', width: keyWidth },
+        { header: 'Value', width: valWidth },
+        { header: 'Source', width: srcWidth },
+      ],
+      rows: rows as string[][],
+      indent: 0,
+    }) + '\n'
+  );
+}
 
 /**
  * Build a scaffolded global config JSON file.
@@ -245,17 +328,24 @@ export const command: CommandDefinition = {
 
     const globalPath = resolveUserConfigPath();
     const consent = getUserConfigConsent(rootDir);
-    const config = loadConfig(rootDir, { userConfig: ctx.program.opts().userConfig });
 
-    // Print effective config — always JSON; discovery hint only in non-JSON mode
-    process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
+    if (opts.json) {
+      const config = loadConfig(rootDir, { userConfig: ctx.program.opts().userConfig });
+      process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
+    } else {
+      // Human-readable table: Key | Value | Source
+      const { config, provenance } = loadConfigWithProvenance(rootDir, {
+        userConfig: ctx.program.opts().userConfig,
+      });
+      process.stdout.write(renderConfigTable(config as unknown as Record<string, unknown>, provenance));
 
-    if (!opts.json && globalPath && !consent) {
-      process.stderr.write(
-        `\nℹ Global config found at ${globalPath} — not applied to this repo.\n` +
-          `  Run \`codegraph config --enable-global\` to opt in, or\n` +
-          `  \`codegraph config --disable-global\` to dismiss this notice.\n`,
-      );
+      if (globalPath && !consent) {
+        process.stderr.write(
+          `\nℹ Global config found at ${globalPath} — not applied to this repo.\n` +
+            `  Run \`codegraph config --enable-global\` to opt in, or\n` +
+            `  \`codegraph config --disable-global\` to dismiss this notice.\n`,
+        );
+      }
     }
   },
 };
