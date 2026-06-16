@@ -1230,10 +1230,29 @@ async function backfillNativeDroppedFiles(
 
   if (missingAbs.length === 0) return;
 
+  // Parse all missing files via WASM first so we can distinguish real native
+  // extractor failures (WASM finds symbols but native didn't) from files the
+  // Rust engine legitimately skipped (gitignored artifacts, empty declaration
+  // files, etc. where WASM also produces 0 symbols). Both categories are
+  // backfilled — only the former triggers a WARN (#1566).
+  const wasmResults = await parseFilesWasmForBackfill(missingAbs, ctx.rootDir);
+
+  // Build a set of rel-paths where WASM found at least one symbol, so we can
+  // tell real extractor failures apart from intentionally-skipped files.
+  const wasmFoundSymbols = new Set<string>();
+  for (const [relPath, symbols] of wasmResults) {
+    if ((symbols.definitions?.length ?? 0) > 0 || (symbols.exports?.length ?? 0) > 0) {
+      wasmFoundSymbols.add(relPath);
+    }
+  }
+
   // Classify drops so users see per-extension reasons instead of just a count
   // (#1011). `unsupported-by-native` is a legitimate parser limit (no Rust
   // extractor); `native-extractor-failure` indicates a real native bug since
-  // the language IS supported by the addon yet the file was dropped anyway.
+  // the language IS supported by the addon yet WASM found symbols the native
+  // engine should have extracted. Files where both engines produce 0 symbols
+  // are legitimately empty (e.g. gitignored napi-generated declaration stubs)
+  // and logged at debug level only.
   const { byReason, totals } = classifyNativeDrops(missingRel);
   if (totals['unsupported-by-native'] > 0) {
     const buckets = byReason['unsupported-by-native'];
@@ -1242,12 +1261,44 @@ async function backfillNativeDroppedFiles(
     );
   }
   if (totals['native-extractor-failure'] > 0) {
-    const buckets = byReason['native-extractor-failure'];
-    warn(
-      `Native orchestrator dropped ${totals['native-extractor-failure']} file(s) across ${buckets.size} extension(s) in natively-supported languages — likely a Rust extractor bug. Backfilling via WASM:${formatDropExtensionSummary(buckets)}`,
-    );
+    // Split into real failures (WASM found symbols) and no-op drops (0 symbols
+    // in both engines — likely gitignored or truly empty files the Rust engine
+    // intentionally skipped while the JS filesystem walk found them on disk).
+    const realFailurePaths = byReason['native-extractor-failure'];
+    const realFailureBuckets = new Map<string, string[]>();
+    const silentDropBuckets = new Map<string, string[]>();
+    for (const [ext, paths] of realFailurePaths) {
+      for (const relPath of paths) {
+        if (wasmFoundSymbols.has(relPath)) {
+          let list = realFailureBuckets.get(ext);
+          if (!list) {
+            list = [];
+            realFailureBuckets.set(ext, list);
+          }
+          list.push(relPath);
+        } else {
+          let list = silentDropBuckets.get(ext);
+          if (!list) {
+            list = [];
+            silentDropBuckets.set(ext, list);
+          }
+          list.push(relPath);
+        }
+      }
+    }
+    if (realFailureBuckets.size > 0) {
+      const realCount = [...realFailureBuckets.values()].reduce((s, a) => s + a.length, 0);
+      warn(
+        `Native orchestrator dropped ${realCount} file(s) across ${realFailureBuckets.size} extension(s) in natively-supported languages — likely a Rust extractor bug. Backfilling via WASM:${formatDropExtensionSummary(realFailureBuckets)}`,
+      );
+    }
+    if (silentDropBuckets.size > 0) {
+      const silentCount = [...silentDropBuckets.values()].reduce((s, a) => s + a.length, 0);
+      debug(
+        `Native orchestrator skipped ${silentCount} file(s) in natively-supported languages that also produced 0 symbols via WASM (likely gitignored or empty); backfilling file nodes:${formatDropExtensionSummary(silentDropBuckets)}`,
+      );
+    }
   }
-  const wasmResults = await parseFilesWasmForBackfill(missingAbs, ctx.rootDir);
 
   const rows: unknown[][] = [];
   const exportKeys: unknown[][] = [];
