@@ -25,6 +25,8 @@ export interface CliContext {
 export interface CommandDefinition {
   name: string;
   description: string;
+  /** Optional Commander.js alias (e.g. 'explain' for the 'audit' command). */
+  alias?: string;
   queryOpts?: boolean;
   options?: Array<[string, string, ...unknown[]]>;
   validate?(args: string[], opts: CommandOpts, ctx: CliContext): string | undefined;
