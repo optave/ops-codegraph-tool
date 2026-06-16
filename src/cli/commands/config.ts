@@ -1,6 +1,10 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
   clearConfigCache,
+  DEFAULTS,
+  getDefaultUserConfigPath,
   loadConfig,
   loadConfigWithProvenance,
   resolveUserConfigPath,
@@ -13,6 +17,55 @@ import {
 } from '../../infrastructure/registry.js';
 import type { CommandDefinition } from '../types.js';
 
+/**
+ * Build a scaffolded global config JSON file.
+ * Produces valid JSON with common sections pre-populated at their defaults.
+ * Uses DEFAULTS so the values always reflect the current schema.
+ *
+ * All keys are optional — users can delete sections they don't need.
+ * The appliesTo wrapper format is documented in the file's own `$schema` hint.
+ */
+function buildInitTemplate(): string {
+  // Build a plain object — no comments in JSON, but keep it self-explanatory.
+  // Unknown top-level keys are silently ignored by mergeConfig.
+  const template: Record<string, unknown> = {
+    // LLM provider for AI features (codegraph explain, context, etc.)
+    // Use apiKeyCommand to pull the key from a secret manager at runtime.
+    // Scope to specific repos with:
+    //   { "appliesTo": ["~/projects/*"], "config": { ... } }
+    llm: {
+      provider: null,
+      model: null,
+      baseUrl: null,
+      apiKey: null,
+      apiKeyCommand: null,
+    },
+
+    query: {
+      defaultDepth: DEFAULTS.query.defaultDepth,
+      defaultLimit: DEFAULTS.query.defaultLimit,
+      excludeTests: DEFAULTS.query.excludeTests,
+    },
+
+    build: {
+      incremental: DEFAULTS.build.incremental,
+      typescriptResolver: DEFAULTS.build.typescriptResolver,
+    },
+
+    ci: {
+      failOnCycles: DEFAULTS.ci.failOnCycles,
+      impactThreshold: DEFAULTS.ci.impactThreshold,
+    },
+
+    search: {
+      defaultMinScore: DEFAULTS.search.defaultMinScore,
+      topK: DEFAULTS.search.topK,
+    },
+  };
+
+  return `${JSON.stringify(template, null, 2)}\n`;
+}
+
 export const command: CommandDefinition = {
   name: 'config',
   description: 'Show or manage codegraph configuration (project + user-level global config)',
@@ -22,9 +75,64 @@ export const command: CommandDefinition = {
     ['--enable-global', 'Record consent to apply the global config to this repo'],
     ['--disable-global', 'Record consent to skip the global config for this repo'],
     ['--list-global', 'List all repos with a recorded consent decision'],
+    ['--init', 'Scaffold a global config file at the default XDG location with commented examples'],
+    ['--edit', 'Open the global config file in $EDITOR (prints the path if $EDITOR is unset)'],
   ],
   execute(_args, opts, ctx) {
     const rootDir = path.resolve('.');
+
+    // ── Init: scaffold global config ───────────────────────────────────
+
+    if (opts.init) {
+      const targetPath = getDefaultUserConfigPath();
+      if (fs.existsSync(targetPath)) {
+        process.stderr.write(
+          `Global config already exists at ${targetPath}\n` +
+            `Run \`codegraph config --edit\` to open it, or delete it and re-run --init.\n`,
+        );
+        process.exit(1);
+      }
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, buildInitTemplate(), 'utf-8');
+      process.stdout.write(`Created global config at ${targetPath}\n`);
+      process.stdout.write(
+        `Next steps:\n` +
+          `  1. Edit the file: codegraph config --edit\n` +
+          `  2. Enable it for this repo: codegraph config --enable-global\n`,
+      );
+      return;
+    }
+
+    // ── Edit: open global config in $EDITOR ────────────────────────────
+
+    if (opts.edit) {
+      // Prefer the existing file; fall back to the default path so the user
+      // can create-and-edit in one step even before running --init.
+      const filePath = resolveUserConfigPath() ?? getDefaultUserConfigPath();
+
+      const editor = process.env.EDITOR || process.env.VISUAL;
+      if (!editor) {
+        process.stdout.write(`${filePath}\n`);
+        process.stderr.write(
+          `$EDITOR is not set. Set it in your shell profile (e.g. export EDITOR=nano)\n` +
+            `or open the file manually at the path printed above.\n`,
+        );
+        return;
+      }
+
+      // Ensure the directory exists so the editor can create the file
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+      const result = spawnSync(editor, [filePath], { stdio: 'inherit' });
+      if (result.error) {
+        process.stderr.write(`Failed to launch editor "${editor}": ${result.error.message}\n`);
+        process.exit(1);
+      }
+      if (result.status !== 0) {
+        process.exit(result.status ?? 1);
+      }
+      return;
+    }
 
     // ── Consent management ─────────────────────────────────────────────
 

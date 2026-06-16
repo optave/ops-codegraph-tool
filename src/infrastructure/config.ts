@@ -198,6 +198,35 @@ const _globalConfigCache = new Map<string, Record<string, unknown> | null>();
 // ── Global config file location ─────────────────────────────────────────
 
 /**
+ * Return the canonical path where a new global config file should be written.
+ *
+ * Uses the same priority logic as resolveUserConfigPath() but always returns a
+ * path — it does not check whether the file exists. Used by `--init` to know
+ * where to scaffold the file.
+ *
+ * Priority:
+ * 1. CODEGRAPH_USER_CONFIG env var (used as-is)
+ * 2. $XDG_CONFIG_HOME/codegraph/config.json
+ *    %APPDATA%\codegraph\config.json  (Windows)
+ *    fallback: ~/.config/codegraph/config.json
+ */
+export function getDefaultUserConfigPath(): string {
+  const envPath = process.env.CODEGRAPH_USER_CONFIG;
+  if (envPath) return envPath;
+
+  const home = os.homedir();
+  const xdgConfig = process.env.XDG_CONFIG_HOME;
+  if (xdgConfig) return path.join(xdgConfig, 'codegraph', 'config.json');
+  if (process.platform === 'win32') {
+    const appdata = process.env.APPDATA;
+    return appdata
+      ? path.join(appdata, 'codegraph', 'config.json')
+      : path.join(home, '.config', 'codegraph', 'config.json');
+  }
+  return path.join(home, '.config', 'codegraph', 'config.json');
+}
+
+/**
  * Resolve the absolute path to the user-level global config file.
  *
  * Priority:
