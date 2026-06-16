@@ -51,7 +51,8 @@ function expandProvenance(
 ): Map<string, ConfigSource> {
   const map = new Map<string, ConfigSource>();
   for (const { key } of flatEntries) {
-    // Walk from longest prefix to shortest to find the governing provenance key
+    // Provenance is keyed by top-level section (e.g. 'build', 'llm'), so
+    // extract the first segment to find the governing provenance entry.
     const topLevel = key.split('.')[0] ?? key;
     map.set(key, provenance[topLevel] ?? 'default');
   }
@@ -60,7 +61,8 @@ function expandProvenance(
 
 /**
  * Render the effective config as a human-readable Key/Value/Source table.
- * Only rows that differ from default are shown unless all are defaults.
+ * All rows are shown, sorted so non-default overrides appear first, then
+ * remaining defaults alphabetically.
  */
 function renderConfigTable(
   config: Record<string, unknown>,
@@ -87,17 +89,15 @@ function renderConfigTable(
   // Source column is always short ('default', 'user', 'project', 'env')
   const srcWidth = 7;
 
-  return (
-    formatTable({
-      columns: [
-        { header: 'Key', width: keyWidth },
-        { header: 'Value', width: valWidth },
-        { header: 'Source', width: srcWidth },
-      ],
-      rows: rows as string[][],
-      indent: 0,
-    }) + '\n'
-  );
+  return `${formatTable({
+    columns: [
+      { header: 'Key', width: keyWidth },
+      { header: 'Value', width: valWidth },
+      { header: 'Source', width: srcWidth },
+    ],
+    rows: rows as string[][],
+    indent: 0,
+  })}\n`;
 }
 
 /**
@@ -337,7 +337,9 @@ export const command: CommandDefinition = {
       const { config, provenance } = loadConfigWithProvenance(rootDir, {
         userConfig: ctx.program.opts().userConfig,
       });
-      process.stdout.write(renderConfigTable(config as unknown as Record<string, unknown>, provenance));
+      process.stdout.write(
+        renderConfigTable(config as unknown as Record<string, unknown>, provenance),
+      );
 
       if (globalPath && !consent) {
         process.stderr.write(
