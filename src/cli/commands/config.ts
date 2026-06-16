@@ -60,7 +60,8 @@ function expandProvenance(
 
 /**
  * Render the effective config as a human-readable Key/Value/Source table.
- * Only rows that differ from default are shown unless all are defaults.
+ * All keys are shown; non-default entries are sorted to the top, then
+ * remaining keys are sorted alphabetically.
  */
 function renderConfigTable(
   config: Record<string, unknown>,
@@ -87,17 +88,15 @@ function renderConfigTable(
   // Source column is always short ('default', 'user', 'project', 'env')
   const srcWidth = 7;
 
-  return (
-    formatTable({
-      columns: [
-        { header: 'Key', width: keyWidth },
-        { header: 'Value', width: valWidth },
-        { header: 'Source', width: srcWidth },
-      ],
-      rows: rows as string[][],
-      indent: 0,
-    }) + '\n'
-  );
+  return `${formatTable({
+    columns: [
+      { header: 'Key', width: keyWidth },
+      { header: 'Value', width: valWidth },
+      { header: 'Source', width: srcWidth },
+    ],
+    rows: rows as string[][],
+    indent: 0,
+  })}\n`;
 }
 
 /**
@@ -337,7 +336,9 @@ export const command: CommandDefinition = {
       const { config, provenance } = loadConfigWithProvenance(rootDir, {
         userConfig: ctx.program.opts().userConfig,
       });
-      process.stdout.write(renderConfigTable(config as unknown as Record<string, unknown>, provenance));
+      process.stdout.write(
+        renderConfigTable(config as unknown as Record<string, unknown>, provenance),
+      );
 
       if (globalPath && !consent) {
         process.stderr.write(
