@@ -231,6 +231,34 @@ describe('batch CLI', () => {
     expect(parsed.results).toHaveLength(1);
   });
 
+  test('accepts --json flag without error (no-op)', () => {
+    const out = execFileSync(
+      'node',
+      [...NODE_TS_FLAGS, cliPath, 'batch', 'query', 'authenticate', '--db', dbPath, '--json'],
+      {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      },
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.command).toBe('query');
+    expect(parsed.total).toBe(1);
+  });
+
+  test('accepts -j flag without error (no-op)', () => {
+    const out = execFileSync(
+      'node',
+      [...NODE_TS_FLAGS, cliPath, 'batch', 'query', 'authenticate', '--db', dbPath, '-j'],
+      {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      },
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.command).toBe('query');
+    expect(parsed.total).toBe(1);
+  });
+
   test('batch accepts comma-separated positional targets', () => {
     const out = execFileSync(
       'node',
