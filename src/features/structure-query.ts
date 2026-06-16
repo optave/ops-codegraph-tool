@@ -324,7 +324,7 @@ export function hotspotsData(
   metric: string;
   level: string;
   limit: number;
-  hotspots: unknown[];
+  items: unknown[];
 } {
   const { db, nativeDb, close } = openReadonlyWithNative(customDbPath);
   try {
@@ -337,19 +337,19 @@ export function hotspotsData(
     // ── Native fast path: single query instead of 4 eagerly prepared ──
     if (nativeDb?.getHotspots) {
       const rows = nativeDb.getHotspots(kind, metric, noTests, limit);
-      const hotspots = rows.map(mapNativeHotspotRow);
-      const base = { metric, level, limit, hotspots };
-      return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
+      const items = rows.map(mapNativeHotspotRow);
+      const base = { metric, level, limit, items };
+      return paginateResult(base, 'items', { limit: opts.limit, offset: opts.offset });
     }
 
     // ── JS fallback ───────────────────────────────────────────────────
     const testFilter = testFilterSQL('n.name', noTests && kind === 'file');
     const stmt = db.prepare(buildHotspotQuery(metric, testFilter));
     const rows = stmt.all(kind, limit) as HotspotRow[];
-    const hotspots = rows.map(mapJsHotspotRow);
+    const items = rows.map(mapJsHotspotRow);
 
-    const base = { metric, level, limit, hotspots };
-    return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
+    const base = { metric, level, limit, items };
+    return paginateResult(base, 'items', { limit: opts.limit, offset: opts.offset });
   } finally {
     close();
   }
