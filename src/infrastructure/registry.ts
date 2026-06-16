@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { ConsentDecision } from '../types.js';
 import { debug, warn } from './logger.js';
 
 export const REGISTRY_PATH: string =
@@ -16,8 +17,15 @@ interface RegistryEntry {
   lastAccessedAt?: string;
 }
 
+interface UserConfigSection {
+  /** Per-repo consent decisions keyed by absolute repo path. */
+  consent: Record<string, ConsentDecision>;
+}
+
 interface Registry {
   repos: Record<string, RegistryEntry>;
+  /** User-level global config consent store — separate from MCP repo listings. */
+  userConfig?: UserConfigSection;
 }
 
 /**
@@ -160,6 +168,67 @@ export function resolveRepoDbPath(
   return entry.dbPath;
 }
 
+// ── User-config consent ────────────────────────────────────────────────
+
+/**
+ * Read the per-repo consent decision for the global user config.
+ * Returns `undefined` when the repo is undecided (no recorded decision).
+ */
+export function getUserConfigConsent(
+  rootDir: string,
+  registryPath: string = REGISTRY_PATH,
+): ConsentDecision | undefined {
+  const registry = loadRegistry(registryPath);
+  const absRoot = path.resolve(rootDir);
+  return registry.userConfig?.consent?.[absRoot];
+}
+
+/**
+ * Persist a per-repo consent decision. Atomic write via temp+rename.
+ */
+export function setUserConfigConsent(
+  rootDir: string,
+  decision: ConsentDecision,
+  registryPath: string = REGISTRY_PATH,
+): void {
+  const registry = loadRegistry(registryPath);
+  const absRoot = path.resolve(rootDir);
+  if (!registry.userConfig) registry.userConfig = { consent: {} };
+  if (!registry.userConfig.consent) registry.userConfig.consent = {};
+  registry.userConfig.consent[absRoot] = decision;
+  saveRegistry(registry, registryPath);
+  debug(`User-config consent for "${absRoot}" set to "${decision}"`);
+}
+
+/**
+ * List every repo with a recorded consent decision, sorted by path.
+ */
+export function listUserConfigConsent(
+  registryPath: string = REGISTRY_PATH,
+): Array<{ path: string; decision: ConsentDecision }> {
+  const registry = loadRegistry(registryPath);
+  const consent = registry.userConfig?.consent ?? {};
+  return Object.entries(consent)
+    .map(([p, decision]) => ({ path: p, decision }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Revert a repo to undecided state. Returns true if a decision was removed.
+ */
+export function clearUserConfigConsent(
+  rootDir: string,
+  registryPath: string = REGISTRY_PATH,
+): boolean {
+  const registry = loadRegistry(registryPath);
+  const absRoot = path.resolve(rootDir);
+  const consent = registry.userConfig?.consent;
+  if (!consent || !(absRoot in consent)) return false;
+  delete consent[absRoot];
+  saveRegistry(registry, registryPath);
+  return true;
+}
+
 interface PrunedEntry {
   name: string;
   path: string;
@@ -200,7 +269,19 @@ export function pruneRegistry(
     }
   }
 
-  if (!dryRun && pruned.length > 0) {
+  // Prune consent entries whose repo paths no longer exist on disk.
+  // Consent entries are TTL-exempt — only the missing-path rule applies.
+  let consentChanged = false;
+  if (!dryRun && registry.userConfig?.consent) {
+    for (const p of Object.keys(registry.userConfig.consent)) {
+      if (!fs.existsSync(p)) {
+        delete registry.userConfig.consent[p];
+        consentChanged = true;
+      }
+    }
+  }
+
+  if (!dryRun && (pruned.length > 0 || consentChanged)) {
     saveRegistry(registry, registryPath);
   }
 

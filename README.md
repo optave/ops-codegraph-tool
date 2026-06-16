@@ -797,6 +797,8 @@ Copy `.github/workflows/codegraph-impact.yml` to your repo, and every PR will ge
 
 Create a `.codegraphrc.json` in your project root to customize behavior. The snippets below cover the most-used keys — see **[docs/guides/configuration.md](docs/guides/configuration.md)** for the full reference (every group, every key, every default).
 
+**Global (user-level) config:** you can also define personal defaults once at `~/.config/codegraph/config.json` and opt individual repos into it with `codegraph config --enable-global`. The global layer merges below the project config so repos always win, and non-interactive contexts (CI, MCP) never apply it without explicit consent. See [docs/guides/configuration.md#user-level-global-configuration](docs/guides/configuration.md#user-level-global-configuration).
+
 ```json
 {
   "include": ["src/**", "lib/**"],

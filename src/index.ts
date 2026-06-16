@@ -52,7 +52,11 @@ export { ownersData } from './features/owners.js';
 export { sequenceData } from './features/sequence.js';
 export { hotspotsData, moduleBoundariesData, structureData } from './features/structure.js';
 export { triageData } from './features/triage.js';
-export { loadConfig } from './infrastructure/config.js';
+export {
+  loadConfig,
+  loadConfigWithProvenance,
+  resolveUserConfigPath,
+} from './infrastructure/config.js';
 export type { ArrayCompatSet } from './shared/constants.js';
 export { EXTENSIONS, IGNORE_DIRS } from './shared/constants.js';
 export {

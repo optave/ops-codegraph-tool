@@ -4,14 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  clearUserConfigConsent,
   DEFAULT_TTL_DAYS,
+  getUserConfigConsent,
   listRepos,
+  listUserConfigConsent,
   loadRegistry,
   pruneRegistry,
   REGISTRY_PATH,
   registerRepo,
   resolveRepoDbPath,
   saveRegistry,
+  setUserConfigConsent,
   unregisterRepo,
 } from '../../src/infrastructure/registry.js';
 
@@ -596,5 +600,106 @@ describe('resolveRepoDbPath updates lastAccessedAt', () => {
     const updated = loadRegistry(registryPath);
     expect(updated.repos.proj.lastAccessedAt).not.toBe('2025-01-01T00:00:00.000Z');
     expect(new Date(updated.repos.proj.lastAccessedAt).getFullYear()).toBeGreaterThanOrEqual(2026);
+  });
+});
+
+// ─── User-config consent ────────────────────────────────────────────
+
+describe('getUserConfigConsent', () => {
+  it('returns undefined for unknown repo (undecided)', () => {
+    const dir = path.join(tmpDir, 'new-repo');
+    expect(getUserConfigConsent(dir, registryPath)).toBeUndefined();
+  });
+
+  it('returns the recorded decision', () => {
+    const dir = path.join(tmpDir, 'repo-a');
+    setUserConfigConsent(dir, 'enabled', registryPath);
+    expect(getUserConfigConsent(dir, registryPath)).toBe('enabled');
+  });
+});
+
+describe('setUserConfigConsent', () => {
+  it('records enabled consent', () => {
+    const dir = path.join(tmpDir, 'enable-repo');
+    setUserConfigConsent(dir, 'enabled', registryPath);
+    const reg = loadRegistry(registryPath);
+    const absDir = path.resolve(dir);
+    expect(reg.userConfig?.consent?.[absDir]).toBe('enabled');
+  });
+
+  it('records disabled consent', () => {
+    const dir = path.join(tmpDir, 'disable-repo');
+    setUserConfigConsent(dir, 'disabled', registryPath);
+    const reg = loadRegistry(registryPath);
+    const absDir = path.resolve(dir);
+    expect(reg.userConfig?.consent?.[absDir]).toBe('disabled');
+  });
+
+  it('overwrites a previous decision', () => {
+    const dir = path.join(tmpDir, 'flip-repo');
+    setUserConfigConsent(dir, 'enabled', registryPath);
+    setUserConfigConsent(dir, 'disabled', registryPath);
+    expect(getUserConfigConsent(dir, registryPath)).toBe('disabled');
+  });
+
+  it('does not touch repos section', () => {
+    const dir = path.join(tmpDir, 'consent-isolated');
+    fs.mkdirSync(dir, { recursive: true });
+    registerRepo(dir, 'consent-isolated', registryPath);
+    setUserConfigConsent(dir, 'enabled', registryPath);
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos['consent-isolated']).toBeDefined();
+  });
+});
+
+describe('listUserConfigConsent', () => {
+  it('returns empty array when no consent exists', () => {
+    expect(listUserConfigConsent(registryPath)).toEqual([]);
+  });
+
+  it('returns all decisions sorted by path', () => {
+    const dirZ = path.join(tmpDir, 'zzz-repo');
+    const dirA = path.join(tmpDir, 'aaa-repo');
+    setUserConfigConsent(dirZ, 'disabled', registryPath);
+    setUserConfigConsent(dirA, 'enabled', registryPath);
+    const list = listUserConfigConsent(registryPath);
+    expect(list).toHaveLength(2);
+    expect(list[0].path).toBe(path.resolve(dirA));
+    expect(list[0].decision).toBe('enabled');
+    expect(list[1].path).toBe(path.resolve(dirZ));
+    expect(list[1].decision).toBe('disabled');
+  });
+});
+
+describe('clearUserConfigConsent', () => {
+  it('removes the decision and returns true', () => {
+    const dir = path.join(tmpDir, 'clear-repo');
+    setUserConfigConsent(dir, 'enabled', registryPath);
+    expect(clearUserConfigConsent(dir, registryPath)).toBe(true);
+    expect(getUserConfigConsent(dir, registryPath)).toBeUndefined();
+  });
+
+  it('returns false if repo had no decision', () => {
+    const dir = path.join(tmpDir, 'no-decision-repo');
+    expect(clearUserConfigConsent(dir, registryPath)).toBe(false);
+  });
+});
+
+describe('pruneRegistry cleans stale consent entries', () => {
+  it('removes consent for missing repo paths', () => {
+    const dir = path.join(tmpDir, 'vanished-consent');
+    fs.mkdirSync(dir, { recursive: true });
+    setUserConfigConsent(dir, 'enabled', registryPath);
+    fs.rmSync(dir, { recursive: true, force: true });
+    pruneRegistry(registryPath);
+    expect(getUserConfigConsent(dir, registryPath)).toBeUndefined();
+  });
+
+  it('keeps consent for existing repo paths', () => {
+    const dir = path.join(tmpDir, 'alive-consent');
+    fs.mkdirSync(dir, { recursive: true });
+    setUserConfigConsent(dir, 'disabled', registryPath);
+    pruneRegistry(registryPath);
+    expect(getUserConfigConsent(dir, registryPath)).toBe('disabled');
   });
 });

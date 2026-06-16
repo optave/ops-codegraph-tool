@@ -13,6 +13,7 @@ import {
   getBuildMeta,
   setBuildMeta,
 } from '../../../../db/index.js';
+import { computeConfigHash } from '../../../../infrastructure/config.js';
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
 import { CODEGRAPH_VERSION } from '../../../../shared/version.js';
 import { writeJournalHeader } from '../../journal.js';
@@ -105,6 +106,7 @@ function persistBuildMetadata(
   } catch {
     /* realpath can fail (e.g. path no longer exists); fall back to resolve() */
   }
+  const configHash = computeConfigHash(ctx.config);
   try {
     if (useNativeDb) {
       ctx.nativeDb!.setBuildMeta(
@@ -117,6 +119,7 @@ function persistBuildMetadata(
           node_count: String(nodeCount),
           edge_count: String(actualEdgeCount),
           root_dir: rootDirToWrite,
+          config_hash: configHash,
         }).map(([key, value]) => ({ key, value: String(value) })),
       );
     } else {
@@ -129,6 +132,7 @@ function persistBuildMetadata(
         node_count: nodeCount,
         edge_count: actualEdgeCount,
         root_dir: rootDirToWrite,
+        config_hash: configHash,
       });
     }
   } catch (err) {

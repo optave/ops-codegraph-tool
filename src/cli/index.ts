@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Command } from 'commander';
+import { setUserConfigOverride } from '../infrastructure/config.js';
 import { setVerbose } from '../infrastructure/logger.js';
 import { checkForUpdates, printUpdateNotification } from '../infrastructure/update-check.js';
 import { ConfigError } from '../shared/errors.js';
@@ -25,9 +26,16 @@ program
   .version(pkg.version)
   .option('-v, --verbose', 'Enable verbose/debug output')
   .option('--engine <engine>', 'Parser engine: native, wasm, or auto (default: auto)', 'auto')
+  .option('--user-config [path]', 'Apply global user config for this run (optional custom path)')
+  .option('--no-user-config', 'Skip global user config for this run')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     if (opts.verbose) setVerbose(true);
+    // Wire user-config flags into the config loader before any command runs.
+    // Commander sets opts.userConfig = true (bare flag), a string (path), or undefined.
+    // opts.userConfig is false when --no-user-config is passed (Commander negation).
+    const uc = opts.userConfig as string | boolean | undefined;
+    setUserConfigOverride(uc);
   })
   .hook('postAction', async (_thisCommand, actionCommand) => {
     const name = actionCommand.name();

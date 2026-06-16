@@ -1,8 +1,18 @@
 import type { Command } from 'commander';
 import { loadConfig } from '../../infrastructure/config.js';
+import type { CodegraphConfig } from '../../types.js';
 import type { CommandOpts } from '../types.js';
 
-const config = loadConfig(process.cwd());
+// Deferred so global --user-config / --no-user-config flags are parsed
+// before config is first accessed (Commander parses flags before any command
+// action runs, but module-level code executes at import time).
+let _config: CodegraphConfig | undefined;
+const config: CodegraphConfig = new Proxy({} as CodegraphConfig, {
+  get(_t, prop: string) {
+    if (_config === undefined) _config = loadConfig(process.cwd());
+    return _config[prop as keyof CodegraphConfig];
+  },
+}) as CodegraphConfig;
 
 /**
  * Attach the common query options shared by most analysis commands.

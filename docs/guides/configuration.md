@@ -32,6 +32,97 @@ Leaves `build.dbPath`, `build.driftThreshold`, etc. at their defaults. Arrays ar
 
 ---
 
+## User-level (global) configuration
+
+You can define **personal config defaults once** and reuse them across repositories — without committing anything to any repo, and without ever silently changing a repo's behavior.
+
+**The defining property:** a global config file is inert until a specific repository explicitly consents to it. There is no blanket "apply everywhere" switch.
+
+### Global config file location
+
+Codegraph resolves the global config file in this order:
+
+1. `CODEGRAPH_USER_CONFIG=<path>` env var (location override only — does not force application)
+2. `$XDG_CONFIG_HOME/codegraph/config.json` (Unix/macOS), or `%APPDATA%\codegraph\config.json` (Windows), falling back to `~/.config/codegraph/config.json`
+3. `~/.codegraph/config.json` (legacy fallback, next to `registry.json`)
+
+### Format
+
+The global config file uses the same schema as `.codegraphrc.json`. Two shapes are accepted:
+
+```jsonc
+// Plain config — applies to any repo that has consented
+{ "query": { "defaultLimit": 50 }, "exclude": ["**/*.generated.*"] }
+```
+
+```jsonc
+// With appliesTo — auto-consent for matching repo paths (power-user)
+{
+  "appliesTo": ["~/work/**", "/Users/me/oss/*"],
+  "config": { "query": { "defaultLimit": 50 } }
+}
+```
+
+### Consent model
+
+A global config file has no effect until a repository consents to it. Consent is per-repo and per-machine (stored in `~/.codegraph/registry.json`, never committed):
+
+| Command | Effect |
+|---------|--------|
+| `codegraph config --enable-global` | Record `enabled` consent for the current repo |
+| `codegraph config --disable-global` | Record `disabled` consent for the current repo |
+| `codegraph config --list-global` | List every repo with a recorded decision |
+| `codegraph build` (interactive) | Prompts once if the repo is undecided and a global file exists |
+
+**Non-interactive contexts** (CI, MCP, programmatic use, hooks) never get prompted and default to *off*, keeping builds reproducible.
+
+**Per-run overrides** (do not record consent):
+- `--user-config [path]` — force-on for this run (optional custom path)
+- `--no-user-config` — force-off for this run
+
+### Precedence
+
+```
+DEFAULTS → global (if consented) → project (.codegraphrc.json) → env vars → secrets
+```
+
+- Objects are **deep-merged** (later layers win per key)
+- Arrays and scalars **replace** (project `ignoreDirs` fully replaces global `ignoreDirs`)
+- A project that omits a key inherits from the global layer
+
+### Safety guard
+
+If the global file sets `build.dbPath` to an **absolute path**, codegraph drops that key with a warning (it would make every repo share one database). Relative `dbPath` values are allowed through unchanged.
+
+### Transparency
+
+- `codegraph config` — print the effective config; shows a discovery hint when a global file exists but is not applied
+- `codegraph config --explain` — per-key provenance (`default` / `user` / `project` / `env`) plus consent state and applied file paths
+- Build notice — when the global layer contributes build-affecting keys, codegraph prints a one-line notice: `ℹ global config applied (<path>) — injecting: ...  · --no-user-config to ignore`
+
+### Programmatic API
+
+```typescript
+import { loadConfig, loadConfigWithProvenance } from '@optave/codegraph';
+
+// Normal: honour per-repo consent from registry
+loadConfig('/path/to/repo');
+
+// Force-on: apply the default global file
+loadConfig('/path/to/repo', { userConfig: true });
+
+// Force-on with explicit file
+loadConfig('/path/to/repo', { userConfig: '/path/to/global.json' });
+
+// Force-off
+loadConfig('/path/to/repo', { userConfig: false });
+
+// With provenance info (for tooling)
+const { config, provenance, appliedGlobalPath } = loadConfigWithProvenance('/path/to/repo');
+```
+
+---
+
 ## File selection
 
 Controls which files codegraph parses.

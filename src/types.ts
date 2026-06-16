@@ -1254,6 +1254,20 @@ export interface BuildGraphOpts {
    * `findDbPath` for every other DB-scoped command.
    */
   dbPath?: string;
+  /**
+   * User-config override for this build (from --user-config / --no-user-config).
+   * - false          → --no-user-config: skip global layer for this run
+   * - string         → --user-config <path>: apply the given file
+   * - true           → --user-config (bare): apply the default global file
+   * - undefined      → honour per-repo consent from the registry (normal)
+   */
+  userConfig?: string | boolean;
+  /**
+   * When true, an interactive consent prompt may fire on first build for
+   * repos whose global-config consent is undecided. Only set by the CLI
+   * build command when stdin/stdout are TTYs and CI is not set.
+   */
+  promptForConsent?: boolean;
 }
 
 /** Build timing result from buildGraph. */
@@ -1475,6 +1489,25 @@ export interface McpDefaults {
   ast_query: number;
   implementations: number;
   interfaces: number;
+}
+
+/** Per-repo consent decision for the user-level global config. */
+export type ConsentDecision = 'enabled' | 'disabled';
+
+/** Which layer contributed a resolved config value. */
+export type ConfigSource = 'default' | 'user' | 'project' | 'env';
+
+/** Maps config key paths (dot notation) to the layer that supplied the value. */
+export type ConfigProvenance = Record<string, ConfigSource>;
+
+/** Result of loadConfigWithProvenance. */
+export interface ConfigWithProvenance {
+  config: CodegraphConfig;
+  provenance: ConfigProvenance;
+  /** Absolute path of the applied global file, or null if none was applied. */
+  appliedGlobalPath: string | null;
+  /** This repo's recorded consent decision (may be undefined if undecided). */
+  consentDecision: ConsentDecision | undefined;
 }
 
 // ════════════════════════════════════════════════════════════════════════

@@ -1,9 +1,13 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { ConfigError, toErrorMessage } from '../shared/errors.js';
-import type { CodegraphConfig } from '../types.js';
+import { compileGlobs, matchesAny } from '../shared/globs.js';
+import type { CodegraphConfig, ConfigSource, ConsentDecision } from '../types.js';
 import { debug, warn } from './logger.js';
+import { getUserConfigConsent, REGISTRY_PATH, setUserConfigConsent } from './registry.js';
 
 export type { CodegraphConfig } from '../types.js';
 
@@ -166,43 +170,409 @@ export const DEFAULTS = {
   },
 } satisfies CodegraphConfig;
 
+// ── Per-process user-config override (set by CLI flags) ────────────────
+// Set once by the preAction hook before any command runs; cleared when changed.
+let _userConfigOverride: string | boolean | undefined;
+
+/**
+ * Set the per-run user-config override from CLI flags.
+ * Called by the CLI preAction hook before any command executes.
+ * - false  → --no-user-config
+ * - string → --user-config <path>
+ * - true   → --user-config (bare, use default global file)
+ * - undefined → clear override, revert to consent-based resolution
+ */
+export function setUserConfigOverride(v: string | boolean | undefined): void {
+  _userConfigOverride = v;
+  _configCache.clear();
+  _globalConfigCache.clear();
+}
+
 // Per-cwd config cache — avoids re-reading the config file on every query call.
-// The config file rarely changes within a single process lifetime.
+// Key includes the applied global path so toggled flags/consent are reflected.
 const _configCache = new Map<string, CodegraphConfig>();
+// Parallel cache for the sanitized global layer — needed so loadConfigWithProvenance
+// can correctly attribute global-layer keys even on a _configCache hit.
+const _globalConfigCache = new Map<string, Record<string, unknown> | null>();
+
+// ── Global config file location ─────────────────────────────────────────
+
+/**
+ * Resolve the absolute path to the user-level global config file.
+ *
+ * Priority:
+ * 1. CODEGRAPH_USER_CONFIG env var (location override only — not forced-on)
+ * 2. $XDG_CONFIG_HOME/codegraph/config.json  (Unix/macOS)
+ *    %APPDATA%\codegraph\config.json          (Windows)
+ *    fallback: ~/.config/codegraph/config.json
+ * 3. ~/.codegraph/config.json  (legacy, next to registry.json)
+ *
+ * Returns the path of the first existing file, or null if none exist.
+ */
+export function resolveUserConfigPath(): string | null {
+  const envPath = process.env.CODEGRAPH_USER_CONFIG;
+  if (envPath) {
+    if (fs.existsSync(envPath)) return envPath;
+    debug(`CODEGRAPH_USER_CONFIG points to missing file: ${envPath}`);
+    return null;
+  }
+
+  const home = os.homedir();
+
+  // XDG_CONFIG_HOME takes priority on all platforms when explicitly set.
+  // Falls back to %APPDATA% on Windows, or ~/.config on Unix/macOS.
+  let platformDefault: string;
+  const xdgConfig = process.env.XDG_CONFIG_HOME;
+  if (xdgConfig) {
+    platformDefault = path.join(xdgConfig, 'codegraph', 'config.json');
+  } else if (process.platform === 'win32') {
+    const appdata = process.env.APPDATA;
+    platformDefault = appdata
+      ? path.join(appdata, 'codegraph', 'config.json')
+      : path.join(home, '.config', 'codegraph', 'config.json');
+  } else {
+    platformDefault = path.join(home, '.config', 'codegraph', 'config.json');
+  }
+
+  if (fs.existsSync(platformDefault)) return platformDefault;
+
+  const legacyPath = path.join(home, '.codegraph', 'config.json');
+  if (fs.existsSync(legacyPath)) return legacyPath;
+
+  return null;
+}
+
+// ── Global config file loading ──────────────────────────────────────────
+
+interface ParsedUserConfig {
+  globalConfig: Record<string, unknown>;
+  appliesToGlobs: string[];
+}
+
+/**
+ * Read and parse a user-level global config file.
+ * Handles both plain-config and appliesTo-wrapper formats.
+ * Returns null on missing or malformed files (never throws).
+ */
+function loadUserConfigFile(filePath: string): ParsedUserConfig | null {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // Wrapper format: { appliesTo: [...], config: {...} }
+    if ('appliesTo' in parsed && typeof parsed.config === 'object' && parsed.config !== null) {
+      const globs = Array.isArray(parsed.appliesTo)
+        ? (parsed.appliesTo as unknown[]).filter((g): g is string => typeof g === 'string')
+        : [];
+      return { globalConfig: parsed.config as Record<string, unknown>, appliesToGlobs: globs };
+    }
+    // Plain config (no appliesTo wrapper)
+    return { globalConfig: parsed, appliesToGlobs: [] };
+  } catch (err) {
+    debug(`Failed to load user config at ${filePath}: ${toErrorMessage(err)}`);
+    return null;
+  }
+}
+
+// ── Safety sanitisation ─────────────────────────────────────────────────
+
+/**
+ * Drop any unsafe keys from the global layer before merging.
+ * Currently: absolute build.dbPath (would make all repos share one DB).
+ * Relative dbPaths resolve per-repo and are allowed through unchanged.
+ */
+function sanitizeUserLayer(raw: Record<string, unknown>): Record<string, unknown> {
+  const build = raw.build as Record<string, unknown> | undefined;
+  if (build && typeof build.dbPath === 'string' && path.isAbsolute(build.dbPath)) {
+    warn(
+      `User config: build.dbPath "${build.dbPath}" is absolute and was ignored ` +
+        '(an absolute dbPath would share one database across all repos).',
+    );
+    const sanitizedBuild = { ...build };
+    delete sanitizedBuild.dbPath;
+    return { ...raw, build: sanitizedBuild };
+  }
+  return raw;
+}
+
+// ── excludeTests shorthand (per-layer) ─────────────────────────────────
+
+/**
+ * Hoist a top-level `excludeTests` key from a raw layer into `query.excludeTests`.
+ * If the layer already has `query.excludeTests`, that value wins (no-op).
+ * Also removes any stale `excludeTests` key that may have leaked into `merged`.
+ */
+function applyExcludeTestsShorthand(
+  merged: Record<string, unknown>,
+  rawLayer: Record<string, unknown>,
+): Record<string, unknown> {
+  if ('excludeTests' in rawLayer) {
+    // Only hoist if this layer doesn't also set query.excludeTests
+    if (!(rawLayer.query && 'excludeTests' in (rawLayer.query as object))) {
+      (merged.query as Record<string, unknown>).excludeTests = Boolean(rawLayer.excludeTests);
+    }
+    const result = { ...merged };
+    delete result.excludeTests;
+    return result;
+  }
+  if ('excludeTests' in merged) {
+    const result = { ...merged };
+    delete result.excludeTests;
+    return result;
+  }
+  return merged;
+}
+
+// ── Consent resolution ──────────────────────────────────────────────────
+
+interface ConsentResolutionResult {
+  applied: boolean;
+  globalPath: string | null;
+  consentDecision: ConsentDecision | undefined;
+}
+
+/**
+ * Resolve whether the global user config should be applied for a given repo.
+ * Implements the §4.1/§4.2 precedence chain from the spec.
+ *
+ * @param rootDir  Absolute repo root.
+ * @param override Per-run override from CLI flags (_userConfigOverride).
+ * @param registryPath  Optional registry path (for tests).
+ */
+function resolveConsent(
+  rootDir: string,
+  override: string | boolean | undefined,
+  registryPath: string = REGISTRY_PATH,
+): ConsentResolutionResult {
+  // §4.1 step 1: --no-user-config
+  if (override === false) {
+    return { applied: false, globalPath: null, consentDecision: undefined };
+  }
+
+  // §4.1 steps 2–3: explicit path or bare --user-config
+  if (override !== undefined) {
+    const explicitPath = typeof override === 'string' ? override : resolveUserConfigPath();
+    if (explicitPath && fs.existsSync(explicitPath)) {
+      return { applied: true, globalPath: explicitPath, consentDecision: undefined };
+    }
+    if (typeof override === 'string') {
+      warn(`--user-config path "${override}" does not exist; skipping global layer.`);
+    }
+    return { applied: false, globalPath: null, consentDecision: undefined };
+  }
+
+  // §4.1 step 4: resolve global file — if none, NOT applied
+  const globalPath = resolveUserConfigPath();
+  if (!globalPath) {
+    return { applied: false, globalPath: null, consentDecision: undefined };
+  }
+
+  // §4.2: check per-repo decision
+  const consentDecision = getUserConfigConsent(rootDir, registryPath);
+
+  // §4.2 step 1: recorded disabled
+  if (consentDecision === 'disabled') {
+    return { applied: false, globalPath, consentDecision };
+  }
+
+  // §4.2 step 2: recorded enabled
+  if (consentDecision === 'enabled') {
+    return { applied: true, globalPath, consentDecision };
+  }
+
+  // §4.2 step 3: appliesTo glob match (dynamic, never persisted)
+  const parsed = loadUserConfigFile(globalPath);
+  if (parsed?.appliesToGlobs.length) {
+    const expanded = parsed.appliesToGlobs.map((g) =>
+      g.startsWith('~') ? path.join(os.homedir(), g.slice(1)) : g,
+    );
+    const regexes = compileGlobs(expanded);
+    const absRoot = path.resolve(rootDir);
+    if (matchesAny(regexes, absRoot)) {
+      return { applied: true, globalPath, consentDecision: undefined };
+    }
+  }
+
+  // §4.2 steps 4–5: undecided — caller decides whether to prompt
+  return { applied: false, globalPath, consentDecision: undefined };
+}
+
+// Last applied global path and parsed data — exposed so pipeline.ts and
+// loadConfigWithProvenance can reuse the already-parsed file contents without a
+// second disk read (eliminating the TOCTOU window between loadConfig and callers).
+let _lastAppliedGlobalPath: string | null = null;
+let _lastAppliedGlobalConfig: Record<string, unknown> | null = null;
+export function getLastAppliedGlobalPath(): string | null {
+  return _lastAppliedGlobalPath;
+}
+export function getLastAppliedGlobalConfig(): Record<string, unknown> | null {
+  return _lastAppliedGlobalConfig;
+}
+
+// ── Build-relevant config hash ──────────────────────────────────────────
+
+const BUILD_HASH_KEYS: ReadonlyArray<keyof CodegraphConfig> = [
+  'include',
+  'exclude',
+  'ignoreDirs',
+  'extensions',
+  'aliases',
+  'build',
+];
+
+/**
+ * Compute a short stable hash of the build-relevant config subset.
+ * Used by the pipeline to detect config changes that require a full rebuild.
+ */
+export function computeConfigHash(config: CodegraphConfig): string {
+  const subset: Partial<CodegraphConfig> = {};
+  for (const k of BUILD_HASH_KEYS) {
+    (subset as Record<string, unknown>)[k] = config[k];
+  }
+  return createHash('sha256').update(JSON.stringify(subset)).digest('hex').slice(0, 16);
+}
+
+// ── Interactive consent prompt ──────────────────────────────────────────
+
+/**
+ * When called from the build command, check whether we should prompt the user
+ * for global-config consent and, if so, prompt and persist the answer.
+ *
+ * Only fires when ALL of:
+ *   - A global config file exists
+ *   - The repo is undecided (no recorded consent)
+ *   - Not matched by appliesTo globs
+ *   - process.stdin.isTTY && process.stdout.isTTY
+ *   - CI env is not set
+ *   - No per-run --user-config / --no-user-config flag is active
+ */
+export async function promptForConsentIfNeeded(
+  rootDir: string,
+  registryPath: string = REGISTRY_PATH,
+): Promise<void> {
+  // No-op if per-run override is active
+  if (_userConfigOverride !== undefined) return;
+
+  const globalPath = resolveUserConfigPath();
+  if (!globalPath) return;
+
+  const consentDecision = getUserConfigConsent(rootDir, registryPath);
+  if (consentDecision !== undefined) return; // already decided
+
+  // Check appliesTo globs (dynamic consent — no prompt needed)
+  const parsed = loadUserConfigFile(globalPath);
+  if (parsed?.appliesToGlobs.length) {
+    const expanded = parsed.appliesToGlobs.map((g) =>
+      g.startsWith('~') ? path.join(os.homedir(), g.slice(1)) : g,
+    );
+    const regexes = compileGlobs(expanded);
+    const absRoot = path.resolve(rootDir);
+    if (matchesAny(regexes, absRoot)) return; // covered by appliesTo
+  }
+
+  // Only prompt in fully interactive sessions
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return;
+  if (process.env.CI) return;
+
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(
+      `\nA global codegraph config was found at ${globalPath}.\n` +
+        `Apply it to this repository (${path.resolve(rootDir)})? [y/N]\n` +
+        `(remembered per-repo; change later with \`codegraph config --enable-global|--disable-global\`)\n` +
+        `> `,
+      (ans) => {
+        rl.close();
+        resolve(ans.trim().toLowerCase());
+      },
+    );
+  });
+
+  const decided = answer === 'y' || answer === 'yes' ? 'enabled' : 'disabled';
+  setUserConfigConsent(rootDir, decided, registryPath);
+  process.stderr.write(`Global config consent recorded: ${decided}\n`);
+}
+
+// ── Main config loader ──────────────────────────────────────────────────
+
+/** Options for loadConfig. */
+export interface LoadConfigOpts {
+  /** Per-run user-config override (from CLI flags or programmatic call). */
+  userConfig?: string | boolean;
+  /** Registry path override (mainly for tests). */
+  registryPath?: string;
+}
 
 /**
  * Load project configuration from a .codegraphrc.json or similar file.
- * Returns merged config with defaults. Results are cached per cwd.
+ * Returns merged config with defaults: defaults → global (if applied) → project → env → secrets.
+ * Results are cached per cwd + applied global path.
  */
-export function loadConfig(cwd?: string): CodegraphConfig {
-  cwd = cwd || process.cwd();
-  const cached = _configCache.get(cwd);
-  if (cached) return structuredClone(cached);
+export function loadConfig(cwd?: string, opts?: LoadConfigOpts): CodegraphConfig {
+  cwd = path.resolve(cwd || process.cwd());
 
+  // Determine effective override: explicit opts win over module-level variable
+  const override = opts?.userConfig !== undefined ? opts.userConfig : _userConfigOverride;
+
+  // Resolve consent and global path
+  const { applied, globalPath } = resolveConsent(cwd, override, opts?.registryPath);
+
+  // Cache key includes applied global path and override flag so toggled consent is reflected
+  const cacheKey = `${cwd}::${applied ? (globalPath ?? 'default') : 'none'}`;
+  // Always update _lastAppliedGlobalPath/_lastAppliedGlobalConfig before returning —
+  // on a cache hit the previous call may have been for a different repo or different
+  // opts, so stale values here would misbehave for programmatic callers making
+  // multiple buildGraph calls in the same process.
+  _lastAppliedGlobalPath = applied ? globalPath : null;
+  _lastAppliedGlobalConfig = null; // updated below if a global file is loaded
+  const cached = _configCache.get(cacheKey);
+  if (cached) {
+    // Restore global config so loadConfigWithProvenance gets correct provenance on cache hits.
+    _lastAppliedGlobalConfig = _globalConfigCache.get(cacheKey) ?? null;
+    return structuredClone(cached);
+  }
+
+  // ── Layer 0: DEFAULTS ─────────────────────────────────────────────
+  let merged = DEFAULTS as unknown as Record<string, unknown>;
+
+  // ── Layer 1: global (if applied) ──────────────────────────────────
+  if (applied && globalPath) {
+    const userFileData = loadUserConfigFile(globalPath);
+    if (userFileData) {
+      debug(`Applying global user config from ${globalPath}`);
+      const sanitized = sanitizeUserLayer(userFileData.globalConfig);
+      // Cache the sanitized global data so pipeline.ts and loadConfigWithProvenance
+      // can use it without a second disk read (eliminates TOCTOU window).
+      _lastAppliedGlobalConfig = sanitized;
+      merged = mergeConfig(merged, sanitized);
+      merged = applyExcludeTestsShorthand(merged, sanitized);
+    }
+  }
+
+  // ── Layer 2: project ──────────────────────────────────────────────
   for (const name of CONFIG_FILES) {
     const filePath = path.join(cwd, name);
     if (fs.existsSync(filePath)) {
       try {
         const raw = fs.readFileSync(filePath, 'utf-8');
-        const config = JSON.parse(raw);
-        debug(`Loaded config from ${filePath}`);
-        const merged = mergeConfig(DEFAULTS as unknown as Record<string, unknown>, config);
-        if ('excludeTests' in config && !(config.query && 'excludeTests' in config.query)) {
-          (merged.query as Record<string, unknown>).excludeTests = Boolean(config.excludeTests);
-        }
-        delete merged.excludeTests;
-        const result = resolveSecrets(applyEnvOverrides(merged as unknown as CodegraphConfig));
-        _configCache.set(cwd, structuredClone(result));
-        return result;
+        const projectConfig = JSON.parse(raw) as Record<string, unknown>;
+        debug(`Loaded project config from ${filePath}`);
+        merged = mergeConfig(merged, projectConfig);
+        merged = applyExcludeTestsShorthand(merged, projectConfig);
+        break;
       } catch (err: unknown) {
         if (err instanceof ConfigError) throw err;
         debug(`Failed to parse config ${filePath}: ${toErrorMessage(err)}`);
       }
     }
   }
-  const defaults = resolveSecrets(applyEnvOverrides({ ...DEFAULTS }));
-  _configCache.set(cwd, structuredClone(defaults));
-  return defaults;
+
+  // ── Layers 3–4: env overrides + secret resolution ─────────────────
+  const result = resolveSecrets(applyEnvOverrides(merged as unknown as CodegraphConfig));
+  _configCache.set(cacheKey, structuredClone(result));
+  _globalConfigCache.set(cacheKey, _lastAppliedGlobalConfig);
+  return result;
 }
 
 /**
@@ -212,6 +582,66 @@ export function loadConfig(cwd?: string): CodegraphConfig {
  */
 export function clearConfigCache(): void {
   _configCache.clear();
+  _globalConfigCache.clear();
+}
+
+/**
+ * Load config and return it together with per-key provenance information.
+ * Used by `codegraph config --explain`.
+ *
+ * Calls loadConfig first so _lastAppliedGlobalConfig is populated, then uses
+ * that cached data for the global-layer provenance — avoiding a second disk
+ * read and eliminating the TOCTOU window between the two reads.
+ */
+export function loadConfigWithProvenance(
+  cwd?: string,
+  opts?: LoadConfigOpts,
+): import('../types.js').ConfigWithProvenance {
+  cwd = path.resolve(cwd || process.cwd());
+  const override = opts?.userConfig !== undefined ? opts.userConfig : _userConfigOverride;
+  const { applied, globalPath, consentDecision } = resolveConsent(
+    cwd,
+    override,
+    opts?.registryPath,
+  );
+
+  // Load (or return from cache) the merged config first — this also populates
+  // _lastAppliedGlobalConfig with the already-parsed and sanitized global layer.
+  const config = loadConfig(cwd, opts);
+
+  // Build provenance by tracking which layer supplies each top-level key
+  const provenance: Record<string, ConfigSource> = {};
+
+  // Layer 0: defaults — everything starts as 'default'
+  for (const k of Object.keys(DEFAULTS)) provenance[k] = 'default';
+
+  // Layer 1: global — reuse the data loadConfig already parsed (no second disk read)
+  const globalRaw = applied && globalPath ? _lastAppliedGlobalConfig : null;
+  if (globalRaw) {
+    for (const k of Object.keys(globalRaw)) provenance[k] = 'user';
+  }
+
+  // Layer 2: project
+  for (const name of CONFIG_FILES) {
+    const filePath = path.join(cwd, name);
+    if (fs.existsSync(filePath)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+        for (const k of Object.keys(raw)) provenance[k] = 'project';
+        break;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Layer 3+: env overrides (LLM keys)
+  const ENV_LLM_KEYS = ['CODEGRAPH_LLM_PROVIDER', 'CODEGRAPH_LLM_API_KEY', 'CODEGRAPH_LLM_MODEL'];
+  if (ENV_LLM_KEYS.some((k) => process.env[k] !== undefined)) {
+    provenance.llm = 'env';
+  }
+
+  return { config, provenance, appliedGlobalPath: applied ? globalPath : null, consentDecision };
 }
 
 const ENV_LLM_MAP: Record<string, string> = {

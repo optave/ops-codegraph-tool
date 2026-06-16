@@ -16,7 +16,10 @@ export const command: CommandDefinition = {
   ],
   async execute([dir], opts, ctx) {
     const root = path.resolve(dir || '.');
-    const engine = ctx.program.opts().engine;
+    const globalOpts = ctx.program.opts();
+    const engine = globalOpts.engine;
+    // Prompt for global-config consent on interactive TTY builds (§4.3).
+    const promptForConsent = !process.env.CI && !!process.stdin.isTTY && !!process.stdout.isTTY;
     await buildGraph(root, {
       incremental: opts.incremental as boolean,
       ast: opts.ast as boolean,
@@ -25,6 +28,8 @@ export const command: CommandDefinition = {
       dataflow: opts.dataflow as boolean,
       cfg: opts.cfg as boolean,
       dbPath: opts.db ? path.resolve(opts.db as string) : undefined,
+      userConfig: globalOpts.userConfig as string | boolean | undefined,
+      promptForConsent,
     });
   },
 };
