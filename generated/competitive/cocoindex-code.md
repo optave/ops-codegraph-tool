@@ -226,7 +226,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 4. **You want to index non-code files** — Markdown, JSON, YAML, HTML, plain text. Codegraph is code-only.
 5. **You need a batteries-included local embedding setup** — `[full]` install bundles torch + transformers + Nomic-embed. No separate embedding config needed.
 6. **You prefer Docker-based deployment** — official Docker images (slim + full) with Docker Compose examples. Codegraph has no official Docker image.
-7. **You use Codex, OpenCode, or OpenCode** — cocoindex-code documents setup for more AI editors. Codegraph currently documents Claude Code and Cursor.
+7. **You use Codex or OpenCode** — cocoindex-code documents setup for more AI editors. Codegraph currently documents Claude Code and Cursor.
 
 ### Use both together when:
 
@@ -300,7 +300,7 @@ cocoindex-code doesn't compete on codegraph's structural analysis principles —
 
 ## cocoindex-code-Inspired Feature Candidates
 
-Features from sections **C. Query Interface**, **E. Installation & Deployment**, and **F. AI Agent & MCP Integration** above, assessed using the [BACKLOG.md](../../docs/roadmap/BACKLOG.md) tier and grading system.
+Features from sections **E. Installation & Deployment**, **F. AI Agent & MCP Integration**, and **G. Developer Productivity Features** above, assessed using the [BACKLOG.md](../../docs/roadmap/BACKLOG.md) tier and grading system.
 
 ### Tier 1 — Zero-dep + Foundation-aligned
 
