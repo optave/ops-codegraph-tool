@@ -26,7 +26,7 @@ Graph existed from v3.11.0. Full rebuild triggered due to schema version change 
 
 ## 2. Cold Start (Pre-Build)
 
-Graph existed from prior session; skipped cold-start phase. Schema upgrade behavior confirmed: `codegraph build` correctly detects schema version change and promotes to full rebuild, printing:
+**Cold-start phase skipped:** A graph DB from a prior session (v3.11.0) was already present on disk. Because the cold-start measurement requires a completely absent DB, this phase was not taken. The schema upgrade path was validated instead: `codegraph build` correctly detects schema version change and promotes to full rebuild, printing:
 ```
 [codegraph] Schema version changed (16 → 17), promoting to full rebuild.
 [codegraph] Codegraph version changed (3.11.0 → 3.12.1-dev.67), promoting to full rebuild.
@@ -228,6 +228,8 @@ Source: `npx tsx scripts/benchmark.ts` and `scripts/incremental-benchmark.ts` (r
 | fnImpact | — | — | 4.1ms | 4.3ms |
 | diffImpact | 8.2ms | — | 7.3ms | — |
 
+**Note:** WASM query benchmark data for `fnDeps` and `fnImpact` at depth=1 and depth=5 was not collected during this session. The query-benchmark script was run in native-only mode. WASM query latency for these operations is not available from this run.
+
 Native delivers a **5x full-build speedup** and **3.8x one-file incremental speedup** over WASM.
 
 ---
@@ -284,6 +286,8 @@ These files (`crates/codegraph-core/index.js`, `index.d.ts`) are napi-generated 
 **Likely cause:** The napi-generated `index.d.ts` uses TypeScript declaration syntax that the Rust extractor may not handle (no function bodies, all `declare` statements). The `index.js` CJS wrapper with conditional `require` chains may also fail.
 
 **This is a minor issue for this specific repo.** Other repos won't see it unless they have similarly unusual auto-generated JS/TS files.
+
+**Tracked:** #1566
 
 ---
 
@@ -347,10 +351,13 @@ No critical bugs found. The tool is ready for pre-release testing.
 | #1543 | fix(parity): native emits extra dynamic CHA edges for fun/classes2 fixtures | Open |
 | #1544 | fix(parity): WASM emits super4 PostMixin CHA edges that native misses | Open |
 | #1552 | fix(parity): native missing receiver edge for function constructors | Open |
-| #1558 | feat(config): codegraph config --init and --edit scaffolding helpers | Open |
 | #1557 | feat: project-config changes should trigger full rebuild | Open |
+| #1558 | feat(config): codegraph config --init and --edit scaffolding helpers | Open |
+| #1561 | bug: batch command rejects --json flag with error instead of accepting it silently | Closed |
+| #1562 | bug: triage --level file JSON uses 'hotspots' key, --level function uses 'items' — inconsistent schema | Open |
+| #1566 | fix(native): native orchestrator drops napi-generated files on full build | Open |
 
-**New issues filed during this dogfood session:** None (BUG-2 and the `triage` JSON inconsistency are new findings; existing issues cover the rest).
+**New issues filed during this dogfood session:** #1561 (BUG-2: `batch --json` rejection), #1562 (`triage` JSON key inconsistency), #1566 (BUG-3: native orchestrator drops napi-generated files).
 
 ---
 
