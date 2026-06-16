@@ -222,7 +222,9 @@ async function doLoadLanguage(entry: LanguageRegistryEntry): Promise<void> {
         file: entry.grammarFile,
         cause: e as Error,
       });
-    warn(
+    const isEnoent = (e as NodeJS.ErrnoException).code === 'ENOENT';
+    const log = isEnoent ? debug : warn;
+    log(
       `${entry.id} parser failed to initialize: ${(e as Error).message}. ${entry.id} files will be skipped.`,
     );
     _cachedParsers!.set(entry.id, null);
