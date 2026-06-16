@@ -18,6 +18,7 @@ export const command: CommandDefinition = {
     ['-k, --kind <kind>', 'Filter by symbol kind'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
+    ['-j, --json', 'Accepted for script compatibility (batch always outputs JSON)'],
   ],
   validate([_command, _targets], opts) {
     if (opts.kind && !(EVERY_SYMBOL_KIND as readonly string[]).includes(opts.kind)) {
