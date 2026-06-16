@@ -23,7 +23,6 @@ import type { CommandDefinition } from '../types.js';
  * Uses DEFAULTS so the values always reflect the current schema.
  *
  * All keys are optional — users can delete sections they don't need.
- * The appliesTo wrapper format is documented in the file's own `$schema` hint.
  */
 function buildInitTemplate(): string {
   // Build a plain object — no comments in JSON, but keep it self-explanatory.
@@ -34,11 +33,11 @@ function buildInitTemplate(): string {
     // Scope to specific repos with:
     //   { "appliesTo": ["~/projects/*"], "config": { ... } }
     llm: {
-      provider: null,
-      model: null,
-      baseUrl: null,
-      apiKey: null,
-      apiKeyCommand: null,
+      provider: DEFAULTS.llm.provider,
+      model: DEFAULTS.llm.model,
+      baseUrl: DEFAULTS.llm.baseUrl,
+      apiKey: DEFAULTS.llm.apiKey,
+      apiKeyCommand: DEFAULTS.llm.apiKeyCommand,
     },
 
     query: {
@@ -75,7 +74,10 @@ export const command: CommandDefinition = {
     ['--enable-global', 'Record consent to apply the global config to this repo'],
     ['--disable-global', 'Record consent to skip the global config for this repo'],
     ['--list-global', 'List all repos with a recorded consent decision'],
-    ['--init', 'Scaffold a global config file at the default XDG location with commented examples'],
+    [
+      '--init',
+      'Scaffold a global config file at the default XDG location with all sections pre-populated',
+    ],
     ['--edit', 'Open the global config file in $EDITOR (prints the path if $EDITOR is unset)'],
   ],
   execute(_args, opts, ctx) {
