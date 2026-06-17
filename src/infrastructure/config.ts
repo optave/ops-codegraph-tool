@@ -29,6 +29,8 @@ export const DEFAULTS = {
     driftThreshold: 0.2,
     smallFilesThreshold: 5,
     typescriptResolver: true,
+    engine: 'auto' as 'auto' | 'native' | 'wasm',
+    fastSkipDiag: false,
   },
   query: {
     defaultDepth: 3,
@@ -658,8 +660,8 @@ export function loadConfigWithProvenance(
         const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
         for (const k of Object.keys(raw)) provenance[k] = 'project';
         break;
-      } catch {
-        // ignore
+      } catch (err) {
+        debug(`loadConfigWithProvenance: failed to parse ${filePath}: ${toErrorMessage(err)}`);
       }
     }
   }
@@ -685,6 +687,16 @@ export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {
       (config.llm as Record<string, unknown>)[field] =
         process.env[envKey as keyof NodeJS.ProcessEnv];
     }
+  }
+  // Engine selection: CODEGRAPH_ENGINE env always wins over config-file value.
+  if (process.env.CODEGRAPH_ENGINE !== undefined) {
+    const val = process.env.CODEGRAPH_ENGINE as 'auto' | 'native' | 'wasm';
+    (config.build as Record<string, unknown>).engine = val;
+  }
+  // Fast-skip diagnostic flag.
+  if (process.env.CODEGRAPH_FAST_SKIP_DIAG !== undefined) {
+    (config.build as Record<string, unknown>).fastSkipDiag =
+      process.env.CODEGRAPH_FAST_SKIP_DIAG === '1';
   }
   return config;
 }

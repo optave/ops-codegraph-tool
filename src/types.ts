@@ -1327,6 +1327,21 @@ export interface CodegraphConfig {
      * Default: false.
      */
     typescriptResolver: boolean;
+    /**
+     * Engine selection override. Equivalent to the `CODEGRAPH_ENGINE` env var and
+     * the `--engine` CLI flag. Values: `'auto'` (default), `'native'`, `'wasm'`.
+     * When set in config, takes lower priority than the CLI flag but higher than
+     * the default. Routed through `applyEnvOverrides` so `CODEGRAPH_ENGINE=wasm`
+     * always wins over a config-file value.
+     */
+    engine: 'auto' | 'native' | 'wasm';
+    /**
+     * Enable diagnostic logging for the native fast-skip pre-flight check.
+     * Equivalent to `CODEGRAPH_FAST_SKIP_DIAG=1`. When true, logs why the
+     * fast-skip gate was skipped (e.g. forceFullRebuild, engineName mismatch).
+     * Default: false.
+     */
+    fastSkipDiag: boolean;
   };
 
   query: {
