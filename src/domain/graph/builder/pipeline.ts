@@ -411,7 +411,8 @@ export async function buildGraph(
     // engineName, scope, etc.) we log the reason so the bench gate run
     // produces observable output even if `detectNoChanges` is never
     // entered.
-    const fastSkipDiag = process.env.CODEGRAPH_FAST_SKIP_DIAG === '1';
+    // Reads from config (which applies CODEGRAPH_FAST_SKIP_DIAG via applyEnvOverrides).
+    const fastSkipDiag = ctx.config.build.fastSkipDiag;
     if (fastSkipDiag) {
       const reasons: string[] = [];
       if (!ctx.nativeAvailable) reasons.push('nativeAvailable=false');
