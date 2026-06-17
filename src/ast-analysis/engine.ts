@@ -358,6 +358,32 @@ function reconcileCfgCyclomatic(fileSymbols: Map<string, ExtractorOutput>): void
 
 // ─── WASM pre-parse ─────────────────────────────────────────────────────
 
+// ─── Per-file analysis predicates ───────────────────────────────────────
+
+/** Whether a file needs WASM AST extraction (astNodes not yet populated). */
+function fileNeedsWasmAst(symbols: ExtractorOutput, ext: string, lid: string): boolean {
+  return !Array.isArray(symbols.astNodes) && (WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(lid));
+}
+
+/** Whether a file needs WASM complexity analysis (any function body missing metrics). */
+function fileNeedsWasmComplexity(symbols: ExtractorOutput, ext: string, lid: string): boolean {
+  if (!COMPLEXITY_EXTENSIONS.has(ext) && !COMPLEXITY_RULES.has(lid)) return false;
+  const defs = symbols.definitions || [];
+  return defs.some((d) => hasFuncBody(d) && !d.complexity);
+}
+
+/** Whether a file needs WASM CFG analysis (any function body missing CFG blocks). */
+function fileNeedsWasmCfg(symbols: ExtractorOutput, ext: string, lid: string): boolean {
+  if (!CFG_EXTENSIONS.has(ext) && !CFG_RULES.has(lid)) return false;
+  const defs = symbols.definitions || [];
+  return defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
+}
+
+/** Whether a file needs WASM dataflow analysis (dataflow not yet populated). */
+function fileNeedsWasmDataflow(symbols: ExtractorOutput, ext: string, lid: string): boolean {
+  return !symbols.dataflow && (DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(lid));
+}
+
 /** Check whether a single file needs a WASM tree for any enabled analysis pass. */
 function fileNeedsWasmTree(
   relPath: string,
@@ -366,33 +392,12 @@ function fileNeedsWasmTree(
 ): boolean {
   if (symbols._tree) return false;
   const ext = path.extname(relPath).toLowerCase();
-  const defs = symbols.definitions || [];
   const lid = symbols._langId || '';
 
-  if (
-    flags.doAst &&
-    !Array.isArray(symbols.astNodes) &&
-    (WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(lid))
-  )
-    return true;
-  if (
-    flags.doComplexity &&
-    (COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(lid)) &&
-    defs.some((d) => hasFuncBody(d) && !d.complexity)
-  )
-    return true;
-  if (
-    flags.doCfg &&
-    (CFG_EXTENSIONS.has(ext) || CFG_RULES.has(lid)) &&
-    defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks))
-  )
-    return true;
-  if (
-    flags.doDataflow &&
-    !symbols.dataflow &&
-    (DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(lid))
-  )
-    return true;
+  if (flags.doAst && fileNeedsWasmAst(symbols, ext, lid)) return true;
+  if (flags.doComplexity && fileNeedsWasmComplexity(symbols, ext, lid)) return true;
+  if (flags.doCfg && fileNeedsWasmCfg(symbols, ext, lid)) return true;
+  if (flags.doDataflow && fileNeedsWasmDataflow(symbols, ext, lid)) return true;
   return false;
 }
 
@@ -701,50 +706,25 @@ function allNativeDataComplete(
     const ext = path.extname(relPath).toLowerCase();
     const langId = symbols._langId || '';
 
-    // AST nodes: native must have produced them
-    if (
-      doAst &&
-      !Array.isArray(symbols.astNodes) &&
-      (WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(langId))
-    ) {
+    if (doAst && fileNeedsWasmAst(symbols, ext, langId)) {
       debug(`allNativeDataComplete: ${relPath} missing astNodes`);
       return false;
     }
-
-    // Dataflow: native must have produced it
-    if (
-      doDataflow &&
-      !symbols.dataflow &&
-      (DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(langId))
-    ) {
+    if (doDataflow && fileNeedsWasmDataflow(symbols, ext, langId)) {
       debug(`allNativeDataComplete: ${relPath} missing dataflow`);
       return false;
     }
-
-    const defs = symbols.definitions || [];
-    for (const def of defs) {
-      if (!hasFuncBody(def)) continue;
-
-      // Complexity: every function must already have it
-      if (
-        doComplexity &&
-        !def.complexity &&
-        (COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(langId))
-      ) {
-        debug(`allNativeDataComplete: ${relPath}:${def.name} missing complexity`);
-        return false;
-      }
-
-      // CFG: every function must already have blocks
-      if (
-        doCfg &&
-        def.cfg !== null &&
-        !Array.isArray(def.cfg?.blocks) &&
-        (CFG_EXTENSIONS.has(ext) || CFG_RULES.has(langId))
-      ) {
-        debug(`allNativeDataComplete: ${relPath}:${def.name} missing cfg blocks`);
-        return false;
-      }
+    if (doComplexity && fileNeedsWasmComplexity(symbols, ext, langId)) {
+      const offender = (symbols.definitions || []).find((d) => hasFuncBody(d) && !d.complexity);
+      debug(`allNativeDataComplete: ${relPath}:${offender?.name ?? '?'} missing complexity`);
+      return false;
+    }
+    if (doCfg && fileNeedsWasmCfg(symbols, ext, langId)) {
+      const offender = (symbols.definitions || []).find(
+        (d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks),
+      );
+      debug(`allNativeDataComplete: ${relPath}:${offender?.name ?? '?'} missing cfg blocks`);
+      return false;
     }
   }
 

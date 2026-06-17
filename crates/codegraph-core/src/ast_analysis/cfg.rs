@@ -920,7 +920,14 @@ impl<'a> CfgBuilder<'a> {
 
         let join_block = self.make_block("body", None, None, None);
 
-        // True branch
+        self.process_if_true_branch(if_stmt, cond_block, join_block);
+        self.process_if_false_branch(if_stmt, cond_block, join_block, depth);
+
+        Some(join_block)
+    }
+
+    /// Wire up the true branch of an if statement.
+    fn process_if_true_branch(&mut self, if_stmt: &Node, cond_block: u32, join_block: u32) {
         let consequent_field = self.rules.if_consequent_field.unwrap_or("consequence");
         let consequent = if_stmt.child_by_field_name(consequent_field);
         let true_block = self.make_block("branch_true", None, None, Some("then"));
@@ -935,70 +942,80 @@ impl<'a> CfgBuilder<'a> {
         } else {
             self.add_edge(true_block, join_block, "fallthrough");
         }
+    }
 
-        // False branch
+    /// Wire up the false branch of an if statement (elif siblings, alternative, or no-else).
+    fn process_if_false_branch(&mut self, if_stmt: &Node, cond_block: u32, join_block: u32, depth: usize) {
         if self.rules.elif_node.is_some() {
             // Pattern B: elif/else as siblings
             self.process_elif_siblings(if_stmt, cond_block, join_block);
-        } else {
-            let alternative = if_stmt.child_by_field_name("alternative");
-            if let Some(alternative) = alternative {
-                let alt_kind = alternative.kind();
-                if self.rules.else_via_alternative && !matches_opt(alt_kind, self.rules.else_clause) {
-                    // Pattern C: alternative points directly to if or block
-                    if matches_opt(alt_kind, self.rules.if_node) || matches_slice(alt_kind, self.rules.if_nodes) {
-                        let false_block = self.make_block("branch_false", None, None, Some("else-if"));
-                        self.add_edge(cond_block, false_block, "branch_false");
-                        let else_if_end = self.process_if_depth(&alternative, false_block, depth + 1);
-                        if let Some(eie) = else_if_end {
-                            self.add_edge(eie, join_block, "fallthrough");
-                        }
-                    } else {
-                        let false_block = self.make_block("branch_false", None, None, Some("else"));
-                        self.add_edge(cond_block, false_block, "branch_false");
-                        let false_stmts = self.get_statements(&alternative);
-                        let false_end = self.process_statements(&false_stmts, false_block);
-                        if let Some(fe) = false_end {
-                            self.add_edge(fe, join_block, "fallthrough");
-                        }
-                    }
-                } else if matches_opt(alt_kind, self.rules.else_clause) {
-                    // Pattern A: else_clause wrapper
-                    let else_children: Vec<Node> = {
-                        let cursor = &mut alternative.walk();
-                        alternative.named_children(cursor).collect()
-                    };
-                    if else_children.len() == 1
-                        && (matches_opt(else_children[0].kind(), self.rules.if_node)
-                            || matches_slice(else_children[0].kind(), self.rules.if_nodes))
-                    {
-                        // else-if: recurse
-                        let false_block = self.make_block("branch_false", None, None, Some("else-if"));
-                        self.add_edge(cond_block, false_block, "branch_false");
-                        let else_if_end = self.process_if_depth(&else_children[0], false_block, depth + 1);
-                        if let Some(eie) = else_if_end {
-                            self.add_edge(eie, join_block, "fallthrough");
-                        }
-                    } else {
-                        // else block
-                        let false_block = self.make_block("branch_false", None, None, Some("else"));
-                        self.add_edge(cond_block, false_block, "branch_false");
-                        let false_end = self.process_statements(&else_children, false_block);
-                        if let Some(fe) = false_end {
-                            self.add_edge(fe, join_block, "fallthrough");
-                        }
-                    }
-                } else {
-                    // Unknown alternative type — treat as no else
-                    self.add_edge(cond_block, join_block, "branch_false");
-                }
-            } else {
-                // No else: condition-false goes to join
-                self.add_edge(cond_block, join_block, "branch_false");
-            }
+            return;
         }
 
-        Some(join_block)
+        let alternative = if_stmt.child_by_field_name("alternative");
+        let Some(alternative) = alternative else {
+            // No else: condition-false goes to join
+            self.add_edge(cond_block, join_block, "branch_false");
+            return;
+        };
+
+        let alt_kind = alternative.kind();
+        if self.rules.else_via_alternative && !matches_opt(alt_kind, self.rules.else_clause) {
+            self.process_if_alternative_c(alternative, alt_kind, cond_block, join_block, depth);
+        } else if matches_opt(alt_kind, self.rules.else_clause) {
+            self.process_if_else_clause(alternative, cond_block, join_block, depth);
+        } else {
+            // Unknown alternative type — treat as no else
+            self.add_edge(cond_block, join_block, "branch_false");
+        }
+    }
+
+    /// Pattern C: alternative points directly to if or block (else_via_alternative languages).
+    fn process_if_alternative_c(&mut self, alternative: Node, alt_kind: &str, cond_block: u32, join_block: u32, depth: usize) {
+        if matches_opt(alt_kind, self.rules.if_node) || matches_slice(alt_kind, self.rules.if_nodes) {
+            let false_block = self.make_block("branch_false", None, None, Some("else-if"));
+            self.add_edge(cond_block, false_block, "branch_false");
+            let else_if_end = self.process_if_depth(&alternative, false_block, depth + 1);
+            if let Some(eie) = else_if_end {
+                self.add_edge(eie, join_block, "fallthrough");
+            }
+        } else {
+            let false_block = self.make_block("branch_false", None, None, Some("else"));
+            self.add_edge(cond_block, false_block, "branch_false");
+            let false_stmts = self.get_statements(&alternative);
+            let false_end = self.process_statements(&false_stmts, false_block);
+            if let Some(fe) = false_end {
+                self.add_edge(fe, join_block, "fallthrough");
+            }
+        }
+    }
+
+    /// Pattern A: else_clause wrapper (else { ... } or else if ...).
+    fn process_if_else_clause(&mut self, alternative: Node, cond_block: u32, join_block: u32, depth: usize) {
+        let else_children: Vec<Node> = {
+            let cursor = &mut alternative.walk();
+            alternative.named_children(cursor).collect()
+        };
+        if else_children.len() == 1
+            && (matches_opt(else_children[0].kind(), self.rules.if_node)
+                || matches_slice(else_children[0].kind(), self.rules.if_nodes))
+        {
+            // else-if: recurse
+            let false_block = self.make_block("branch_false", None, None, Some("else-if"));
+            self.add_edge(cond_block, false_block, "branch_false");
+            let else_if_end = self.process_if_depth(&else_children[0], false_block, depth + 1);
+            if let Some(eie) = else_if_end {
+                self.add_edge(eie, join_block, "fallthrough");
+            }
+        } else {
+            // else block
+            let false_block = self.make_block("branch_false", None, None, Some("else"));
+            self.add_edge(cond_block, false_block, "branch_false");
+            let false_end = self.process_statements(&else_children, false_block);
+            if let Some(fe) = false_end {
+                self.add_edge(fe, join_block, "fallthrough");
+            }
+        }
     }
 
     /// Pattern B: elif/elsif/else_if as sibling children of the if node.
@@ -1232,51 +1249,10 @@ impl<'a> CfgBuilder<'a> {
         let case_children: Vec<Node> = container.named_children(cursor).collect();
 
         for case_clause in &case_children {
-            let cc_kind = case_clause.kind();
-            let is_default = matches_opt(cc_kind, self.rules.default_node)
-                || (self.rules.wildcard_pattern_node.is_some()
-                    && (matches_opt(cc_kind, self.rules.case_node) || matches_slice(cc_kind, self.rules.case_nodes))
-                    && case_clause.named_child(0)
-                        .is_some_and(|c| matches_opt(c.kind(), self.rules.wildcard_pattern_node)));
-            let is_case = is_default
-                || matches_opt(cc_kind, self.rules.case_node)
-                || matches_slice(cc_kind, self.rules.case_nodes);
-
-            if !is_case {
-                continue;
-            }
-
-            let case_label = if is_default { "default" } else { "case" };
-            let case_block = self.make_block("case", Some(node_line(case_clause)), None, Some(case_label));
-            let edge_kind = if is_default { "branch_false" } else { "branch_true" };
-            self.add_edge(switch_header, case_block, edge_kind);
-            if is_default {
-                has_default = true;
-            }
-
-            // Extract case body
-            let case_body_node = case_clause.child_by_field_name("body")
-                .or_else(|| case_clause.child_by_field_name("consequence"));
-
-            let case_stmts: Vec<Node> = if let Some(body_node) = case_body_node {
-                self.get_statements(&body_node)
-            } else if let Some(value_node) = case_clause.child_by_field_name("value") {
-                // Rust match_arm: the `value` field is the arm expression body
-                vec![value_node]
-            } else {
-                let pattern_node = case_clause.child_by_field_name("pattern");
-                let cursor2 = &mut case_clause.walk();
-                case_clause.named_children(cursor2)
-                    .filter(|child| {
-                        if let Some(ref p) = pattern_node { if child.id() == p.id() { return false; } }
-                        child.kind() != "switch_label"
-                    })
-                    .collect()
-            };
-
-            let case_end = self.process_statements(&case_stmts, case_block);
-            if let Some(ce) = case_end {
-                self.add_edge(ce, join_block, "fallthrough");
+            if let Some(is_default) = self.process_switch_case(case_clause, switch_header, join_block) {
+                if is_default {
+                    has_default = true;
+                }
             }
         }
 
@@ -1288,12 +1264,87 @@ impl<'a> CfgBuilder<'a> {
         Some(join_block)
     }
 
+    /// Process a single case clause within a switch statement.
+    /// Returns `Some(is_default)` if the clause was a case/default, `None` if skipped.
+    fn process_switch_case(&mut self, case_clause: &Node, switch_header: u32, join_block: u32) -> Option<bool> {
+        let cc_kind = case_clause.kind();
+        let is_default = matches_opt(cc_kind, self.rules.default_node)
+            || (self.rules.wildcard_pattern_node.is_some()
+                && (matches_opt(cc_kind, self.rules.case_node) || matches_slice(cc_kind, self.rules.case_nodes))
+                && case_clause.named_child(0)
+                    .is_some_and(|c| matches_opt(c.kind(), self.rules.wildcard_pattern_node)));
+        let is_case = is_default
+            || matches_opt(cc_kind, self.rules.case_node)
+            || matches_slice(cc_kind, self.rules.case_nodes);
+
+        if !is_case {
+            return None;
+        }
+
+        let case_label = if is_default { "default" } else { "case" };
+        let case_block = self.make_block("case", Some(node_line(case_clause)), None, Some(case_label));
+        let edge_kind = if is_default { "branch_false" } else { "branch_true" };
+        self.add_edge(switch_header, case_block, edge_kind);
+
+        let case_stmts = self.extract_case_stmts(case_clause);
+        let case_end = self.process_statements(&case_stmts, case_block);
+        if let Some(ce) = case_end {
+            self.add_edge(ce, join_block, "fallthrough");
+        }
+
+        Some(is_default)
+    }
+
+    /// Extract the statement list from a case clause body.
+    fn extract_case_stmts<'b>(&self, case_clause: &Node<'b>) -> Vec<Node<'b>> {
+        let case_body_node = case_clause.child_by_field_name("body")
+            .or_else(|| case_clause.child_by_field_name("consequence"));
+
+        if let Some(body_node) = case_body_node {
+            self.get_statements(&body_node)
+        } else if let Some(value_node) = case_clause.child_by_field_name("value") {
+            // Rust match_arm: the `value` field is the arm expression body
+            vec![value_node]
+        } else {
+            let pattern_node = case_clause.child_by_field_name("pattern");
+            let cursor2 = &mut case_clause.walk();
+            case_clause.named_children(cursor2)
+                .filter(|child| {
+                    if let Some(ref p) = pattern_node { if child.id() == p.id() { return false; } }
+                    child.kind() != "switch_label"
+                })
+                .collect()
+        }
+    }
+
     fn process_try_catch(&mut self, try_stmt: &Node, current: u32) -> Option<u32> {
         self.set_end_line(current, node_line(try_stmt));
 
         let join_block = self.make_block("body", None, None, None);
 
         // Try body
+        let (try_block, try_end) = self.process_try_body(try_stmt, current);
+
+        // Find catch, finally, and else handlers
+        let (catch_handlers, finally_handler, else_handler) = self.collect_try_handlers(try_stmt);
+
+        // Process else clause (Python try...except...else): runs when try succeeds
+        let success_end = self.process_try_else(else_handler, try_end);
+
+        if !catch_handlers.is_empty() {
+            let catch_ends = self.process_catch_handlers(&catch_handlers, try_block);
+            self.wire_finally_or_join(finally_handler, success_end, &catch_ends, join_block);
+        } else if let Some(finally_node) = finally_handler {
+            self.process_finally_block(finally_node, success_end, &[], join_block);
+        } else if let Some(se) = success_end {
+            self.add_edge(se, join_block, "fallthrough");
+        }
+
+        Some(join_block)
+    }
+
+    /// Extract and process the try-body statements; returns (try_block_idx, try_end).
+    fn process_try_body(&mut self, try_stmt: &Node, current: u32) -> (u32, Option<u32>) {
         let try_body = try_stmt.child_by_field_name("body");
         let (try_body_start, try_stmts): (u32, Vec<Node>) = if let Some(body) = try_body {
             (node_line(&body), self.get_statements(&body))
@@ -1313,8 +1364,16 @@ impl<'a> CfgBuilder<'a> {
         let try_block = self.make_block("body", Some(try_body_start), None, Some("try"));
         self.add_edge(current, try_block, "fallthrough");
         let try_end = self.process_statements(&try_stmts, try_block);
+        (try_block, try_end)
+    }
 
-        // Find catch, finally, and else handlers
+    /// Collect catch, finally, and else handler nodes from a try statement.
+    ///
+    /// Iterates only over direct children of `try_stmt`: this is both necessary and sufficient
+    /// because tree-sitter represents each handler clause as a direct child of the try node.
+    /// Only treat as try-else if it's a direct child of the try statement
+    /// (not the else_clause of an if inside the try body).
+    fn collect_try_handlers<'b>(&self, try_stmt: &Node<'b>) -> (Vec<Node<'b>>, Option<Node<'b>>, Option<Node<'b>>) {
         let mut catch_handlers: Vec<Node> = Vec::new();
         let mut finally_handler: Option<Node> = None;
         let mut else_handler: Option<Node> = None;
@@ -1327,14 +1386,15 @@ impl<'a> CfgBuilder<'a> {
                 finally_handler = Some(child);
             }
             if matches_opt(child.kind(), self.rules.else_node) {
-                // Only treat as try-else if it's a direct child of the try statement
-                // (not the else_clause of an if inside the try body)
                 else_handler = Some(child);
             }
         }
+        (catch_handlers, finally_handler, else_handler)
+    }
 
-        // Process else clause (Python try...except...else): runs when try succeeds
-        let success_end = if let Some(else_node) = else_handler {
+    /// Process the optional else clause of a try statement (Python try...except...else).
+    fn process_try_else(&mut self, else_handler: Option<Node>, try_end: Option<u32>) -> Option<u32> {
+        if let Some(else_node) = else_handler {
             let else_block = self.make_block("body", Some(node_line(&else_node)), None, Some("else"));
             if let Some(te) = try_end {
                 self.add_edge(te, else_block, "fallthrough");
@@ -1343,78 +1403,66 @@ impl<'a> CfgBuilder<'a> {
             self.process_statements(&else_stmts, else_block)
         } else {
             try_end
-        };
+        }
+    }
 
-        if !catch_handlers.is_empty() {
-            let mut catch_ends: Vec<Option<u32>> = Vec::new();
+    /// Process all catch handlers, returning the list of catch-end block indices.
+    fn process_catch_handlers(&mut self, catch_handlers: &[Node], try_block: u32) -> Vec<Option<u32>> {
+        let mut catch_ends: Vec<Option<u32>> = Vec::new();
+        for catch_node in catch_handlers {
+            let catch_block = self.make_block("catch", Some(node_line(catch_node)), None, Some("catch"));
+            self.add_edge(try_block, catch_block, "exception");
 
-            for catch_node in &catch_handlers {
-                let catch_block = self.make_block("catch", Some(node_line(catch_node)), None, Some("catch"));
-                self.add_edge(try_block, catch_block, "exception");
-
-                let catch_body_node = catch_node.child_by_field_name("body");
-                let catch_stmts: Vec<Node> = if let Some(body) = catch_body_node {
-                    self.get_statements(&body)
-                } else {
-                    let cursor2 = &mut catch_node.walk();
-                    catch_node.named_children(cursor2).collect()
-                };
-                let catch_end = self.process_statements(&catch_stmts, catch_block);
-                catch_ends.push(catch_end);
-            }
-
-            if let Some(finally_node) = finally_handler {
-                let finally_block = self.make_block("finally", Some(node_line(&finally_node)), None, Some("finally"));
-                if let Some(se) = success_end {
-                    self.add_edge(se, finally_block, "fallthrough");
-                }
-                for catch_end in &catch_ends {
-                    if let Some(ce) = *catch_end {
-                        self.add_edge(ce, finally_block, "fallthrough");
-                    }
-                }
-                let finally_body = finally_node.child_by_field_name("body");
-                let finally_stmts: Vec<Node> = if let Some(body) = finally_body {
-                    self.get_statements(&body)
-                } else {
-                    self.get_statements(&finally_node)
-                };
-                let finally_end = self.process_statements(&finally_stmts, finally_block);
-                if let Some(fe) = finally_end {
-                    self.add_edge(fe, join_block, "fallthrough");
-                }
-            } else {
-                if let Some(se) = success_end {
-                    self.add_edge(se, join_block, "fallthrough");
-                }
-                for catch_end in &catch_ends {
-                    if let Some(ce) = *catch_end {
-                        self.add_edge(ce, join_block, "fallthrough");
-                    }
-                }
-            }
-        } else if let Some(finally_node) = finally_handler {
-            let finally_block = self.make_block("finally", Some(node_line(&finally_node)), None, Some("finally"));
-            if let Some(se) = success_end {
-                self.add_edge(se, finally_block, "fallthrough");
-            }
-            let finally_body = finally_node.child_by_field_name("body");
-            let finally_stmts: Vec<Node> = if let Some(body) = finally_body {
+            let catch_body_node = catch_node.child_by_field_name("body");
+            let catch_stmts: Vec<Node> = if let Some(body) = catch_body_node {
                 self.get_statements(&body)
             } else {
-                self.get_statements(&finally_node)
+                let cursor2 = &mut catch_node.walk();
+                catch_node.named_children(cursor2).collect()
             };
-            let finally_end = self.process_statements(&finally_stmts, finally_block);
-            if let Some(fe) = finally_end {
-                self.add_edge(fe, join_block, "fallthrough");
-            }
+            let catch_end = self.process_statements(&catch_stmts, catch_block);
+            catch_ends.push(catch_end);
+        }
+        catch_ends
+    }
+
+    /// Wire a finally block (or direct join edges when there is no finally).
+    fn wire_finally_or_join(&mut self, finally_handler: Option<Node>, success_end: Option<u32>, catch_ends: &[Option<u32>], join_block: u32) {
+        if let Some(finally_node) = finally_handler {
+            self.process_finally_block(finally_node, success_end, catch_ends, join_block);
         } else {
             if let Some(se) = success_end {
                 self.add_edge(se, join_block, "fallthrough");
             }
+            for catch_end in catch_ends {
+                if let Some(ce) = *catch_end {
+                    self.add_edge(ce, join_block, "fallthrough");
+                }
+            }
         }
+    }
 
-        Some(join_block)
+    /// Process a finally block, wiring all predecessor ends into it and its end to join.
+    fn process_finally_block(&mut self, finally_node: Node, success_end: Option<u32>, catch_ends: &[Option<u32>], join_block: u32) {
+        let finally_block = self.make_block("finally", Some(node_line(&finally_node)), None, Some("finally"));
+        if let Some(se) = success_end {
+            self.add_edge(se, finally_block, "fallthrough");
+        }
+        for catch_end in catch_ends {
+            if let Some(ce) = *catch_end {
+                self.add_edge(ce, finally_block, "fallthrough");
+            }
+        }
+        let finally_body = finally_node.child_by_field_name("body");
+        let finally_stmts: Vec<Node> = if let Some(body) = finally_body {
+            self.get_statements(&body)
+        } else {
+            self.get_statements(&finally_node)
+        };
+        let finally_end = self.process_statements(&finally_stmts, finally_block);
+        if let Some(fe) = finally_end {
+            self.add_edge(fe, join_block, "fallthrough");
+        }
     }
 }
 

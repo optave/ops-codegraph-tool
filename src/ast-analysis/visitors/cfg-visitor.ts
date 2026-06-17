@@ -27,97 +27,28 @@ import { processTryCatch } from './cfg-try-catch.js';
 
 export type { CfgBlockInternal } from './cfg-shared.js';
 
-function processStatements(
+// ─── Statement handler dispatch ─────────────────────────────────────────
+
+type BoundProcessStatements = (
   stmts: TreeSitterNode[],
   currentBlock: CfgBlockInternal,
   S: FuncState,
-  cfgRules: AnyRules,
-): CfgBlockInternal | null {
-  let cur: CfgBlockInternal | null = currentBlock;
-  for (const stmt of stmts) {
-    if (!cur) break;
-    cur = processStatement(stmt, cur, S, cfgRules);
-  }
-  return cur;
-}
+) => CfgBlockInternal | null;
 
-function processStatement(
-  stmt: TreeSitterNode,
-  currentBlock: CfgBlockInternal,
-  S: FuncState,
-  cfgRules: AnyRules,
-): CfgBlockInternal | null {
-  if (!stmt || !currentBlock) return currentBlock;
-
-  const effNode = effectiveNode(stmt, cfgRules);
-  const type = effNode.type;
-
-  if (type === cfgRules.labeledNode) {
-    return processLabeled(effNode, currentBlock, S, cfgRules);
-  }
-  if (isIfNode(type, cfgRules) || (cfgRules.unlessNode && type === cfgRules.unlessNode)) {
-    return processIf(effNode, currentBlock, S, cfgRules, processStatements);
-  }
-  if (isForNode(type, cfgRules)) {
-    return processForLoop(effNode, currentBlock, S, cfgRules, processStatements);
-  }
-  if (isWhileNode(type, cfgRules) || (cfgRules.untilNode && type === cfgRules.untilNode)) {
-    return processWhileLoop(effNode, currentBlock, S, cfgRules, processStatements);
-  }
-  if (cfgRules.doNode && type === cfgRules.doNode) {
-    return processDoWhileLoop(effNode, currentBlock, S, cfgRules, processStatements);
-  }
-  if (cfgRules.infiniteLoopNode && type === cfgRules.infiniteLoopNode) {
-    return processInfiniteLoop(effNode, currentBlock, S, cfgRules, processStatements);
-  }
-  if (isSwitchNode(type, cfgRules)) {
-    return processSwitch(effNode, currentBlock, S, cfgRules, processStatements);
-  }
-  if (cfgRules.tryNode && type === cfgRules.tryNode) {
-    return processTryCatch(effNode, currentBlock, S, cfgRules, processStatements);
-  }
-  if (type === cfgRules.returnNode) {
-    currentBlock.endLine = effNode.startPosition.row + 1;
-    S.addEdge(currentBlock, S.exitBlock, 'return');
-    return null;
-  }
-  if (type === cfgRules.throwNode) {
-    currentBlock.endLine = effNode.startPosition.row + 1;
-    S.addEdge(currentBlock, S.exitBlock, 'exception');
-    return null;
-  }
-  if (type === cfgRules.breakNode) {
-    return processBreak(effNode, currentBlock, S);
-  }
-  if (type === cfgRules.continueNode) {
-    return processContinue(effNode, currentBlock, S);
-  }
-
-  if (!currentBlock.startLine) {
-    currentBlock.startLine = stmt.startPosition.row + 1;
-  }
-  currentBlock.endLine = stmt.endPosition.row + 1;
-  return currentBlock;
-}
-
-function processLabeled(
+type StatementHandler = (
   node: TreeSitterNode,
   currentBlock: CfgBlockInternal,
   S: FuncState,
   cfgRules: AnyRules,
-): CfgBlockInternal | null {
-  const labelNode = node.childForFieldName('label');
-  const labelName = labelNode ? labelNode.text : null;
-  const body = node.childForFieldName('body');
-  if (body && labelName) {
-    const labelCtx: LabelCtx = { headerBlock: null, exitBlock: null };
-    S.labelMap.set(labelName, labelCtx);
-    const result = processStatement(body, currentBlock, S, cfgRules);
-    S.labelMap.delete(labelName);
-    return result;
-  }
-  return currentBlock;
+  processStmts: BoundProcessStatements,
+) => CfgBlockInternal | null;
+
+interface StatementEntry {
+  match: (type: string) => boolean;
+  handle: StatementHandler;
 }
+
+// ─── Helpers that do not depend on the dispatch closure ─────────────────
 
 function processBreak(
   node: TreeSitterNode,
@@ -165,7 +96,186 @@ function processContinue(
   return currentBlock;
 }
 
-function processFunctionBody(funcNode: TreeSitterNode, S: FuncState, cfgRules: AnyRules): void {
+// ─── Dispatch table builder ──────────────────────────────────────────────
+
+// ─── Terminal statement handlers (no processStatements dependency) ───────
+
+function handleReturn(n: TreeSitterNode, b: CfgBlockInternal, S: FuncState): null {
+  b.endLine = n.startPosition.row + 1;
+  S.addEdge(b, S.exitBlock, 'return');
+  return null;
+}
+
+function handleThrow(n: TreeSitterNode, b: CfgBlockInternal, S: FuncState): null {
+  b.endLine = n.startPosition.row + 1;
+  S.addEdge(b, S.exitBlock, 'exception');
+  return null;
+}
+
+/**
+ * Lookup structure for statement dispatch.
+ * - `map`: O(1) lookup for single-type matchers (one concrete node-type string per handler).
+ * - `fallback`: short linear scan for multi-predicate entries (if/for/while/switch rules that
+ *   match multiple concrete type strings depending on the language).
+ */
+interface StatementDispatch {
+  map: Map<string, StatementHandler>;
+  fallback: StatementEntry[];
+}
+
+/**
+ * Build a dispatch table for statement node types from cfgRules.
+ * Built once per createCfgVisitor call; optional entries (doNode, infiniteLoopNode,
+ * tryNode) are included only when the language rules define them.
+ *
+ * Single-type matchers go into a Map for O(1) lookup; multi-predicate entries
+ * (isIfNode, isForNode, isWhileNode, isSwitchNode) stay in a short fallback array
+ * scanned only on a map miss.
+ */
+function buildStatementDispatch(
+  cfgRules: AnyRules,
+  processLabeledFn: (
+    n: TreeSitterNode,
+    b: CfgBlockInternal,
+    S: FuncState,
+  ) => CfgBlockInternal | null,
+): StatementDispatch {
+  const map = new Map<string, StatementHandler>();
+
+  // Single-type required matchers
+  if (cfgRules.labeledNode) map.set(cfgRules.labeledNode, (n, b, S) => processLabeledFn(n, b, S));
+  if (cfgRules.returnNode) map.set(cfgRules.returnNode, handleReturn);
+  if (cfgRules.throwNode) map.set(cfgRules.throwNode, handleThrow);
+  if (cfgRules.breakNode) map.set(cfgRules.breakNode, (n, b, S) => processBreak(n, b, S));
+  if (cfgRules.continueNode) map.set(cfgRules.continueNode, (n, b, S) => processContinue(n, b, S));
+
+  // Single-type optional matchers
+  if (cfgRules.doNode)
+    map.set(cfgRules.doNode, (n, b, S, r, ps) => processDoWhileLoop(n, b, S, r, ps));
+  if (cfgRules.infiniteLoopNode)
+    map.set(cfgRules.infiniteLoopNode, (n, b, S, r, ps) => processInfiniteLoop(n, b, S, r, ps));
+  if (cfgRules.tryNode)
+    map.set(cfgRules.tryNode, (n, b, S, r, ps) => processTryCatch(n, b, S, r, ps));
+
+  // Multi-predicate entries that can match several concrete type strings per language;
+  // also handles unlessNode/untilNode aliases for if/while which may collide with other
+  // single-type map keys.
+  const fallback: StatementEntry[] = [
+    {
+      match: (t) => isIfNode(t, cfgRules) || (!!cfgRules.unlessNode && t === cfgRules.unlessNode),
+      handle: (n, b, S, r, ps) => processIf(n, b, S, r, ps),
+    },
+    {
+      match: (t) => isForNode(t, cfgRules),
+      handle: (n, b, S, r, ps) => processForLoop(n, b, S, r, ps),
+    },
+    {
+      match: (t) => isWhileNode(t, cfgRules) || (!!cfgRules.untilNode && t === cfgRules.untilNode),
+      handle: (n, b, S, r, ps) => processWhileLoop(n, b, S, r, ps),
+    },
+    {
+      match: (t) => isSwitchNode(t, cfgRules),
+      handle: (n, b, S, r, ps) => processSwitch(n, b, S, r, ps),
+    },
+  ];
+
+  return { map, fallback };
+}
+
+// ─── Bound statement processors ──────────────────────────────────────────
+
+/**
+ * Build {processStatement, processStatements} bound to cfgRules and a
+ * pre-built dispatch table. The two functions are mutually recursive via
+ * the closure — no cfgRules arguments needed at call sites inside the visitor.
+ */
+function buildStatementProcessors(cfgRules: AnyRules): {
+  processStatement: (
+    stmt: TreeSitterNode,
+    currentBlock: CfgBlockInternal,
+    S: FuncState,
+  ) => CfgBlockInternal | null;
+  processStatements: BoundProcessStatements;
+} {
+  // processLabeled needs processStatement from this closure, so we forward-declare
+  // it and patch it in after processStatement is defined.
+  let processStatementRef: (
+    stmt: TreeSitterNode,
+    block: CfgBlockInternal,
+    S: FuncState,
+  ) => CfgBlockInternal | null;
+
+  function processLabeled(
+    node: TreeSitterNode,
+    currentBlock: CfgBlockInternal,
+    S: FuncState,
+  ): CfgBlockInternal | null {
+    const labelNode = node.childForFieldName('label');
+    const labelName = labelNode ? labelNode.text : null;
+    const body = node.childForFieldName('body');
+    if (body && labelName) {
+      const labelCtx: LabelCtx = { headerBlock: null, exitBlock: null };
+      S.labelMap.set(labelName, labelCtx);
+      const result = processStatementRef(body, currentBlock, S);
+      S.labelMap.delete(labelName);
+      return result;
+    }
+    return currentBlock;
+  }
+
+  const dispatch = buildStatementDispatch(cfgRules, processLabeled);
+
+  function processStatement(
+    stmt: TreeSitterNode,
+    currentBlock: CfgBlockInternal,
+    S: FuncState,
+  ): CfgBlockInternal | null {
+    if (!stmt || !currentBlock) return currentBlock;
+
+    const effNode = effectiveNode(stmt, cfgRules);
+    const type = effNode.type;
+
+    // O(1) map lookup first; fall back to the short multi-predicate array on a miss
+    const mapHandler = dispatch.map.get(type);
+    if (mapHandler) return mapHandler(effNode, currentBlock, S, cfgRules, processStatements);
+    const fallbackEntry = dispatch.fallback.find((e) => e.match(type));
+    if (fallbackEntry)
+      return fallbackEntry.handle(effNode, currentBlock, S, cfgRules, processStatements);
+
+    if (!currentBlock.startLine) {
+      currentBlock.startLine = stmt.startPosition.row + 1;
+    }
+    currentBlock.endLine = stmt.endPosition.row + 1;
+    return currentBlock;
+  }
+
+  // Wire the forward reference so processLabeled can call processStatement
+  processStatementRef = processStatement;
+
+  function processStatements(
+    stmts: TreeSitterNode[],
+    currentBlock: CfgBlockInternal,
+    S: FuncState,
+  ): CfgBlockInternal | null {
+    let cur: CfgBlockInternal | null = currentBlock;
+    for (const stmt of stmts) {
+      if (!cur) break;
+      cur = processStatement(stmt, cur, S);
+    }
+    return cur;
+  }
+
+  return { processStatement, processStatements };
+}
+
+// ─── Function body walker ────────────────────────────────────────────────
+
+function processFunctionBody(
+  funcNode: TreeSitterNode,
+  S: FuncState,
+  cfgRules: AnyRules,
+  processStatements: BoundProcessStatements,
+): void {
   const body = funcNode.childForFieldName('body');
   if (!body) {
     S.blocks.length = 2;
@@ -194,17 +304,21 @@ function processFunctionBody(funcNode: TreeSitterNode, S: FuncState, cfgRules: A
   }
 
   const firstBody = S.blocks[2]!;
-  const lastBlock = processStatements(stmts, firstBody, S, cfgRules);
+  const lastBlock = processStatements(stmts, firstBody, S);
   if (lastBlock) {
     S.addEdge(lastBlock, S.exitBlock, 'fallthrough');
   }
   S.currentBlock = null;
 }
 
+// ─── Public visitor factory ───────────────────────────────────────────────
+
 export function createCfgVisitor(cfgRules: AnyRules): Visitor {
   const funcStateStack: FuncState[] = [];
   let S: FuncState | null = null;
   const results: CFGResultInternal[] = [];
+
+  const { processStatements } = buildStatementProcessors(cfgRules);
 
   return {
     name: 'cfg',
@@ -218,7 +332,7 @@ export function createCfgVisitor(cfgRules: AnyRules): Visitor {
       if (S) funcStateStack.push(S);
       S = makeFuncState();
       S.funcNode = funcNode;
-      processFunctionBody(funcNode, S, cfgRules);
+      processFunctionBody(funcNode, S, cfgRules, processStatements);
     },
 
     exitFunction(

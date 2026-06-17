@@ -1106,13 +1106,11 @@ fn unwrap_await<'a>(node: &Node<'a>, rules: &DataflowRules) -> Node<'a> {
     *node
 }
 
-fn handle_var_declarator(
-    node: &Node,
+/// Resolve the name and value nodes from a variable declarator, handling C#/Go quirks.
+fn resolve_var_declarator_nodes<'a>(
+    node: &Node<'a>,
     rules: &DataflowRules,
-    source: &[u8],
-    scope_stack: &mut Vec<ScopeFrame>,
-    assignments: &mut Vec<DataflowAssignment>,
-) {
+) -> (Option<Node<'a>>, Option<Node<'a>>) {
     let mut name_node = node.child_by_field_name(rules.var_name_field);
     let mut value_node = rules.var_value_field.and_then(|f| node.child_by_field_name(f));
 
@@ -1157,6 +1155,42 @@ fn handle_var_declarator(
         }
     }
 
+    (name_node, value_node)
+}
+
+/// Emit assignments for a destructuring pattern (object or array).
+fn emit_destructuring_assignments(
+    name_n: &Node,
+    node: &Node,
+    callee: &str,
+    func_name: &str,
+    rules: &DataflowRules,
+    source: &[u8],
+    scope: &mut ScopeFrame,
+    assignments: &mut Vec<DataflowAssignment>,
+) {
+    let names = extract_param_names(name_n, rules, source);
+    for n in &names {
+        assignments.push(DataflowAssignment {
+            var_name: n.clone(),
+            caller_func: Some(func_name.to_string()),
+            source_call_name: callee.to_string(),
+            expression: truncate(node_text(node, source), DATAFLOW_TRUNCATION_LIMIT),
+            line: node_line(node),
+        });
+        scope.locals.insert(n.clone(), LocalSource::Destructured);
+    }
+}
+
+fn handle_var_declarator(
+    node: &Node,
+    rules: &DataflowRules,
+    source: &[u8],
+    scope_stack: &mut Vec<ScopeFrame>,
+    assignments: &mut Vec<DataflowAssignment>,
+) {
+    let (name_node, value_node) = resolve_var_declarator_nodes(node, rules);
+
     let scope = match scope_stack.last_mut() {
         Some(s) => s,
         None => return,
@@ -1189,19 +1223,7 @@ fn handle_var_declarator(
     let is_arr_destruct = rules.array_destruct_type.is_some_and(|a| a == name_n.kind());
 
     if is_obj_destruct || is_arr_destruct {
-        let names = extract_param_names(&name_n, rules, source);
-        for n in &names {
-            assignments.push(DataflowAssignment {
-                var_name: n.clone(),
-                caller_func: Some(func_name.clone()),
-                source_call_name: callee.clone(),
-                expression: truncate(node_text(node, source), DATAFLOW_TRUNCATION_LIMIT),
-                line: node_line(node),
-            });
-            scope
-                .locals
-                .insert(n.clone(), LocalSource::Destructured);
-        }
+        emit_destructuring_assignments(&name_n, node, &callee, &func_name, rules, source, scope, assignments);
     } else {
         let var_name = node_text(&name_n, source).to_string();
         assignments.push(DataflowAssignment {
@@ -1348,24 +1370,14 @@ fn handle_call_expr(
     }
 }
 
-fn handle_expr_stmt_mutation(
-    node: &Node,
+/// Resolve the method name and receiver from a call expression node using
+/// the three supported dispatch patterns (member-access, dedicated name field,
+/// Java/combined object+name fields). Returns `(method_name, receiver)`.
+fn resolve_mutation_method_receiver(
+    expr: &Node,
     rules: &DataflowRules,
     source: &[u8],
-    scope_stack: &[ScopeFrame],
-    mutations: &mut Vec<DataflowMutation>,
-) {
-    if rules.mutating_methods.is_empty() {
-        return;
-    }
-    let expr = match node.named_child(0) {
-        Some(e) => e,
-        None => return,
-    };
-    if !is_call_node(rules, expr.kind()) {
-        return;
-    }
-
+) -> (Option<String>, Option<String>) {
     let mut method_name: Option<String> = None;
     let mut receiver: Option<String> = None;
 
@@ -1414,6 +1426,29 @@ fn handle_expr_stmt_mutation(
             }
         }
     }
+
+    (method_name, receiver)
+}
+
+fn handle_expr_stmt_mutation(
+    node: &Node,
+    rules: &DataflowRules,
+    source: &[u8],
+    scope_stack: &[ScopeFrame],
+    mutations: &mut Vec<DataflowMutation>,
+) {
+    if rules.mutating_methods.is_empty() {
+        return;
+    }
+    let expr = match node.named_child(0) {
+        Some(e) => e,
+        None => return,
+    };
+    if !is_call_node(rules, expr.kind()) {
+        return;
+    }
+
+    let (method_name, receiver) = resolve_mutation_method_receiver(&expr, rules, source);
 
     let method = match method_name {
         Some(m) => m,

@@ -451,58 +451,41 @@ fn extract_csharp_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Optio
     }
 }
 
-fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
-    match node.kind() {
-        "variable_declaration" => {
-            let type_node = node.child_by_field_name("type").or_else(|| node.child(0));
-            if let Some(type_node) = type_node {
-                if type_node.kind() == "implicit_type" {
-                    // var x = new Foo() — infer type from object_creation_expression initializer
-                    for i in 0..node.child_count() {
-                        if let Some(declarator) = node.child(i) {
-                            if declarator.kind() != "variable_declarator" { continue; }
-                            let name_node = declarator.child_by_field_name("name")
-                                .or_else(|| declarator.child(0));
-                            let Some(name_node) = name_node else { continue };
-                            if name_node.kind() != "identifier" { continue; }
-                            let Some(obj_creation) = find_child(&declarator, "object_creation_expression") else { continue };
-                            let Some(ctor_type_node) = obj_creation.child_by_field_name("type") else { continue };
-                            if let Some(ctor_type) = extract_csharp_type_name(&ctor_type_node, source) {
-                                symbols.type_map.push(TypeMapEntry {
-                                    name: node_text(&name_node, source).to_string(),
-                                    type_name: ctor_type.to_string(),
-                                    confidence: 1.0,
-                                });
-                            }
-                        }
-                    }
-                } else if type_node.kind() != "var_keyword" {
-                    if let Some(type_name) = extract_csharp_type_name(&type_node, source) {
-                        for i in 0..node.child_count() {
-                            if let Some(child) = node.child(i) {
-                                if child.kind() == "variable_declarator" {
-                                    let name_node = child.child_by_field_name("name")
-                                        .or_else(|| child.child(0));
-                                    if let Some(name_node) = name_node {
-                                        if name_node.kind() == "identifier" {
-                                            symbols.type_map.push(TypeMapEntry {
-                                                name: node_text(&name_node, source).to_string(),
-                                                type_name: type_name.to_string(),
-                                                confidence: 0.9,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+/// Handle `variable_declaration` nodes: infer type from `var` (implicit_type) via
+/// constructor initializer, or use the explicit type annotation for each declarator.
+fn handle_csharp_var_decl_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let type_node = match node.child_by_field_name("type").or_else(|| node.child(0)) {
+        Some(n) => n,
+        None => return,
+    };
+    if type_node.kind() == "implicit_type" {
+        // var x = new Foo() — infer type from object_creation_expression initializer
+        for i in 0..node.child_count() {
+            let Some(declarator) = node.child(i) else { continue };
+            if declarator.kind() != "variable_declarator" { continue; }
+            let name_node = declarator.child_by_field_name("name")
+                .or_else(|| declarator.child(0));
+            let Some(name_node) = name_node else { continue };
+            if name_node.kind() != "identifier" { continue; }
+            let Some(obj_creation) = find_child(&declarator, "object_creation_expression") else { continue };
+            let Some(ctor_type_node) = obj_creation.child_by_field_name("type") else { continue };
+            if let Some(ctor_type) = extract_csharp_type_name(&ctor_type_node, source) {
+                symbols.type_map.push(TypeMapEntry {
+                    name: node_text(&name_node, source).to_string(),
+                    type_name: ctor_type.to_string(),
+                    confidence: 1.0,
+                });
             }
         }
-        "parameter" => {
-            if let Some(type_node) = node.child_by_field_name("type") {
-                if let Some(type_name) = extract_csharp_type_name(&type_node, source) {
-                    if let Some(name_node) = node.child_by_field_name("name") {
+    } else if type_node.kind() != "var_keyword" {
+        // Explicit type: T x = ...; — emit an entry for each variable_declarator
+        if let Some(type_name) = extract_csharp_type_name(&type_node, source) {
+            for i in 0..node.child_count() {
+                let Some(child) = node.child(i) else { continue };
+                if child.kind() != "variable_declarator" { continue; }
+                let name_node = child.child_by_field_name("name").or_else(|| child.child(0));
+                if let Some(name_node) = name_node {
+                    if name_node.kind() == "identifier" {
                         symbols.type_map.push(TypeMapEntry {
                             name: node_text(&name_node, source).to_string(),
                             type_name: type_name.to_string(),
@@ -512,6 +495,25 @@ fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, 
                 }
             }
         }
+    }
+}
+
+/// Handle `parameter` nodes: emit a type_map entry for typed method/constructor parameters.
+fn handle_csharp_param_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(type_node) = node.child_by_field_name("type") else { return };
+    let Some(type_name) = extract_csharp_type_name(&type_node, source) else { return };
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    symbols.type_map.push(TypeMapEntry {
+        name: node_text(&name_node, source).to_string(),
+        type_name: type_name.to_string(),
+        confidence: 0.9,
+    });
+}
+
+fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    match node.kind() {
+        "variable_declaration" => handle_csharp_var_decl_type_map(node, source, symbols),
+        "parameter" => handle_csharp_param_type_map(node, source, symbols),
         _ => {}
     }
 }
