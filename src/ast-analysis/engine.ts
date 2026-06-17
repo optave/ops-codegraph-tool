@@ -715,11 +715,15 @@ function allNativeDataComplete(
       return false;
     }
     if (doComplexity && fileNeedsWasmComplexity(symbols, ext, langId)) {
-      debug(`allNativeDataComplete: ${relPath} missing complexity`);
+      const offender = (symbols.definitions || []).find((d) => hasFuncBody(d) && !d.complexity);
+      debug(`allNativeDataComplete: ${relPath}:${offender?.name ?? '?'} missing complexity`);
       return false;
     }
     if (doCfg && fileNeedsWasmCfg(symbols, ext, langId)) {
-      debug(`allNativeDataComplete: ${relPath} missing cfg blocks`);
+      const offender = (symbols.definitions || []).find(
+        (d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks),
+      );
+      debug(`allNativeDataComplete: ${relPath}:${offender?.name ?? '?'} missing cfg blocks`);
       return false;
     }
   }
