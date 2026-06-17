@@ -25,6 +25,22 @@ interface ParsedDiff {
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const NEW_FILE_RE = /^\+\+\+ b\/(.+)/;
 
+/** Returns true if the diff line marks the old file as /dev/null (new-file creation). */
+function isDevNullSourceLine(line: string): boolean {
+  return line.startsWith('--- /dev/null');
+}
+
+/** Returns true if the diff line is a `---` source file header (not /dev/null). */
+function isSourceFileHeaderLine(line: string): boolean {
+  return line.startsWith('--- ');
+}
+
+/** Extracts the new filename from a `+++ b/<file>` diff header, or null. */
+function extractNewFileName(line: string): string | null {
+  const m = line.match(NEW_FILE_RE);
+  return m ? m[1]! : null;
+}
+
 function pushHunkRanges(
   line: string,
   currentFile: string,
@@ -53,17 +69,17 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
   let prevIsDevNull = false;
 
   for (const line of diffOutput.split('\n')) {
-    if (line.startsWith('--- /dev/null')) {
+    if (isDevNullSourceLine(line)) {
       prevIsDevNull = true;
       continue;
     }
-    if (line.startsWith('--- ')) {
+    if (isSourceFileHeaderLine(line)) {
       prevIsDevNull = false;
       continue;
     }
-    const fileMatch = line.match(NEW_FILE_RE);
-    if (fileMatch) {
-      currentFile = fileMatch[1]!;
+    const newFile = extractNewFileName(line);
+    if (newFile) {
+      currentFile = newFile;
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
       if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
       if (prevIsDevNull) newFiles.add(currentFile);

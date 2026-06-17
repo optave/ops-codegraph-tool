@@ -116,6 +116,33 @@ interface TriageDataOpts {
   repo?: Repository;
 }
 
+interface ResolvedRiskConfig {
+  weights: RiskWeights;
+  riskOpts: { roleWeights?: Record<string, number>; defaultRoleWeight?: number };
+}
+
+/** Resolve risk weights and role-weight options from config + opts overrides. */
+function resolveRiskConfig(opts: TriageDataOpts): ResolvedRiskConfig {
+  const config = opts.config || loadConfig();
+  const riskConfig = ((config as unknown as Record<string, unknown>).risk || {}) as {
+    weights?: Partial<RiskWeights>;
+    roleWeights?: Record<string, number>;
+    defaultRoleWeight?: number;
+  };
+  const weights: RiskWeights = {
+    ...DEFAULT_WEIGHTS,
+    ...(riskConfig.weights || {}),
+    ...(opts.weights || {}),
+  };
+  return {
+    weights,
+    riskOpts: {
+      roleWeights: riskConfig.roleWeights,
+      defaultRoleWeight: riskConfig.defaultRoleWeight,
+    },
+  };
+}
+
 export function triageData(
   customDbPath?: string,
   opts: TriageDataOpts = {},
@@ -125,21 +152,7 @@ export function triageData(
     const noTests = opts.noTests || false;
     const minScore = opts.minScore != null ? Number(opts.minScore) : null;
     const sort = opts.sort || 'risk';
-    const config = opts.config || loadConfig();
-    const riskConfig = ((config as unknown as Record<string, unknown>).risk || {}) as {
-      weights?: Partial<RiskWeights>;
-      roleWeights?: Record<string, number>;
-      defaultRoleWeight?: number;
-    };
-    const weights: RiskWeights = {
-      ...DEFAULT_WEIGHTS,
-      ...(riskConfig.weights || {}),
-      ...(opts.weights || {}),
-    };
-    const riskOpts = {
-      roleWeights: riskConfig.roleWeights,
-      defaultRoleWeight: riskConfig.defaultRoleWeight,
-    };
+    const { weights, riskOpts } = resolveRiskConfig(opts);
 
     let rows: TriageNodeRow[];
     try {

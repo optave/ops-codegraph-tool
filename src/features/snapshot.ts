@@ -25,6 +25,41 @@ interface SnapshotSaveOptions {
   force?: boolean;
 }
 
+/**
+ * Atomically place `tmp` at `dest`.
+ * - force=true: renameSync (overwrites any existing file).
+ * - force=false: linkSync so EEXIST is detected atomically; then unlink tmp.
+ * Callers are responsible for cleaning up `tmp` on any thrown error.
+ */
+function atomicPlaceFile(tmp: string, dest: string, name: string, force?: boolean): void {
+  if (force) {
+    // renameSync overwrites atomically — the correct semantics for --force.
+    fs.renameSync(tmp, dest);
+    return;
+  }
+
+  // Non-force path: linkSync fails atomically with EEXIST if dest exists,
+  // closing the TOCTOU window between existsSync above and the final
+  // placement. We then unlink the temp file; on POSIX and NTFS, link
+  // creates a second reference so tmp can safely be removed.
+  try {
+    fs.linkSync(tmp, dest);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new ConfigError(`Snapshot "${name}" already exists. Use --force to overwrite.`);
+    }
+    throw err;
+  }
+  try {
+    fs.unlinkSync(tmp);
+  } catch (cleanupErr) {
+    // Best-effort — dest is already in place, so a leftover tmp file is
+    // harmless. Log at debug so repeated failures surface during
+    // troubleshooting without noising up normal operation.
+    debug(`snapshotSave: failed to remove temp file ${tmp}: ${cleanupErr}`);
+  }
+}
+
 export function snapshotSave(
   name: string,
   options: SnapshotSaveOptions = {},
@@ -73,31 +108,7 @@ export function snapshotSave(
   }
 
   try {
-    if (options.force) {
-      // renameSync overwrites atomically — the correct semantics for --force.
-      fs.renameSync(tmp, dest);
-    } else {
-      // Non-force path: linkSync fails atomically with EEXIST if dest exists,
-      // closing the TOCTOU window between existsSync above and the final
-      // placement. We then unlink the temp file; on POSIX and NTFS, link
-      // creates a second reference so tmp can safely be removed.
-      try {
-        fs.linkSync(tmp, dest);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-          throw new ConfigError(`Snapshot "${name}" already exists. Use --force to overwrite.`);
-        }
-        throw err;
-      }
-      try {
-        fs.unlinkSync(tmp);
-      } catch (cleanupErr) {
-        // Best-effort — dest is already in place, so a leftover tmp file is
-        // harmless. Log at debug so repeated failures surface during
-        // troubleshooting without noising up normal operation.
-        debug(`snapshotSave: failed to remove temp file ${tmp}: ${cleanupErr}`);
-      }
-    }
+    atomicPlaceFile(tmp, dest, name, options.force);
   } catch (err) {
     try {
       fs.unlinkSync(tmp);

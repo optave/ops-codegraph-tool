@@ -10,6 +10,34 @@ import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
 // ─── Alias generation ────────────────────────────────────────────────
 
+/** Build aliases for a group of paths that share the same basename.
+ *  Progressively adds parent dirs until all aliases are unique. */
+function resolveCollisionAliases(paths: string[], aliases: Map<string, string>): void {
+  for (let depth = 2; depth <= 10; depth++) {
+    const trial = new Map<string, string>();
+    let allUnique = true;
+    const seen = new Set<string>();
+
+    for (const p of paths) {
+      const parts = p.replace(/\.[^.]+$/, '').split('/');
+      const alias = parts
+        .slice(-depth)
+        .join('_')
+        .replace(/[^a-zA-Z0-9_-]/g, '_');
+      trial.set(p, alias);
+      if (seen.has(alias)) allUnique = false;
+      seen.add(alias);
+    }
+
+    if (allUnique || depth === 10) {
+      for (const [p, alias] of trial) {
+        aliases.set(p, alias);
+      }
+      break;
+    }
+  }
+}
+
 function buildAliases(files: string[]): Map<string, string> {
   const aliases = new Map<string, string>();
   const basenames = new Map<string, string[]>();
@@ -26,29 +54,7 @@ function buildAliases(files: string[]): Map<string, string> {
       aliases.set(paths[0]!, base);
     } else {
       // Collision — progressively add parent dirs until aliases are unique
-      for (let depth = 2; depth <= 10; depth++) {
-        const trial = new Map<string, string>();
-        let allUnique = true;
-        const seen = new Set<string>();
-
-        for (const p of paths) {
-          const parts = p.replace(/\.[^.]+$/, '').split('/');
-          const alias = parts
-            .slice(-depth)
-            .join('_')
-            .replace(/[^a-zA-Z0-9_-]/g, '_');
-          trial.set(p, alias);
-          if (seen.has(alias)) allUnique = false;
-          seen.add(alias);
-        }
-
-        if (allUnique || depth === 10) {
-          for (const [p, alias] of trial) {
-            aliases.set(p, alias);
-          }
-          break;
-        }
-      }
+      resolveCollisionAliases(paths, aliases);
     }
   }
 

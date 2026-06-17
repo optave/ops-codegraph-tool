@@ -136,6 +136,35 @@ async function initCfgParsers(
   return { parsers, getParserFn };
 }
 
+/** Parse source via WASM when no native CFG data is available.
+ *  Returns the parsed tree or undefined on any read/parse failure. */
+function parseTreeForCfg(
+  relPath: string,
+  rootDir: string,
+  _langId: string,
+  parsers: unknown,
+  getParserFn: unknown,
+): { rootNode: TreeSitterNode } | undefined {
+  const absPath = path.join(rootDir, relPath);
+  let code: string;
+  try {
+    code = fs.readFileSync(absPath, 'utf-8');
+  } catch (e) {
+    debug(`cfg: cannot read ${relPath}: ${(e as Error).message}`);
+    return undefined;
+  }
+
+  const parser = (getParserFn as (parsers: unknown, absPath: string) => unknown)(parsers, absPath);
+  if (!parser) return undefined;
+
+  try {
+    return (parser as { parse: (code: string) => { rootNode: TreeSitterNode } }).parse(code);
+  } catch (e) {
+    debug(`cfg: parse failed for ${relPath}: ${(e as Error).message}`);
+    return undefined;
+  }
+}
+
 function getTreeAndLang(
   symbols: FileSymbols,
   relPath: string,
@@ -152,28 +181,8 @@ function getTreeAndLang(
     if (!getParserFn) return null;
     langId = extToLang.get(ext);
     if (!langId || !CFG_RULES.has(langId)) return null;
-
-    const absPath = path.join(rootDir, relPath);
-    let code: string;
-    try {
-      code = fs.readFileSync(absPath, 'utf-8');
-    } catch (e) {
-      debug(`cfg: cannot read ${relPath}: ${(e as Error).message}`);
-      return null;
-    }
-
-    const parser = (getParserFn as (parsers: unknown, absPath: string) => unknown)(
-      parsers,
-      absPath,
-    );
-    if (!parser) return null;
-
-    try {
-      tree = (parser as { parse: (code: string) => { rootNode: TreeSitterNode } }).parse(code);
-    } catch (e) {
-      debug(`cfg: parse failed for ${relPath}: ${(e as Error).message}`);
-      return null;
-    }
+    tree = parseTreeForCfg(relPath, rootDir, langId, parsers, getParserFn);
+    if (!tree) return null;
   }
 
   if (!langId) {

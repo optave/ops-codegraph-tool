@@ -146,33 +146,42 @@ function analyzeDrift(
 
 // ─── Core Analysis ────────────────────────────────────────────────────
 
-export function communitiesData(
-  customDbPath?: string,
-  opts: {
-    functions?: boolean;
-    resolution?: number;
-    noTests?: boolean;
-    drift?: boolean;
-    json?: boolean;
-    config?: CodegraphConfig;
-    maxLevels?: number;
-    maxLocalPasses?: number;
-    refinementTheta?: number;
-    limit?: number;
-    offset?: number;
-    repo?: Repository;
-  } = {},
-): Record<string, unknown> {
+type CommunitiesDataOpts = {
+  functions?: boolean;
+  resolution?: number;
+  noTests?: boolean;
+  drift?: boolean;
+  json?: boolean;
+  config?: CodegraphConfig;
+  maxLevels?: number;
+  maxLocalPasses?: number;
+  refinementTheta?: number;
+  limit?: number;
+  offset?: number;
+  repo?: Repository;
+};
+
+/** Load dependency graph from the repo, then close the DB connection. */
+function loadCommunityGraph(
+  customDbPath: string | undefined,
+  opts: CommunitiesDataOpts,
+): CodeGraph {
   const { repo, close } = openRepo(customDbPath, opts);
-  let graph: CodeGraph;
   try {
-    graph = buildDependencyGraph(repo, {
+    return buildDependencyGraph(repo, {
       fileLevel: !opts.functions,
       noTests: opts.noTests,
     });
   } finally {
     close();
   }
+}
+
+export function communitiesData(
+  customDbPath?: string,
+  opts: CommunitiesDataOpts = {},
+): Record<string, unknown> {
+  const graph = loadCommunityGraph(customDbPath, opts);
 
   if (graph.nodeCount === 0 || graph.edgeCount === 0) {
     return {

@@ -289,6 +289,46 @@ interface FileSymbol {
   signature?: string | null;
 }
 
+/** Query callees, callers, and related test files for a node. */
+function querySymbolEdges(
+  db: BetterSqlite3Database,
+  nodeId: number,
+  noTests: boolean,
+): { callees: SymbolRef[]; callers: SymbolRef[]; relatedTests: { file: string }[] } {
+  const callees = (
+    db
+      .prepare(
+        `SELECT n.name, n.kind, n.file, n.line
+       FROM edges e JOIN nodes n ON e.target_id = n.id
+       WHERE e.source_id = ? AND e.kind = 'calls'`,
+      )
+      .all(nodeId) as SymbolRef[]
+  ).map(toSymbolRef);
+
+  let callers = (
+    db
+      .prepare(
+        `SELECT n.name, n.kind, n.file, n.line
+       FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'calls'`,
+      )
+      .all(nodeId) as SymbolRef[]
+  ).map(toSymbolRef);
+  if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
+
+  const testCallerRows = db
+    .prepare(
+      `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'calls'`,
+    )
+    .all(nodeId) as { file: string }[];
+  const relatedTests = testCallerRows
+    .filter((r) => isTestFile(r.file))
+    .map((r) => ({ file: r.file }));
+
+  return { callees, callers, relatedTests };
+}
+
 function enrichSymbol(
   db: BetterSqlite3Database,
   sym: FileSymbol,
@@ -305,40 +345,9 @@ function enrichSymbol(
   const endLine = nodeRow?.end_line || null;
   const lineCount = endLine ? endLine - sym.line + 1 : null;
 
-  // Get callers/callees for this symbol
-  let callees: SymbolRef[] = [];
-  let callers: SymbolRef[] = [];
-  let relatedTests: { file: string }[] = [];
-  if (nodeId) {
-    callees = (
-      db
-        .prepare(
-          `SELECT n.name, n.kind, n.file, n.line
-         FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'calls'`,
-        )
-        .all(nodeId) as SymbolRef[]
-    ).map(toSymbolRef);
-
-    callers = (
-      db
-        .prepare(
-          `SELECT n.name, n.kind, n.file, n.line
-         FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
-        )
-        .all(nodeId) as SymbolRef[]
-    ).map(toSymbolRef);
-    if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
-
-    const testCallerRows = db
-      .prepare(
-        `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
-      )
-      .all(nodeId) as { file: string }[];
-    relatedTests = testCallerRows.filter((r) => isTestFile(r.file)).map((r) => ({ file: r.file }));
-  }
+  const { callees, callers, relatedTests } = nodeId
+    ? querySymbolEdges(db, nodeId, noTests)
+    : { callees: [], callers: [], relatedTests: [] };
 
   const health = nodeId ? buildHealth(db, nodeId, thresholds) : defaultHealth();
   const impact = nodeId

@@ -174,6 +174,21 @@ export function validateBoundaryConfig(config: unknown): { valid: boolean; error
 
 // ─── Preset Rule Generation ─────────────────────────────────────────
 
+/** Collect the names of all modules assigned to layers outer than `layerIdx`. */
+function collectOuterModules(
+  modulesByLayer: Map<string, string[]>,
+  layerIndex: Map<string, number>,
+  layerIdx: number,
+): string[] {
+  const outer: string[] = [];
+  for (const [otherLayer, otherModNames] of modulesByLayer) {
+    if (layerIndex.get(otherLayer)! > layerIdx) {
+      outer.push(...otherModNames);
+    }
+  }
+  return outer;
+}
+
 function generatePresetRules(
   modules: Map<string, ResolvedModule>,
   presetName: string,
@@ -181,8 +196,7 @@ function generatePresetRules(
   const preset = PRESETS[presetName];
   if (!preset) return [];
 
-  const layers = preset.layers;
-  const layerIndex = new Map<string, number>(layers.map((l, i) => [l, i]));
+  const layerIndex = new Map<string, number>(preset.layers.map((l, i) => [l, i]));
 
   const modulesByLayer = new Map<string, string[]>();
   for (const [name, mod] of modules) {
@@ -194,13 +208,7 @@ function generatePresetRules(
 
   const rules: BoundaryRule[] = [];
   for (const [layer, modNames] of modulesByLayer) {
-    const idx = layerIndex.get(layer)!;
-    const outerModules: string[] = [];
-    for (const [otherLayer, otherModNames] of modulesByLayer) {
-      if (layerIndex.get(otherLayer)! > idx) {
-        outerModules.push(...otherModNames);
-      }
-    }
+    const outerModules = collectOuterModules(modulesByLayer, layerIndex, layerIndex.get(layer)!);
     if (outerModules.length > 0) {
       for (const from of modNames) {
         rules.push({ from, notTo: outerModules });
