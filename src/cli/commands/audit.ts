@@ -7,7 +7,8 @@ import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
   name: 'audit <target>',
-  description: 'Composite report: explain + impact + health metrics per function',
+  alias: 'explain',
+  description: 'Composite report: explain + impact + health metrics per function (alias: explain)',
   options: [
     ['-d, --db <path>', 'Path to graph.db'],
     ['--quick', 'Structural summary only (skip impact analysis and health metrics)'],

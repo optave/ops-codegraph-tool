@@ -75,6 +75,8 @@ const ctx: CliContext = {
 function registerCommand(parent: Command, def: CommandDefinition): Command {
   const cmd = parent.command(def.name).description(def.description);
 
+  if (def.alias) cmd.alias(def.alias);
+
   if (def.queryOpts) applyQueryOpts(cmd);
 
   for (const opt of def.options || []) {
