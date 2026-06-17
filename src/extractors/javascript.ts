@@ -96,6 +96,13 @@ const BUILTIN_GLOBALS: Set<string> = new Set([
 const MAX_PROPAGATION_DEPTH = 3;
 /** Confidence penalty applied per propagation hop (1.0 → 0.9 → 0.8 → 0.7). */
 export const PROPAGATION_HOP_PENALTY = 0.1;
+/**
+ * Confidence score for a return type inferred from `return new Constructor()` with no
+ * explicit TypeScript annotation.  Registered as `analysis.typeInferenceConfidence` in
+ * `src/infrastructure/config.ts` DEFAULTS — kept in sync manually until config is
+ * threaded through to `extractSymbols`.
+ */
+const INFERRED_RETURN_TYPE_CONFIDENCE = 0.85;
 
 /**
  * Extract symbols from a JS/TS parsed AST.
@@ -1592,8 +1599,8 @@ function storeReturnType(
     const inferred = findReturnNewExprType(body);
     if (inferred) {
       const existing = returnTypeMap.get(fnName);
-      if (!existing || 0.85 > existing.confidence)
-        returnTypeMap.set(fnName, { type: inferred, confidence: 0.85 });
+      if (!existing || INFERRED_RETURN_TYPE_CONFIDENCE > existing.confidence)
+        returnTypeMap.set(fnName, { type: inferred, confidence: INFERRED_RETURN_TYPE_CONFIDENCE });
     }
   }
 }

@@ -97,6 +97,7 @@ describe('DEFAULTS', () => {
       briefMediumRiskCallers: 3,
       typePropagationDepth: 3,
       pointsToMaxIterations: 50,
+      typeInferenceConfidence: 0.85,
     });
   });
 

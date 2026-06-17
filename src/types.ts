@@ -1420,6 +1420,13 @@ export interface CodegraphConfig {
      * constant of 50.  See TODO in `src/infrastructure/config.ts`.
      */
     pointsToMaxIterations: number;
+    /**
+     * Confidence score for a return type inferred from `return new Constructor()`
+     * with no explicit TypeScript annotation.
+     * Mirrors `INFERRED_RETURN_TYPE_CONFIDENCE` in `src/extractors/javascript.ts`.
+     * @reserved — not yet wired; see TODO in `src/infrastructure/config.ts`.
+     */
+    typeInferenceConfidence: number;
   };
 
   community: {
