@@ -227,118 +227,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * latest, when `previous.version` matches via the baseline fallback). Once
  * a version is no longer the latest in committed history and no longer the
  * baseline used for `dev` comparisons, its entries become dead weight and
- * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0).
- *
- * - 3.11.0:Query time / 3.11.0:No-op rebuild / 3.11.0:fnDeps depth 3 /
- *   3.11.0:fnDeps depth 5 — CI runner variance on sub-50ms WASM metrics
- *   when the per-PR gate replays dev against the just-published 3.11.0
- *   baseline. The dev source tree between commit f7c29c5 (3.11.0 release)
- *   and the post-publish docs PR (#1217) contains only version-bump diffs
- *   in package.json/Cargo.toml/package-lock.json — no extractor, query,
- *   or DB changes. Published 3.11.0 numbers were captured by the publish
- *   workflow on one runner; the per-PR gate re-measures on a fresh runner
- *   and lands ~10ms higher on every sub-50ms WASM metric:
- *     - Query time:    32.5 → 44.2 (+36%) on run 26426483639
- *     - No-op rebuild: 18   → 29   (+61%)
- *     - fnDeps depth 3: 33.6 → 44.1 (+31%)
- *     - fnDeps depth 5: 33.3 → 44.4 (+33%)
- *   The 3.11.0 vs 3.10.0 release-time comparison shows these metrics
- *   either flat or improved (Query time 37.6 → 32.5 = -14%, fnDeps depth 3
- *   33 → 33.6 = ~flat, fnDeps depth 5 33 → 33.3 = ~flat, No-op rebuild
- *   15 → 18 = +20% but at runner noise floor) — confirming no underlying
- *   regression and ruling out a real slowdown introduced in 3.11.0. Same
- *   shape and root cause as the pruned 3.10.0 entries. Exempt this release;
- *   remove once 3.13.0+ data confirms the new steady-state on whatever
- *   runner generation is current at that time.
- *
- * - 3.11.0:1-file rebuild — CI runner variance on a sub-100ms native
- *   incremental metric. The 3.11.0 baseline was captured at 64ms; the
- *   per-PR gate re-measures dev on a fresh runner and can land +45ms
- *   higher (e.g. 64 → 109ms = +70%, threshold 50%) on runs where the
- *   runner is under load. No incremental, Rust, or JS change in the
- *   dev tree accounts for this delta — other dep-only PRs running
- *   concurrently measured 64 → 80ms (+25%) on the same corpus
- *   (run 26706695868), confirming per-runner noise rather than a
- *   structural slowdown. The 50% NOISY_METRIC_THRESHOLD is razor-thin
- *   for a sub-100ms metric at shared-runner noise floor (~20ms). Exempt
- *   this release; remove once 3.13.0+ data confirms stabilization.
- *
- * - 3.11.0:Full build — same CI runner-variance root cause as the four
- *   3.11.0 entries above, but on the multi-second WASM full-build metric
- *   rather than the sub-50ms group. Surfaced on the embedding-bench docs
- *   PR (#1218) when the per-PR gate re-measured dev (byte-identical to
- *   released 3.11.0 modulo EMBEDDING-BENCHMARKS.md) against the published
- *   3.11.0 baseline:
- *     - Full build (wasm): 7664 → 9765 (+27%, threshold 25%) on run 26431397916
- *   Historical WASM full-build numbers on the same corpus span 7.2s–14.0s
- *   across 3.9.0–3.11.0, so 9.8s on a single dev re-measurement sits well
- *   inside the runner-noise envelope (3.10.0 baseline was 8.4s, 3.9.6 was
- *   14.0s). PR #1217's gate measured 7664 — the same code on a fresh
- *   runner instance later measured 9765. No extractor, builder, or DB
- *   layer changed between 3.11.0 release and #1218; only EMBEDDING-
- *   BENCHMARKS.md, which is not loaded at build time. Exempt this release;
- *   remove once 3.13.0+ data confirms stabilization under whatever runner
- *   generation is current at that time.
- *
- * - 3.11.1:DB bytes/file — same methodology-scope artifact as 3.10.0:DB
- *   bytes/file. The 3.11.0 release does not have query benchmark data
- *   committed to history, so findLatestPair falls back to 3.10.0 as the
- *   baseline. The 3.10.0 corpus included resolution fixtures (~745 files);
- *   3.11.1 measures only the codegraph source (~607 files) after #1134
- *   excluded resolution fixtures from the build sweep. The denominator
- *   shrinks while total DB content stays roughly constant, inflating
- *   dbSizeBytes/file: native 41614 → 54107 (+30%), wasm 41543 → 53517
- *   (+29%). No schema or extraction change; remove once 3.13.0+ data is
- *   captured with the full 3.11.x baseline in committed query history.
- *
- * - 3.11.1:fnDeps depth 3 / 3.11.1:fnDeps depth 5 — same baseline-gap
- *   root cause as 3.11.1:DB bytes/file. Because 3.11.0 query benchmark
- *   data is absent from committed history, the guard compares 3.11.1
- *   against the pre-3.11.0 3.10.0 baseline. The 3.10.0 query numbers
- *   predate the steady-state established in 3.11.0 (fnDeps depth 3: 33ms,
- *   depth 5: 33ms), so 3.11.1's equivalent values appear as regressions:
- *     - native fnDeps depth 3: 24.3 → 34.7 (+43%)
- *     - native fnDeps depth 5: 24.7 → 34.7 (+40%)
- *     - wasm   fnDeps depth 3: 33   → 43.2 (+31%)
- *     - wasm   fnDeps depth 5: 33   → 43.5 (+32%)
- *   No fn_deps Rust implementation, fnDepsData JS wrapper, or DB index
- *   changed between 3.10.0 and 3.11.1. Remove once 3.12.0+ data confirms
- *   stable query numbers against a 3.11.x baseline.
- *
- * - 3.11.2:No-op rebuild — CI runner variance on a sub-30ms native metric.
- *   The 3.11.2 baseline captures noopRebuildMs=25 (build benchmark) and
- *   noopRebuildMs=19 (incremental benchmark); the per-PR gate re-measures
- *   dev on a fresh runner and lands at 45ms (+80%) and 37ms (+95%) on run
- *   26792023287 — both exceed the NOISY_METRIC_THRESHOLD of 50% due to
- *   sub-30ms variance. No watcher, builder, or incremental-orchestrator
- *   change is present in the dev tree for this docs-only PR (#1282);
- *   the delta is entirely shared-runner scheduling noise. Same shape and
- *   root cause as the 3.11.0 and 3.11.1 entries above. Exempt this
- *   release; remove once 3.13.0+ data confirms the steady-state.
- *
- * - 3.11.2:1-file rebuild — CI runner variance on the sub-100ms native
- *   incremental metric. The 3.11.2 baseline was captured at 83ms; the
- *   per-PR gate for the Phase 8.1 TypeScript resolver PR (#1278) re-measured
- *   dev on a fresh runner and landed at 212ms (+155%, threshold 50%) on run
- *   26793082961. The same PR modifies only: (a) a new ts-resolver.ts module
- *   gated behind `typescriptResolver: false` (was the default at the time), (b) an import of
- *   that module in build-edges.ts, and (c) a config field — none of which
- *   execute on the incremental hot path. Locally the same PR measures 86ms
- *   (within noise of the 83ms baseline). The 3.11.0:1-file rebuild exemption
- *   above documents the same pattern for the same baseline range. Exempt
- *   this release; remove once 3.13.0+ data confirms stabilization.
- *
- * - 3.11.2:Full build — CI runner variance on the multi-second native
- *   full-build metric. The 3.11.2 baseline captures fullBuildMs=2231; the
- *   per-PR gate for the Phase 8.3c parameter-flow PR (#1308) re-measured dev
- *   on a fresh runner and landed at 2852ms (+28%, threshold 25%) on run
- *   27003863932. The PR adds CHA post-pass and parameter-flow tracking that
- *   each contribute microseconds-level overhead per call site — not hundreds
- *   of milliseconds. Historical native full-build numbers on this corpus span
- *   1959ms (3.10.0) to 2986ms (3.9.6), so 2852ms sits well within the
- *   runner-noise envelope. Same shape and root cause as the 3.11.0:Full build
- *   exemption above (which was a WASM metric; this is native). Exempt this
- *   release; remove once 3.13.0+ data confirms the steady-state.
+ * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0/3.11.0/3.11.1/3.11.2).
  *
  * - 3.12.0:No-op rebuild — CI runner variance on a sub-50ms native metric.
  *   The 3.12.0 baseline captures noopRebuildMs=30 (build benchmark) and
@@ -404,18 +293,6 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * (DB bytes/file), neither of which the WASM widening covers.
  */
 const KNOWN_REGRESSIONS = new Set([
-  '3.11.0:Query time',
-  '3.11.0:No-op rebuild',
-  '3.11.0:1-file rebuild',
-  '3.11.0:fnDeps depth 3',
-  '3.11.0:fnDeps depth 5',
-  '3.11.0:Full build',
-  '3.11.1:DB bytes/file',
-  '3.11.1:fnDeps depth 3',
-  '3.11.1:fnDeps depth 5',
-  '3.11.2:No-op rebuild',
-  '3.11.2:1-file rebuild',
-  '3.11.2:Full build',
   '3.12.0:No-op rebuild',
   '3.12.0:Full build',
   '3.12.0:1-file rebuild',
