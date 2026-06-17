@@ -363,6 +363,10 @@ const KNOWN_REGRESSIONS = new Set([
   // integrated and a new baseline is captured.
   '3.12.0:resolution erlang precision',
   '3.12.0:resolution erlang recall',
+  // 3.13.0 comparison against 3.12.0 baseline: same root cause — erlang WASM
+  // grammar still absent. Remove once a clean replacement grammar lands.
+  '3.13.0:resolution erlang precision',
+  '3.13.0:resolution erlang recall',
 ]);
 
 /**

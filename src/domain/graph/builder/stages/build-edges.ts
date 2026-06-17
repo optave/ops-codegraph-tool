@@ -1589,7 +1589,16 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   // Enrich typeMap for .ts/.tsx files using the TypeScript compiler API.
   // Runs before call-edge construction so the accurate types are available
   // for method-call resolution. Gated on config so users can opt out.
-  if (ctx.config.build.typescriptResolver) {
+  //
+  // Skip for small incremental builds: TypeScript program creation requires
+  // loading the entire tsconfig file list (~700ms startup on the codegraph
+  // corpus), which dominates the 1-file rebuild time. Native engine bypasses
+  // this entirely via the Rust orchestrator; WASM/JS engines need this gate
+  // to match native's effective behaviour on tiny incremental changes.
+  // Mirrors the smallFilesThreshold gates for nativeDb and native call-edges.
+  const isSmallIncremental =
+    !ctx.isFullBuild && ctx.fileSymbols.size <= ctx.config.build.smallFilesThreshold;
+  if (ctx.config.build.typescriptResolver && !isSmallIncremental) {
     await enrichTypeMapWithTsc(ctx.rootDir, ctx.fileSymbols);
   }
 
