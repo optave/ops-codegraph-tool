@@ -372,25 +372,16 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
 export const CHA_DISPATCH_CONFIDENCE = 0.8;
 
 /**
- * CHA (Class Hierarchy Analysis) post-pass.
- *
- * Expands virtual-dispatch call edges for class hierarchies and interface
- * implementations already present in the DB:
- *
- *  1. Build implementors map: parent/interface → [child/implementing class] from
- *     `extends` and `implements` edges.
- *  2. Collect RTA evidence: class nodes that appear as `calls` targets (new X()).
- *  3. Find all `calls` edges to qualified method nodes (name contains '.').
- *  4. For each such call, expand to concrete overrides via the implementors map,
- *     filtered by RTA when evidence exists.
- *
- * Used by both the native orchestrator post-pass and the WASM build-edges pass.
+ * Build the parent→children implementor map from `extends`/`implements` edges.
+ * Returns null if no hierarchy edges exist.
  */
-export function runChaPostPass(db: BetterSqlite3Database): number {
+function buildImplementorMap(
+  db: BetterSqlite3Database,
+): { implementors: Map<string, string[]>; implementorSets: Map<string, Set<string>> } | null {
   const hasHierarchy = db
     .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
     .get();
-  if (!hasHierarchy) return 0;
+  if (!hasHierarchy) return null;
 
   const hierarchyRows = db
     .prepare(
@@ -411,11 +402,22 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     }
     set.add(row.child_name);
   }
-  if (implementorSets.size === 0) return 0;
-  // Convert to arrays for iteration compatibility with the rest of the function
-  const implementors = new Map([...implementorSets.entries()].map(([k, v]) => [k, [...v]]));
+  if (implementorSets.size === 0) return null;
 
-  // RTA: collect class names instantiated via constructor calls (`new X()`).
+  // Convert to arrays for iteration compatibility
+  const implementors = new Map([...implementorSets.entries()].map(([k, v]) => [k, [...v]]));
+  return { implementors, implementorSets };
+}
+
+/**
+ * Collect RTA (Rapid Type Analysis) evidence: class names instantiated via
+ * constructor calls (`new X()`). Falls back to constructor/function-kind nodes
+ * for languages that record constructor calls differently (e.g. TS via WASM).
+ */
+function collectRtaInstantiated(
+  db: BetterSqlite3Database,
+  implementorSets: Map<string, Set<string>>,
+): Set<string> {
   let rtaRows = db
     .prepare(
       `SELECT DISTINCT tgt.name
@@ -424,6 +426,7 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
        WHERE e.kind = 'calls' AND tgt.kind = 'class'`,
     )
     .all() as Array<{ name: string }>;
+
   if (rtaRows.length === 0) {
     // Fallback: some languages (e.g. TypeScript via WASM) record constructor calls as
     // 'function' or 'constructor' kind rather than 'class'. Restrict to names that are
@@ -456,7 +459,89 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
       }
     }
   }
-  const instantiated = new Set(rtaRows.map((r) => r.name));
+
+  return new Set(rtaRows.map((r) => r.name));
+}
+
+/**
+ * BFS-expand a single call-to-qualified-method into CHA dispatch edges.
+ *
+ * For `source_id` calling `typeName.methodSuffix`, walks the implementors
+ * map (BFS) and emits an edge for each concrete override that passes the
+ * RTA filter.  New edges are appended to `newEdges`; `seen` is updated in
+ * place to prevent duplicate insertions within the same pass.
+ */
+function expandChaCall(
+  sourceId: number,
+  typeName: string,
+  methodSuffix: string,
+  implementors: Map<string, string[]>,
+  instantiated: Set<string>,
+  noRtaEvidence: boolean,
+  findMethodStmt: { all(name: string): unknown[] },
+  seen: Set<string>,
+  newEdges: Array<[number, number, string, number, number, string]>,
+): void {
+  // BFS over the implementors map — handles multi-level hierarchies where
+  // abstract/non-instantiated classes sit between the call-site type and
+  // the concrete leaf implementations (matches runPostNativeCha, issue #1311).
+  const bfsQueue: string[] = [typeName];
+  const bfsVisited = new Set<string>([typeName]);
+  while (bfsQueue.length > 0) {
+    const current = bfsQueue.shift()!;
+    const children = implementors.get(current);
+    if (!children?.length) continue;
+
+    for (const cls of children) {
+      if (bfsVisited.has(cls)) continue;
+      bfsVisited.add(cls);
+
+      if (noRtaEvidence || instantiated.has(cls)) {
+        const qualifiedName = `${cls}.${methodSuffix}`;
+        const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
+        for (const methodNode of methodNodes) {
+          if (methodNode.id === sourceId) continue; // skip self-loops
+          const key = `${sourceId}|${methodNode.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          newEdges.push([
+            sourceId,
+            methodNode.id,
+            'calls',
+            CHA_TYPED_DISPATCH_CONFIDENCE,
+            0,
+            'cha-expanded',
+          ]);
+        }
+      }
+
+      // Always traverse children — non-instantiated classes may have instantiated subclasses.
+      bfsQueue.push(cls);
+    }
+  }
+}
+
+/**
+ * CHA (Class Hierarchy Analysis) post-pass.
+ *
+ * Expands virtual-dispatch call edges for class hierarchies and interface
+ * implementations already present in the DB:
+ *
+ *  1. Build implementors map: parent/interface → [child/implementing class] from
+ *     `extends` and `implements` edges.
+ *  2. Collect RTA evidence: class nodes that appear as `calls` targets (new X()).
+ *  3. Find all `calls` edges to qualified method nodes (name contains '.').
+ *  4. For each such call, expand to concrete overrides via the implementors map,
+ *     filtered by RTA when evidence exists.
+ *
+ * Used by both the native orchestrator post-pass and the WASM build-edges pass.
+ */
+export function runChaPostPass(db: BetterSqlite3Database): number {
+  const hierarchy = buildImplementorMap(db);
+  if (!hierarchy) return 0;
+  const { implementors, implementorSets } = hierarchy;
+
+  const instantiated = collectRtaInstantiated(db, implementorSets);
   const noRtaEvidence = instantiated.size === 0;
   if (noRtaEvidence) {
     debug('runChaPostPass: no constructor-call evidence — proceeding without RTA filter');
@@ -474,11 +559,11 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     )
     .all() as Array<{ source_id: number; caller_name: string; method_name: string }>;
 
-  const seen = new Set<string>();
   // Scope deduplication to only the source_ids we are about to expand, avoiding
   // a full-table scan. CHA only inserts edges FROM callers that already call a
   // qualified method (the source_ids in callToMethods), so we only need to
   // check existing edges for those specific callers.
+  const seen = new Set<string>();
   const callerIds = [...new Set(callToMethods.map((r) => r.source_id))];
   if (callerIds.length > 0) {
     // Chunk to stay within SQLite SQLITE_MAX_VARIABLE_NUMBER (999 in many builds).
@@ -504,44 +589,17 @@ export function runChaPostPass(db: BetterSqlite3Database): number {
     if (dotIdx === -1) continue;
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
-
-    // BFS over the implementors map — handles multi-level hierarchies where
-    // abstract/non-instantiated classes sit between the call-site type and
-    // the concrete leaf implementations (matches runPostNativeCha, issue #1311).
-    const bfsQueue: string[] = [typeName];
-    const bfsVisited = new Set<string>([typeName]);
-    while (bfsQueue.length > 0) {
-      const current = bfsQueue.shift()!;
-      const children = implementors.get(current);
-      if (!children?.length) continue;
-
-      for (const cls of children) {
-        if (bfsVisited.has(cls)) continue;
-        bfsVisited.add(cls);
-
-        if (noRtaEvidence || instantiated.has(cls)) {
-          const qualifiedName = `${cls}.${methodSuffix}`;
-          const methodNodes = findMethodStmt.all(qualifiedName) as Array<{ id: number }>;
-          for (const methodNode of methodNodes) {
-            if (methodNode.id === source_id) continue; // skip self-loops
-            const key = `${source_id}|${methodNode.id}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            newEdges.push([
-              source_id,
-              methodNode.id,
-              'calls',
-              CHA_TYPED_DISPATCH_CONFIDENCE,
-              0,
-              'cha-expanded',
-            ]);
-          }
-        }
-
-        // Always traverse children — non-instantiated classes may have instantiated subclasses.
-        bfsQueue.push(cls);
-      }
-    }
+    expandChaCall(
+      source_id,
+      typeName,
+      methodSuffix,
+      implementors,
+      instantiated,
+      noRtaEvidence,
+      findMethodStmt,
+      seen,
+      newEdges,
+    );
   }
 
   if (newEdges.length > 0) {

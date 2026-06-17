@@ -53,74 +53,93 @@ const CALLABLE_KINDS = new Set(['function', 'method']);
  */
 const TOP_LEVEL_BINDING_KINDS = new Set(['variable', 'constant']);
 
+type Def = { name: string; kind: string; line: number; endLine?: number | null };
+type CallerMatch = { id: number; name: string } | null;
+
+/**
+ * Find the narrowest enclosing function/method definition for `callLine`.
+ * Returns the DB node and name, or null if none encloses the call.
+ */
+function findEnclosingCallable(
+  lookup: CallNodeLookup,
+  callLine: number,
+  definitions: ReadonlyArray<Def>,
+  relPath: string,
+): CallerMatch {
+  let best: CallerMatch = null;
+  let bestSpan = Infinity;
+  for (const def of definitions) {
+    if (!CALLABLE_KINDS.has(def.kind)) continue;
+    if (def.line > callLine) continue;
+    const end = def.endLine ?? Infinity;
+    if (callLine > end) continue;
+    const span = end === Infinity ? Infinity : end - def.line;
+    if (span < bestSpan) {
+      const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
+      if (row) {
+        best = { ...row, name: def.name };
+        bestSpan = span;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Find the widest (outermost) enclosing variable/constant binding for `callLine`.
+ * Used as fallback for top-level bindings (e.g. Haskell `main = do …`).
+ * We pick the WIDEST span so that nested `let` bindings inside `main`'s
+ * do-block do not shadow `main` itself as the attributing caller.
+ */
+function findEnclosingBinding(
+  lookup: CallNodeLookup,
+  callLine: number,
+  definitions: ReadonlyArray<Def>,
+  relPath: string,
+): CallerMatch {
+  let best: CallerMatch = null;
+  let bestSpan = -1; // looking for WIDEST span, so start at -1
+  for (const def of definitions) {
+    if (!TOP_LEVEL_BINDING_KINDS.has(def.kind)) continue;
+    if (def.line > callLine) continue;
+    const end = def.endLine ?? Infinity;
+    if (callLine > end) continue;
+    const span = end === Infinity ? Infinity : end - def.line;
+    if (span > bestSpan) {
+      const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
+      if (row) {
+        best = { ...row, name: def.name };
+        bestSpan = span;
+      }
+    }
+  }
+  return best;
+}
+
 export function findCaller(
   lookup: CallNodeLookup,
   call: { line: number },
-  definitions: ReadonlyArray<{
-    name: string;
-    kind: string;
-    line: number;
-    endLine?: number | null;
-  }>,
+  definitions: ReadonlyArray<Def>,
   relPath: string,
   fileNodeRow: { id: number },
 ): { id: number; callerName: string | null } {
   // Pass 1: find the narrowest enclosing function/method.
-  let fnCaller: { id: number } | null = null;
-  let fnCallerName: string | null = null;
-  let fnCallerSpan = Infinity;
-
-  // Pass 2: find the widest (outermost) enclosing variable/constant binding.
-  // Used as fallback when no function/method encloses the call site
-  // (e.g. Haskell `main = do …` is a `bind` node with kind `variable`).
-  // We pick the WIDEST span (outermost binding), not the narrowest, so that
-  // nested `let` bindings inside `main`'s do-block do not shadow `main`
-  // itself as the attributing caller.  The outermost enclosing variable is
-  // the "function-like" top-level binding.
-  let varCaller: { id: number } | null = null;
-  let varCallerName: string | null = null;
-  let varCallerSpan = -1; // looking for WIDEST span, so start at -1
-
-  for (const def of definitions) {
-    if (def.line <= call.line) {
-      const end = def.endLine ?? Infinity;
-      if (call.line <= end) {
-        const span = end === Infinity ? Infinity : end - def.line;
-        if (CALLABLE_KINDS.has(def.kind)) {
-          if (span < fnCallerSpan) {
-            const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
-            if (row) {
-              fnCaller = row;
-              fnCallerName = def.name;
-              fnCallerSpan = span;
-            }
-          }
-        } else if (TOP_LEVEL_BINDING_KINDS.has(def.kind)) {
-          if (span > varCallerSpan) {
-            const row = lookup.nodeId(def.name, def.kind, relPath, def.line);
-            if (row) {
-              varCaller = row;
-              varCallerName = def.name;
-              varCallerSpan = span;
-            }
-          }
-        }
-      }
-    }
-  }
+  const fnCaller = findEnclosingCallable(lookup, call.line, definitions, relPath);
 
   // Prefer function/method enclosing scope over variable binding.
-  // If a function/method encloses the call, use it — local variable
-  // declarations inside the function body must not shadow it.
   // Only fall back to a variable/constant binding when the call is at
   // top-level scope (no enclosing function/method found), which handles
   // languages like Haskell where `main` is a top-level `bind` node.
   if (fnCaller) {
-    return { ...fnCaller, callerName: fnCallerName };
+    return { id: fnCaller.id, callerName: fnCaller.name };
   }
+
+  // Pass 2: find the widest (outermost) enclosing variable/constant binding.
+  const varCaller = findEnclosingBinding(lookup, call.line, definitions, relPath);
   if (varCaller) {
-    return { ...varCaller, callerName: varCallerName };
+    return { id: varCaller.id, callerName: varCaller.name };
   }
+
   return { ...fileNodeRow, callerName: null };
 }
 
