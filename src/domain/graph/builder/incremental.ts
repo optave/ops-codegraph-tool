@@ -533,7 +533,7 @@ function seedRestParamTypeMap(typeMap: Map<string, unknown>, symbols: ExtractorO
  * Normalize symbols.typeMap into a canonical Map and seed scoped rest-param
  * keys (Phase 8.3f). Mirrors buildObjectRestParamPostPass in the full build.
  */
-function incrementalBarrelEdges(symbols: ExtractorOutput): Map<string, unknown> {
+function buildIncrementalTypeMap(symbols: ExtractorOutput): Map<string, unknown> {
   const typeMap = coerceTypeMap(symbols);
   seedRestParamTypeMap(typeMap, symbols);
   return typeMap;
@@ -541,8 +541,14 @@ function incrementalBarrelEdges(symbols: ExtractorOutput): Map<string, unknown> 
 
 /**
  * Strategy 1 — same-class `this.method()` fallback.
- * Derives the enclosing class name from callerName (e.g. `Logger.info` → `Logger`)
- * and retries with the qualified method name `Logger.methodName`.
+ * Derives the enclosing class name from callerName by extracting the segment
+ * immediately before the final dot (e.g. `MyClass.method` → `MyClass`,
+ * `Namespace.MyClass.method` → `MyClass`), then retries with the qualified
+ * method name `MyClass.callName`.
+ *
+ * Uses lastIndexOf to match the full-build counterpart in resolveFallbackTargets
+ * (build-edges.ts) — indexOf would extract `Namespace` instead of `MyClass` for
+ * deeply-qualified caller names like `Namespace.MyClass.method`.
  */
 function resolveThisSameClassTarget(
   callName: string,
@@ -550,9 +556,10 @@ function resolveThisSameClassTarget(
   relPath: string,
   lookup: CallNodeLookup,
 ): Array<{ id: number; file: string; kind?: string }> {
-  const dotIdx = callerName.indexOf('.');
-  if (dotIdx <= 0) return [];
-  const className = callerName.slice(0, dotIdx);
+  const lastDot = callerName.lastIndexOf('.');
+  if (lastDot <= 0) return [];
+  const prevDot = callerName.lastIndexOf('.', lastDot - 1);
+  const className = callerName.slice(prevDot + 1, lastDot);
   return lookup
     .byNameAndFile(`${className}.${callName}`, relPath)
     .filter((n) => n.kind === 'method');
@@ -598,7 +605,7 @@ function resolveDefinePropertyTarget(
  * Apply `this`-receiver fallback resolution strategies for a single call site
  * when the primary resolveCallTargets pass returned no targets.
  */
-function incrementalImportEdges(
+function applyThisReceiverFallbacks(
   call: { name: string; receiver?: string | null },
   callerName: string | null,
   relPath: string,
@@ -635,7 +642,7 @@ function incrementalImportEdges(
  * then emit a `receiver` edge when the call has a non-this/self/super receiver.
  * Returns the number of edges inserted.
  */
-function incrementalChaEdges(
+function emitIncrementalCallEdges(
   call: { name: string; receiver?: string | null; dynamic?: boolean },
   caller: { id: number; callerName: string | null },
   targets: Array<{ id: number; file: string; kind?: string }>,
@@ -692,7 +699,7 @@ function buildCallEdges(
   fileNodeRow: { id: number },
   importedNames: Map<string, string>,
 ): number {
-  const typeMap = incrementalBarrelEdges(symbols);
+  const typeMap = buildIncrementalTypeMap(symbols);
   const seenCallEdges = new Set<string>();
   const lookup = makeIncrementalLookup(db, stmts);
   let edgesAdded = 0;
@@ -710,7 +717,7 @@ function buildCallEdges(
       caller.callerName,
     );
 
-    const targets = incrementalImportEdges(
+    const targets = applyThisReceiverFallbacks(
       call,
       caller.callerName,
       relPath,
@@ -720,7 +727,7 @@ function buildCallEdges(
       initialTargets,
     );
 
-    edgesAdded += incrementalChaEdges(
+    edgesAdded += emitIncrementalCallEdges(
       call,
       caller,
       targets,
