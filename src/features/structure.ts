@@ -90,6 +90,44 @@ interface SqliteStatement {
   run(...params: unknown[]): unknown;
 }
 
+/** Insert file→parent-directory contains edges (incremental-aware). */
+function insertFileToParentEdges(
+  insertEdge: SqliteStatement,
+  getNodeIdStmt: NodeIdStmt,
+  fileSymbols: Map<string, FileSymbolData>,
+  affectedDirs: Set<string> | null,
+): void {
+  for (const relPath of fileSymbols.keys()) {
+    const dir = normalizePath(path.dirname(relPath));
+    if (!dir || dir === '.') continue;
+    if (affectedDirs && !affectedDirs.has(dir)) continue;
+    const dirRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
+    const fileRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (dirRow && fileRow) {
+      insertEdge.run(dirRow.id, fileRow.id, 'contains', 1.0, 0);
+    }
+  }
+}
+
+/** Insert child-directory→parent-directory contains edges (incremental-aware). */
+function insertDirToParentEdges(
+  insertEdge: SqliteStatement,
+  getNodeIdStmt: NodeIdStmt,
+  allDirs: Set<string>,
+  affectedDirs: Set<string> | null,
+): void {
+  for (const dir of allDirs) {
+    const parent = normalizePath(path.dirname(dir));
+    if (!parent || parent === '.' || parent === dir) continue;
+    if (affectedDirs && !affectedDirs.has(parent)) continue;
+    const parentRow = getNodeIdStmt.get(parent, 'directory', parent, 0);
+    const childRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
+    if (parentRow && childRow) {
+      insertEdge.run(parentRow.id, childRow.id, 'contains', 1.0, 0);
+    }
+  }
+}
+
 function insertContainsEdges(
   db: BetterSqlite3Database,
   insertEdge: SqliteStatement,
@@ -102,26 +140,8 @@ function insertContainsEdges(
   const affectedDirs = isIncremental ? getAncestorDirs(changedFiles ?? []) : null;
 
   db.transaction(() => {
-    for (const relPath of fileSymbols.keys()) {
-      const dir = normalizePath(path.dirname(relPath));
-      if (!dir || dir === '.') continue;
-      if (affectedDirs && !affectedDirs.has(dir)) continue;
-      const dirRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
-      const fileRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
-      if (dirRow && fileRow) {
-        insertEdge.run(dirRow.id, fileRow.id, 'contains', 1.0, 0);
-      }
-    }
-    for (const dir of allDirs) {
-      const parent = normalizePath(path.dirname(dir));
-      if (!parent || parent === '.' || parent === dir) continue;
-      if (affectedDirs && !affectedDirs.has(parent)) continue;
-      const parentRow = getNodeIdStmt.get(parent, 'directory', parent, 0);
-      const childRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
-      if (parentRow && childRow) {
-        insertEdge.run(parentRow.id, childRow.id, 'contains', 1.0, 0);
-      }
-    }
+    insertFileToParentEdges(insertEdge, getNodeIdStmt, fileSymbols, affectedDirs);
+    insertDirToParentEdges(insertEdge, getNodeIdStmt, allDirs, affectedDirs);
   })();
 }
 
@@ -249,40 +269,59 @@ function buildFileToAncestorDirs(dirFiles: Map<string, string[]>): Map<string, S
   return fileToAncestorDirs;
 }
 
+/** Initialise a zero-count map for all known directories. */
+function initDirEdgeCounts(
+  allDirs: Set<string>,
+): Map<string, { intra: number; fanIn: number; fanOut: number }> {
+  const m = new Map<string, { intra: number; fanIn: number; fanOut: number }>();
+  for (const dir of allDirs) m.set(dir, { intra: 0, fanIn: 0, fanOut: 0 });
+  return m;
+}
+
+/** Accumulate source-side (intra / fanOut) counts for one import edge. */
+function accumulateSrcDirCounts(
+  srcDirs: Set<string>,
+  tgtDirs: Set<string> | undefined,
+  dirEdgeCounts: Map<string, { intra: number; fanIn: number; fanOut: number }>,
+): void {
+  for (const dir of srcDirs) {
+    const counts = dirEdgeCounts.get(dir);
+    if (!counts) continue;
+    if (tgtDirs?.has(dir)) {
+      counts.intra++;
+    } else {
+      counts.fanOut++;
+    }
+  }
+}
+
+/** Accumulate target-side (fanIn) counts for one import edge. */
+function accumulateTgtDirCounts(
+  tgtDirs: Set<string>,
+  srcDirs: Set<string> | undefined,
+  dirEdgeCounts: Map<string, { intra: number; fanIn: number; fanOut: number }>,
+): void {
+  for (const dir of tgtDirs) {
+    if (srcDirs?.has(dir)) continue;
+    const counts = dirEdgeCounts.get(dir);
+    if (!counts) continue;
+    counts.fanIn++;
+  }
+}
+
 /** Count intra-directory, fan-in, and fan-out edges per directory. */
 function countDirectoryEdges(
   allDirs: Set<string>,
   importEdges: ImportEdge[],
   fileToAncestorDirs: Map<string, Set<string>>,
 ): Map<string, { intra: number; fanIn: number; fanOut: number }> {
-  const dirEdgeCounts = new Map<string, { intra: number; fanIn: number; fanOut: number }>();
-  for (const dir of allDirs) {
-    dirEdgeCounts.set(dir, { intra: 0, fanIn: 0, fanOut: 0 });
-  }
+  const dirEdgeCounts = initDirEdgeCounts(allDirs);
   for (const { source_file, target_file } of importEdges) {
     const srcDirs = fileToAncestorDirs.get(source_file);
     const tgtDirs = fileToAncestorDirs.get(target_file);
     if (!srcDirs && !tgtDirs) continue;
-
-    if (srcDirs) {
-      for (const dir of srcDirs) {
-        const counts = dirEdgeCounts.get(dir);
-        if (!counts) continue;
-        if (tgtDirs?.has(dir)) {
-          counts.intra++;
-        } else {
-          counts.fanOut++;
-        }
-      }
-    }
-    if (tgtDirs) {
-      for (const dir of tgtDirs) {
-        if (srcDirs?.has(dir)) continue;
-        const counts = dirEdgeCounts.get(dir);
-        if (!counts) continue;
-        counts.fanIn++;
-      }
-    }
+    if (srcDirs) accumulateSrcDirCounts(srcDirs, tgtDirs, dirEdgeCounts);
+    if (tgtDirs) accumulateTgtDirCounts(tgtDirs, srcDirs, dirEdgeCounts);
   }
   return dirEdgeCounts;
 }
@@ -660,7 +699,8 @@ function readCachedMedians(db: BetterSqlite3Database): { fanIn: number; fanOut: 
     )
       return null;
     return { fanIn: cached.fanIn, fanOut: cached.fanOut };
-  } catch {
+  } catch (e) {
+    debug(`readCachedMedians: failed to parse cached medians — ${e}`);
     return null;
   }
 }
