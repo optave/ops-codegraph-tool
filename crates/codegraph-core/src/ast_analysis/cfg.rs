@@ -1368,6 +1368,11 @@ impl<'a> CfgBuilder<'a> {
     }
 
     /// Collect catch, finally, and else handler nodes from a try statement.
+    ///
+    /// Iterates only over direct children of `try_stmt`: this is both necessary and sufficient
+    /// because tree-sitter represents each handler clause as a direct child of the try node.
+    /// Only treat as try-else if it's a direct child of the try statement
+    /// (not the else_clause of an if inside the try body).
     fn collect_try_handlers<'b>(&self, try_stmt: &Node<'b>) -> (Vec<Node<'b>>, Option<Node<'b>>, Option<Node<'b>>) {
         let mut catch_handlers: Vec<Node> = Vec::new();
         let mut finally_handler: Option<Node> = None;
