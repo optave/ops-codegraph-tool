@@ -51,7 +51,8 @@ function expandProvenance(
 ): Map<string, ConfigSource> {
   const map = new Map<string, ConfigSource>();
   for (const { key } of flatEntries) {
-    // Walk from longest prefix to shortest to find the governing provenance key
+    // Provenance is keyed by top-level section (e.g. 'build', 'llm'), so
+    // extract the first segment to find the governing provenance entry.
     const topLevel = key.split('.')[0] ?? key;
     map.set(key, provenance[topLevel] ?? 'default');
   }
@@ -60,8 +61,8 @@ function expandProvenance(
 
 /**
  * Render the effective config as a human-readable Key/Value/Source table.
- * All keys are shown; non-default entries are sorted to the top, then
- * remaining keys are sorted alphabetically.
+ * All rows are shown, sorted so non-default overrides appear first, then
+ * remaining defaults alphabetically.
  */
 function renderConfigTable(
   config: Record<string, unknown>,

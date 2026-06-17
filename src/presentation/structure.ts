@@ -53,15 +53,15 @@ interface HotspotsResult {
   metric: string;
   level: string;
   limit: number;
-  hotspots: any[];
+  items: any[];
 }
 
 export function formatHotspots(data: HotspotsResult): string {
-  if (data.hotspots.length === 0) return 'No hotspots found. Run "codegraph build" first.';
+  if (data.items.length === 0) return 'No hotspots found. Run "codegraph build" first.';
 
   const lines = [`\nHotspots by ${data.metric} (${data.level}-level, top ${data.limit}):\n`];
   let rank = 1;
-  for (const h of data.hotspots) {
+  for (const h of data.items) {
     const extra =
       h.kind === 'directory'
         ? `${h.fileCount} files, cohesion=${h.cohesion !== null ? h.cohesion!.toFixed(2) : 'n/a'}`
