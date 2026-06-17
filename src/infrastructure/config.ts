@@ -508,7 +508,7 @@ export async function promptForConsentIfNeeded(
   const answer = await new Promise<string>((resolve) => {
     rl.question(
       `\nA global codegraph config was found at ${globalPath}.\n` +
-        `Apply it to this repository (${path.resolve(rootDir)})? [y/N]\n` +
+        `Apply it to settings not explicitly configured in this repo (${path.resolve(rootDir)})? [y/N]\n` +
         `(remembered per-repo; change later with \`codegraph config --enable-global|--disable-global\`)\n` +
         `> `,
       (ans) => {
