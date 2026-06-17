@@ -233,6 +233,19 @@ function evaluateFunctionRules(
   ruleResults: RuleResult[],
 ): void {
   const defs = RULE_DEFS.filter((d) => d.level === 'function');
+  const activeDefs = defs.filter((d) => isEnabled(rules[d.name]!));
+  if (activeDefs.length === 0) {
+    for (const def of defs) {
+      ruleResults.push({
+        name: def.name,
+        level: def.level,
+        status: 'pass',
+        thresholds: rules[def.name]!,
+        violationCount: 0,
+      });
+    }
+    return;
+  }
 
   let where = "WHERE n.kind IN ('function','method')";
   const params: unknown[] = [];
@@ -274,6 +287,19 @@ function evaluateFileRules(
   ruleResults: RuleResult[],
 ): void {
   const defs = RULE_DEFS.filter((d) => d.level === 'file');
+  const activeDefs = defs.filter((d) => isEnabled(rules[d.name]!));
+  if (activeDefs.length === 0) {
+    for (const def of defs) {
+      ruleResults.push({
+        name: def.name,
+        level: def.level,
+        status: 'pass',
+        thresholds: rules[def.name]!,
+        violationCount: 0,
+      });
+    }
+    return;
+  }
 
   let where = "WHERE n.kind = 'file'";
   const params: unknown[] = [];
