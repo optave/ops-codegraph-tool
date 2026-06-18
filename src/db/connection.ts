@@ -419,18 +419,25 @@ export function openRepo(
  * Returns the better-sqlite3 handle (for backwards compat) plus an optional
  * NativeDatabase for modules that can use batched Rust query methods.
  * Callers should use nativeDb when available and fall back to db.prepare().
+ *
+ * @param opts.engine - Per-call engine override: 'native' | 'wasm' | 'auto'.
+ *   When omitted, falls back to config.build.engine then 'auto', mirroring
+ *   the priority chain used by openRepo().
  */
-export function openReadonlyWithNative(customPath?: string): {
+export function openReadonlyWithNative(
+  customPath?: string,
+  opts: { engine?: 'native' | 'wasm' | 'auto' } = {},
+): {
   db: BetterSqlite3Database;
   nativeDb: NativeDatabase | undefined;
   close(): void;
 } {
   const db = openReadonlyOrFail(customPath);
 
-  // Respect explicit engine selection, consistent with openRepo().
+  // Respect explicit engine selection: opts.engine > config.build.engine > auto.
   // config.build.engine covers both CODEGRAPH_ENGINE env (via applyEnvOverrides)
-  // and the .codegraphrc.json config-file path.
-  const engine = loadConfig().build.engine ?? 'auto';
+  // and the .codegraphrc.json config-file path. Mirrors openRepo() priority chain.
+  const engine = opts.engine ?? loadConfig().build.engine ?? 'auto';
 
   let nativeDb: NativeDatabase | undefined;
   if (engine !== 'wasm' && isNativeAvailable()) {
