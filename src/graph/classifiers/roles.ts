@@ -141,6 +141,23 @@ function classifyUnreferencedNode(node: RoleClassificationNode): Role {
       // these types are almost certainly live — classify as leaf.
       return 'leaf';
     }
+    if (node.kind === 'method') {
+      // Methods implementing interfaces are dispatched via conditional property
+      // access e.g. `if (v.enterFunction) v.enterFunction(...)`. Codegraph
+      // resolves the call to the property accessor rather than to the concrete
+      // method implementation, so the method has no inbound call edge. All
+      // methods with active file siblings are almost certainly interface
+      // implementations — classify as leaf.
+      return 'leaf';
+    }
+    if (node.kind === 'function' && node.fanOut > 0) {
+      // Functions referenced as logical-or fallback defaults — e.g.
+      // `const fn = options._fetchLatest || fetchLatestVersion` — appear as
+      // value references, not call sites, so no call edge is produced. We
+      // require `fanOut > 0` as evidence that the function is non-trivial
+      // (i.e. it calls something), ruling out truly inert dead helpers.
+      return 'leaf';
+    }
   }
   if (node.testOnlyFanIn != null && node.testOnlyFanIn > 0) return 'test-only';
   return classifyDeadSubRole(node);
