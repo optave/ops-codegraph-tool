@@ -1328,11 +1328,16 @@ export interface CodegraphConfig {
      */
     typescriptResolver: boolean;
     /**
-     * Engine selection override. Equivalent to the `CODEGRAPH_ENGINE` env var and
-     * the `--engine` CLI flag. Values: `'auto'` (default), `'native'`, `'wasm'`.
-     * When set in config, takes lower priority than the CLI flag but higher than
-     * the default. Routed through `applyEnvOverrides` so `CODEGRAPH_ENGINE=wasm`
-     * always wins over a config-file value.
+     * Engine selection override. Values: `'auto'` (default), `'native'`, `'wasm'`.
+     *
+     * **Current wiring (partial):** This field is populated by `applyEnvOverrides`
+     * from `CODEGRAPH_ENGINE` env var — env var → `config.build.engine`. The
+     * `--engine` CLI flag is also forwarded. However, `connection.ts` and
+     * `pipeline.ts` still read `process.env.CODEGRAPH_ENGINE` / `ctx.opts.engine`
+     * directly, so a value set only in `.codegraphrc.json` (not via env var or CLI)
+     * is silently ignored by the pipeline.
+     *
+     * Full config-file wiring is tracked in issue #1596.
      */
     engine: 'auto' | 'native' | 'wasm';
     /**
@@ -1420,6 +1425,13 @@ export interface CodegraphConfig {
      * constant of 50.  See TODO in `src/infrastructure/config.ts`.
      */
     pointsToMaxIterations: number;
+    /**
+     * Confidence score for a return type inferred from `return new Constructor()`
+     * with no explicit TypeScript annotation.
+     * Mirrors `INFERRED_RETURN_TYPE_CONFIDENCE` in `src/extractors/javascript.ts`.
+     * @reserved — not yet wired; see TODO in `src/infrastructure/config.ts`.
+     */
+    typeInferenceConfidence: number;
   };
 
   community: {

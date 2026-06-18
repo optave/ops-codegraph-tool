@@ -85,4 +85,27 @@ describe('Swift parser', () => {
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'print' }));
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'bar' }));
   });
+
+  it('extracts navigation_expression calls with bare method name and receiver', () => {
+    // navigation_expression uses a navigation_suffix child node — method name
+    // must be "save" not ".save" so the call resolver can find UserRepository.save.
+    const symbols = parseSwift(`func f() { repo.save(x) }`);
+    const call = symbols.calls.find((c) => c.receiver === 'repo');
+    expect(call).toBeDefined();
+    expect(call!.name).toBe('save');
+    expect(call!.receiver).toBe('repo');
+  });
+
+  it('seeds typeMap from class property type annotations', () => {
+    // `private let repo: UserRepository` in a class body must seed typeMap
+    // so that receiver-typed call edges (repo.save → UserRepository) can resolve.
+    const symbols = parseSwift(`class Service {
+  private let repo: UserRepository
+  func createUser() { repo.save(x) }
+}`);
+    const entry = symbols.typeMap.get('repo');
+    expect(entry).toBeDefined();
+    expect(entry!.type).toBe('UserRepository');
+    expect(entry!.confidence).toBe(0.9);
+  });
 });

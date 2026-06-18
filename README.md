@@ -332,6 +332,7 @@ Composite commands for risk-driven workflows and multi-agent dispatch.
 codegraph audit <file-or-function>    # Combined structural summary + impact + health in one report
 codegraph audit <target> --quick      # Structural summary only (skip impact and health)
 codegraph audit src/queries.js -T     # Audit all functions in a file
+codegraph explain <target>            # Alias for audit — same output, easier to discover
 codegraph triage                      # Ranked audit priority queue (connectivity + hotspots + roles)
 codegraph triage -T --limit 20        # Top 20 riskiest functions, excluding tests
 codegraph triage --level file -T      # File-level hotspot analysis
@@ -456,6 +457,22 @@ codegraph registry remove <name>  # Unregister
 
 `codegraph build` auto-registers the project — no manual setup needed.
 
+### Configuration
+
+Inspect and manage `.codegraphrc.json` settings.
+
+```bash
+codegraph config                    # Show all config keys with values and sources
+codegraph config --json             # JSON output of the merged config
+codegraph config --init             # Scaffold a .codegraphrc.json with all sections pre-populated
+codegraph config --edit             # Open .codegraphrc.json in $EDITOR
+codegraph config --enable-global    # Opt this repo into user-level global config
+codegraph config --disable-global   # Opt this repo out of user-level global config
+codegraph config --list-global      # Show the contents of the global config file
+```
+
+A user-level config file at `~/.config/codegraph/config.json` (XDG) or `~/.codegraph/config.json` lets you set personal defaults once and apply them to opted-in repos. The merge order is: DEFAULTS → global (if consented) → project → env. Non-interactive contexts (CI, MCP) never apply the global config without explicit consent. See [docs/guides/configuration.md](docs/guides/configuration.md) for full details.
+
 ### Common Flags
 
 | Flag | Description |
@@ -475,6 +492,8 @@ codegraph registry remove <name>  # Unregister
 | `--limit <n>` | Limit number of results |
 | `--offset <n>` | Skip first N results (pagination) |
 | `--rrf-k <n>` | RRF smoothing constant for multi-query search (default 60) |
+| `--user-config [path]` | Apply global user config for this run; optionally specify a custom path instead of the XDG default (`~/.config/codegraph/config.json`) |
+| `--no-user-config` | Skip global user config for this run (CI/non-interactive safe) |
 
 ## 🌐 Language Support
 

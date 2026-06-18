@@ -121,7 +121,9 @@ interface CheckForUpdatesOptions {
 
 /**
  * Return the latest version from cache if fresh, or fetch it from the registry.
- * Persists the result to the cache before returning.
+ * Persists the fetched version to the cache only when a network fetch occurs
+ * (i.e. the cache is stale or missing). Returns the cached value directly
+ * without updating the cache when the cache is still within `CACHE_TTL_MS`.
  * Returns null when the network fetch fails or the cache is corrupt.
  */
 async function resolveLatestVersion(

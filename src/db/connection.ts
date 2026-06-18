@@ -383,9 +383,11 @@ export function openRepo(
   // Derive rootDir from customDbPath so loadConfig reads the right project config.
   // Convention: customDbPath = <rootDir>/.codegraph/graph.db
   const rootDir = customDbPath ? path.dirname(path.dirname(path.resolve(customDbPath))) : undefined;
-  // Explicit opts.engine wins; otherwise use the project config (which already
-  // applies CODEGRAPH_ENGINE env via applyEnvOverrides).
-  const engine = opts.engine ?? loadConfig(rootDir).build.engine;
+  // Respect explicit engine selection: opts.engine > config.build.engine > auto.
+  // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
+  // so this covers both the env-var path and the .codegraphrc.json config-file path.
+  // This ensures --engine wasm and benchmark workers bypass the native path.
+  const engine = opts.engine ?? loadConfig(rootDir).build.engine ?? 'auto';
 
   // Try native rusqlite path first (Phase 6.14)
   if (engine !== 'wasm' && isNativeAvailable()) {
@@ -420,17 +422,28 @@ export function openRepo(
  * Returns the better-sqlite3 handle (for backwards compat) plus an optional
  * NativeDatabase for modules that can use batched Rust query methods.
  * Callers should use nativeDb when available and fall back to db.prepare().
+ *
+ * @param opts.engine - Per-call engine override: 'native' | 'wasm' | 'auto'.
+ *   When omitted, falls back to config.build.engine then 'auto', mirroring
+ *   the priority chain used by openRepo().
  */
-export function openReadonlyWithNative(customPath?: string): {
+export function openReadonlyWithNative(
+  customPath?: string,
+  opts: { engine?: 'native' | 'wasm' | 'auto' } = {},
+): {
   db: BetterSqlite3Database;
   nativeDb: NativeDatabase | undefined;
   close(): void;
 } {
   const db = openReadonlyOrFail(customPath);
 
-  // Derive rootDir from customPath and load its project config, consistent with openRepo().
+  // Derive rootDir from customPath so loadConfig reads the right project config,
+  // consistent with openRepo(). Convention: customPath = <rootDir>/.codegraph/graph.db
   const rootDir = customPath ? path.dirname(path.dirname(path.resolve(customPath))) : undefined;
-  const engine = loadConfig(rootDir).build.engine;
+  // Respect explicit engine selection: opts.engine > config.build.engine > auto.
+  // config.build.engine covers both CODEGRAPH_ENGINE env (via applyEnvOverrides)
+  // and the .codegraphrc.json config-file path. Mirrors openRepo() priority chain.
+  const engine = opts.engine ?? loadConfig(rootDir).build.engine ?? 'auto';
 
   let nativeDb: NativeDatabase | undefined;
   if (engine !== 'wasm' && isNativeAvailable()) {

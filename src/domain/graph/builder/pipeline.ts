@@ -62,7 +62,9 @@ export {
 
 function initializeEngine(ctx: PipelineContext): void {
   ctx.engineOpts = {
-    engine: ctx.opts.engine || 'auto',
+    // Priority: CLI --engine flag > .codegraphrc.json build.engine > 'auto'.
+    // ctx.config is already populated by the time initializeEngine is called.
+    engine: ctx.opts.engine ?? ctx.config.build.engine ?? 'auto',
     dataflow: ctx.opts.dataflow !== false,
     ast: ctx.opts.ast !== false,
     // nativeDb and WAL callbacks are set later when NativeDatabase is opened
@@ -174,8 +176,13 @@ function setupPipeline(ctx: PipelineContext): void {
     ? path.resolve(ctx.opts.dbPath)
     : path.join(ctx.rootDir, '.codegraph', 'graph.db');
 
+  // Load config first so build.engine from .codegraphrc.json is available for
+  // the engine-pref fallback below (ctx.opts.engine > config.build.engine > 'auto').
+  ctx.config = loadConfig(ctx.rootDir, { userConfig: ctx.opts.userConfig });
+
   // Detect whether native engine is available.
-  const enginePref = ctx.opts.engine || 'auto';
+  // Priority: CLI --engine flag > .codegraphrc.json build.engine > 'auto'.
+  const enginePref = ctx.opts.engine ?? ctx.config.build.engine ?? 'auto';
   const native = enginePref !== 'wasm' ? loadNative() : null;
   ctx.nativeAvailable = !!native?.NativeDatabase;
 
@@ -188,8 +195,6 @@ function setupPipeline(ctx: PipelineContext): void {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   ctx.db = openDb(ctx.dbPath);
   initSchema(ctx.db);
-
-  ctx.config = loadConfig(ctx.rootDir, { userConfig: ctx.opts.userConfig });
   // Merge caller-supplied excludes on top of the file-config excludes so
   // programmatic callers (e.g. benchmark scripts) can extend exclusion
   // without mutating .codegraphrc.json. Native orchestrator picks this up

@@ -389,53 +389,10 @@ async function runPostNativeAnalysis(
   return timing;
 }
 
-/**
- * Phase 8.6: CHA expansion post-pass for the native orchestrator path.
- *
- * The Rust build pipeline resolves typed receiver calls (e.g. `worker.doWork()`
- * where `worker: IWorker`) to the interface method declaration only.  This
- * post-pass reads the class hierarchy (via `implements`/`extends` edges) and
- * instantiated types (via `calls` edges to class nodes) from the DB and expands
- * each call to an interface/abstract method to ALL RTA-filtered concrete
- * implementations.
- *
- * Note: `this`/`super` dispatch is handled separately by `runPostNativeThisDispatch`,
- * which WASM-re-parses JS/TS files to obtain raw call site receiver info.
- *
- * `changedFiles` controls candidate scoping on incremental builds:
- *   - null  → full build; scan all call→method edges (existing behaviour).
- *   - array → incremental; two cheap gate queries decide scope:
- *       Gate A: any class/interface/trait/struct/record nodes in changed files?
- *               If yes, a new implementor may have appeared — full scan required.
- *       Gate B: any `calls` edges from changed-file sources targeting
- *               class/constructor/function-kind nodes? If yes, the RTA set may
- *               have grown (also covers the older-schema fallback where
- *               constructor calls target `constructor`/`function` nodes instead
- *               of `class` nodes) — full scan required.
- *       If neither gate fires: scope `callToMethods` to `src.file IN changedFiles`
- *       (safe because no hierarchy or RTA evidence changed).
- *
- * Returns the count of newly inserted CHA edges plus the set of files containing
- * the new edges' endpoints, so the caller can scope role re-classification to the
- * nodes whose fan-in/out actually changed. A zero count means no edges were added
- * and role re-classification is unnecessary.
- */
-function runPostNativeCha(
-  db: BetterSqlite3Database,
-  changedFiles: string[] | null,
-): {
-  newEdgeCount: number;
-  affectedFiles: Set<string>;
-} {
-  const affectedFiles = new Set<string>();
-  const empty = { newEdgeCount: 0, affectedFiles };
-  // Fast guard: no hierarchy edges → no CHA work
-  const hasHierarchy = db
-    .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
-    .get();
-  if (!hasHierarchy) return empty;
+// ── CHA post-pass helpers ────────────────────────────────────────────────────
 
-  // Build implementors map: parent/interface name → [child/implementing class names]
+/** Build implementors map: parent/interface name → [child/implementing class names]. */
+function buildChaImplementorsMap(db: BetterSqlite3Database): Map<string, string[]> {
   const hierarchyRows = db
     .prepare(`
       SELECT src.name AS child_name, tgt.name AS parent_name
@@ -455,12 +412,22 @@ function runPostNativeCha(
     }
     if (!list.includes(row.child_name)) list.push(row.child_name);
   }
-  if (implementors.size === 0) return empty;
+  return implementors;
+}
 
-  // RTA: collect class names that are actually instantiated via `new X()`.
-  // Primary query targets `class`-kind nodes (the canonical schema).
-  // Fallback also matches `constructor`/`function`-kind nodes because some native
-  // engine versions record constructor calls against those kinds instead of `class`.
+/**
+ * Build RTA set: class names actually instantiated via `new X()`.
+ * Primary query targets `class`-kind nodes (the canonical schema).
+ * Fallback also matches `constructor`/`function`-kind nodes because some native
+ * engine versions record constructor calls against those kinds instead of `class`.
+ * Returns `{ instantiated, noRtaEvidence }` where `noRtaEvidence` means no
+ * constructor-call evidence exists — skip RTA filtering so interface dispatch
+ * still produces edges.
+ */
+function buildChaRtaSet(db: BetterSqlite3Database): {
+  instantiated: Set<string>;
+  noRtaEvidence: boolean;
+} {
   let rtaRows = db
     .prepare(`
       SELECT DISTINCT tgt.name
@@ -482,110 +449,104 @@ function runPostNativeCha(
       .all() as Array<{ name: string }>;
   }
   const instantiated = new Set(rtaRows.map((r) => r.name));
-  // noRtaEvidence: true when no constructor-call evidence exists in the DB (e.g. graph
-  // built by an older native engine that doesn't emit constructor call edges at all).
-  // In that case we skip RTA filtering so interface dispatch still produces edges —
-  // all instantiated implementors are admitted rather than silently dropping everything.
   const noRtaEvidence = instantiated.size === 0;
   if (noRtaEvidence) {
     debug('runPostNativeCha: no constructor-call evidence found — proceeding without RTA filter');
   }
+  return { instantiated, noRtaEvidence };
+}
 
-  // ── Incremental candidate scoping ──────────────────────────────────────────
-  // On incremental builds, two gate queries decide whether to restrict the
-  // candidate scan to changed-file call sites or run the full graph scan.
-  //
-  // Gate A: did a changed file add/change a class hierarchy node?
-  //   A new `extends`/`implements` edge means a previously-untracked implementor
-  //   is now in the hierarchy — unchanged call sites in OTHER files may gain new
-  //   valid expansions, so the full scan is required.
-  //   Note: *removed* class nodes are safe — Rust's `purge_changed_files` runs
-  //   before this post-pass and deletes stale nodes and their hierarchy edges, so
-  //   Gate A queries the post-purge DB. A deleted class returns no row here, which
-  //   is correct: its stale CHA edges were already cleaned up by the Rust purge.
-  //
-  // Gate B: did a changed file add new RTA evidence (`new ConcreteX()`)?
-  //   A new `calls` edge to a class/constructor/function-kind target means the
-  //   instantiated set grew — previously RTA-filtered expansions in unchanged
-  //   caller files become admissible, so the full scan is required.
-  //   (`constructor`/`function` cover the older native engine fallback schema.)
-  //
-  // If neither gate fires, the hierarchy and RTA set are unchanged for all files
-  // outside changedFiles, so restricting to changed-file sources is safe.
-  let scopeToChangedFiles = false; // true → add WHERE src.file IN changedFiles
-  if (changedFiles !== null && changedFiles.length > 0) {
-    // Gate A: class/interface/trait/struct/record nodes in changed files?
-    const CHUNK_SIZE = 500;
-    let gateAFired = false;
-    for (let i = 0; i < changedFiles.length && !gateAFired; i += CHUNK_SIZE) {
+/**
+ * Determine CHA candidate scope for incremental builds.
+ *
+ * Gate A: did a changed file add/change a class hierarchy node?
+ *   A new `extends`/`implements` edge means a previously-untracked implementor
+ *   is now in the hierarchy — unchanged call sites in OTHER files may gain new
+ *   valid expansions, so the full scan is required.
+ *   Note: *removed* class nodes are safe — Rust's `purge_changed_files` runs
+ *   before this post-pass and deletes stale nodes and their hierarchy edges, so
+ *   Gate A queries the post-purge DB. A deleted class returns no row here, which
+ *   is correct: its stale CHA edges were already cleaned up by the Rust purge.
+ *
+ * Gate B: did a changed file add new RTA evidence (`new ConcreteX()`)?
+ *   A new `calls` edge to a class/constructor/function-kind target means the
+ *   instantiated set grew — previously RTA-filtered expansions in unchanged
+ *   caller files become admissible, so the full scan is required.
+ *   (`constructor`/`function` cover the older native engine fallback schema.)
+ *
+ * Returns `true` when the scan should be scoped to changed-file sources only.
+ * Returns `false` (full scan) when changedFiles is null, empty, or either gate fires.
+ */
+function computeChaScope(db: BetterSqlite3Database, changedFiles: string[] | null): boolean {
+  if (changedFiles === null || changedFiles.length === 0) return false;
+
+  const CHUNK_SIZE = 500;
+  let gateAFired = false;
+  for (let i = 0; i < changedFiles.length && !gateAFired; i += CHUNK_SIZE) {
+    const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+    const ph = chunk.map(() => '?').join(',');
+    const row = db
+      .prepare(
+        `SELECT 1 FROM nodes
+         WHERE file IN (${ph})
+         AND kind IN ('class', 'interface', 'trait', 'struct', 'record')
+         LIMIT 1`,
+      )
+      .get(...chunk);
+    if (row) gateAFired = true;
+  }
+
+  let gateBFired = false;
+  if (!gateAFired) {
+    for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
       const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
       const ph = chunk.map(() => '?').join(',');
       const row = db
         .prepare(
-          `SELECT 1 FROM nodes
-           WHERE file IN (${ph})
-           AND kind IN ('class', 'interface', 'trait', 'struct', 'record')
+          `SELECT 1 FROM edges e
+           JOIN nodes src ON e.source_id = src.id
+           JOIN nodes tgt ON e.target_id = tgt.id
+           WHERE e.kind = 'calls'
+           AND tgt.kind IN ('class', 'interface', 'trait', 'struct', 'record', 'constructor', 'function')
+           AND src.file IN (${ph})
            LIMIT 1`,
         )
         .get(...chunk);
-      if (row) gateAFired = true;
-    }
-
-    // Gate B: calls from changed-file sources to class/instantiable-kind targets
-    // (also covers older-schema fallback and future CHA extensions to struct/record).
-    // Includes class/interface/trait/struct/record (future CHA extension safety) and
-    // constructor/function (older native engine schema fallback).
-    let gateBFired = false;
-    if (!gateAFired) {
-      for (let i = 0; i < changedFiles.length && !gateBFired; i += CHUNK_SIZE) {
-        const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
-        const ph = chunk.map(() => '?').join(',');
-        const row = db
-          .prepare(
-            `SELECT 1 FROM edges e
-             JOIN nodes src ON e.source_id = src.id
-             JOIN nodes tgt ON e.target_id = tgt.id
-             WHERE e.kind = 'calls'
-             AND tgt.kind IN ('class', 'interface', 'trait', 'struct', 'record', 'constructor', 'function')
-             AND src.file IN (${ph})
-             LIMIT 1`,
-          )
-          .get(...chunk);
-        if (row) gateBFired = true;
-      }
-    }
-
-    if (!gateAFired && !gateBFired) {
-      scopeToChangedFiles = true;
-      debug(
-        `runPostNativeCha: neither gate fired — scoping candidate scan to ${changedFiles.length} changed file(s)`,
-      );
-    } else {
-      debug(
-        `runPostNativeCha: ${gateAFired ? 'Gate A (hierarchy)' : 'Gate B (RTA)'} fired — running full scan`,
-      );
+      if (row) gateBFired = true;
     }
   }
 
-  // Find existing call edges targeting qualified methods (e.g., 'IWorker.doWork').
-  // Include caller_file and method_file so affectedFiles can be populated for
-  // incremental role reclassification; confidence uses CHA_TYPED_DISPATCH_CONFIDENCE matching runChaPostPass.
-  // When scopeToChangedFiles is true, restrict to call sites in the changed files
-  // (safe because no hierarchy or RTA evidence changed outside those files).
-  let callToMethods: Array<{
-    source_id: number;
-    caller_name: string;
-    method_name: string;
-    caller_file: string | null;
-  }>;
+  if (!gateAFired && !gateBFired) {
+    debug(
+      `runPostNativeCha: neither gate fired — scoping candidate scan to ${changedFiles.length} changed file(s)`,
+    );
+    return true;
+  }
+  debug(
+    `runPostNativeCha: ${gateAFired ? 'Gate A (hierarchy)' : 'Gate B (RTA)'} fired — running full scan`,
+  );
+  return false;
+}
+
+type ChaCallRow = {
+  source_id: number;
+  caller_name: string;
+  method_name: string;
+  caller_file: string | null;
+};
+
+/**
+ * Fetch call→method rows that are candidates for CHA expansion.
+ * When `scopeToChangedFiles` is true, restricts to source nodes in `changedFiles`.
+ */
+function fetchChaCallToMethods(
+  db: BetterSqlite3Database,
+  changedFiles: string[] | null,
+  scopeToChangedFiles: boolean,
+): ChaCallRow[] {
   if (scopeToChangedFiles && changedFiles && changedFiles.length > 0) {
     const CHUNK_SIZE = 500;
-    const rows: Array<{
-      source_id: number;
-      caller_name: string;
-      method_name: string;
-      caller_file: string | null;
-    }> = [];
+    const rows: ChaCallRow[] = [];
     for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
       const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
       const ph = chunk.map(() => '?').join(',');
@@ -600,33 +561,36 @@ function runPostNativeCha(
            AND (e.technique IS NULL OR e.technique != 'cha-expanded')
            AND src.file IN (${ph})`,
         )
-        .all(...chunk) as Array<{
-        source_id: number;
-        caller_name: string;
-        method_name: string;
-        caller_file: string | null;
-      }>;
+        .all(...chunk) as ChaCallRow[];
       rows.push(...chunkRows);
     }
-    callToMethods = rows;
-  } else {
-    callToMethods = db
-      .prepare(`
-        SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name, src.file AS caller_file
-        FROM edges e
-        JOIN nodes tgt ON e.target_id = tgt.id
-        JOIN nodes src ON e.source_id = src.id
-        WHERE e.kind = 'calls' AND tgt.kind = 'method'
-        AND INSTR(tgt.name, '.') > 0
-        AND (e.technique IS NULL OR e.technique != 'cha-expanded')
-      `)
-      .all() as Array<{
-      source_id: number;
-      caller_name: string;
-      method_name: string;
-      caller_file: string | null;
-    }>;
+    return rows;
   }
+  return db
+    .prepare(`
+      SELECT e.source_id, src.name AS caller_name, tgt.name AS method_name, src.file AS caller_file
+      FROM edges e
+      JOIN nodes tgt ON e.target_id = tgt.id
+      JOIN nodes src ON e.source_id = src.id
+      WHERE e.kind = 'calls' AND tgt.kind = 'method'
+      AND INSTR(tgt.name, '.') > 0
+      AND (e.technique IS NULL OR e.technique != 'cha-expanded')
+    `)
+    .all() as ChaCallRow[];
+}
+
+/**
+ * BFS-expand CHA call edges and insert new edges into the DB.
+ * Returns `{ newEdgeCount, affectedFiles }` for role re-classification scoping.
+ */
+function expandChaEdges(
+  db: BetterSqlite3Database,
+  callToMethods: ChaCallRow[],
+  implementors: Map<string, string[]>,
+  instantiated: Set<string>,
+  noRtaEvidence: boolean,
+): { newEdgeCount: number; affectedFiles: Set<string> } {
+  const affectedFiles = new Set<string>();
 
   // Seed seen-pairs only from the source_ids we'll be expanding — avoids loading every
   // call edge in the DB (which would be O(all edges)) for large codebases.
@@ -707,88 +671,107 @@ function runPostNativeCha(
   return { newEdgeCount, affectedFiles };
 }
 
+/**
+ * Phase 8.6: CHA expansion post-pass for the native orchestrator path.
+ *
+ * The Rust build pipeline resolves typed receiver calls (e.g. `worker.doWork()`
+ * where `worker: IWorker`) to the interface method declaration only.  This
+ * post-pass reads the class hierarchy (via `implements`/`extends` edges) and
+ * instantiated types (via `calls` edges to class nodes) from the DB and expands
+ * each call to an interface/abstract method to ALL RTA-filtered concrete
+ * implementations.
+ *
+ * Note: `this`/`super` dispatch is handled separately by `runPostNativeThisDispatch`,
+ * which WASM-re-parses JS/TS files to obtain raw call site receiver info.
+ *
+ * `changedFiles` controls candidate scoping on incremental builds:
+ *   - null  → full build; scan all call→method edges (existing behaviour).
+ *   - array → incremental; two cheap gate queries decide scope:
+ *       Gate A: any class/interface/trait/struct/record nodes in changed files?
+ *               If yes, a new implementor may have appeared — full scan required.
+ *       Gate B: any `calls` edges from changed-file sources targeting
+ *               class/constructor/function-kind nodes? If yes, the RTA set may
+ *               have grown (also covers the older-schema fallback where
+ *               constructor calls target `constructor`/`function` nodes instead
+ *               of `class` nodes) — full scan required.
+ *       If neither gate fires: scope `callToMethods` to `src.file IN changedFiles`
+ *       (safe because no hierarchy or RTA evidence changed).
+ *
+ * Returns the count of newly inserted CHA edges plus the set of files containing
+ * the new edges' endpoints, so the caller can scope role re-classification to the
+ * nodes whose fan-in/out actually changed. A zero count means no edges were added
+ * and role re-classification is unnecessary.
+ */
+function runPostNativeCha(
+  db: BetterSqlite3Database,
+  changedFiles: string[] | null,
+): {
+  newEdgeCount: number;
+  affectedFiles: Set<string>;
+} {
+  const affectedFiles = new Set<string>();
+  const empty = { newEdgeCount: 0, affectedFiles };
+  // Fast guard: no hierarchy edges → no CHA work
+  const hasHierarchy = db
+    .prepare(`SELECT 1 FROM edges WHERE kind IN ('extends', 'implements') LIMIT 1`)
+    .get();
+  if (!hasHierarchy) return empty;
+
+  const implementors = buildChaImplementorsMap(db);
+  if (implementors.size === 0) return empty;
+
+  const { instantiated, noRtaEvidence } = buildChaRtaSet(db);
+  const scopeToChangedFiles = computeChaScope(db, changedFiles);
+  const callToMethods = fetchChaCallToMethods(db, changedFiles, scopeToChangedFiles);
+
+  return expandChaEdges(db, callToMethods, implementors, instantiated, noRtaEvidence);
+}
+
 // Extensions where `this`/`super` dispatch can occur (JS/TS family)
 const THIS_DISPATCH_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '.mts', '.cts']);
 
+// ── this/super dispatch post-pass helpers ───────────────────────────────────
+
 /**
- * Phase 8.5: this/super dispatch post-pass for the native orchestrator path.
- *
- * The Rust build pipeline resolves typed receiver calls but does NOT persist raw
- * unresolved call site receiver info (e.g. `this`, `super`) to the DB. This
- * hybrid post-pass re-parses JS/TS/TSX files via WASM to collect call sites with
- * `this`/`super` receivers, then resolves them through the class hierarchy stored
- * in DB `extends` edges — mirroring what `buildChaPostPass` does on the WASM path.
- *
- * Also handles function-as-object-property methods (`f.h = function() { this.g() }`):
- * these use `this` to reference sibling properties on the same object (`f`), so
- * `resolveThisDispatch` resolves them by treating the dot-prefix of the caller name
- * (`f` from `f.h`) as the class and looking up `f.g` directly — no `extends` edge needed.
- *
- * Runs when either `extends` edges exist (class inheritance) OR dot-named `method`
- * nodes exist (func-prop assignments); skips only when neither is present.
+ * Build parents map: child class → direct parent class (from `extends` edges).
+ * May be empty when only func-prop methods exist (no class inheritance) —
+ * resolveThisDispatch handles that case via direct class-prefix lookup.
  */
-async function runPostNativeThisDispatch(
+function buildThisDispatchParentsMap(
   db: BetterSqlite3Database,
-  rootDir: string,
-  changedFiles: string[] | undefined,
-  isFullBuild: boolean,
-): Promise<{ elapsedMs: number; targetIds: Set<number>; affectedFiles: Set<string> }> {
-  const t0 = performance.now();
-  const targetIds = new Set<number>();
-  // Files containing endpoints of newly inserted edges — lets the caller scope
-  // role re-classification to the nodes whose fan-in/out actually changed.
-  const affectedFiles = new Set<string>();
-
-  // Fast guard: need at least one extends edge (class inheritance) OR a dot-named
-  // method node (func-prop assignment: `f.h = function() { this.g() }`) for
-  // this/super dispatch to produce any edges.
-  const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
-  const hasFuncPropMethod = db
-    .prepare(`SELECT 1 FROM nodes WHERE kind = 'method' AND INSTR(name, '.') > 0 LIMIT 1`)
-    .get();
-  if (!hasExtends && !hasFuncPropMethod) return { elapsedMs: 0, targetIds, affectedFiles };
-
-  // Build parents map: child class → direct parent class (from `extends` edges).
-  // May be empty when only func-prop methods exist (no class inheritance) —
-  // resolveThisDispatch handles that case via direct class-prefix lookup.
-  const parentRows = hasExtends
-    ? (db
-        .prepare(`
-          SELECT src.name AS child_name, tgt.name AS parent_name
-          FROM edges e
-          JOIN nodes src ON e.source_id = src.id
-          JOIN nodes tgt ON e.target_id = tgt.id
-          WHERE e.kind = 'extends'
-        `)
-        .all() as Array<{ child_name: string; parent_name: string }>)
-    : [];
-
+  hasExtends: unknown,
+): Map<string, string> {
   const parents = new Map<string, string>();
+  if (!hasExtends) return parents;
+  const parentRows = db
+    .prepare(`
+      SELECT src.name AS child_name, tgt.name AS parent_name
+      FROM edges e
+      JOIN nodes src ON e.source_id = src.id
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind = 'extends'
+    `)
+    .all() as Array<{ child_name: string; parent_name: string }>;
   for (const row of parentRows) {
     if (!parents.has(row.child_name)) parents.set(row.child_name, row.parent_name);
   }
-  // Note: parents may be empty when hasFuncPropMethod but !hasExtends — that is
-  // intentional. resolveThisDispatch still resolves `this.g()` inside `f.h` by
-  // treating `f` (the dot-prefix of callerName `f.h`) as the class and looking
-  // up `f.g` directly via lookup.byName(), without traversing the parents chain.
+  return parents;
+}
 
-  const chaCtx: ChaContext = {
-    implementors: new Map(), // not needed for this/super resolution
-    parents,
-    instantiatedTypes: new Set(), // not needed for this/super resolution
-  };
-
-  // Determine which files to re-parse.
-  //
-  // On a full build we do NOT re-parse every JS/TS file — that would WASM-parse
-  // the entire project on top of the native pass, causing a massive regression
-  // (measured: +358% ms/file on codegraph itself). Instead we restrict to files
-  // that are part of the class inheritance hierarchy (both subclass files with
-  // `super.X()` calls and parent-class files with `this.X()` calls) OR that
-  // contain dot-named method nodes (func-prop assignments whose bodies may call
-  // `this.sibling()`). Any file not in either set has no class or object context
-  // where `this`/`super` dispatch would produce new edges.
-  let relFiles: string[];
+/**
+ * Determine the set of relative file paths to re-parse for this/super dispatch.
+ *
+ * On a full build we do NOT re-parse every JS/TS file — that would WASM-parse
+ * the entire project on top of the native pass, causing a massive regression
+ * (measured: +358% ms/file on codegraph itself). Instead we restrict to files
+ * that are part of the class inheritance hierarchy OR that contain dot-named
+ * method nodes (func-prop assignments whose bodies may call `this.sibling()`).
+ */
+function selectThisDispatchFiles(
+  db: BetterSqlite3Database,
+  changedFiles: string[] | undefined,
+  isFullBuild: boolean,
+): string[] {
   if (isFullBuild || !changedFiles) {
     const rows = db
       .prepare(`
@@ -820,76 +803,42 @@ async function runPostNativeThisDispatch(
         )
       `)
       .all() as Array<{ file: string }>;
-    relFiles = rows
+    return rows
       .map((r) => r.file)
       .filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
-  } else {
-    // NOTE: Only files explicitly listed in changedFiles are re-parsed.
-    // If a parent-class method is replaced (new node ID) but the child file is
-    // unchanged, the stale super.method() edge is not refreshed here. A full
-    // rebuild (isFullBuild=true) is required to recover in that scenario.
-    relFiles = changedFiles.filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
   }
-  if (relFiles.length === 0) return { elapsedMs: 0, targetIds, affectedFiles };
+  // NOTE: Only files explicitly listed in changedFiles are re-parsed.
+  // If a parent-class method is replaced (new node ID) but the child file is
+  // unchanged, the stale super.method() edge is not refreshed here. A full
+  // rebuild (isFullBuild=true) is required to recover in that scenario.
+  return changedFiles.filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
+}
 
-  // DB-backed CallNodeLookup — resolveThisDispatch only calls byName()
-  const findByNameStmt = db.prepare(`SELECT id, file, kind FROM nodes WHERE name = ?`);
-  const lookup: CallNodeLookup = {
-    byName: (name) => findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>,
-    byNameAndFile: (name, file) =>
-      (findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>).filter(
-        (n) => n.file === file,
-      ),
-    isBarrel: () => false,
-    resolveBarrel: () => null,
-    nodeId: () => undefined,
-  };
-
-  // Seed seen-pairs from existing call edges on source nodes in our file set
-  const seen = new Set<string>();
-  const CHUNK = 500;
-  for (let i = 0; i < relFiles.length; i += CHUNK) {
-    const chunk = relFiles.slice(i, i + CHUNK);
-    const ph = chunk.map(() => '?').join(',');
-    const rows = db
-      .prepare(
-        `SELECT e.source_id, e.target_id
-         FROM edges e
-         JOIN nodes n ON e.source_id = n.id
-         WHERE e.kind = 'calls' AND n.file IN (${ph})`,
-      )
-      .all(...chunk) as Array<{ source_id: number; target_id: number }>;
-    for (const r of rows) seen.add(`${r.source_id}|${r.target_id}`);
-  }
-
-  // Find the innermost containing method/function for a call at `line` in `file`.
-  // COALESCE maps NULL end_line to a large sentinel so unbounded nodes sort last
-  // (SQLite ASC orders NULLs first, so a raw `end_line - line` would pick them first).
-  const findCallerByLineStmt = db.prepare(`
-    SELECT id, name FROM nodes
-    WHERE file = ? AND kind IN ('method', 'function')
-    AND line <= ? AND (end_line IS NULL OR end_line >= ?)
-    ORDER BY COALESCE(end_line - line, 999999999) ASC
-    LIMIT 1
-  `);
-
-  // Re-parse the files to obtain raw call sites with receiver info. Only
-  // `calls` (with receivers) are consumed here.
-  //
-  // The native engine is preferred: this pass only runs after a native
-  // orchestrator build, so the addon is already loaded and re-parses the
-  // hierarchy file set in single-digit milliseconds with the same
-  // receiver-annotated call sites as the WASM extractor. Booting the WASM
-  // runtime here instead cost ~40–110ms per full build (in-process
-  // web-tree-sitter + grammar init dominated) — part of the v3.12.0
-  // publish-gate regression. Files the native engine cannot parse (extension
-  // outside NATIVE_SUPPORTED_EXTENSIONS, e.g. .mts/.cts) and native parse
-  // failures fall back to the WASM backfill path so the sweep stays complete.
-  const absFiles = relFiles.map((f) => path.join(rootDir, f));
+/**
+ * Re-parse files via native (preferred) + WASM fallback to obtain call sites
+ * with receiver info. Returns a map of relPath → calls array.
+ *
+ * The native engine is preferred: this pass only runs after a native
+ * orchestrator build, so the addon is already loaded and re-parses the
+ * hierarchy file set in single-digit milliseconds with the same
+ * receiver-annotated call sites as the WASM extractor. Booting the WASM
+ * runtime here instead cost ~40–110ms per full build (in-process
+ * web-tree-sitter + grammar init dominated) — part of the v3.12.0
+ * publish-gate regression. Files the native engine cannot parse (extension
+ * outside NATIVE_SUPPORTED_EXTENSIONS, e.g. .mts/.cts) and native parse
+ * failures fall back to the WASM backfill path so the sweep stays complete.
+ */
+async function parseFilesForThisDispatch(
+  absFiles: string[],
+  rootDir: string,
+): Promise<{
+  callsByRel: Map<string, { name: string; receiver?: string; line: number }[]>;
+  wasmResults: Map<string, ExtractorOutput>;
+}> {
+  const callsByRel = new Map<string, { name: string; receiver?: string; line: number }[]>();
   const nativeAbs = absFiles.filter((f) =>
     NATIVE_SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase()),
   );
-  const callsByRel = new Map<string, { name: string; receiver?: string; line: number }[]>();
   // Track native-supported files that returned null (per-file parse error) so
   // they can be included in the WASM fallback set below, ensuring no file's
   // this/super call sites are silently discarded.
@@ -935,8 +884,35 @@ async function runPostNativeThisDispatch(
   for (const [relPath, symbols] of wasmResults) {
     callsByRel.set(relPath, symbols.calls ?? []);
   }
+  return { callsByRel, wasmResults };
+}
+
+/** Emit this/super dispatch edges from re-parsed call sites. */
+function emitThisDispatchEdges(
+  db: BetterSqlite3Database,
+  callsByRel: Map<string, { name: string; receiver?: string; line: number }[]>,
+  chaCtx: ChaContext,
+  lookup: CallNodeLookup,
+  seen: Set<string>,
+): {
+  newEdges: Array<[number, number, string, number, number, string]>;
+  targetIds: Set<number>;
+  affectedFiles: Set<string>;
+} {
+  // Find the innermost containing method/function for a call at `line` in `file`.
+  // COALESCE maps NULL end_line to a large sentinel so unbounded nodes sort last
+  // (SQLite ASC orders NULLs first, so a raw `end_line - line` would pick them first).
+  const findCallerByLineStmt = db.prepare(`
+    SELECT id, name FROM nodes
+    WHERE file = ? AND kind IN ('method', 'function')
+    AND line <= ? AND (end_line IS NULL OR end_line >= ?)
+    ORDER BY COALESCE(end_line - line, 999999999) ASC
+    LIMIT 1
+  `);
 
   const newEdges: Array<[number, number, string, number, number, string]> = [];
+  const targetIds = new Set<number>();
+  const affectedFiles = new Set<string>();
 
   for (const [relPath, calls] of callsByRel) {
     for (const call of calls) {
@@ -976,13 +952,11 @@ async function runPostNativeThisDispatch(
       }
     }
   }
+  return { newEdges, targetIds, affectedFiles };
+}
 
-  if (newEdges.length > 0) {
-    db.transaction(() => batchInsertEdges(db, newEdges))();
-    debug(`this/super dispatch post-pass: inserted ${newEdges.length} edge(s)`);
-  }
-
-  // Free WASM parse trees — mirrors the cleanup in backfillNativeDroppedFiles
+/** Free WASM parse trees after this-dispatch post-pass to prevent memory leaks. */
+function cleanupThisDispatchWasmTrees(wasmResults: Map<string, ExtractorOutput>): void {
   for (const [, symbols] of wasmResults) {
     const tree = (symbols as { _tree?: { delete?: () => void } })._tree;
     if (tree && typeof tree.delete === 'function') {
@@ -995,6 +969,109 @@ async function runPostNativeThisDispatch(
     (symbols as { _tree?: unknown; _langId?: unknown })._tree = undefined;
     (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
+}
+
+/**
+ * Phase 8.5: this/super dispatch post-pass for the native orchestrator path.
+ *
+ * The Rust build pipeline resolves typed receiver calls but does NOT persist raw
+ * unresolved call site receiver info (e.g. `this`, `super`) to the DB. This
+ * hybrid post-pass re-parses JS/TS/TSX files via WASM to collect call sites with
+ * `this`/`super` receivers, then resolves them through the class hierarchy stored
+ * in DB `extends` edges — mirroring what `buildChaPostPass` does on the WASM path.
+ *
+ * Also handles function-as-object-property methods (`f.h = function() { this.g() }`):
+ * these use `this` to reference sibling properties on the same object (`f`), so
+ * `resolveThisDispatch` resolves them by treating the dot-prefix of the caller name
+ * (`f` from `f.h`) as the class and looking up `f.g` directly — no `extends` edge needed.
+ *
+ * Runs when either `extends` edges exist (class inheritance) OR dot-named `method`
+ * nodes exist (func-prop assignments); skips only when neither is present.
+ */
+async function runPostNativeThisDispatch(
+  db: BetterSqlite3Database,
+  rootDir: string,
+  changedFiles: string[] | undefined,
+  isFullBuild: boolean,
+): Promise<{ elapsedMs: number; targetIds: Set<number>; affectedFiles: Set<string> }> {
+  const t0 = performance.now();
+
+  // Fast guard: need at least one extends edge (class inheritance) OR a dot-named
+  // method node (func-prop assignment: `f.h = function() { this.g() }`) for
+  // this/super dispatch to produce any edges.
+  const hasExtends = db.prepare(`SELECT 1 FROM edges WHERE kind = 'extends' LIMIT 1`).get();
+  const hasFuncPropMethod = db
+    .prepare(`SELECT 1 FROM nodes WHERE kind = 'method' AND INSTR(name, '.') > 0 LIMIT 1`)
+    .get();
+  const emptyResult = {
+    elapsedMs: 0,
+    targetIds: new Set<number>(),
+    affectedFiles: new Set<string>(),
+  };
+  if (!hasExtends && !hasFuncPropMethod) return emptyResult;
+
+  const parents = buildThisDispatchParentsMap(db, hasExtends);
+  // Note: parents may be empty when hasFuncPropMethod but !hasExtends — that is
+  // intentional. resolveThisDispatch still resolves `this.g()` inside `f.h` by
+  // treating `f` (the dot-prefix of callerName `f.h`) as the class and looking
+  // up `f.g` directly via lookup.byName(), without traversing the parents chain.
+
+  const chaCtx: ChaContext = {
+    implementors: new Map(), // not needed for this/super resolution
+    parents,
+    instantiatedTypes: new Set(), // not needed for this/super resolution
+  };
+
+  const relFiles = selectThisDispatchFiles(db, changedFiles, isFullBuild);
+  if (relFiles.length === 0) return emptyResult;
+
+  // DB-backed CallNodeLookup — resolveThisDispatch only calls byName()
+  const findByNameStmt = db.prepare(`SELECT id, file, kind FROM nodes WHERE name = ?`);
+  const lookup: CallNodeLookup = {
+    byName: (name) => findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>,
+    byNameAndFile: (name, file) =>
+      (findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>).filter(
+        (n) => n.file === file,
+      ),
+    isBarrel: () => false,
+    resolveBarrel: () => null,
+    nodeId: () => undefined,
+  };
+
+  // Seed seen-pairs from existing call edges on source nodes in our file set
+  const seen = new Set<string>();
+  const CHUNK = 500;
+  for (let i = 0; i < relFiles.length; i += CHUNK) {
+    const chunk = relFiles.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT e.source_id, e.target_id
+         FROM edges e
+         JOIN nodes n ON e.source_id = n.id
+         WHERE e.kind = 'calls' AND n.file IN (${ph})`,
+      )
+      .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+    for (const r of rows) seen.add(`${r.source_id}|${r.target_id}`);
+  }
+
+  const absFiles = relFiles.map((f) => path.join(rootDir, f));
+  const { callsByRel, wasmResults } = await parseFilesForThisDispatch(absFiles, rootDir);
+
+  const { newEdges, targetIds, affectedFiles } = emitThisDispatchEdges(
+    db,
+    callsByRel,
+    chaCtx,
+    lookup,
+    seen,
+  );
+
+  if (newEdges.length > 0) {
+    db.transaction(() => batchInsertEdges(db, newEdges))();
+    debug(`this/super dispatch post-pass: inserted ${newEdges.length} edge(s)`);
+  }
+
+  cleanupThisDispatchWasmTrees(wasmResults);
 
   return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
 }
@@ -1184,81 +1261,33 @@ function detectDroppedLanguageGap(ctx: PipelineContext): DroppedLanguageGap {
   return { missingRel, missingAbs, staleRel };
 }
 
+// ── backfillNativeDroppedFiles helpers ───────────────────────────────────────
+
+/** Purge stale WASM-only files deleted from disk (#1073). */
+function purgeStaleWasmOnlyFiles(db: BetterSqlite3Database, staleRel: string[]): void {
+  // `computeWasmOnlyStaleFiles` guarantees every path here has an extension
+  // outside NATIVE_SUPPORTED_EXTENSIONS, so `classifyNativeDrops` would
+  // always bucket 100% into `unsupported-by-native`. Build the extension
+  // summary directly to avoid a redundant classification pass.
+  const staleByExt = groupByExtension(staleRel);
+  info(
+    `Detected ${staleRel.length} deleted WASM-only file(s) across ${staleByExt.size} extension(s) the native orchestrator skipped; purging stale rows:${formatDropExtensionSummary(staleByExt)}`,
+  );
+  purgeFilesData(db, staleRel);
+}
+
 /**
- * Backfill files that the native orchestrator silently dropped during parse.
- * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
- *
- * Also purges stale rows for WASM-only files deleted from disk (#1073), which
- * Rust's `detect_removed_files` filter (#1070) skips.
- *
- * Accepts a pre-computed `gap` from `detectDroppedLanguageGap` so the caller
- * can use the same scan for both gating and the actual backfill — avoiding
- * a redundant fs walk when the orchestrator's signals already triggered.
+ * Classify and log dropped file buckets.
+ * Three-way split of native-extractor-failure files:
+ *   realFailureBuckets  — WASM found symbols → real Rust extractor bug (WARN)
+ *   emptyFileBuckets    — WASM parsed but found 0 symbols → gitignored/empty (debug)
+ *   wasmSkipBuckets     — WASM skipped entirely → no file-node insert (debug)
  */
-async function backfillNativeDroppedFiles(
-  ctx: PipelineContext,
-  gap: DroppedLanguageGap,
-): Promise<void> {
-  const { missingRel, missingAbs, staleRel } = gap;
-  if (missingAbs.length === 0 && staleRel.length === 0) return;
-
-  // Now that we know there's work to do, hand off to better-sqlite3 (needed
-  // for the INSERT path below).
-  if (ctx.nativeFirstProxy) {
-    closeNativeDb(ctx, 'pre-parity-backfill');
-    ctx.db = openDb(ctx.dbPath);
-    ctx.nativeFirstProxy = false;
-  }
-
-  const dbConn = ctx.db as unknown as BetterSqlite3Database;
-
-  // Purge WASM-only files that were deleted from disk (#1073). Rust's
-  // detect_removed_files skips them and the insert path below never visits
-  // them, so without this their rows would persist across rebuilds until the
-  // next full rebuild reset the DB.
-  if (staleRel.length > 0) {
-    // `computeWasmOnlyStaleFiles` guarantees every path here has an extension
-    // outside NATIVE_SUPPORTED_EXTENSIONS, so `classifyNativeDrops` would
-    // always bucket 100% into `unsupported-by-native`. Build the extension
-    // summary directly to avoid a redundant classification pass.
-    const staleByExt = groupByExtension(staleRel);
-    info(
-      `Detected ${staleRel.length} deleted WASM-only file(s) across ${staleByExt.size} extension(s) the native orchestrator skipped; purging stale rows:${formatDropExtensionSummary(staleByExt)}`,
-    );
-    purgeFilesData(dbConn, staleRel);
-  }
-
-  if (missingAbs.length === 0) return;
-
-  // Parse all missing files via WASM first so we can distinguish real native
-  // extractor failures (WASM finds symbols but native didn't) from files the
-  // Rust engine legitimately skipped (gitignored artifacts, empty declaration
-  // files, etc. where WASM also produces 0 symbols). Both categories are
-  // backfilled — only the former triggers a WARN (#1566).
-  const wasmResults = await parseFilesWasmForBackfill(missingAbs, ctx.rootDir);
-
-  // Build two sets from wasmResults:
-  //   wasmParsedFiles  — rel-paths present in wasmResults (WASM succeeded, even 0 symbols)
-  //   wasmFoundSymbols — subset where WASM found ≥1 symbol
-  // Files absent from wasmParsedFiles were skipped by WASM entirely (extension
-  // not in _extToLang, wasmExtractSymbols returned null, or a read error).
-  // Those files do NOT end up in the batchInsertNodes loop below.
-  const wasmParsedFiles = new Set<string>();
-  const wasmFoundSymbols = new Set<string>();
-  for (const [relPath, symbols] of wasmResults) {
-    wasmParsedFiles.add(relPath);
-    if ((symbols.definitions?.length ?? 0) > 0 || (symbols.exports?.length ?? 0) > 0) {
-      wasmFoundSymbols.add(relPath);
-    }
-  }
-
-  // Classify drops so users see per-extension reasons instead of just a count
-  // (#1011). `unsupported-by-native` is a legitimate parser limit (no Rust
-  // extractor); `native-extractor-failure` indicates a real native bug since
-  // the language IS supported by the addon yet WASM found symbols the native
-  // engine should have extracted. Files where both engines produce 0 symbols
-  // are legitimately empty (e.g. gitignored napi-generated declaration stubs)
-  // and logged at debug level only.
+function classifyAndLogDroppedFiles(
+  missingRel: string[],
+  wasmParsedFiles: Set<string>,
+  wasmFoundSymbols: Set<string>,
+): void {
   const { byReason, totals } = classifyNativeDrops(missingRel);
   if (totals['unsupported-by-native'] > 0) {
     const buckets = byReason['unsupported-by-native'];
@@ -1267,13 +1296,6 @@ async function backfillNativeDroppedFiles(
     );
   }
   if (totals['native-extractor-failure'] > 0) {
-    // Three-way split of native-extractor-failure files:
-    //   realFailureBuckets  — WASM found symbols → real Rust extractor bug (WARN)
-    //   emptyFileBuckets    — WASM parsed but found 0 symbols → gitignored/empty (debug)
-    //                         These DO receive a file-node insert in the loop below.
-    //   wasmSkipBuckets     — WASM skipped entirely (ext unknown or parse error) →
-    //                         no file-node insert, and no WARN (debug only, distinct
-    //                         message to avoid overstating backfill coverage).
     const allFailurePaths = byReason['native-extractor-failure'];
     const realFailureBuckets = new Map<string, string[]>();
     const emptyFileBuckets = new Map<string, string[]>();
@@ -1315,7 +1337,13 @@ async function backfillNativeDroppedFiles(
       );
     }
   }
+}
 
+/** Insert node rows for all backfilled files and mark exported symbols. */
+function insertBackfilledNodes(
+  db: BetterSqlite3Database,
+  wasmResults: Map<string, ExtractorOutput>,
+): void {
   const rows: unknown[][] = [];
   const exportKeys: unknown[][] = [];
   for (const [relPath, symbols] of wasmResults) {
@@ -1347,7 +1375,6 @@ async function backfillNativeDroppedFiles(
       exportKeys.push([exp.name, exp.kind, relPath, exp.line]);
     }
   }
-  const db = dbConn;
   batchInsertNodes(db, rows);
 
   // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.
@@ -1374,18 +1401,26 @@ async function backfillNativeDroppedFiles(
       updateStmt.run(...vals);
     }
   }
+}
 
-  // Persist file_hashes rows for every backfilled file. The Rust orchestrator
-  // only hashes files it parsed itself, so without this step files in
-  // optional-language extensions (e.g. .clj when no Rust extractor exists)
-  // would be missing from `file_hashes` — permanently breaking the JS-side
-  // fast-skip pre-flight (#1054), which rejects on `collected file missing
-  // from file_hashes` and forces every no-op rebuild back through the full
-  // ~2s native pipeline (#1068).
-  //
-  // Iterates `missingRel` (every collected file the Rust orchestrator
-  // dropped), not `wasmResults`, so files that produced zero symbols still
-  // get a row.
+/**
+ * Persist file_hashes rows for every backfilled file.
+ *
+ * The Rust orchestrator only hashes files it parsed itself, so without this
+ * step files in optional-language extensions (e.g. .clj when no Rust extractor
+ * exists) would be missing from `file_hashes` — permanently breaking the JS-side
+ * fast-skip pre-flight (#1054), which rejects on `collected file missing
+ * from file_hashes` and forces every no-op rebuild back through the full
+ * ~2s native pipeline (#1068).
+ *
+ * Iterates `missingRel` (every collected file the Rust orchestrator dropped),
+ * not `wasmResults`, so files that produced zero symbols still get a row.
+ */
+function backfillFileHashes(
+  db: BetterSqlite3Database,
+  missingRel: string[],
+  missingAbs: string[],
+): void {
   try {
     const upsertHash = db.prepare(
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
@@ -1415,6 +1450,79 @@ async function backfillNativeDroppedFiles(
       `backfillNativeDroppedFiles: file_hashes write failed (table may not exist): ${toErrorMessage(e)}`,
     );
   }
+}
+
+/**
+ * Backfill files that the native orchestrator silently dropped during parse.
+ * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
+ *
+ * Also purges stale rows for WASM-only files deleted from disk (#1073), which
+ * Rust's `detect_removed_files` filter (#1070) skips.
+ *
+ * Accepts a pre-computed `gap` from `detectDroppedLanguageGap` so the caller
+ * can use the same scan for both gating and the actual backfill — avoiding
+ * a redundant fs walk when the orchestrator's signals already triggered.
+ */
+async function backfillNativeDroppedFiles(
+  ctx: PipelineContext,
+  gap: DroppedLanguageGap,
+): Promise<void> {
+  const { missingRel, missingAbs, staleRel } = gap;
+  if (missingAbs.length === 0 && staleRel.length === 0) return;
+
+  // Now that we know there's work to do, hand off to better-sqlite3 (needed
+  // for the INSERT path below).
+  if (ctx.nativeFirstProxy) {
+    closeNativeDb(ctx, 'pre-parity-backfill');
+    ctx.db = openDb(ctx.dbPath);
+    ctx.nativeFirstProxy = false;
+  }
+
+  const dbConn = ctx.db as unknown as BetterSqlite3Database;
+
+  // Purge WASM-only files that were deleted from disk (#1073). Rust's
+  // detect_removed_files skips them and the insert path below never visits
+  // them, so without this their rows would persist across rebuilds until the
+  // next full rebuild reset the DB.
+  if (staleRel.length > 0) {
+    purgeStaleWasmOnlyFiles(dbConn, staleRel);
+  }
+
+  if (missingAbs.length === 0) return;
+
+  // Parse all missing files via WASM first so we can distinguish real native
+  // extractor failures (WASM finds symbols but native didn't) from files the
+  // Rust engine legitimately skipped (gitignored artifacts, empty declaration
+  // files, etc. where WASM also produces 0 symbols). Both categories are
+  // backfilled — only the former triggers a WARN (#1566).
+  const wasmResults = await parseFilesWasmForBackfill(missingAbs, ctx.rootDir);
+
+  // Build two sets from wasmResults:
+  //   wasmParsedFiles  — rel-paths present in wasmResults (WASM succeeded, even 0 symbols)
+  //   wasmFoundSymbols — subset where WASM found ≥1 symbol
+  // Files absent from wasmParsedFiles were skipped by WASM entirely (extension
+  // not in _extToLang, wasmExtractSymbols returned null, or a read error).
+  // Those files do NOT end up in the batchInsertNodes loop below.
+  const wasmParsedFiles = new Set<string>();
+  const wasmFoundSymbols = new Set<string>();
+  for (const [relPath, symbols] of wasmResults) {
+    wasmParsedFiles.add(relPath);
+    if ((symbols.definitions?.length ?? 0) > 0 || (symbols.exports?.length ?? 0) > 0) {
+      wasmFoundSymbols.add(relPath);
+    }
+  }
+
+  // Classify drops so users see per-extension reasons instead of just a count
+  // (#1011). `unsupported-by-native` is a legitimate parser limit (no Rust
+  // extractor); `native-extractor-failure` indicates a real native bug since
+  // the language IS supported by the addon yet WASM found symbols the native
+  // engine should have extracted. Files where both engines produce 0 symbols
+  // are legitimately empty (e.g. gitignored napi-generated declaration stubs)
+  // and logged at debug level only.
+  classifyAndLogDroppedFiles(missingRel, wasmParsedFiles, wasmFoundSymbols);
+
+  insertBackfilledNodes(dbConn, wasmResults);
+  backfillFileHashes(dbConn, missingRel, missingAbs);
 
   // Free WASM parse trees from the inline backfill path (#1058).
   // `parseFilesWasmInline` sets `symbols._tree` (a live web-tree-sitter Tree
@@ -1424,18 +1532,7 @@ async function backfillNativeDroppedFiles(
   // sees them. Without this, trees leak WASM memory until process exit —
   // bounded per run but cumulative across in-process integration tests.
   // Mirrors the cleanup discipline established for #931.
-  for (const [, symbols] of wasmResults) {
-    const tree = (symbols as { _tree?: { delete?: () => void } })._tree;
-    if (tree && typeof tree.delete === 'function') {
-      try {
-        tree.delete();
-      } catch {
-        /* ignore cleanup errors */
-      }
-    }
-    (symbols as { _tree?: unknown; _langId?: unknown })._tree = undefined;
-    (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
-  }
+  cleanupThisDispatchWasmTrees(wasmResults);
 }
 
 /**
@@ -1482,172 +1579,60 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
   tx();
 }
 
+// ── tryNativeOrchestrator helpers ────────────────────────────────────────────
+
 /**
- * Try the native build orchestrator.
+ * Open NativeDatabase on demand — deferred from setupPipeline to skip the
+ * ~60ms cost on no-op/early-exit builds.
  *
- * Returns:
- *   - `BuildResult` on success (caller should return it directly).
- *   - `'early-exit'` when the orchestrator detected no changes (caller should return undefined).
- *   - `undefined` when native is unavailable or skipped (caller should fall through to the JS pipeline).
- *
- * Encapsulates the orchestrator-selection strategy: open `NativeDatabase`,
- * invoke `nativeDb.buildGraph()` (the Rust pipeline), and run post-native
- * structure + analysis fallbacks. Lives in its own file to keep the Rust
- * orchestrator entry point separated from the JS-side `buildGraph()` driver
- * in `pipeline.ts`.
+ * Closes the better-sqlite3 connection first to avoid dual-connection WAL
+ * corruption. On setup failure, falls back to reopening better-sqlite3 and
+ * leaves ctx.nativeDb undefined so the caller falls through to the JS pipeline.
  */
-export async function tryNativeOrchestrator(
+function openNativeDatabase(ctx: PipelineContext): void {
+  if (ctx.nativeDb || !ctx.nativeAvailable) return;
+  const native = loadNative();
+  if (!native?.NativeDatabase) return;
+  try {
+    // Close better-sqlite3 before opening rusqlite to avoid WAL conflicts.
+    // Uses raw close() instead of closeDb() intentionally — the advisory lock
+    // is kept and transferred to the NativeDbProxy below, not released here.
+    ctx.db.close();
+    acquireAdvisoryLock(ctx.dbPath);
+    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+    ctx.nativeDb.initSchema();
+    // Replace ctx.db with a NativeDbProxy so post-native JS fallback
+    // (structure, analysis) can use it without reopening better-sqlite3.
+    const proxy = new NativeDbProxy(ctx.nativeDb);
+    proxy.__lockPath = `${ctx.dbPath}.lock`;
+    ctx.db = proxy as unknown as typeof ctx.db;
+    ctx.nativeFirstProxy = true;
+  } catch (err) {
+    warn(`NativeDatabase setup failed, falling back to JS: ${toErrorMessage(err)}`);
+    try {
+      ctx.nativeDb?.close();
+    } catch (e) {
+      debug(`tryNativeOrchestrator: close failed during fallback: ${toErrorMessage(e)}`);
+    }
+    ctx.nativeDb = undefined;
+    ctx.nativeFirstProxy = false; // defensive: reset in case future refactors move the assignment above throwing lines
+    releaseAdvisoryLock(`${ctx.dbPath}.lock`);
+    // Reopen better-sqlite3 for JS pipeline fallback
+    ctx.db = openDb(ctx.dbPath);
+  }
+}
+
+/**
+ * Coordinate all post-native edge-writing post-passes, role re-classification,
+ * and technique backfill. Returns timing data for the build result.
+ *
+ * Post-passes run before structure/analysis so role classification sees the
+ * complete graph including CHA + this/super dispatch edges.
+ */
+async function runPostNativePasses(
   ctx: PipelineContext,
-): Promise<BuildResult | undefined | 'early-exit'> {
-  const skipReason = shouldSkipNativeOrchestrator(ctx);
-  if (skipReason) {
-    debug(`Skipping native orchestrator: ${skipReason}`);
-    return undefined;
-  }
-
-  // Open NativeDatabase on demand — deferred from setupPipeline to skip the
-  // ~60ms cost on no-op/early-exit builds. Close the better-sqlite3 connection
-  // first to avoid dual-connection WAL corruption.
-  if (!ctx.nativeDb && ctx.nativeAvailable) {
-    const native = loadNative();
-    if (native?.NativeDatabase) {
-      try {
-        // Close better-sqlite3 before opening rusqlite to avoid WAL conflicts.
-        // Uses raw close() instead of closeDb() intentionally — the advisory lock
-        // is kept and transferred to the NativeDbProxy below, not released here.
-        ctx.db.close();
-        acquireAdvisoryLock(ctx.dbPath);
-        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-        ctx.nativeDb.initSchema();
-        // Replace ctx.db with a NativeDbProxy so post-native JS fallback
-        // (structure, analysis) can use it without reopening better-sqlite3.
-        const proxy = new NativeDbProxy(ctx.nativeDb);
-        proxy.__lockPath = `${ctx.dbPath}.lock`;
-        ctx.db = proxy as unknown as typeof ctx.db;
-        ctx.nativeFirstProxy = true;
-      } catch (err) {
-        warn(`NativeDatabase setup failed, falling back to JS: ${toErrorMessage(err)}`);
-        try {
-          ctx.nativeDb?.close();
-        } catch (e) {
-          debug(`tryNativeOrchestrator: close failed during fallback: ${toErrorMessage(e)}`);
-        }
-        ctx.nativeDb = undefined;
-        ctx.nativeFirstProxy = false; // defensive: reset in case future refactors move the assignment above throwing lines
-        releaseAdvisoryLock(`${ctx.dbPath}.lock`);
-        // Reopen better-sqlite3 for JS pipeline fallback
-        ctx.db = openDb(ctx.dbPath);
-      }
-    }
-  }
-
-  if (!ctx.nativeDb?.buildGraph) return undefined;
-
-  const resultJson = ctx.nativeDb.buildGraph(
-    ctx.rootDir,
-    JSON.stringify(ctx.config),
-    JSON.stringify(ctx.aliases),
-    JSON.stringify(ctx.opts),
-  );
-  const result = JSON.parse(resultJson) as NativeOrchestratorResult;
-
-  if (result.earlyExit) {
-    info('No changes detected');
-    // Even on no-op rebuilds, dropped-language files added since the last
-    // full build are still missing from `nodes`/`file_hashes` (#1083), and
-    // WASM-only files deleted from disk leave stale rows behind (#1073).
-    // The orchestrator's collect_files skipped them, so its earlyExit
-    // doesn't imply DB consistency. Run the gap repair before returning.
-    const gap = detectDroppedLanguageGap(ctx);
-    if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {
-      await backfillNativeDroppedFiles(ctx, gap);
-    }
-    closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-    return 'early-exit';
-  }
-
-  // Log incremental status to match JS pipeline output
-  const changed = result.changedCount ?? 0;
-  const removed = result.removedCount ?? 0;
-  if (!result.isFullBuild && (changed > 0 || removed > 0)) {
-    info(`Incremental: ${changed} changed, ${removed} removed`);
-  }
-
-  const p = result.phases;
-
-  // Sync build_meta so JS-side version/engine checks work on next build.
-  // Use the binary's CARGO_PKG_VERSION (ctx.nativeBinaryVersion), not the
-  // platform package.json version (ctx.engineVersion). The Rust side's
-  // check_version_mismatch compares against CARGO_PKG_VERSION; writing
-  // the package.json value would create a permanent mismatch whenever
-  // the binary and platform package.json diverge — e.g., CI hot-swap
-  // via ci-install-native.mjs (#1066) — forcing every subsequent build
-  // to be a full rebuild.
-  //
-  // When the native addon doesn't expose engineVersion() (older addon),
-  // fall back to CODEGRAPH_VERSION — same fallback used by both
-  // checkEngineSchemaMismatch (read path) and persistBuildMetadata
-  // (the JS-pipeline write path in finalize.ts). Using ctx.engineVersion
-  // here would re-introduce the asymmetry this PR fixes for that case.
-  const nativeVersionForMeta = ctx.nativeBinaryVersion || CODEGRAPH_VERSION;
-  setBuildMeta(ctx.db, {
-    engine: ctx.engineName,
-    engine_version: nativeVersionForMeta,
-    codegraph_version: nativeVersionForMeta,
-    schema_version: String(ctx.schemaVersion),
-    built_at: new Date().toISOString(),
-  });
-
-  // The build summary is logged after the JS edge-writing post-passes below
-  // (dropped-language backfill, CHA, this/super dispatch) so the reported
-  // counts include their edges (#1452).
-
-  // ── Post-native structure + analysis ──────────────────────────────
-  let analysisTiming = {
-    astMs: +(p.astMs ?? 0),
-    complexityMs: +(p.complexityMs ?? 0),
-    cfgMs: +(p.cfgMs ?? 0),
-    dataflowMs: +(p.dataflowMs ?? 0),
-  };
-  let structurePatchMs = 0;
-  // Skip JS structure when the Rust pipeline's small-incremental fast path
-  // already handled it. For full builds and large incrementals where Rust
-  // skipped structure, we must run the JS fallback.
-  const needsStructure = !result.structureHandled;
-  // When the Rust addon doesn't include analysis persistence (older addon
-  // version or analysis failed), fall back to JS-side analysis.
-  const needsAnalysisFallback =
-    !result.analysisComplete &&
-    (ctx.opts.ast !== false ||
-      ctx.opts.complexity !== false ||
-      ctx.opts.cfg !== false ||
-      ctx.opts.dataflow !== false);
-
-  // ── DB handoff ────────────────────────────────────────────────────────────
-  // Ensure a proper better-sqlite3 connection is open before any post-pass that
-  // writes edges (dropped-language backfill, CHA) and before structure/analysis.
-  // When analysis fallback is needed the handoff already happened above; when
-  // neither structure nor analysis is needed the proxy conversion is deferred to
-  // here so CHA and technique-backfill can still write rows.
-  if (needsStructure || needsAnalysisFallback) {
-    if (needsAnalysisFallback && ctx.nativeFirstProxy) {
-      closeNativeDb(ctx, 'pre-analysis-fallback');
-      ctx.db = openDb(ctx.dbPath);
-      ctx.nativeFirstProxy = false;
-    } else if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
-      // DB reopen failed — return partial result (no post-pass phases completed)
-      return formatNativeTimingResult(p, 0, analysisTiming, {
-        gapDetectMs: 0,
-        chaMs: 0,
-        thisDispatchMs: 0,
-        reclassifyMs: 0,
-        techniqueBackfillMs: 0,
-      });
-    }
-  }
-
-  // ── Edge-writing post-passes (run before structure so roles see full graph) ──
-
+  result: NativeOrchestratorResult,
+): Promise<PostPassTimings & { backfillHappened: boolean }> {
   // Engine parity: the native orchestrator silently drops files whose
   // Rust extractor/grammar is missing or fails (e.g. HCL, Scala, Swift on
   // stale native binaries). WASM handles those — backfill via WASM so both
@@ -1777,6 +1762,148 @@ export async function tryNativeOrchestrator(
     `Native build orchestrator completed: ${finalNodeCount} nodes, ${finalEdgeCount} edges, ${result.fileCount ?? 0} files`,
   );
 
+  return {
+    gapDetectMs,
+    chaMs,
+    thisDispatchMs,
+    reclassifyMs,
+    techniqueBackfillMs,
+    backfillHappened,
+  };
+}
+
+/**
+ * Try the native build orchestrator.
+ *
+ * Returns:
+ *   - `BuildResult` on success (caller should return it directly).
+ *   - `'early-exit'` when the orchestrator detected no changes (caller should return undefined).
+ *   - `undefined` when native is unavailable or skipped (caller should fall through to the JS pipeline).
+ *
+ * Encapsulates the orchestrator-selection strategy: open `NativeDatabase`,
+ * invoke `nativeDb.buildGraph()` (the Rust pipeline), and run post-native
+ * structure + analysis fallbacks. Lives in its own file to keep the Rust
+ * orchestrator entry point separated from the JS-side `buildGraph()` driver
+ * in `pipeline.ts`.
+ */
+export async function tryNativeOrchestrator(
+  ctx: PipelineContext,
+): Promise<BuildResult | undefined | 'early-exit'> {
+  const skipReason = shouldSkipNativeOrchestrator(ctx);
+  if (skipReason) {
+    debug(`Skipping native orchestrator: ${skipReason}`);
+    return undefined;
+  }
+
+  openNativeDatabase(ctx);
+
+  if (!ctx.nativeDb?.buildGraph) return undefined;
+
+  const resultJson = ctx.nativeDb.buildGraph(
+    ctx.rootDir,
+    JSON.stringify(ctx.config),
+    JSON.stringify(ctx.aliases),
+    JSON.stringify(ctx.opts),
+  );
+  const result = JSON.parse(resultJson) as NativeOrchestratorResult;
+
+  if (result.earlyExit) {
+    info('No changes detected');
+    // Even on no-op rebuilds, dropped-language files added since the last
+    // full build are still missing from `nodes`/`file_hashes` (#1083), and
+    // WASM-only files deleted from disk leave stale rows behind (#1073).
+    // The orchestrator's collect_files skipped them, so its earlyExit
+    // doesn't imply DB consistency. Run the gap repair before returning.
+    const gap = detectDroppedLanguageGap(ctx);
+    if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {
+      await backfillNativeDroppedFiles(ctx, gap);
+    }
+    closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+    return 'early-exit';
+  }
+
+  // Log incremental status to match JS pipeline output
+  const changed = result.changedCount ?? 0;
+  const removed = result.removedCount ?? 0;
+  if (!result.isFullBuild && (changed > 0 || removed > 0)) {
+    info(`Incremental: ${changed} changed, ${removed} removed`);
+  }
+
+  const p = result.phases;
+
+  // Sync build_meta so JS-side version/engine checks work on next build.
+  // Use the binary's CARGO_PKG_VERSION (ctx.nativeBinaryVersion), not the
+  // platform package.json version (ctx.engineVersion). The Rust side's
+  // check_version_mismatch compares against CARGO_PKG_VERSION; writing
+  // the package.json value would create a permanent mismatch whenever
+  // the binary and platform package.json diverge — e.g., CI hot-swap
+  // via ci-install-native.mjs (#1066) — forcing every subsequent build
+  // to be a full rebuild.
+  //
+  // When the native addon doesn't expose engineVersion() (older addon),
+  // fall back to CODEGRAPH_VERSION — same fallback used by both
+  // checkEngineSchemaMismatch (read path) and persistBuildMetadata
+  // (the JS-pipeline write path in finalize.ts). Using ctx.engineVersion
+  // here would re-introduce the asymmetry this PR fixes for that case.
+  const nativeVersionForMeta = ctx.nativeBinaryVersion || CODEGRAPH_VERSION;
+  setBuildMeta(ctx.db, {
+    engine: ctx.engineName,
+    engine_version: nativeVersionForMeta,
+    codegraph_version: nativeVersionForMeta,
+    schema_version: String(ctx.schemaVersion),
+    built_at: new Date().toISOString(),
+  });
+
+  // The build summary is logged after the JS edge-writing post-passes below
+  // (dropped-language backfill, CHA, this/super dispatch) so the reported
+  // counts include their edges (#1452).
+
+  // ── Post-native structure + analysis ──────────────────────────────
+  let analysisTiming = {
+    astMs: +(p.astMs ?? 0),
+    complexityMs: +(p.complexityMs ?? 0),
+    cfgMs: +(p.cfgMs ?? 0),
+    dataflowMs: +(p.dataflowMs ?? 0),
+  };
+  let structurePatchMs = 0;
+  // Skip JS structure when the Rust pipeline's small-incremental fast path
+  // already handled it. For full builds and large incrementals where Rust
+  // skipped structure, we must run the JS fallback.
+  const needsStructure = !result.structureHandled;
+  // When the Rust addon doesn't include analysis persistence (older addon
+  // version or analysis failed), fall back to JS-side analysis.
+  const needsAnalysisFallback =
+    !result.analysisComplete &&
+    (ctx.opts.ast !== false ||
+      ctx.opts.complexity !== false ||
+      ctx.opts.cfg !== false ||
+      ctx.opts.dataflow !== false);
+
+  // ── DB handoff ────────────────────────────────────────────────────────────
+  // Ensure a proper better-sqlite3 connection is open before any post-pass that
+  // writes edges (dropped-language backfill, CHA) and before structure/analysis.
+  // When analysis fallback is needed the handoff already happened above; when
+  // neither structure nor analysis is needed the proxy conversion is deferred to
+  // here so CHA and technique-backfill can still write rows.
+  if (needsStructure || needsAnalysisFallback) {
+    if (needsAnalysisFallback && ctx.nativeFirstProxy) {
+      closeNativeDb(ctx, 'pre-analysis-fallback');
+      ctx.db = openDb(ctx.dbPath);
+      ctx.nativeFirstProxy = false;
+    } else if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
+      // DB reopen failed — return partial result (no post-pass phases completed)
+      return formatNativeTimingResult(p, 0, analysisTiming, {
+        gapDetectMs: 0,
+        chaMs: 0,
+        thisDispatchMs: 0,
+        reclassifyMs: 0,
+        techniqueBackfillMs: 0,
+      });
+    }
+  }
+
+  const postPassTimings = await runPostNativePasses(ctx, result);
+
   // ── Structure and analysis fallback (run after edge-writing so roles see full graph) ──
   // Reconstruct fileSymbols once for both structure and analysis to avoid two
   // expensive DB scans. The DB handoff above already ensured ctx.db is a proper
@@ -1799,11 +1926,5 @@ export async function tryNativeOrchestrator(
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, {
-    gapDetectMs,
-    chaMs,
-    thisDispatchMs,
-    reclassifyMs,
-    techniqueBackfillMs,
-  });
+  return formatNativeTimingResult(p, structurePatchMs, analysisTiming, postPassTimings);
 }

@@ -144,7 +144,11 @@ function deserializeMapFields(ser: SerializedExtractorOutput, out: ExtractorOutp
 
 function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutput | null {
   if (!ser) return null;
-  const out: ExtractorOutput = { ...deserializeCoreFields(ser) } as ExtractorOutput;
+  // deserializeCoreFields supplies all required ExtractorOutput fields (definitions,
+  // calls, imports, classes, exports, typeMap). The cast is safe: every required field
+  // is present in the returned Pick. If a new required field is added to ExtractorOutput,
+  // add it to deserializeCoreFields' return Pick and body to keep the cast honest.
+  const out = { ...deserializeCoreFields(ser) } as ExtractorOutput;
   deserializeBindingFields(ser, out);
   deserializeMapFields(ser, out);
   return out;

@@ -5,23 +5,9 @@
  * change between pages; offset/limit is simpler and maps directly to SQL.
  */
 
-export interface PaginationMeta {
-  total: number;
-  offset: number;
-  limit: number;
-  hasMore: boolean;
-  returned: number;
-}
+import type { PaginatedItems, PaginationMeta, PaginationOpts } from '../types.js';
 
-export interface PaginatedResult<T> {
-  items: T[];
-  pagination?: PaginationMeta;
-}
-
-export interface PaginateOpts {
-  limit?: number;
-  offset?: number;
-}
+export type { PaginatedItems as PaginatedResult, PaginationMeta, PaginationOpts as PaginateOpts };
 
 /** Default limits applied by MCP tool handlers (not by the programmatic API). */
 export const MCP_DEFAULTS: Record<string, number> = {
@@ -65,7 +51,7 @@ export const MCP_MAX_LIMIT = 1000;
  *
  * When `limit` is undefined the input is returned unchanged (no-op).
  */
-export function paginate<T>(items: T[], { limit, offset }: PaginateOpts = {}): PaginatedResult<T> {
+export function paginate<T>(items: T[], { limit, offset }: PaginationOpts = {}): PaginatedItems<T> {
   if (limit === undefined) {
     return { items };
   }
@@ -94,7 +80,7 @@ export function paginate<T>(items: T[], { limit, offset }: PaginateOpts = {}): P
 export function paginateResult<T extends Record<string, unknown>>(
   result: T,
   field: string,
-  { limit, offset }: PaginateOpts = {},
+  { limit, offset }: PaginationOpts = {},
 ): T & { _pagination?: PaginationMeta } {
   if (limit === undefined) {
     return result;

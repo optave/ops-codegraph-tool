@@ -6,10 +6,17 @@ export interface BfsOpts {
   direction?: 'forward' | 'backward' | 'both';
 }
 
+/** Resolve the neighbor list for a node given traversal direction. */
+function getNeighbors(graph: CodeGraph, node: string, direction: string): string[] {
+  if (direction === 'forward') return graph.successors(node);
+  if (direction === 'backward') return graph.predecessors(node);
+  return graph.neighbors(node);
+}
+
 /**
  * Breadth-first traversal on a CodeGraph.
  *
- * Tries the native Rust implementation first, falls back to JS.
+ * Tries the native Rust implementation first, falls back to a pure-JS queue.
  *
  * @returns nodeId → depth from nearest start node
  */
@@ -46,7 +53,10 @@ export function bfs(
   return bfsJS(graph, starts, maxDepth, direction);
 }
 
-/** Pure JS fallback for BFS (used when native addon is unavailable). */
+/**
+ * Pure-JS BFS queue (used when native addon is unavailable).
+ * Separated from bfs() to keep each function's complexity within thresholds.
+ */
 function bfsJS(
   graph: CodeGraph,
   starts: string[],
@@ -70,16 +80,7 @@ function bfsJS(
     const depth = depths.get(current)!;
     if (depth >= maxDepth) continue;
 
-    let neighbors: string[];
-    if (direction === 'forward') {
-      neighbors = graph.successors(current);
-    } else if (direction === 'backward') {
-      neighbors = graph.predecessors(current);
-    } else {
-      neighbors = graph.neighbors(current);
-    }
-
-    for (const n of neighbors) {
+    for (const n of getNeighbors(graph, current, direction)) {
       if (!depths.has(n)) {
         depths.set(n, depth + 1);
         queue.push(n);

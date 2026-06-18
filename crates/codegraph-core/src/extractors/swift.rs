@@ -299,9 +299,22 @@ fn match_swift_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
                     }
                     "navigation_expression" => {
                         let last = fn_node.child(fn_node.child_count().saturating_sub(1));
-                        let name = last
-                            .map(|n| node_text(&n, source).to_string())
-                            .unwrap_or_else(|| node_text(&fn_node, source).to_string());
+                        // Swift's grammar wraps the method name in a `navigation_suffix` node
+                        // (e.g. `.save` text), not a bare `simple_identifier`. Descend into
+                        // navigation_suffix to get the inner simple_identifier so the resolved
+                        // name is "save" not ".save". Mirrors WASM extractors/swift.ts fix.
+                        let name = last.map(|n| {
+                            if n.kind() == "navigation_suffix" {
+                                find_child(&n, "simple_identifier")
+                                    .map(|id| node_text(&id, source).to_string())
+                                    .unwrap_or_else(|| {
+                                        let t = node_text(&n, source);
+                                        t.trim_start_matches('.').to_string()
+                                    })
+                            } else {
+                                node_text(&n, source).to_string()
+                            }
+                        }).unwrap_or_else(|| node_text(&fn_node, source).to_string());
                         let receiver = fn_node.child(0)
                             .map(|n| node_text(&n, source).to_string());
                         symbols.calls.push(Call {
@@ -375,5 +388,26 @@ mod tests {
         assert_eq!(s.imports.len(), 1);
         assert_eq!(s.imports[0].source, "Foundation");
         assert!(s.imports[0].swift_import.unwrap());
+    }
+
+    /// navigation_expression uses a `navigation_suffix` child — the method name
+    /// must be extracted as a bare identifier ("save"), not ".save".
+    #[test]
+    fn extracts_navigation_call_bare_name() {
+        let s = parse_swift("func f() { repo.save(x) }");
+        let call = s.calls.iter().find(|c| c.receiver.as_deref() == Some("repo")).unwrap();
+        assert_eq!(call.name, "save", "method name must not include leading dot");
+        assert_eq!(call.receiver.as_deref(), Some("repo"));
+    }
+
+    /// Class property with a type annotation seeds the typeMap so that
+    /// receiver-typed call edges can be resolved.
+    #[test]
+    fn class_property_type_annotation_seeds_type_map() {
+        let s = parse_swift("class Service { private let repo: Repository }");
+        let entry = s.type_map.iter().find(|e| e.name == "repo");
+        assert!(entry.is_some(), "repo should appear in type_map");
+        assert_eq!(entry.unwrap().type_name, "Repository");
+        assert_eq!(entry.unwrap().confidence, 0.9);
     }
 }

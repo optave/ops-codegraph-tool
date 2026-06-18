@@ -97,6 +97,7 @@ describe('DEFAULTS', () => {
       briefMediumRiskCallers: 3,
       typePropagationDepth: 3,
       pointsToMaxIterations: 50,
+      typeInferenceConfidence: 0.85,
     });
   });
 
@@ -323,7 +324,13 @@ describe('excludeTests hoisting', () => {
 });
 
 describe('applyEnvOverrides', () => {
-  const ENV_KEYS = ['CODEGRAPH_LLM_PROVIDER', 'CODEGRAPH_LLM_API_KEY', 'CODEGRAPH_LLM_MODEL'];
+  const ENV_KEYS = [
+    'CODEGRAPH_LLM_PROVIDER',
+    'CODEGRAPH_LLM_API_KEY',
+    'CODEGRAPH_LLM_MODEL',
+    'CODEGRAPH_ENGINE',
+    'CODEGRAPH_FAST_SKIP_DIAG',
+  ];
 
   afterEach(() => {
     for (const key of ENV_KEYS) {
@@ -374,6 +381,46 @@ describe('applyEnvOverrides', () => {
     );
     const config = loadConfig(dir);
     expect(config.llm.provider).toBe('openai');
+  });
+
+  it.each([
+    'native',
+    'wasm',
+    'auto',
+  ] as const)('overrides build.engine from env when set to "%s"', (engine) => {
+    process.env.CODEGRAPH_ENGINE = engine;
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+      build: { engine: 'auto', fastSkipDiag: false },
+    });
+    expect(config.build.engine).toBe(engine);
+  });
+
+  it('warns and falls back to "auto" when CODEGRAPH_ENGINE is invalid', () => {
+    process.env.CODEGRAPH_ENGINE = 'natve';
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+      build: { engine: 'auto', fastSkipDiag: false },
+    });
+    expect(config.build.engine).toBe('auto');
+  });
+
+  it('overrides build.fastSkipDiag from env when set to "1"', () => {
+    process.env.CODEGRAPH_FAST_SKIP_DIAG = '1';
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+      build: { engine: 'auto', fastSkipDiag: false },
+    });
+    expect(config.build.fastSkipDiag).toBe(true);
+  });
+
+  it('sets build.fastSkipDiag to false when CODEGRAPH_FAST_SKIP_DIAG is not "1"', () => {
+    process.env.CODEGRAPH_FAST_SKIP_DIAG = '0';
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+      build: { engine: 'auto', fastSkipDiag: false },
+    });
+    expect(config.build.fastSkipDiag).toBe(false);
   });
 });
 

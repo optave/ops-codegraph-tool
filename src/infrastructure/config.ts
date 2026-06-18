@@ -89,9 +89,16 @@ export const DEFAULTS = {
     // TODO(Phase 8.3): wire these into the points-to solver and type-propagation path
     // once config is threaded through to extractSymbols / buildPointsToMap. Currently
     // controlled by hardcoded constants in src/extractors/javascript.ts
-    // (MAX_PROPAGATION_DEPTH, PROPAGATION_HOP_PENALTY) and in
+    // (MAX_PROPAGATION_DEPTH, PROPAGATION_HOP_PENALTY, INFERRED_RETURN_TYPE_CONFIDENCE) and in
     // src/domain/graph/resolver/points-to.ts (MAX_SOLVER_ITERATIONS).
     typePropagationDepth: 3,
+    /**
+     * Confidence score assigned to a return type inferred from `return new Constructor()`
+     * when no explicit TypeScript annotation is present.
+     * Mirrors `INFERRED_RETURN_TYPE_CONFIDENCE` in `src/extractors/javascript.ts`.
+     * @reserved — not yet wired; see TODO above.
+     */
+    typeInferenceConfidence: 0.85,
     /**
      * Maximum fixed-point iterations for the Phase 8.3 points-to solver.
      * @reserved — currently not wired to either the WASM solver
@@ -510,7 +517,7 @@ export async function promptForConsentIfNeeded(
   const answer = await new Promise<string>((resolve) => {
     rl.question(
       `\nA global codegraph config was found at ${globalPath}.\n` +
-        `Apply it to this repository (${path.resolve(rootDir)})? [y/N]\n` +
+        `Apply settings not explicitly configured in this repo to ${path.resolve(rootDir)}? [y/N]\n` +
         `(remembered per-repo; change later with \`codegraph config --enable-global|--disable-global\`)\n` +
         `> `,
       (ans) => {
@@ -690,8 +697,16 @@ export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {
   }
   // Engine selection: CODEGRAPH_ENGINE env always wins over config-file value.
   if (process.env.CODEGRAPH_ENGINE !== undefined) {
-    const val = process.env.CODEGRAPH_ENGINE as 'auto' | 'native' | 'wasm';
-    (config.build as Record<string, unknown>).engine = val;
+    const raw = process.env.CODEGRAPH_ENGINE;
+    const valid = ['auto', 'native', 'wasm'] as const;
+    if ((valid as readonly string[]).includes(raw)) {
+      (config.build as Record<string, unknown>).engine = raw as 'auto' | 'native' | 'wasm';
+    } else {
+      warn(
+        `CODEGRAPH_ENGINE="${raw}" is not a valid engine value (expected auto|native|wasm). Falling back to "auto".`,
+      );
+      (config.build as Record<string, unknown>).engine = 'auto';
+    }
   }
   // Fast-skip diagnostic flag.
   if (process.env.CODEGRAPH_FAST_SKIP_DIAG !== undefined) {

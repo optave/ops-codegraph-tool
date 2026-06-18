@@ -991,6 +991,403 @@ function buildDefinitionParamsMap(
   return map;
 }
 
+// ── Per-call resolution helpers ─────────────────────────────────────────
+
+/**
+ * Resolve targets for a single call site with all JS-path fallbacks applied.
+ *
+ * Runs in order:
+ *   1. Primary resolution via `resolveCallTargets` (importedNames + typeMap).
+ *   2. Same-class `this.method()` fallback (non-super receivers only).
+ *   3. Same-class bare-call fallback for non-JS/TS class-scoped languages.
+ *   4. Object.defineProperty accessor fallback (this-calls inside getter/setter).
+ *
+ * Returns the resolved targets array and the importedFrom hint for confidence scoring.
+ */
+function resolveFallbackTargets(
+  call: Call,
+  caller: { id: number; callerName: string | null },
+  relPath: string,
+  importedNames: Map<string, string>,
+  lookup: CallNodeLookup,
+  typeMap: Map<string, TypeMapEntry | string>,
+  definePropertyReceivers: Map<string, string> | undefined,
+): {
+  targets: ReadonlyArray<{ id: number; file: string; kind?: string }>;
+  importedFrom: string | null | undefined;
+} {
+  let { targets, importedFrom } = resolveCallTargets(
+    lookup,
+    call,
+    relPath,
+    importedNames,
+    typeMap as Map<string, unknown>,
+    caller.callerName,
+  );
+
+  // Same-class `this.method()` fallback: when the call receiver is `this` and
+  // resolveCallTargets found nothing, derive the enclosing class name from the
+  // caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
+  // qualified method name `Logger._write`. This mirrors what the native Rust
+  // engine does implicitly via its class-scoped symbol table.
+  // NOTE: restricted to `this` only — `super.method()` targets a parent class,
+  // not the enclosing class, so qualifying with the child class name would
+  // produce a false edge when the child also defines a same-named method.
+  if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
+    const lastDot = caller.callerName.lastIndexOf('.');
+    if (lastDot > 0) {
+      const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
+      const className = caller.callerName.slice(prevDot + 1, lastDot);
+      const qualified = lookup
+        .byNameAndFile(`${className}.${call.name}`, relPath)
+        .filter((n) => n.kind === 'method');
+      if (qualified.length > 0) targets = qualified;
+    }
+  }
+
+  // Same-class bare-call fallback: when a no-receiver call can't be resolved
+  // globally, try the caller's own class as a qualifier. Handles C# static
+  // sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
+  // to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
+  // module-scoped, not class-scoped.
+  if (
+    targets.length === 0 &&
+    !call.receiver &&
+    caller.callerName != null &&
+    !isModuleScopedLanguage(relPath)
+  ) {
+    const lastDot = caller.callerName.lastIndexOf('.');
+    if (lastDot > 0) {
+      const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
+      const className = caller.callerName.slice(prevDot + 1, lastDot);
+      const qualified = lookup
+        .byNameAndFile(`${className}.${call.name}`, relPath)
+        .filter((n) => n.kind === 'method');
+      if (qualified.length > 0) targets = qualified;
+    }
+  }
+
+  // Object.defineProperty accessor fallback: when a function is registered as
+  // a getter/setter via `Object.defineProperty(obj, "bar", { get: getter })`,
+  // calls to `this.X()` inside `getter` resolve against `obj` (this === obj
+  // when the accessor is invoked). If the same-class fallback above found
+  // nothing, try treating `obj` as the receiver and look up `obj.X` in the
+  // typeMap, or fall back to a same-file lookup of any definition named X
+  // that belongs to the object literal or its type.
+  if (
+    targets.length === 0 &&
+    call.receiver === 'this' &&
+    caller.callerName != null &&
+    definePropertyReceivers
+  ) {
+    const receiverVarName = definePropertyReceivers.get(caller.callerName);
+    if (receiverVarName) {
+      const typeEntry = typeMap.get(receiverVarName);
+      const typeName = typeEntry
+        ? typeof typeEntry === 'string'
+          ? typeEntry
+          : (typeEntry as { type?: string }).type
+        : null;
+      if (typeName) {
+        const qualified = lookup.byNameAndFile(`${typeName}.${call.name}`, relPath);
+        if (qualified.length > 0) targets = [...qualified];
+      }
+      // If still no targets, search for any definition named `call.name` in
+      // the same file — handles plain object literals where the method isn't
+      // qualified (e.g. `const obj = { baz() {} }` defines `baz` directly).
+      // Note: this is intentionally broad — it matches any same-file definition
+      // with the called name, not just members of the receiver object. This is
+      // the same behaviour used by the native post-pass path (buildDefinePropertyPostPass).
+      if (targets.length === 0) {
+        const sameFile = lookup.byNameAndFile(call.name, relPath);
+        if (sameFile.length > 0) targets = [...sameFile];
+      }
+    }
+  }
+
+  return { targets, importedFrom };
+}
+
+/**
+ * Emit direct-call edges for the resolved targets of a single call site.
+ *
+ * Sorts targets by confidence descending first, then for each target:
+ *   - Skips self-edges and already-seen edges.
+ *   - If a pts edge already exists for this pair, upgrades it in-place to
+ *     direct-call confidence and promotes to seenCallEdges.
+ *   - Otherwise records a new `calls` edge with `ts-native` technique.
+ */
+function emitDirectCallEdgesForCall(
+  caller: { id: number },
+  targets: ReadonlyArray<{ id: number; file: string }>,
+  importedFrom: string | null | undefined,
+  isDynamic: number,
+  relPath: string,
+  seenCallEdges: Set<string>,
+  ptsEdgeRows: Map<string, number>,
+  allEdgeRows: EdgeRowTuple[],
+): void {
+  // Sort targets by confidence descending before emitting edges.
+  // For multi-target calls with duplicate (source_id, target_id) pairs the
+  // stored confidence depends on which duplicate is processed last — sorting
+  // here guarantees the highest-confidence target wins on dedup, matching the
+  // native engine's sort_targets_by_confidence call in build_edges.rs.
+  const sorted =
+    targets.length > 1
+      ? [...targets].sort(
+          (a, b) =>
+            computeConfidence(relPath, b.file, importedFrom ?? null) -
+            computeConfidence(relPath, a.file, importedFrom ?? null),
+        )
+      : targets;
+
+  for (const t of sorted) {
+    const edgeKey = `${caller.id}|${t.id}`;
+    if (t.id === caller.id) continue;
+    const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
+    if (seenCallEdges.has(edgeKey)) continue;
+    const ptsIdx = ptsEdgeRows.get(edgeKey);
+    if (ptsIdx !== undefined) {
+      // A pts-resolved edge already exists for this caller→target pair with a
+      // penalised confidence. Upgrade it to the direct-call confidence in-place,
+      // then promote to seenCallEdges so no further processing is needed.
+      const ptsRow = allEdgeRows[ptsIdx];
+      if (ptsRow) {
+        ptsRow[3] = confidence;
+        ptsRow[4] = isDynamic; // upgrade is_dynamic: direct call overrides the pts-alias dynamic flag
+        ptsRow[5] = 'ts-native'; // promoted from pts to direct-call resolution
+      }
+      ptsEdgeRows.delete(edgeKey);
+      seenCallEdges.add(edgeKey);
+    } else {
+      seenCallEdges.add(edgeKey);
+      allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native']);
+    }
+  }
+}
+
+/**
+ * Phase 8.3 / 8.3c / bind: emit pts-resolved edges for unresolved no-receiver calls.
+ *
+ * Fires for three cases:
+ *   (a) dynamic=true: alias calls emitted by extractCallbackReferenceCalls.
+ *       Looks up `call.name` directly (alias entries are flat-keyed).
+ *   (b) non-dynamic: parameter variable calls (fn() where fn is a param).
+ *       Looks up the scoped key `callerName::call.name` to avoid spurious
+ *       edges from same-named parameters across different functions.
+ *   (c) non-dynamic: module-level alias bindings — `f = fn.bind(ctx)` or
+ *       `const f = handler` — where pts('f') was seeded by fnRefBindings.
+ *       Checked against fnRefBindingLhs so case (c) only fires for genuine
+ *       bind/alias entries and never for self-seeded local definitions.
+ *
+ * Pts edges are added to ptsEdgeRows (not seenCallEdges) so that a later
+ * direct call to the same target can upgrade confidence rather than being
+ * silently dropped by the dedup guard.
+ */
+function emitPtsNoReceiverEdges(
+  call: Call,
+  caller: { id: number; callerName: string | null },
+  isDynamic: number,
+  relPath: string,
+  importedNames: Map<string, string>,
+  lookup: CallNodeLookup,
+  typeMap: Map<string, TypeMapEntry | string>,
+  ptsMap: PointsToMap,
+  fnRefBindingLhs: Set<string>,
+  seenCallEdges: Set<string>,
+  ptsEdgeRows: Map<string, number>,
+  allEdgeRows: EdgeRowTuple[],
+): void {
+  const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+  // Module-level calls (callerName === null) use the '<module>' sentinel emitted by
+  // extractSpreadForOfWalk for top-level for-of loops. Look it up as a fallback so
+  // that `for (const f of arr) { f(); }` at module scope resolves correctly.
+  const modulePtsKey =
+    caller.callerName === null && ptsMap.has(`<module>::${call.name}`)
+      ? `<module>::${call.name}`
+      : null;
+  const flatPtsKey =
+    !call.dynamic && fnRefBindingLhs.has(call.name) && ptsMap.has(call.name) ? call.name : null;
+
+  if (
+    !(
+      call.dynamic ||
+      (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) ||
+      modulePtsKey != null ||
+      flatPtsKey != null
+    )
+  )
+    return;
+
+  const ptsLookupName = call.dynamic
+    ? call.name
+    : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
+      ? scopedPtsKey
+      : modulePtsKey != null
+        ? modulePtsKey
+        : // flatPtsKey != null is guaranteed: if neither call.dynamic nor scopedPtsKey
+          // nor modulePtsKey matched, flatPtsKey must be non-null.
+          flatPtsKey!;
+
+  for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
+    // Resolve the concrete alias target. Only `name` is needed here — receiver
+    // and line are not relevant for alias resolution (we are looking up the
+    // aliased function by name, not dispatching a method call).
+    const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+      lookup,
+      { name: alias },
+      relPath,
+      importedNames,
+      typeMap as Map<string, unknown>,
+    );
+    const sortedAliasTargets =
+      aliasTargets.length > 1
+        ? [...aliasTargets].sort(
+            (a, b) =>
+              computeConfidence(relPath, b.file, aliasFrom ?? null) -
+              computeConfidence(relPath, a.file, aliasFrom ?? null),
+          )
+        : aliasTargets;
+    for (const t of sortedAliasTargets) {
+      const edgeKey = `${caller.id}|${t.id}`;
+      if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+        const conf =
+          computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+        if (conf > 0) {
+          ptsEdgeRows.set(edgeKey, allEdgeRows.length);
+          allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Phase 8.3f: emit pts-resolved edges for unresolved receiver calls via
+ * object-rest param bindings.
+ *
+ * Fires when `rest.prop()` is encountered and `rest` was seeded as
+ * `pts["rest.prop"]` by the object-rest dispatch chain
+ * (ObjectRestParamBinding + paramBinding + ObjectPropBinding).
+ */
+function emitPtsReceiverEdges(
+  call: Call,
+  caller: { id: number; callerName: string | null },
+  isDynamic: number,
+  relPath: string,
+  importedNames: Map<string, string>,
+  lookup: CallNodeLookup,
+  typeMap: Map<string, TypeMapEntry | string>,
+  ptsMap: PointsToMap,
+  seenCallEdges: Set<string>,
+  ptsEdgeRows: Map<string, number>,
+  allEdgeRows: EdgeRowTuple[],
+): void {
+  const receiverKey = `${call.receiver}.${call.name}`;
+  if (!ptsMap.has(receiverKey)) return;
+
+  for (const alias of resolveViaPointsTo(receiverKey, ptsMap)) {
+    const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+      lookup,
+      { name: alias },
+      relPath,
+      importedNames,
+      typeMap as Map<string, unknown>,
+    );
+    const sortedAliasTargets =
+      aliasTargets.length > 1
+        ? [...aliasTargets].sort(
+            (a, b) =>
+              computeConfidence(relPath, b.file, aliasFrom ?? null) -
+              computeConfidence(relPath, a.file, aliasFrom ?? null),
+          )
+        : aliasTargets;
+    for (const t of sortedAliasTargets) {
+      const edgeKey = `${caller.id}|${t.id}`;
+      if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+        const conf =
+          computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+        if (conf > 0) {
+          ptsEdgeRows.set(edgeKey, allEdgeRows.length);
+          allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Phase 8.5: emit CHA + RTA dispatch edges for a single call site.
+ *
+ * For `this`/`self`/`super` calls: resolve through the class hierarchy.
+ * For typed receiver calls: expand to all instantiated concrete implementations.
+ */
+function emitChaCallEdgesForCall(
+  call: Call,
+  caller: { id: number; callerName: string | null },
+  relPath: string,
+  typeMap: Map<string, TypeMapEntry | string>,
+  lookup: CallNodeLookup,
+  chaCtx: ChaContext,
+  seenCallEdges: Set<string>,
+  ptsEdgeRows: Map<string, number>,
+  allEdgeRows: EdgeRowTuple[],
+): void {
+  let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+  let isTypedReceiverDispatch = false;
+
+  if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
+    chaTargets = resolveThisDispatch(
+      call.name,
+      caller.callerName,
+      call.receiver,
+      chaCtx,
+      lookup,
+      relPath,
+    );
+  } else if (!BUILTIN_RECEIVERS.has(call.receiver!)) {
+    const typeEntry = typeMap.get(call.receiver!);
+    const typeName = typeEntry
+      ? typeof typeEntry === 'string'
+        ? typeEntry
+        : (typeEntry as { type?: string }).type
+      : null;
+    if (typeName) {
+      chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+      isTypedReceiverDispatch = true;
+    }
+  }
+
+  for (const t of chaTargets) {
+    const edgeKey = `${caller.id}|${t.id}`;
+    if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
+      // Typed-receiver (interface/CHA) dispatch: use CHA_TYPED_DISPATCH_CONFIDENCE
+      // — file proximity is not meaningful for virtual dispatch confidence.
+      // this/super dispatch keeps computeConfidence-based proximity scoring to
+      // match runPostNativeThisDispatch (native-orchestrator.ts).
+      const conf = isTypedReceiverDispatch
+        ? CHA_TYPED_DISPATCH_CONFIDENCE
+        : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+      if (conf > 0) {
+        seenCallEdges.add(edgeKey);
+        allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+      }
+    }
+  }
+}
+
+/**
+ * Build call edges for all calls in a single file (WASM/JS engine path).
+ *
+ * Iterates over `symbols.calls` and dispatches each call through the full
+ * JS resolution cascade:
+ *   1. `resolveFallbackTargets`  — primary + class-fallback + defineProperty fallback
+ *   2. `emitDirectCallEdgesForCall` — emit direct-call edges (upgrading any pts pair)
+ *   3. `emitPtsNoReceiverEdges`  — Phase 8.3/8.3c pts fallback for no-receiver calls
+ *   4. `emitPtsReceiverEdges`    — Phase 8.3f pts fallback for rest-param receiver calls
+ *   5. Inline `resolveReceiverEdge` — emit `receiver` edge for external receivers
+ *   6. `emitChaCallEdgesForCall` — Phase 8.5 CHA + RTA dispatch expansion
+ */
 function buildFileCallEdges(
   relPath: string,
   symbols: ExtractorOutput,
@@ -1015,231 +1412,55 @@ function buildFileCallEdges(
   // bind/alias entries, not for every locally-defined function or import that
   // buildPointsToMap seeds with a self-pointing entry.
   const fnRefBindingLhs = new Set(symbols.fnRefBindings?.map((b) => b.lhs) ?? []);
+
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
     const isDynamic: number = call.dynamic ? 1 : 0;
-    let { targets, importedFrom } = resolveCallTargets(
-      lookup,
+
+    // Step 1: Resolve targets with all JS-path fallbacks.
+    const { targets, importedFrom } = resolveFallbackTargets(
       call,
+      caller,
       relPath,
       importedNames,
-      typeMap as Map<string, unknown>,
-      caller.callerName,
+      lookup,
+      typeMap,
+      symbols.definePropertyReceivers,
     );
 
-    // Same-class `this.method()` fallback: when the call receiver is `this` and
-    // resolveCallTargets found nothing, derive the enclosing class name from the
-    // caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
-    // qualified method name `Logger._write`. This mirrors what the native Rust
-    // engine does implicitly via its class-scoped symbol table.
-    // NOTE: restricted to `this` only — `super.method()` targets a parent class,
-    // not the enclosing class, so qualifying with the child class name would
-    // produce a false edge when the child also defines a same-named method.
-    if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
-      const lastDot = caller.callerName.lastIndexOf('.');
-      if (lastDot > 0) {
-        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
-        const className = caller.callerName.slice(prevDot + 1, lastDot);
-        const qualifiedName = `${className}.${call.name}`;
-        const qualified = lookup
-          .byNameAndFile(qualifiedName, relPath)
-          .filter((n) => n.kind === 'method');
-        if (qualified.length > 0) {
-          targets = qualified;
-        }
-      }
-    }
+    // Step 2: Emit direct-call edges (upgrades any pending pts edge in-place).
+    emitDirectCallEdgesForCall(
+      caller,
+      targets,
+      importedFrom,
+      isDynamic,
+      relPath,
+      seenCallEdges,
+      ptsEdgeRows,
+      allEdgeRows,
+    );
 
-    // Same-class bare-call fallback: when a no-receiver call can't be resolved
-    // globally, try the caller's own class as a qualifier. Handles C# static
-    // sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
-    // to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
-    // module-scoped, not class-scoped.
-    if (
-      targets.length === 0 &&
-      !call.receiver &&
-      caller.callerName != null &&
-      !isModuleScopedLanguage(relPath)
-    ) {
-      const lastDot = caller.callerName.lastIndexOf('.');
-      if (lastDot > 0) {
-        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
-        const className = caller.callerName.slice(prevDot + 1, lastDot);
-        const qualifiedName = `${className}.${call.name}`;
-        const qualified = lookup
-          .byNameAndFile(qualifiedName, relPath)
-          .filter((n) => n.kind === 'method');
-        if (qualified.length > 0) {
-          targets = qualified;
-        }
-      }
-    }
-
-    // Object.defineProperty accessor fallback: when a function is registered as
-    // a getter/setter via `Object.defineProperty(obj, "bar", { get: getter })`,
-    // calls to `this.X()` inside `getter` resolve against `obj` (this === obj
-    // when the accessor is invoked). If the same-class fallback above found
-    // nothing, try treating `obj` as the receiver and look up `obj.X` in the
-    // typeMap, or fall back to a same-file lookup of any definition named X
-    // that belongs to the object literal or its type.
-    if (
-      targets.length === 0 &&
-      call.receiver === 'this' &&
-      caller.callerName != null &&
-      symbols.definePropertyReceivers
-    ) {
-      const receiverVarName = symbols.definePropertyReceivers.get(caller.callerName);
-      if (receiverVarName) {
-        // Try typeMap lookup for receiver.methodName
-        const typeEntry = typeMap.get(receiverVarName);
-        const typeName = typeEntry
-          ? typeof typeEntry === 'string'
-            ? typeEntry
-            : (typeEntry as { type?: string }).type
-          : null;
-        if (typeName) {
-          const qualifiedName = `${typeName}.${call.name}`;
-          const qualified = lookup.byNameAndFile(qualifiedName, relPath);
-          if (qualified.length > 0) {
-            targets = [...qualified];
-          }
-        }
-        // If still no targets, search for any definition named `call.name` in
-        // the same file — handles plain object literals where the method isn't
-        // qualified (e.g. `const obj = { baz() {} }` defines `baz` directly).
-        // Note: this is intentionally broad — it matches any same-file definition
-        // with the called name, not just members of the receiver object. This is
-        // the same behaviour used by the native post-pass path (buildDefinePropertyPostPass).
-        if (targets.length === 0) {
-          const sameFile = lookup.byNameAndFile(call.name, relPath);
-          if (sameFile.length > 0) {
-            targets = [...sameFile];
-          }
-        }
-      }
-    }
-
-    // Sort targets by confidence descending before emitting edges.
-    // For multi-target calls with duplicate (source_id, target_id) pairs the
-    // stored confidence depends on which duplicate is processed last — sorting
-    // here guarantees the highest-confidence target wins on dedup, matching the
-    // native engine's sort_targets_by_confidence call in build_edges.rs.
-    if (targets.length > 1) {
-      targets = [...targets].sort(
-        (a, b) =>
-          computeConfidence(relPath, b.file, importedFrom ?? null) -
-          computeConfidence(relPath, a.file, importedFrom ?? null),
+    // Step 3: Phase 8.3/8.3c pts fallback for unresolved no-receiver calls.
+    if (targets.length === 0 && !call.receiver && ptsMap) {
+      emitPtsNoReceiverEdges(
+        call,
+        caller,
+        isDynamic,
+        relPath,
+        importedNames,
+        lookup,
+        typeMap,
+        ptsMap,
+        fnRefBindingLhs,
+        seenCallEdges,
+        ptsEdgeRows,
+        allEdgeRows,
       );
     }
 
-    for (const t of targets) {
-      const edgeKey = `${caller.id}|${t.id}`;
-      if (t.id !== caller.id) {
-        const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
-        if (seenCallEdges.has(edgeKey)) continue;
-        const ptsIdx = ptsEdgeRows.get(edgeKey);
-        if (ptsIdx !== undefined) {
-          // A pts-resolved edge already exists for this caller→target pair with a
-          // penalised confidence. Upgrade it to the direct-call confidence in-place,
-          // then promote to seenCallEdges so no further processing is needed.
-          const ptsRow = allEdgeRows[ptsIdx];
-          if (ptsRow) {
-            ptsRow[3] = confidence;
-            ptsRow[4] = isDynamic; // upgrade is_dynamic: direct call overrides the pts-alias dynamic flag
-            ptsRow[5] = 'ts-native'; // promoted from pts to direct-call resolution
-          }
-          ptsEdgeRows.delete(edgeKey);
-          seenCallEdges.add(edgeKey);
-        } else {
-          seenCallEdges.add(edgeKey);
-          allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native']);
-        }
-      }
-    }
-
-    // Phase 8.3 / 8.3c / bind: points-to fallback for unresolved calls.
-    // Fires for three cases:
-    //   (a) dynamic=true: alias calls emitted by extractCallbackReferenceCalls.
-    //       Looks up `call.name` directly (alias entries are flat-keyed).
-    //   (b) non-dynamic: parameter variable calls (fn() where fn is a param).
-    //       Looks up the scoped key `callerName::call.name` to avoid spurious
-    //       edges from same-named parameters across different functions.
-    //   (c) non-dynamic: module-level alias bindings — `f = fn.bind(ctx)` or
-    //       `const f = handler` — where pts('f') was seeded by fnRefBindings.
-    //       Checked against fnRefBindingLhs (the pre-computed set of lhs names from
-    //       fnRefBindings) rather than the full ptsMap, so case (c) only fires for
-    //       genuine bind/alias entries and never for self-seeded local definitions.
-    // Confidence is penalised by one hop to reflect the extra indirection.
-    //
-    // Note: pts edges are added to ptsEdgeRows (not seenCallEdges) so that a later
-    // direct call to the same target in the same function body can upgrade confidence
-    // rather than being silently dropped by the dedup guard.
-    const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
-    // Module-level calls (callerName === null) use the '<module>' sentinel emitted by
-    // extractSpreadForOfWalk for top-level for-of loops. Look it up as a fallback so
-    // that `for (const f of arr) { f(); }` at module scope resolves correctly.
-    const modulePtsKey =
-      caller.callerName === null && ptsMap?.has(`<module>::${call.name}`)
-        ? `<module>::${call.name}`
-        : null;
-    const flatPtsKey =
-      !call.dynamic && fnRefBindingLhs.has(call.name) && ptsMap?.has(call.name) ? call.name : null;
-    if (
-      targets.length === 0 &&
-      !call.receiver &&
-      ptsMap &&
-      (call.dynamic ||
-        (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) ||
-        modulePtsKey != null ||
-        flatPtsKey != null)
-    ) {
-      const ptsLookupName = call.dynamic
-        ? call.name
-        : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
-          ? scopedPtsKey
-          : modulePtsKey != null
-            ? modulePtsKey
-            : // flatPtsKey != null is guaranteed by the outer if condition: if neither
-              // call.dynamic nor scopedPtsKey nor modulePtsKey matched, flatPtsKey must be non-null.
-              flatPtsKey!;
-      for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
-        // Resolve the concrete alias target. Only `name` is needed here — receiver
-        // and line are not relevant for alias resolution (we are looking up the
-        // aliased function by name, not dispatching a method call).
-        const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
-          lookup,
-          { name: alias },
-          relPath,
-          importedNames,
-          typeMap as Map<string, unknown>,
-        );
-        const sortedAliasTargets =
-          aliasTargets.length > 1
-            ? [...aliasTargets].sort(
-                (a, b) =>
-                  computeConfidence(relPath, b.file, aliasFrom ?? null) -
-                  computeConfidence(relPath, a.file, aliasFrom ?? null),
-              )
-            : aliasTargets;
-        for (const t of sortedAliasTargets) {
-          const edgeKey = `${caller.id}|${t.id}`;
-          if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
-            const conf =
-              computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
-            if (conf > 0) {
-              ptsEdgeRows.set(edgeKey, allEdgeRows.length);
-              allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
-            }
-          }
-        }
-      }
-    }
-
-    // Phase 8.3f: pts fallback for receiver calls via object-rest param bindings.
-    // Fires when `rest.prop()` is encountered and `rest` was seeded as `pts["rest.prop"]`
-    // by the object-rest dispatch chain (ObjectRestParamBinding + paramBinding + ObjectPropBinding).
+    // Step 4: Phase 8.3f pts fallback for unresolved receiver calls (rest params).
     if (
       targets.length === 0 &&
       call.receiver &&
@@ -1249,39 +1470,22 @@ function buildFileCallEdges(
       call.receiver !== 'super' &&
       ptsMap
     ) {
-      const receiverKey = `${call.receiver}.${call.name}`;
-      if (ptsMap.has(receiverKey)) {
-        for (const alias of resolveViaPointsTo(receiverKey, ptsMap)) {
-          const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
-            lookup,
-            { name: alias },
-            relPath,
-            importedNames,
-            typeMap as Map<string, unknown>,
-          );
-          const sortedAliasTargets =
-            aliasTargets.length > 1
-              ? [...aliasTargets].sort(
-                  (a, b) =>
-                    computeConfidence(relPath, b.file, aliasFrom ?? null) -
-                    computeConfidence(relPath, a.file, aliasFrom ?? null),
-                )
-              : aliasTargets;
-          for (const t of sortedAliasTargets) {
-            const edgeKey = `${caller.id}|${t.id}`;
-            if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
-              const conf =
-                computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
-              if (conf > 0) {
-                ptsEdgeRows.set(edgeKey, allEdgeRows.length);
-                allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
-              }
-            }
-          }
-        }
-      }
+      emitPtsReceiverEdges(
+        call,
+        caller,
+        isDynamic,
+        relPath,
+        importedNames,
+        lookup,
+        typeMap,
+        ptsMap,
+        seenCallEdges,
+        ptsEdgeRows,
+        allEdgeRows,
+      );
     }
 
+    // Step 5: Emit receiver edge for external (non-this/self/super) receivers.
     if (
       call.receiver &&
       !BUILTIN_RECEIVERS.has(call.receiver) &&
@@ -1303,50 +1507,19 @@ function buildFileCallEdges(
       }
     }
 
-    // Phase 8.5: CHA + RTA dispatch expansion.
-    // For `this`/`self`/`super` calls: resolve through the class hierarchy instead
-    // of relying solely on global name matching.
-    // For typed receiver calls: expand to all instantiated concrete implementations.
+    // Step 6: Phase 8.5 CHA + RTA dispatch expansion.
     if (chaCtx && call.receiver) {
-      let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
-      let isTypedReceiverDispatch = false;
-      if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
-        chaTargets = resolveThisDispatch(
-          call.name,
-          caller.callerName,
-          call.receiver,
-          chaCtx,
-          lookup,
-          relPath,
-        );
-      } else if (!BUILTIN_RECEIVERS.has(call.receiver)) {
-        const typeEntry = typeMap.get(call.receiver);
-        const typeName = typeEntry
-          ? typeof typeEntry === 'string'
-            ? typeEntry
-            : (typeEntry as { type?: string }).type
-          : null;
-        if (typeName) {
-          chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
-          isTypedReceiverDispatch = true;
-        }
-      }
-      for (const t of chaTargets) {
-        const edgeKey = `${caller.id}|${t.id}`;
-        if (t.id !== caller.id && !seenCallEdges.has(edgeKey) && !ptsEdgeRows.has(edgeKey)) {
-          // Typed-receiver (interface/CHA) dispatch: use CHA_TYPED_DISPATCH_CONFIDENCE
-          // — file proximity is not meaningful for virtual dispatch confidence.
-          // this/super dispatch keeps computeConfidence-based proximity scoring to
-          // match runPostNativeThisDispatch (native-orchestrator.ts).
-          const conf = isTypedReceiverDispatch
-            ? CHA_TYPED_DISPATCH_CONFIDENCE
-            : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
-          if (conf > 0) {
-            seenCallEdges.add(edgeKey);
-            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
-          }
-        }
-      }
+      emitChaCallEdgesForCall(
+        call,
+        caller,
+        relPath,
+        typeMap,
+        lookup,
+        chaCtx,
+        seenCallEdges,
+        ptsEdgeRows,
+        allEdgeRows,
+      );
     }
   }
 }
@@ -1594,7 +1767,16 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   // Enrich typeMap for .ts/.tsx files using the TypeScript compiler API.
   // Runs before call-edge construction so the accurate types are available
   // for method-call resolution. Gated on config so users can opt out.
-  if (ctx.config.build.typescriptResolver) {
+  //
+  // Skip for small incremental builds: TypeScript program creation requires
+  // loading the entire tsconfig file list (~700ms startup on the codegraph
+  // corpus), which dominates the 1-file rebuild time. Native engine bypasses
+  // this entirely via the Rust orchestrator; WASM/JS engines need this gate
+  // to match native's effective behaviour on tiny incremental changes.
+  // Mirrors the smallFilesThreshold gates for nativeDb and native call-edges.
+  const isSmallIncremental =
+    !ctx.isFullBuild && ctx.fileSymbols.size <= ctx.config.build.smallFilesThreshold;
+  if (ctx.config.build.typescriptResolver && !isSmallIncremental) {
     await enrichTypeMapWithTsc(ctx.rootDir, ctx.fileSymbols);
   }
 

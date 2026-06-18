@@ -211,11 +211,31 @@ describe('classifyRoles', () => {
     expect(roles.get('1')).toBe('dead-ffi');
   });
 
-  it('classifies dead-entry for CLI command files', () => {
+  it('classifies execute/validate as entry (not dead-entry) in CLI command files (#1585)', () => {
+    // Commander.js dispatch methods (execute, validate) in cli/commands/ are
+    // confirmed entry points — promoted directly to `entry` so they don't
+    // appear in `--role dead` output.
     const nodes = [
       {
         id: '1',
         name: 'execute',
+        kind: 'function',
+        file: 'src/cli/commands/build.js',
+        fanIn: 0,
+        fanOut: 3,
+        isExported: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('entry');
+  });
+
+  it('classifies non-Commander functions as dead-entry in CLI command files', () => {
+    // Functions other than execute/validate in cli/commands/ are still dead-entry.
+    const nodes = [
+      {
+        id: '1',
+        name: 'handleQuery',
         kind: 'function',
         file: 'src/cli/commands/build.js',
         fanIn: 0,
@@ -360,6 +380,136 @@ describe('classifyRoles', () => {
         fanOut: 0,
         isExported: false,
         testOnlyFanIn: 0,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('dead-unresolved');
+  });
+
+  // ── Pattern 2: interface dispatch via conditional property access ──────────
+
+  it('classifies method as leaf when same file has active callables (pattern 2: interface dispatch)', () => {
+    // Simulates enterFunction/exitFunction/etc. in cfg-visitor.ts — methods implementing
+    // the Visitor interface, dispatched via `if (v.enterFunction) v.enterFunction(...)`.
+    // The method itself has fanIn === 0 because codegraph resolves the call to the
+    // property accessor, not to the concrete method implementation.
+    const nodes = [
+      {
+        id: '1',
+        name: 'enterFunction',
+        kind: 'method',
+        file: 'src/ast-analysis/visitors/cfg-visitor.ts',
+        fanIn: 0,
+        fanOut: 3,
+        isExported: false,
+        hasActiveFileSiblings: true,
+      },
+      {
+        id: '2',
+        name: 'createCfgVisitor',
+        kind: 'function',
+        file: 'src/ast-analysis/visitors/cfg-visitor.ts',
+        fanIn: 5,
+        fanOut: 2,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+    // The factory function is properly connected
+    expect(roles.get('2')).toBe('core');
+  });
+
+  it('classifies method as dead-unresolved when no active file siblings (pattern 2: no siblings)', () => {
+    // A method in an isolated file (no connected callables) remains dead-unresolved.
+    const nodes = [
+      {
+        id: '1',
+        name: 'extractParamName',
+        kind: 'method',
+        file: 'src/ast-analysis/rules/csharp.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+        hasActiveFileSiblings: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('dead-unresolved');
+  });
+
+  it('classifies method as dead-unresolved when fanOut === 0 even with active file siblings (pattern 2: inert)', () => {
+    // A method with no callers and no outgoing calls in a busy file is a genuinely dead
+    // helper — the fanOut > 0 guard keeps it visible in --role dead output.
+    const nodes = [
+      {
+        id: '1',
+        name: 'unusedHelper',
+        kind: 'method',
+        file: 'src/graph/classifiers/roles.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+        hasActiveFileSiblings: true,
+      },
+      {
+        id: '2',
+        name: 'classifyUnreferencedNode',
+        kind: 'function',
+        file: 'src/graph/classifiers/roles.ts',
+        fanIn: 5,
+        fanOut: 3,
+        isExported: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('dead-unresolved');
+  });
+
+  // ── Pattern 3: logical-or fallback defaults ────────────────────────────────
+
+  it('classifies function as leaf when used as logical-or default and file has active callables (pattern 3)', () => {
+    // Simulates fetchLatestVersion in update-check.ts:
+    //   `const fetchFn = options._fetchLatest || fetchLatestVersion`
+    // The function is referenced as a value, not called directly, so no call edge is produced.
+    // fanOut > 0 indicates the function is non-trivial (it calls something internally).
+    const nodes = [
+      {
+        id: '1',
+        name: 'fetchLatestVersion',
+        kind: 'function',
+        file: 'src/infrastructure/update-check.ts',
+        fanIn: 0,
+        fanOut: 1, // fetchLatestVersion calls https.get internally
+        isExported: false,
+        hasActiveFileSiblings: true,
+      },
+      {
+        id: '2',
+        name: 'checkForUpdates',
+        kind: 'function',
+        file: 'src/infrastructure/update-check.ts',
+        fanIn: 3,
+        fanOut: 4,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+  });
+
+  it('classifies function as dead-unresolved when isolated (no active siblings)', () => {
+    // A function in a file with no connected callables remains dead-unresolved.
+    const nodes = [
+      {
+        id: '1',
+        name: 'trulySilent',
+        kind: 'function',
+        file: 'src/lib.js',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+        hasActiveFileSiblings: false,
       },
     ];
     const roles = classifyRoles(nodes);

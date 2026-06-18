@@ -42,6 +42,7 @@ function walkSwiftNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       handleSwiftCallExpression(node, ctx);
       break;
     case 'property_declaration':
+      seedSwiftPropertyTypeMap(node, ctx);
       handleSwiftPropertyDecl(node, ctx);
       break;
   }
@@ -250,11 +251,26 @@ function handleSwiftCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
   if (!funcNode) return;
   const call: Call = { name: '', line: node.startPosition.row + 1 };
   if (funcNode.type === 'navigation_expression') {
-    // obj.method(...)
+    // obj.method(...) — Swift's tree-sitter grammar wraps the suffix in a
+    // `navigation_suffix` node: navigation_expression > [simple_identifier, navigation_suffix].
+    // We must descend into navigation_suffix to get the bare method name (e.g. "save" not ".save").
+    // Mirrors Rust match_swift_node which also descends into navigation_suffix via find_child
+    // to extract the inner simple_identifier, with a trim_start_matches('.') fallback.
     const lastChild = funcNode.child(funcNode.childCount - 1);
     const firstChild = funcNode.child(0);
-    if (lastChild && lastChild.type === 'simple_identifier' && firstChild) {
-      call.name = lastChild.text;
+    if (lastChild && firstChild) {
+      // Resolve the method name: descend into navigation_suffix to find the
+      // simple_identifier, or fall back to stripping the leading dot from the text.
+      let methodName: string;
+      if (lastChild.type === 'simple_identifier') {
+        methodName = lastChild.text;
+      } else if (lastChild.type === 'navigation_suffix') {
+        const inner = findChild(lastChild, 'simple_identifier');
+        methodName = inner ? inner.text : lastChild.text.replace(/^\./, '');
+      } else {
+        methodName = lastChild.text;
+      }
+      call.name = methodName;
       call.receiver = firstChild.text;
     }
   } else if (funcNode.type === 'simple_identifier') {
@@ -263,6 +279,33 @@ function handleSwiftCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
     call.name = funcNode.text;
   }
   if (call.name) ctx.calls.push(call);
+}
+
+/**
+ * Seed the typeMap for a property_declaration with a type annotation.
+ * This runs for ALL property_declaration nodes (including class-body ones)
+ * so that `repo.method()` calls can be resolved to the correct class.
+ * Mirrors Rust match_swift_type_map which walks all nodes unconditionally.
+ */
+function seedSwiftPropertyTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const typeAnn = findChild(node, 'type_annotation');
+  if (!typeAnn) return;
+  // type_annotation: ":" <user_type | simple_identifier | ...>
+  // The last child is the actual type node.
+  const lastChild = typeAnn.child(typeAnn.childCount - 1);
+  if (!lastChild) return;
+  // For "user_type > type_identifier", grab the inner identifier text;
+  // for a plain simple_identifier, use it directly.
+  const typeNode =
+    lastChild.type === 'user_type' ? findChild(lastChild, 'type_identifier') : lastChild;
+  if (!typeNode) return;
+  const typeName = typeNode.text;
+  if (!typeName) return;
+  const pattern = findChild(node, 'pattern');
+  if (!pattern) return;
+  const varName = findChild(pattern, 'simple_identifier')?.text ?? pattern.text;
+  if (!varName) return;
+  ctx.typeMap.set(varName, { type: typeName, confidence: 0.9 });
 }
 
 function handleSwiftPropertyDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {

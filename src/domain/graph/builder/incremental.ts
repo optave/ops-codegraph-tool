@@ -482,6 +482,215 @@ function makeIncrementalLookup(db: BetterSqlite3Database, stmts: IncrementalStmt
   };
 }
 
+/** Coerce symbols.typeMap (Map, Array, or undefined) to a canonical Map. */
+function coerceTypeMap(symbols: ExtractorOutput): Map<string, unknown> {
+  const rawTM: unknown = symbols.typeMap;
+  if (rawTM instanceof Map) return rawTM;
+  if (Array.isArray(rawTM) && rawTM.length > 0) {
+    return new Map(
+      (rawTM as Array<{ name: string; typeName?: string; type?: string }>).map((e) => [
+        e.name,
+        e.typeName ?? e.type ?? null,
+      ]),
+    );
+  }
+  return new Map();
+}
+
+/**
+ * Seed scoped rest-param keys into typeMap (Phase 8.3f).
+ * Mirrors buildObjectRestParamPostPass in the full build.
+ *
+ * Scoped keys (`callee::restName`) prevent same-name rest-param collisions
+ * when two functions in the same file both use `...rest` (#1358). The
+ * unscoped key is also seeded when only one callee uses a given rest name,
+ * preserving resolution when callerName is null.
+ */
+function seedRestParamTypeMap(typeMap: Map<string, unknown>, symbols: ExtractorOutput): void {
+  if (!symbols.objectRestParamBindings?.length || !symbols.paramBindings?.length) return;
+
+  const restNameCallees = new Map<string, Set<string>>();
+  for (const orpb of symbols.objectRestParamBindings) {
+    if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
+    restNameCallees.get(orpb.restName)!.add(orpb.callee);
+  }
+  for (const orpb of symbols.objectRestParamBindings) {
+    for (const pb of symbols.paramBindings) {
+      if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
+        const scopedKey = `${orpb.callee}::${orpb.restName}`;
+        if (!typeMap.has(scopedKey)) {
+          typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
+          if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
+            typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Normalize symbols.typeMap into a canonical Map and seed scoped rest-param
+ * keys (Phase 8.3f). Mirrors buildObjectRestParamPostPass in the full build.
+ */
+function buildIncrementalTypeMap(symbols: ExtractorOutput): Map<string, unknown> {
+  const typeMap = coerceTypeMap(symbols);
+  seedRestParamTypeMap(typeMap, symbols);
+  return typeMap;
+}
+
+/**
+ * Strategy 1 — same-class `this.method()` fallback.
+ * Derives the enclosing class name from callerName by extracting the segment
+ * immediately before the final dot (e.g. `MyClass.method` → `MyClass`,
+ * `Namespace.MyClass.method` → `MyClass`), then retries with the qualified
+ * method name `MyClass.callName`.
+ *
+ * Uses lastIndexOf to match the full-build counterpart in resolveFallbackTargets
+ * (build-edges.ts) — indexOf would extract `Namespace` instead of `MyClass` for
+ * deeply-qualified caller names like `Namespace.MyClass.method`.
+ */
+function resolveThisSameClassTarget(
+  callName: string,
+  callerName: string,
+  relPath: string,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  const lastDot = callerName.lastIndexOf('.');
+  if (lastDot <= 0) return [];
+  const prevDot = callerName.lastIndexOf('.', lastDot - 1);
+  const className = callerName.slice(prevDot + 1, lastDot);
+  return lookup
+    .byNameAndFile(`${className}.${callName}`, relPath)
+    .filter((n) => n.kind === 'method');
+}
+
+/**
+ * Strategy 2 — Object.defineProperty accessor fallback.
+ * When a function is registered as a getter/setter via
+ * `Object.defineProperty(obj, "bar", { get: getter })`, calls to `this.X()`
+ * inside `getter` resolve against `obj`. Looks up the receiver var in the
+ * typeMap for its type, then falls back to any same-file definition named
+ * `callName` with function or method kind.
+ */
+function resolveDefinePropertyTarget(
+  callName: string,
+  callerName: string,
+  relPath: string,
+  typeMap: Map<string, unknown>,
+  lookup: CallNodeLookup,
+  definePropertyReceivers: Map<string, string>,
+): Array<{ id: number; file: string; kind?: string }> {
+  const receiverVarName = definePropertyReceivers.get(callerName);
+  if (!receiverVarName) return [];
+
+  const typeEntry = typeMap.get(receiverVarName);
+  const typeName = typeEntry
+    ? typeof typeEntry === 'string'
+      ? typeEntry
+      : (typeEntry as { type?: string }).type
+    : null;
+  if (typeName) {
+    const qualified = lookup.byNameAndFile(`${typeName}.${callName}`, relPath);
+    if (qualified.length > 0) return [...qualified];
+  }
+  // Narrow to function/method kinds only to avoid matching unrelated
+  // variables or classes that share a name in the same file.
+  return lookup
+    .byNameAndFile(callName, relPath)
+    .filter((n) => n.kind === 'function' || n.kind === 'method');
+}
+
+/**
+ * Apply `this`-receiver fallback resolution strategies for a single call site
+ * when the primary resolveCallTargets pass returned no targets.
+ */
+function applyThisReceiverFallbacks(
+  call: { name: string; receiver?: string | null },
+  callerName: string | null,
+  relPath: string,
+  typeMap: Map<string, unknown>,
+  lookup: CallNodeLookup,
+  definePropertyReceivers: Map<string, string> | undefined,
+  initialTargets: Array<{ id: number; file: string; kind?: string }>,
+): Array<{ id: number; file: string; kind?: string }> {
+  if (initialTargets.length > 0) return initialTargets;
+
+  // Strategy 1: same-class `this.method()` fallback.
+  if (call.receiver === 'this' && callerName != null) {
+    const s1 = resolveThisSameClassTarget(call.name, callerName, relPath, lookup);
+    if (s1.length > 0) return s1;
+  }
+
+  // Strategy 2: Object.defineProperty accessor fallback.
+  if (call.receiver === 'this' && callerName != null && definePropertyReceivers) {
+    return resolveDefinePropertyTarget(
+      call.name,
+      callerName,
+      relPath,
+      typeMap,
+      lookup,
+      definePropertyReceivers,
+    );
+  }
+
+  return initialTargets;
+}
+
+/**
+ * Emit direct `calls` edges for the resolved targets of a single call site,
+ * then emit a `receiver` edge when the call has a non-this/self/super receiver.
+ * Returns the number of edges inserted.
+ */
+function emitIncrementalCallEdges(
+  call: { name: string; receiver?: string | null; dynamic?: boolean },
+  caller: { id: number; callerName: string | null },
+  targets: Array<{ id: number; file: string; kind?: string }>,
+  importedFrom: string | null | undefined,
+  relPath: string,
+  typeMap: Map<string, unknown>,
+  lookup: CallNodeLookup,
+  importedNames: Map<string, string>,
+  seenCallEdges: Set<string>,
+  stmts: IncrementalStmts,
+): number {
+  let edgesAdded = 0;
+
+  for (const t of targets) {
+    const edgeKey = `${caller.id}|${t.id}`;
+    if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+      seenCallEdges.add(edgeKey);
+      const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
+      stmts.insertEdge.run(caller.id, t.id, 'calls', confidence, call.dynamic ? 1 : 0);
+      edgesAdded++;
+    }
+  }
+
+  if (
+    call.receiver &&
+    !BUILTIN_RECEIVERS.has(call.receiver) &&
+    call.receiver !== 'this' &&
+    call.receiver !== 'self' &&
+    call.receiver !== 'super'
+  ) {
+    const recv = resolveReceiverEdge(
+      lookup,
+      { name: call.name, receiver: call.receiver },
+      caller,
+      relPath,
+      typeMap,
+      seenCallEdges,
+      importedNames,
+    );
+    if (recv) {
+      stmts.insertEdge.run(recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0);
+      edgesAdded++;
+    }
+  }
+
+  return edgesAdded;
+}
+
 function buildCallEdges(
   db: BetterSqlite3Database,
   stmts: IncrementalStmts,
@@ -490,46 +699,7 @@ function buildCallEdges(
   fileNodeRow: { id: number },
   importedNames: Map<string, string>,
 ): number {
-  const rawTM: unknown = symbols.typeMap;
-  const typeMap: Map<string, unknown> =
-    rawTM instanceof Map
-      ? rawTM
-      : Array.isArray(rawTM) && rawTM.length > 0
-        ? new Map(
-            (rawTM as Array<{ name: string; typeName?: string; type?: string }>).map((e) => [
-              e.name,
-              e.typeName ?? e.type ?? null,
-            ]),
-          )
-        : new Map();
-
-  // Phase 8.3f: seed typeMap[callee::restName] = { type: argName } from
-  // objectRestParamBindings × paramBindings, mirroring buildObjectRestParamPostPass.
-  // Scoped keys prevent same-name rest-param collisions when two functions in
-  // the same file both use `...rest` (#1358). The unscoped key is also seeded
-  // when only one callee uses a given rest name, preserving resolution when
-  // callerName is null (findCaller couldn't identify the enclosing function).
-  if (symbols.objectRestParamBindings?.length && symbols.paramBindings?.length) {
-    const restNameCallees = new Map<string, Set<string>>();
-    for (const orpb of symbols.objectRestParamBindings) {
-      if (!restNameCallees.has(orpb.restName)) restNameCallees.set(orpb.restName, new Set());
-      restNameCallees.get(orpb.restName)!.add(orpb.callee);
-    }
-    for (const orpb of symbols.objectRestParamBindings) {
-      for (const pb of symbols.paramBindings) {
-        if (pb.callee === orpb.callee && pb.argIndex === orpb.argIndex) {
-          const scopedKey = `${orpb.callee}::${orpb.restName}`;
-          if (!typeMap.has(scopedKey)) {
-            typeMap.set(scopedKey, { type: pb.argName, confidence: 0.65 });
-            if (restNameCallees.get(orpb.restName)!.size === 1 && !typeMap.has(orpb.restName)) {
-              typeMap.set(orpb.restName, { type: pb.argName, confidence: 0.65 });
-            }
-          }
-        }
-      }
-    }
-  }
-
+  const typeMap = buildIncrementalTypeMap(symbols);
   const seenCallEdges = new Set<string>();
   const lookup = makeIncrementalLookup(db, stmts);
   let edgesAdded = 0;
@@ -546,87 +716,29 @@ function buildCallEdges(
       typeMap,
       caller.callerName,
     );
-    let targets = initialTargets;
 
-    if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
-      const dotIdx = caller.callerName.indexOf('.');
-      if (dotIdx > 0) {
-        const className = caller.callerName.slice(0, dotIdx);
-        const qualifiedName = `${className}.${call.name}`;
-        const qualified = lookup
-          .byNameAndFile(qualifiedName, relPath)
-          .filter((n) => n.kind === 'method');
-        if (qualified.length > 0) {
-          targets = qualified;
-        }
-      }
-    }
+    const targets = applyThisReceiverFallbacks(
+      call,
+      caller.callerName,
+      relPath,
+      typeMap,
+      lookup,
+      symbols.definePropertyReceivers,
+      initialTargets,
+    );
 
-    if (
-      targets.length === 0 &&
-      call.receiver === 'this' &&
-      caller.callerName != null &&
-      symbols.definePropertyReceivers
-    ) {
-      const receiverVarName = symbols.definePropertyReceivers.get(caller.callerName);
-      if (receiverVarName) {
-        const typeEntry = typeMap.get(receiverVarName);
-        const typeName = typeEntry
-          ? typeof typeEntry === 'string'
-            ? typeEntry
-            : (typeEntry as { type?: string }).type
-          : null;
-        if (typeName) {
-          const qualifiedName = `${typeName}.${call.name}`;
-          const qualified = lookup.byNameAndFile(qualifiedName, relPath);
-          if (qualified.length > 0) {
-            targets = [...qualified];
-          }
-        }
-        if (targets.length === 0) {
-          // Narrow to function/method kinds only to avoid matching unrelated
-          // variables or classes that share a name in the same file.
-          const sameFile = lookup
-            .byNameAndFile(call.name, relPath)
-            .filter((n) => n.kind === 'function' || n.kind === 'method');
-          if (sameFile.length > 0) {
-            targets = [...sameFile];
-          }
-        }
-      }
-    }
-
-    for (const t of targets) {
-      const edgeKey = `${caller.id}|${t.id}`;
-      if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
-        seenCallEdges.add(edgeKey);
-        const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
-        stmts.insertEdge.run(caller.id, t.id, 'calls', confidence, call.dynamic ? 1 : 0);
-        edgesAdded++;
-      }
-    }
-
-    if (
-      call.receiver &&
-      !BUILTIN_RECEIVERS.has(call.receiver) &&
-      call.receiver !== 'this' &&
-      call.receiver !== 'self' &&
-      call.receiver !== 'super'
-    ) {
-      const recv = resolveReceiverEdge(
-        lookup,
-        { name: call.name, receiver: call.receiver },
-        caller,
-        relPath,
-        typeMap,
-        seenCallEdges,
-        importedNames,
-      );
-      if (recv) {
-        stmts.insertEdge.run(recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0);
-        edgesAdded++;
-      }
-    }
+    edgesAdded += emitIncrementalCallEdges(
+      call,
+      caller,
+      targets,
+      importedFrom,
+      relPath,
+      typeMap,
+      lookup,
+      importedNames,
+      seenCallEdges,
+      stmts,
+    );
   }
   return edgesAdded;
 }

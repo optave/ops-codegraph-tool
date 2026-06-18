@@ -6,6 +6,7 @@ dist/
 coverage/
 .env
 grammars/*.wasm
+!grammars/tree-sitter-erlang.wasm
 crates/codegraph-core/index.js
 crates/codegraph-core/index.d.ts
 crates/codegraph-core/*.node

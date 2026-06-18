@@ -891,6 +891,37 @@ describe('JavaScript parser', () => {
       );
     });
 
+    // let/var object-literal method definitions
+    it('extracts qualified definitions from var object-literal arrow functions', () => {
+      // `var x = { a: function() {} }` — native produces `x.a`, WASM must too.
+      // Parity fix: extractLetVarObjLiteralDeclarators covers let/var (const already
+      // handled by extractConstDeclarators → extractObjectLiteralFunctions).
+      const symbols = parseJS(`var x = { a: function() {}, b: () => {} };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'x.a', kind: 'function' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'x.b', kind: 'function' }),
+      );
+    });
+
+    it('extracts qualified definitions from let object-literal shorthand methods', () => {
+      // `let x12 = { f13() {} }` — matches jelly-micro classes.js fixtures.
+      const symbols = parseJS(`let x12 = { f13() {}, f14: () => {} };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'x12.f13', kind: 'function' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'x12.f14', kind: 'function' }),
+      );
+    });
+
+    it('does not extract let/var object-literal definitions inside function scope', () => {
+      // Scope guard mirrors const path — skips object literals inside function bodies.
+      const symbols = parseJS(`function setup() { var local = { f() {} }; }`);
+      expect(symbols.definitions).not.toContainEqual(expect.objectContaining({ name: 'local.f' }));
+    });
+
     // Line range verification
     it('sets correct line and endLine on callback definition', () => {
       const code = [

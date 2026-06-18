@@ -74,7 +74,48 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    ```
    If merge conflict → stop: "Merge conflict after syncing with main. Resolve conflicts and re-run `/titan-run`."
 
-6. **Print plan:**
+6. **Bootstrap worktree environment** (run when `pwd` contains `.claude/worktrees/` or `node_modules` is absent/stale):
+
+   **E1. Node dependencies:** Check whether `node_modules` needs installing:
+   ```bash
+   if [ ! -f node_modules/.package-lock.json ] || [ package.json -nt node_modules/.package-lock.json ]; then
+     npm install --prefer-offline 2>&1 | tail -5
+   fi
+   ```
+   This also builds WASM grammars (via the `prepare` script). After this step, all subsequent agent prompts must use `TEST_CMD="npx vitest run --config vitest.config.worktree.ts"` (see E2).
+
+   **E2. Vitest worktree config:** The default `vitest.config.ts` excludes `**/.claude/**`, matching this path and silently breaking test discovery. Write an override if absent:
+   ```bash
+   if [ ! -f vitest.config.worktree.ts ]; then
+     node -e "
+       const fs = require('fs');
+       const src = fs.readFileSync('vitest.config.ts', 'utf8');
+       fs.writeFileSync('vitest.config.worktree.ts',
+         src.replace(/'\*\*\/\.claude\/\*\*',?\s*/g, ''));
+       console.log('vitest.config.worktree.ts written');
+     "
+   fi
+   ```
+   All test runs in forge/grind/gate agent prompts must reference this file: `npx vitest run --config vitest.config.worktree.ts`.
+
+   **E3. Native binary freshness** (only if `crates/` exists):
+   ```bash
+   NODE_BINARY=$(find node_modules/@optave -name "codegraph-core.node" 2>/dev/null | head -1)
+   if [ -n "$NODE_BINARY" ]; then
+     NEWER_RUST=$(find crates -name "*.rs" -newer "$NODE_BINARY" 2>/dev/null | head -1)
+     if [ -n "$NEWER_RUST" ]; then
+       echo "Rust source newer than binary — rebuilding native addon..."
+       npx napi build --platform --release --manifest-path crates/codegraph-core/Cargo.toml --output-dir .
+       PLATFORM=$(node -e "const os=require('os');const arch=os.arch()==='arm64'?'arm64':'x64';console.log(os.platform()+'-'+arch)")
+       codesign --sign - --force codegraph-core.node 2>/dev/null || true
+       cp codegraph-core.node "node_modules/@optave/codegraph-${PLATFORM}/codegraph-core.node"
+       echo "Native binary rebuilt."
+     fi
+   fi
+   ```
+   If any bootstrap step fails, warn but continue — the pipeline can still proceed, and forge/grind agents will catch environment issues at test-run time.
+
+7. **Print plan:**
    ```
    Titan Pipeline — End-to-End Run
    Target: <path>
@@ -368,6 +409,12 @@ Agent → "Run /titan-sync. Read .claude/skills/titan-sync/SKILL.md and follow i
 
 ### 3c. Post-phase validation
 
+**Pre-V8. Validate sync.json is parseable JSON:**
+```bash
+node -e "try { JSON.parse(require('fs').readFileSync('.codegraph/titan/sync.json','utf8')); console.log('JSON OK'); } catch(e) { console.log('JSON INVALID: '+e.message); process.exit(1); }"
+```
+If this fails → **VALIDATION FAILED.** Stop: "SYNC produced invalid JSON in sync.json (likely a mismatched bracket/brace). Re-run with `/titan-run --start-from sync`."
+
 **V8. sync.json structure:**
 Read `.codegraph/titan/sync.json` and verify:
 - `phase` — must equal `"sync"`
@@ -378,11 +425,23 @@ Read `.codegraph/titan/sync.json` and verify:
 
 If missing or structurally invalid → **VALIDATION FAILED.** Stop: "SYNC produced invalid plan. Re-run with `/titan-run --start-from sync`."
 
-**V9. Sync targets trace back to gauntlet:**
-Collect all target names from `sync.json → executionOrder[*].targets` (flatten).
-For each, verify it appears in `gauntlet.ndjson` as a `target` field, OR in `titan-state.json → roles.deadSymbols` (dead code targets come from recon, not gauntlet).
+**V9. Sync targets trace back to gauntlet batches:**
+Collect all file paths from `titan-state.json → batches[*].files` (the ground-truth set gauntlet audited).
+Flatten all targets from `sync.json → executionOrder[*].targets` and check each against that set.
 
-If > 20% of sync targets have no gauntlet entry and aren't dead symbols → **WARN**: "SYNC references <N> targets not found in gauntlet results. The sub-agent may have hallucinated targets."
+```javascript
+const state = JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));
+const batchFiles = new Set((state.batches || []).flatMap(b => b.files || []));
+const allSyncTargets = sync.executionOrder.flatMap(e => e.targets);
+if (allSyncTargets.length === 0) { console.log('V9 FAIL: sync.json has no targets — execution plan is empty'); process.exit(1); }
+const missingCount = allSyncTargets.filter(t => !batchFiles.has(t)).length;
+const pct = missingCount / allSyncTargets.length;
+if (pct > 0.2) console.log('V9 WARN:', missingCount + '/' + allSyncTargets.length,
+  'sync targets not in any gauntlet batch (' + (pct*100).toFixed(0) + '%) — agent may have hallucinated targets');
+else console.log('V9 OK —', allSyncTargets.length, 'targets, all traced to gauntlet batches');
+```
+
+Note: sync targets are **file-level paths** (`src/foo.ts`). Do NOT compare against `gauntlet.ndjson → target` fields — those are function-level names and will never match.
 
 **V10. Execution order dependency check:**
 For entries with `dependencies` arrays, verify that each dependency phase number exists in `executionOrder` and has a lower phase number. Circular dependencies in the execution plan → **VALIDATION FAILED.**
@@ -606,10 +665,39 @@ while iteration < maxIterations:
         else:
             Run: <testCmd> 2>&1
             if tests fail:
-                Print: "CRITICAL: Test suite fails after forge phase <nextPhase>. Stopping pipeline."
+                Print: "WARNING: Test suite has failures after forge phase <nextPhase>. Auto-spawning regression-fix agent."
+                Print: "Failing tests: <list of failing test files>"
                 Print: "Commits from this phase: git log --oneline <headBefore>..<headAfter>"
-                Print: "Consider reverting: git revert <headBefore>..<headAfter>"
-                Stop.
+
+                # Run Pre-Agent Gate (G1-G4) and back up state
+                # Then dispatch fix agent:
+                Agent → "Investigate and fix test regressions introduced by the last forge phase.
+                         Commits in scope: git log --oneline <headBefore>..<headAfter>
+                         Failing tests: <list>
+                         
+                         Steps:
+                         1. Read the failing tests to understand what they expect
+                         2. Identify which committed change broke them (git diff <headBefore>..<headAfter>)
+                         3. Fix the root cause — prefer targeted fixes over reverts
+                         4. If Rust source changed: rebuild the native addon before running tests
+                            npx napi build --platform --release --manifest-path crates/codegraph-core/Cargo.toml --output-dir .
+                            PLATFORM=$(node -e "const os=require('os');const arch=os.arch()==='arm64'?'arm64':'x64';console.log(os.platform()+'-'+arch)")
+                            if [[ "$(uname)" == "Darwin" ]]; then codesign --sign - --force codegraph-core.node; fi
+                            cp codegraph-core.node "node_modules/@optave/codegraph-${PLATFORM}/codegraph-core.node"
+                         5. Verify with: <testCmd>
+                         6. Commit fixes with: 'fix: correct regressions from forge phase <N>'
+                         7. Do NOT stage: package-lock.json, vitest.config.worktree.ts, tests/benchmarks/resolution/fixtures/python/__pycache__/
+                         
+                         Run all commands INLINE (not in background)."
+                
+                # After fix agent returns, re-run tests:
+                Run: <testCmd> 2>&1
+                if tests still fail:
+                    Print: "CRITICAL: Regression-fix agent could not resolve test failures after forge phase <nextPhase>. Manual intervention required."
+                    Print: "Consider reverting: git revert <headBefore>..HEAD"
+                    Stop.
+                else:
+                    Print: "V13: Regressions resolved by fix agent. Continuing pipeline."
 ```
 
 ### 4c. Post-loop validation
@@ -714,9 +802,39 @@ while iteration < maxIterations:
         if testCmd != "NO_TEST_SCRIPT":
             Run: <testCmd> 2>&1
             if tests fail:
-                Print: "CRITICAL: Test suite fails after grind phase <nextPhase>. Stopping pipeline."
+                Print: "WARNING: Test suite has failures after grind phase <nextPhase>. Auto-spawning regression-fix agent."
+                Print: "Failing tests: <list of failing test files>"
                 Print: "Commits from this phase: git log --oneline <headBefore>..<headAfter>"
-                Stop.
+
+                # Run Pre-Agent Gate (G1-G4) and back up state
+                # Then dispatch fix agent:
+                Agent → "Investigate and fix test regressions introduced by the last grind phase.
+                         Commits in scope: git log --oneline <headBefore>..<headAfter>
+                         Failing tests: <list>
+                         
+                         Steps:
+                         1. Read the failing tests to understand what they expect
+                         2. Identify which committed change broke them (git diff <headBefore>..<headAfter>)
+                         3. Fix the root cause — prefer targeted fixes over reverts
+                         4. If Rust source changed: rebuild the native addon before running tests
+                            npx napi build --platform --release --manifest-path crates/codegraph-core/Cargo.toml --output-dir .
+                            PLATFORM=$(node -e "const os=require('os');const arch=os.arch()==='arm64'?'arm64':'x64';console.log(os.platform()+'-'+arch)")
+                            if [[ "$(uname)" == "Darwin" ]]; then codesign --sign - --force codegraph-core.node; fi
+                            cp codegraph-core.node "node_modules/@optave/codegraph-${PLATFORM}/codegraph-core.node"
+                         5. Verify with: <testCmd>
+                         6. Commit fixes with: 'fix: correct regressions from grind phase <N>'
+                         7. Do NOT stage: package-lock.json, vitest.config.worktree.ts, tests/benchmarks/resolution/fixtures/python/__pycache__/
+                         
+                         Run all commands INLINE (not in background)."
+                
+                # After fix agent returns, re-run tests:
+                Run: <testCmd> 2>&1
+                if tests still fail:
+                    Print: "CRITICAL: Regression-fix agent could not resolve test failures after grind phase <nextPhase>. Manual intervention required."
+                    Print: "Consider reverting: git revert <headBefore>..HEAD"
+                    Stop.
+                else:
+                    Print: "V17: Regressions resolved by fix agent. Continuing pipeline."
 ```
 
 ### 4.5c. Post-loop validation
@@ -823,7 +941,117 @@ After the agent returns, verify:
 
 If the agent created PRs, print the PR URLs.
 
+**Commit hygiene check:** If `.claude/skills/` files were modified during this run (e.g., by a V13 regression-fix agent), they must NOT share a commit with `.codegraph/titan/` artifacts. Check:
+```bash
+git status --short | grep -E "\.claude/skills/|generated/titan/|\.codegraph/titan/"
+```
+If both are dirty, commit them separately before proceeding to the retrospective.
+
 Record `phaseTimestamps.close.completedAt`.
+
+---
+
+## Step 6 — RETROSPECTIVE (automatic)
+
+After CLOSE, run a brief retrospective on this pipeline execution and offer to apply findings as skill improvements.
+
+### 6a. Collect run data
+
+Read from disk (no sub-agent needed):
+```bash
+node -e "
+const fs = require('fs');
+const s = JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));
+const ts = s.phaseTimestamps || {};
+const phases = ['recon','gauntlet','sync','forge','grind','parity','close'];
+for (const p of phases) {
+  if (ts[p]?.startedAt && ts[p]?.completedAt) {
+    const dur = ((new Date(ts[p].completedAt) - new Date(ts[p].startedAt))/60000).toFixed(1);
+    console.log(p + ': ' + dur + ' min');
+  }
+}
+const stalls = s.gauntletStalls || 0;
+const forgeStalls = s.execution?.stallCount || 0;
+const failed = (s.execution?.failedTargets || []).length;
+const grindDelta = (s.grind?.deadSymbolCurrent || 0) - (s.grind?.deadSymbolBaseline || 0);
+console.log('gauntlet stalls:', stalls, '| forge stalls:', forgeStalls, '| failed targets:', failed, '| grind delta:', grindDelta);
+"
+```
+
+### 6b. Dispatch retrospective agent
+
+```
+Agent → "Analyze this Titan pipeline run and produce a retrospective.
+
+Read:
+  - .codegraph/titan/titan-state.json  (phase timestamps, stalls, failed targets)
+  - .codegraph/titan/gate-log.ndjson   (PASS/WARN/FAIL verdicts per commit)
+  - .codegraph/titan/gauntlet-summary.json
+  - .codegraph/titan/issues.ndjson     (bugs and anomalies logged during the run)
+
+Produce a JSON file at .codegraph/titan/retrospective.json:
+{
+  'wentWell': [string],       // phases/outcomes that ran cleanly
+  'anomalies': [              // anything that required retries, fixes, or manual intervention
+    { phase: string, description: string }
+  ],
+  'skillRecs': [              // concrete skill improvements, highest-impact first
+    { priority: 'P1'|'P2'|'P3', area: string, problem: string, fix: string }
+  ]
+}
+
+Keep skillRecs to 3-5 items max. Focus on structural issues (things that would affect every run), not one-off incidents."
+```
+
+### 6c. Print retrospective summary
+
+After the agent writes `retrospective.json`, read and print it:
+```bash
+node -e "
+const fs = require('fs');
+if (!fs.existsSync('.codegraph/titan/retrospective.json')) { console.log('retrospective.json not written — skipping summary'); process.exit(0); }
+const r = JSON.parse(fs.readFileSync('.codegraph/titan/retrospective.json','utf8'));
+console.log('\n=== Titan Retrospective ===');
+console.log('\nWent well:');
+(r.wentWell || []).forEach(w => console.log('  ✓', w));
+if ((r.anomalies||[]).length) {
+  console.log('\nAnomalies:');
+  r.anomalies.forEach(a => console.log('  ⚠', a.phase + ':', a.description));
+}
+if ((r.skillRecs||[]).length) {
+  console.log('\nSkill improvement recommendations:');
+  r.skillRecs.forEach(rec => console.log('  ' + rec.priority + ' [' + rec.area + '] ' + rec.fix));
+}
+console.log('');
+"
+```
+
+### 6d. Offer skill improvement
+
+Ask the user:
+```
+Would you like me to apply these recommendations to improve the /titan-run skill? [y/n]
+```
+
+If `--yes` is set → apply automatically without asking.
+
+**If yes (or --yes):**
+
+Run Pre-Agent Gate (G1-G4), back up state, then:
+
+```
+Agent → "Improve .claude/skills/titan-run/SKILL.md based on these recommendations:
+         <paste skillRecs from retrospective.json>
+
+         Rules:
+         - Use the Edit tool — make targeted changes only, do not rewrite unrelated sections
+         - One logical change per edit call
+         - After editing, verify the file is internally consistent (read the changed sections)
+         - Commit with: 'fix(titan-run): <one-line summary of improvements applied>'
+         - Do NOT stage: package-lock.json, vitest.config.worktree.ts, .codegraph/titan/"
+```
+
+**If no:** Print `"Retrospective saved to .codegraph/titan/retrospective.json — apply recommendations later by editing .claude/skills/titan-run/SKILL.md."` and finish.
 
 ---
 
@@ -834,7 +1062,7 @@ Record `phaseTimestamps.close.completedAt`.
 - **State file corrupt (JSON parse error):** Attempt restore from `.bak`. If no backup → stop: "State file corrupted. Run `/titan-reset` and start over."
 - **NDJSON corrupt lines:** Warn but continue — partial results are better than none. The corrupt lines are logged so the user knows which targets to re-audit.
 - **Merge conflict detected by pre-agent gate:** Stop immediately with the conflicting files listed.
-- **Tests fail after forge phase:** Stop immediately. Print the failing phase's commits so the user can revert.
+- **Tests fail after forge/grind phase:** Auto-spawn a regression-fix agent. If the fix agent resolves the failures, continue the pipeline. If it cannot, stop and print the failing commits so the user can revert.
 - **Parity audit fails on drift introduced by this run:** Stop before CLOSE. Retry with `/titan-run --start-from parity` after fixing or reverting.
 - **Validation failure (any V-check marked FAILED):** Stop with details. Warn-level V-checks are logged but don't stop the pipeline.
 
@@ -855,4 +1083,8 @@ Record `phaseTimestamps.close.completedAt`.
 
 ## Self-Improvement
 
-This skill lives at `.claude/skills/titan-run/SKILL.md`. Edit if loop logic needs adjustment, error handling needs improvement, or new phases are added to the pipeline.
+This skill lives at `.claude/skills/titan-run/SKILL.md`. It improves itself automatically via Step 6 (RETROSPECTIVE) at the end of every run.
+
+For manual edits: use the Edit tool for targeted changes. Never rewrite sections unrelated to the fix. Commit skill changes separately from pipeline artifacts (`generated/titan/`, `.codegraph/titan/`) — they must not share a commit.
+
+When adding new phases: update `meta.phases` at the top, add the phase to the timestamp list in Step 0.3, add a V-check for the phase's key artifact, and add the phase to Step 0.5's pre-validation table.

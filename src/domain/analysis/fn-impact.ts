@@ -294,10 +294,14 @@ export function fnImpactData(
         maxDepth,
         includeImplementors,
       });
+      const direct = levels[1]?.length ?? 0;
+      const transitive = totalDependents - direct;
       return {
         ...normalizeSymbol(node, repo, hc),
         levels,
         totalDependents,
+        direct,
+        transitive,
       };
     });
 

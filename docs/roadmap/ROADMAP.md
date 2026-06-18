@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.12.0 | **Status:** Active development | **Updated:** 2026-06-10
+> **Current version:** 3.13.0 | **Status:** Active development | **Updated:** 2026-06-16
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -2311,6 +2311,8 @@ Commander supports shell completion but it's not implemented. Basic UX gap for a
 1. **CI `npm audit`** -- add `npm audit --omit=dev` step to CI pipeline; fail on critical/high vulnerabilities
    - ✅ npm audit CI step added (v3.9.1, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
    - ✅ WASM grammar validation — build-time integrity checks for tree-sitter grammar files (v3.9.1, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
+   - ✅ Dev-dependency audit at critical severity added to CI (v3.13.0, [#1479](https://github.com/optave/ops-codegraph-tool/pull/1479))
+   - ✅ Supply-chain incident resolved — malicious `tree-sitter-erlang` npm package replaced with clean source build; 3 moderate vulns fixed (v3.13.0, [#1478](https://github.com/optave/ops-codegraph-tool/pull/1478))
 2. **SBOM generation** -- produce CycloneDX or SPDX SBOM on each release via `@cyclonedx/cyclonedx-npm` or similar
    - 🔲 Not yet started
 3. **SLSA provenance** -- enable SLSA Level 2+ build provenance using `actions/attest-build-provenance` in the publish workflow; attach attestation to npm packages

@@ -1,5 +1,5 @@
 {
-  "version": "3.12.0",
+  "version": "3.13.0",
   "name": "@optave/codegraph",
   "dependencies": {
     "@modelcontextprotocol/sdk": {
@@ -14,7 +14,7 @@
           "overridden": false,
           "dependencies": {
             "hono": {
-              "version": "4.12.18"
+              "version": "4.12.25"
             }
           }
         },
@@ -187,7 +187,7 @@
                   "version": "2.4.1"
                 },
                 "qs": {
-                  "version": "6.15.0"
+                  "version": "6.15.2"
                 },
                 "raw-body": {
                   "version": "3.0.2"
@@ -369,8 +369,8 @@
               }
             },
             "qs": {
-              "version": "6.15.0",
-              "resolved": "https://registry.npmjs.org/qs/-/qs-6.15.0.tgz",
+              "version": "6.15.2",
+              "resolved": "https://registry.npmjs.org/qs/-/qs-6.15.2.tgz",
               "overridden": false,
               "dependencies": {
                 "side-channel": {
@@ -666,8 +666,8 @@
           }
         },
         "hono": {
-          "version": "4.12.18",
-          "resolved": "https://registry.npmjs.org/hono/-/hono-4.12.18.tgz",
+          "version": "4.12.25",
+          "resolved": "https://registry.npmjs.org/hono/-/hono-4.12.25.tgz",
           "overridden": false
         },
         "jose": {
@@ -738,8 +738,8 @@
     "@optave/codegraph-darwin-x64": {},
     "@optave/codegraph-linux-arm64-gnu": {},
     "@optave/codegraph-linux-x64-gnu": {
-      "version": "3.12.0",
-      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.12.0.tgz",
+      "version": "3.13.0",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.13.0.tgz",
       "overridden": false
     },
     "@optave/codegraph-linux-x64-musl": {},

@@ -96,6 +96,13 @@ const BUILTIN_GLOBALS: Set<string> = new Set([
 const MAX_PROPAGATION_DEPTH = 3;
 /** Confidence penalty applied per propagation hop (1.0 → 0.9 → 0.8 → 0.7). */
 export const PROPAGATION_HOP_PENALTY = 0.1;
+/**
+ * Confidence score for a return type inferred from `return new Constructor()` with no
+ * explicit TypeScript annotation.  Registered as `analysis.typeInferenceConfidence` in
+ * `src/infrastructure/config.ts` DEFAULTS — kept in sync manually until config is
+ * threaded through to `extractSymbols`.
+ */
+const INFERRED_RETURN_TYPE_CONFIDENCE = 0.85;
 
 /**
  * Extract symbols from a JS/TS parsed AST.
@@ -474,6 +481,7 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
     }
 
     extractConstDeclarators(declNode, definitions);
+    extractLetVarObjLiteralDeclarators(declNode, definitions);
 
     // Recurse into non-function, non-export-statement children (blocks, if-statements, etc.)
     if (child.type !== 'export_statement') {
@@ -575,6 +583,34 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
         extractObjectLiteralFunctions(valueN, nameN.text, definitions);
       }
     }
+  }
+}
+
+/**
+ * Extract qualified method definitions from `let`/`var` object-literal declarations.
+ * Mirrors `match_js_objlit_qualified_method_defs` in `javascript.rs`, which emits
+ * qualified definitions for `method_definition` (all declaration kinds) and
+ * `pair+arrow/function` (`let`/`var` only, since `const` is already handled by
+ * `extractConstDeclarators` → `extractObjectLiteralFunctions`).
+ *
+ * Called from extractConstantsWalk which already provides the function-scope guard.
+ * `var q1 = { m1() {} }` → emits Definition { name: 'q1.m1', kind: 'function' }
+ */
+function extractLetVarObjLiteralDeclarators(
+  declNode: TreeSitterNode,
+  definitions: Definition[],
+): void {
+  const t = declNode.type;
+  if (t !== 'lexical_declaration' && t !== 'variable_declaration') return;
+  if (declNode.text.startsWith('const ')) return; // handled by extractConstDeclarators
+
+  for (let j = 0; j < declNode.childCount; j++) {
+    const declarator = declNode.child(j);
+    if (declarator?.type !== 'variable_declarator') continue;
+    const nameN = declarator.childForFieldName('name');
+    const valueN = declarator.childForFieldName('value');
+    if (nameN?.type !== 'identifier' || !valueN || valueN.type !== 'object') continue;
+    extractObjectLiteralFunctions(valueN, nameN.text, definitions);
   }
 }
 
@@ -1036,6 +1072,18 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
           if (valueN.type === 'object') {
             extractObjectLiteralFunctions(valueN, nameN.text, ctx.definitions);
           }
+        } else if (
+          !isConst &&
+          nameN.type === 'identifier' &&
+          valueN.type === 'object' &&
+          !hasFunctionScopeAncestor(node)
+        ) {
+          // `let`/`var` object literals: extract qualified method definitions so that
+          // `obj.method()` calls resolve correctly. Mirrors Rust match_js_objlit_qualified_method_defs
+          // which emits method_definition qualified names for ALL declaration kinds and
+          // pair+arrow/function for let/var only (const is already handled above).
+          // Scope guard prevents local object properties from polluting the global index.
+          extractObjectLiteralFunctions(valueN, nameN.text, ctx.definitions);
         } else if (isConst && nameN.type === 'object_pattern' && !hasFunctionScopeAncestor(node)) {
           // Destructured bindings: const { handleToken, checkPermissions } = initAuth(...)
           // Each destructured property becomes a function definition so it can be
@@ -1592,8 +1640,8 @@ function storeReturnType(
     const inferred = findReturnNewExprType(body);
     if (inferred) {
       const existing = returnTypeMap.get(fnName);
-      if (!existing || 0.85 > existing.confidence)
-        returnTypeMap.set(fnName, { type: inferred, confidence: 0.85 });
+      if (!existing || INFERRED_RETURN_TYPE_CONFIDENCE > existing.confidence)
+        returnTypeMap.set(fnName, { type: inferred, confidence: INFERRED_RETURN_TYPE_CONFIDENCE });
     }
   }
 }
@@ -1967,7 +2015,190 @@ function runContextCollectorWalk(rootNode: TreeSitterNode, out: ContextCollector
   walk(rootNode, 0, null, null);
 }
 
-/** Extract type info from a variable_declarator: type annotation, constructor, or factory. */
+/**
+ * Record function-reference bindings from a variable_declarator's value node.
+ *
+ * Captures three patterns (Phase 8.3):
+ *   - `const fn = handler`          (identifier alias)
+ *   - `const fn = obj.method`       (member_expression alias)
+ *   - `const f = fn.bind(ctx)`      (bind creates a bound alias)
+ *
+ * Must be called before any type-analysis early returns so every declarator
+ * contributes to fnRefBindings regardless of whether it has a type annotation.
+ */
+function collectFnRefBindings(
+  lhsName: string,
+  valueN: TreeSitterNode,
+  fnRefBindings: FnRefBinding[],
+): void {
+  if (valueN.type === 'identifier' && !BUILTIN_GLOBALS.has(valueN.text)) {
+    fnRefBindings.push({ lhs: lhsName, rhs: valueN.text });
+    return;
+  }
+  if (valueN.type === 'member_expression') {
+    const prop = valueN.childForFieldName('property');
+    const obj = valueN.childForFieldName('object');
+    // Guard: only static property access (property_identifier or identifier), not
+    // computed subscript expressions like obj[expr] where prop.text would be the
+    // full expression rather than a simple name — those can never match pts keys.
+    if (
+      prop &&
+      (prop.type === 'property_identifier' || prop.type === 'identifier') &&
+      obj?.type === 'identifier' &&
+      !BUILTIN_GLOBALS.has(obj.text)
+    ) {
+      fnRefBindings.push({ lhs: lhsName, rhs: prop.text, rhsReceiver: obj.text });
+    }
+    return;
+  }
+  if (valueN.type === 'call_expression') {
+    // `const f = fn.bind(ctx)` — bind returns a bound copy of fn; track f → fn so
+    // pts(f) ⊇ pts(fn) and subsequent `f(args)` calls resolve to fn.
+    // Note: only flat-identifier binds (fn.bind) are tracked here; method-receiver
+    // binds like `obj.method.bind(ctx)` are not captured (boundFn must be an identifier).
+    const callFn = valueN.childForFieldName('function');
+    if (callFn?.type === 'member_expression') {
+      const bindProp = callFn.childForFieldName('property');
+      if (bindProp?.text === 'bind') {
+        const boundFn = callFn.childForFieldName('object');
+        if (boundFn?.type === 'identifier' && !BUILTIN_GLOBALS.has(boundFn.text)) {
+          fnRefBindings.push({ lhs: lhsName, rhs: boundFn.text });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Handle the `call_expression` branch of variable_declarator type-map seeding.
+ *
+ * Processes three sub-cases in priority order:
+ *   1. Object.create({ ... }) — seeds composite pts keys from the prototype object (Phase 8.3e)
+ *   2. Inter-procedural return-type propagation via returnTypeMap (Phase 8.2)
+ *   3. Factory method heuristic: `const x = Foo.create()` → type Foo at confidence 0.7
+ */
+function handleCallExprTypeMap(
+  lhsName: string,
+  valueN: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+  returnTypeMap: Map<string, TypeMapEntry> | undefined,
+  callAssignments: CallAssignment[] | undefined,
+): void {
+  const createFn = valueN.childForFieldName('function');
+  // Phase 8.3e: Object.create({ f1, f2 }) — seed composite pts keys obj.f1 → f1, etc.
+  if (createFn?.type === 'member_expression') {
+    const createObj = createFn.childForFieldName('object');
+    const createProp = createFn.childForFieldName('property');
+    if (createObj?.text === 'Object' && createProp?.text === 'create') {
+      const createArgs = valueN.childForFieldName('arguments') || findChild(valueN, 'arguments');
+      if (createArgs) {
+        let proto: TreeSitterNode | null = null;
+        for (let i = 0; i < createArgs.childCount; i++) {
+          const n = createArgs.child(i);
+          if (n && n.type !== '(' && n.type !== ')' && n.type !== ',') {
+            proto = n;
+            break;
+          }
+        }
+        if (proto?.type === 'object') {
+          seedProtoProperties(lhsName, proto, typeMap);
+        }
+      }
+      return;
+    }
+  }
+  // Phase 8.2: inter-procedural propagation — try to resolve return type from
+  // the local returnTypeMap before falling back to factory heuristics.
+  if (returnTypeMap) {
+    const result = resolveCallExprReturnType(valueN, typeMap, returnTypeMap, 0);
+    if (result) {
+      setTypeMapEntry(typeMap, lhsName, result.type, result.confidence);
+      return;
+    }
+  }
+  // Record for cross-file resolution in build-edges.ts (imported functions)
+  if (callAssignments) {
+    recordCallAssignment(valueN, lhsName, typeMap, callAssignments);
+  }
+  // Factory method heuristic: const x = Foo.create() → type Foo, confidence 0.7
+  if (createFn?.type === 'member_expression') {
+    const obj = createFn.childForFieldName('object');
+    if (obj?.type === 'identifier') {
+      const objName = obj.text;
+      if (objName[0] && objName[0] !== objName[0].toLowerCase() && !BUILTIN_GLOBALS.has(objName)) {
+        setTypeMapEntry(typeMap, lhsName, objName, 0.7);
+      }
+    }
+  }
+}
+
+/**
+ * Seed composite pts keys from a module-level object literal assignment (Phase 8.3f).
+ *
+ * `const obj = { baz: () => {} }` → typeMap['obj.baz'] = 'obj.baz'
+ * `const obj = { baz }` (shorthand) → typeMap['obj.baz'] = 'baz'  (bare identifier target)
+ * `const obj = { baz: otherFn }` → typeMap['obj.baz'] = 'otherFn'  (identifier alias)
+ * `const obj = { baz() {} }` (method shorthand) → typeMap['obj.baz'] = 'obj.baz'
+ *
+ * For function/arrow values, the value is the qualified name ('obj.baz') because
+ * extractObjectLiteralFunctions registers definitions under that qualified name to avoid
+ * polluting the global index with bare property names like 'init', 'run', or 'render'.
+ * Enables accessor this-dispatch: when typeMap['getter:this'] = 'obj',
+ * resolving this.baz() inside getter → typeMap['obj.baz'] → 'obj.baz' → lookup.byName('obj.baz').
+ *
+ * Scope guard: caller must ensure `node` is not inside a function body
+ * (mirrors Rust handle_var_decl's find_parent_of_types check — function-scoped
+ * `const localObj = { fn: ... }` must not shadow a module-level `const obj`).
+ */
+function handleObjectLiteralTypeMap(
+  lhsName: string,
+  valueN: TreeSitterNode,
+  typeMap: Map<string, TypeMapEntry>,
+): void {
+  for (let i = 0; i < valueN.childCount; i++) {
+    const child = valueN.child(i);
+    if (!child) continue;
+    if (child.type === 'shorthand_property_identifier') {
+      setTypeMapEntry(typeMap, `${lhsName}.${child.text}`, child.text, 0.85);
+    } else if (child.type === 'pair') {
+      const keyNode = child.childForFieldName('key');
+      const valNode = child.childForFieldName('value');
+      if (!keyNode || !valNode) continue;
+      const keyName =
+        keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+      if (!keyName) continue;
+      const qualifiedKey = `${lhsName}.${keyName}`;
+      if (
+        valNode.type === 'arrow_function' ||
+        valNode.type === 'function_expression' ||
+        valNode.type === 'function'
+      ) {
+        // Store the qualified name so the resolver finds the qualified definition.
+        setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85);
+      } else if (valNode.type === 'identifier') {
+        setTypeMapEntry(typeMap, qualifiedKey, valNode.text, 0.85);
+      }
+    } else if (child.type === 'method_definition') {
+      // Method shorthand: `const obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
+      // extractObjectLiteralFunctions registers a definition under the qualified name;
+      // seed the matching typeMap entry so the two-step accessor dispatch finds it.
+      const nameNode = child.childForFieldName('name');
+      if (!nameNode) continue;
+      setTypeMapEntry(typeMap, `${lhsName}.${nameNode.text}`, `${lhsName}.${nameNode.text}`, 0.85);
+    }
+  }
+}
+
+/**
+ * Extract type info from a variable_declarator: type annotation, constructor, or factory.
+ *
+ * Orchestrates four concerns in priority order:
+ *   1. fnRefBindings — always collected first (before any early return)
+ *   2. new_expression — constructor wins over annotation (runtime type is authoritative)
+ *   3. type_annotation — confidence 0.9 for static analysis
+ *   4. call_expression / object literal — delegated to handleCallExprTypeMap /
+ *      handleObjectLiteralTypeMap
+ */
 function handleVarDeclaratorTypeMap(
   node: TreeSitterNode,
   typeMap: Map<string, TypeMapEntry>,
@@ -1981,48 +2212,12 @@ function handleVarDeclaratorTypeMap(
   const typeAnno = findChild(node, 'type_annotation');
   const valueN = node.childForFieldName('value');
 
-  // Phase 8.3: record function-reference bindings before any type-analysis early returns.
-  // Captures `const fn = handler` (identifier) and `const fn = obj.method` (member_expression).
-  // Also handles `const f = fn.bind(ctx)` — bind returns a new function aliasing fn.
+  // 1. fnRefBindings — must run before any early return so every declarator contributes.
   if (fnRefBindings && valueN) {
-    if (valueN.type === 'identifier' && !BUILTIN_GLOBALS.has(valueN.text)) {
-      fnRefBindings.push({ lhs: nameN.text, rhs: valueN.text });
-    } else if (valueN.type === 'member_expression') {
-      const prop = valueN.childForFieldName('property');
-      const obj = valueN.childForFieldName('object');
-      // Guard: only static property access (property_identifier or identifier), not
-      // computed subscript expressions like obj[expr] where prop.text would be the
-      // full expression rather than a simple name — those can never match pts keys.
-      if (
-        prop &&
-        (prop.type === 'property_identifier' || prop.type === 'identifier') &&
-        obj?.type === 'identifier' &&
-        !BUILTIN_GLOBALS.has(obj.text)
-      ) {
-        fnRefBindings.push({ lhs: nameN.text, rhs: prop.text, rhsReceiver: obj.text });
-      }
-    } else if (valueN.type === 'call_expression') {
-      // `const f = fn.bind(ctx)` — bind returns a bound copy of fn; track f → fn so
-      // pts(f) ⊇ pts(fn) and subsequent `f(args)` calls resolve to fn.
-      // Note: only flat-identifier binds (fn.bind) are tracked here; method-receiver
-      // binds like `obj.method.bind(ctx)` are not captured (boundFn must be an identifier).
-      const callFn = valueN.childForFieldName('function');
-      if (callFn?.type === 'member_expression') {
-        const bindProp = callFn.childForFieldName('property');
-        if (bindProp?.text === 'bind') {
-          const boundFn = callFn.childForFieldName('object');
-          if (boundFn?.type === 'identifier' && !BUILTIN_GLOBALS.has(boundFn.text)) {
-            fnRefBindings.push({ lhs: nameN.text, rhs: boundFn.text });
-          }
-        }
-      }
-    }
+    collectFnRefBindings(nameN.text, valueN, fnRefBindings);
   }
 
-  // Constructor on the same declaration wins over annotation: the runtime type is
-  // what matters for call resolution (e.g. `const x: Base = new Derived()` should
-  // resolve `x.render()` to `Derived.render`, not `Base.render`).
-  // When no constructor is present, annotation still takes precedence over factory.
+  // 2. Constructor wins over annotation: `const x: Base = new Derived()` resolves to Derived.
   if (valueN?.type === 'new_expression') {
     const ctorType = extractNewExprTypeName(valueN);
     if (ctorType) {
@@ -2031,7 +2226,7 @@ function handleVarDeclaratorTypeMap(
     }
   }
 
-  // Type annotation: const x: Foo = … → confidence 0.9
+  // 3. Type annotation — confidence 0.9.
   if (typeAnno) {
     const typeName = extractSimpleTypeName(typeAnno);
     if (typeName) {
@@ -2043,108 +2238,15 @@ function handleVarDeclaratorTypeMap(
   if (!valueN) return;
   if (valueN.type === 'new_expression') return;
 
+  // 4a. call_expression — Object.create / return-type propagation / factory heuristic.
   if (valueN.type === 'call_expression') {
-    // Phase 8.3e: Object.create({ f1, f2 }) — seed composite pts keys obj.f1 → f1, etc.
-    const createFn = valueN.childForFieldName('function');
-    if (createFn?.type === 'member_expression') {
-      const createObj = createFn.childForFieldName('object');
-      const createProp = createFn.childForFieldName('property');
-      if (createObj?.text === 'Object' && createProp?.text === 'create') {
-        const createArgs = valueN.childForFieldName('arguments') || findChild(valueN, 'arguments');
-        if (createArgs) {
-          let proto: TreeSitterNode | null = null;
-          for (let i = 0; i < createArgs.childCount; i++) {
-            const n = createArgs.child(i);
-            if (n && n.type !== '(' && n.type !== ')' && n.type !== ',') {
-              proto = n;
-              break;
-            }
-          }
-          if (proto?.type === 'object') {
-            seedProtoProperties(nameN.text, proto, typeMap);
-          }
-        }
-        return;
-      }
-    }
-    // Phase 8.2: inter-procedural propagation — try to resolve return type from
-    // the local returnTypeMap before falling back to factory heuristics.
-    if (returnTypeMap) {
-      const result = resolveCallExprReturnType(valueN, typeMap, returnTypeMap, 0);
-      if (result) {
-        setTypeMapEntry(typeMap, nameN.text, result.type, result.confidence);
-        return;
-      }
-    }
-    // Record for cross-file resolution in build-edges.ts (imported functions)
-    if (callAssignments) {
-      recordCallAssignment(valueN, nameN.text, typeMap, callAssignments);
-    }
-    // Factory method heuristic: const x = Foo.create() → type Foo, confidence 0.7
-    const fn = valueN.childForFieldName('function');
-    if (fn?.type === 'member_expression') {
-      const obj = fn.childForFieldName('object');
-      if (obj?.type === 'identifier') {
-        const objName = obj.text;
-        if (
-          objName[0] &&
-          objName[0] !== objName[0].toLowerCase() &&
-          !BUILTIN_GLOBALS.has(objName)
-        ) {
-          setTypeMapEntry(typeMap, nameN.text, objName, 0.7);
-        }
-      }
-    }
+    handleCallExprTypeMap(nameN.text, valueN, typeMap, returnTypeMap, callAssignments);
+    return;
   }
 
-  // Phase 8.3f: seed composite pts keys for object literal properties.
-  // `const obj = { baz: () => {} }` → typeMap['obj.baz'] = 'obj.baz'
-  // `const obj = { baz }` (shorthand) → typeMap['obj.baz'] = 'baz'  (bare identifier target)
-  // `const obj = { baz: otherFn }` → typeMap['obj.baz'] = 'otherFn'  (identifier alias)
-  //
-  // For function/arrow values, the value is the qualified name ('obj.baz') because
-  // extractObjectLiteralFunctions now registers definitions under that qualified name to avoid
-  // polluting the global index with bare property names like 'init', 'run', or 'render'.
-  // Enables accessor this-dispatch: when typeMap['getter:this'] = 'obj',
-  // resolving this.baz() inside getter → typeMap['obj.baz'] → 'obj.baz' → lookup.byName('obj.baz').
-  //
-  // Scope guard: mirrors Rust handle_var_decl's find_parent_of_types check — skip object literals
-  // inside function bodies so function-scoped `const localObj = { fn: ... }` never seeds
-  // the typeMap (which would shadow a module-level `const obj` with the same property names).
+  // 4b. Object literal — seed composite pts keys for module-level const objects.
   if (valueN.type === 'object' && !hasFunctionScopeAncestor(node)) {
-    for (let i = 0; i < valueN.childCount; i++) {
-      const child = valueN.child(i);
-      if (!child) continue;
-      if (child.type === 'shorthand_property_identifier') {
-        setTypeMapEntry(typeMap, `${nameN.text}.${child.text}`, child.text, 0.85);
-      } else if (child.type === 'pair') {
-        const keyNode = child.childForFieldName('key');
-        const valNode = child.childForFieldName('value');
-        if (!keyNode || !valNode) continue;
-        const keyName =
-          keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
-        if (!keyName) continue;
-        const qualifiedKey = `${nameN.text}.${keyName}`;
-        if (
-          valNode.type === 'arrow_function' ||
-          valNode.type === 'function_expression' ||
-          valNode.type === 'function'
-        ) {
-          // Store the qualified name so the resolver finds the qualified definition.
-          setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85);
-        } else if (valNode.type === 'identifier') {
-          setTypeMapEntry(typeMap, qualifiedKey, valNode.text, 0.85);
-        }
-      } else if (child.type === 'method_definition') {
-        // Method shorthand: `const obj = { baz() {} }` → typeMap['obj.baz'] = 'obj.baz'
-        // extractObjectLiteralFunctions registers a definition under the qualified name;
-        // seed the matching typeMap entry so the two-step accessor dispatch finds it.
-        const nameNode = child.childForFieldName('name');
-        if (!nameNode) continue;
-        const qualifiedKey = `${nameN.text}.${nameNode.text}`;
-        setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85);
-      }
-    }
+    handleObjectLiteralTypeMap(nameN.text, valueN, typeMap);
   }
 }
 

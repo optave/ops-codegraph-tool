@@ -41,38 +41,17 @@ export type PointsToMap = Map<string, Set<string>>;
 const MAX_SOLVER_ITERATIONS = 50;
 
 /**
- * Build a points-to map for one file.
+ * Seed the pts map from locally-defined functions, imported names, and
+ * fnRefBindings (direct assignment aliases: `const fn = handler`).
  *
- * Seeds concrete function names (locally-defined functions + imported names),
- * then propagates assignments through fixed-point iteration until stable.
- *
- * Each "concrete target" in a pts set is a name that `resolveCallTargets` can
- * look up — either a locally-defined function name (found via byNameAndFile) or
- * an imported name (found via importedNames → byNameAndFile in the source file).
- *
- * @param fnRefBindings         - identifier/member-expr bindings from the extractor
- * @param definitionNames       - locally-defined callable names in this file
- * @param importedNames         - names imported into this file (name → resolved file)
- * @param paramBindings         - call-site arg→param bindings (Phase 8.3c)
- * @param definitionParams      - per-function ordered parameter names (Phase 8.3c)
- * @param arrayElemBindings     - array literal element bindings (Phase 8.3e)
- * @param spreadArgBindings     - spread-argument bindings (Phase 8.3e)
- * @param forOfBindings         - for-of iteration variable bindings (Phase 8.3e)
- * @param arrayCallbackBindings - Array.from/callback bindings (Phase 8.3e)
+ * Returns the seeded pts map and the base constraint list built from
+ * fnRefBindings (member-expression aliases: `const fn = obj.method`).
  */
-export function buildPointsToMap(
+function buildThisAssignmentMap(
   fnRefBindings: readonly FnRefBinding[],
   definitionNames: ReadonlySet<string>,
   importedNames: ReadonlyMap<string, string>,
-  paramBindings?: readonly ParamBinding[],
-  definitionParams?: ReadonlyMap<string, readonly string[]>,
-  arrayElemBindings?: readonly ArrayElemBinding[],
-  spreadArgBindings?: readonly SpreadArgBinding[],
-  forOfBindings?: readonly ForOfBinding[],
-  arrayCallbackBindings?: readonly ArrayCallbackBinding[],
-  objectRestParamBindings?: readonly ObjectRestParamBinding[],
-  objectPropBindings?: readonly ObjectPropBinding[],
-): PointsToMap {
+): { pts: PointsToMap; constraints: Array<{ lhs: string; rhsKey: string }> } {
   const pts: PointsToMap = new Map();
 
   // Seed: each locally-defined function points to itself.
@@ -96,6 +75,24 @@ export function buildPointsToMap(
     rhsKey: b.rhsReceiver ? `${b.rhsReceiver}.${b.rhs}` : b.rhs,
   }));
 
+  return { pts, constraints };
+}
+
+/**
+ * Append parameter-flow and array/spread/forOf/callback constraints (Phases 8.3c and 8.3e).
+ *
+ * Mutates `pts` (seeds array-element entries) and appends to `constraints`.
+ */
+function buildParamAndArrayConstraints(
+  pts: PointsToMap,
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  paramBindings?: readonly ParamBinding[],
+  definitionParams?: ReadonlyMap<string, readonly string[]>,
+  arrayElemBindings?: readonly ArrayElemBinding[],
+  spreadArgBindings?: readonly SpreadArgBinding[],
+  forOfBindings?: readonly ForOfBinding[],
+  arrayCallbackBindings?: readonly ArrayCallbackBinding[],
+): void {
   // Phase 8.3c: parameter-flow constraints.
   // For each call f(x) at argIndex i where f is locally defined, add
   // constraint: pts(f::paramName_i) ⊇ pts(x). This makes the pts solver
@@ -180,46 +177,113 @@ export function buildPointsToMap(
       constraints.push({ lhs: `${calleeName}::${params[0]}`, rhsKey: `${sourceName}[*]` });
     }
   }
+}
 
-  // Phase 8.3f: object-rest parameter dispatch.
-  // `function f({ ...rest }) {}` + `f(obj)` + `const obj = { prop: fn }` →
-  // seed pts["rest.prop"] = {"fn"} so that `rest.prop()` resolves to `fn`.
-  if (objectRestParamBindings && objectPropBindings && paramBindings) {
-    // Index paramBindings: "callee::argIndex" → argName[] (O(|paramBindings|) build,
-    // O(1) lookup — avoids scanning paramBindings for each rest binding).
-    const paramByCalleeIdx = new Map<string, string[]>();
-    for (const { callee, argIndex, argName } of paramBindings) {
-      const k = `${callee}::${argIndex}`;
-      const list = paramByCalleeIdx.get(k);
-      if (list) list.push(argName);
-      else paramByCalleeIdx.set(k, [argName]);
-    }
+/**
+ * Seed pts entries for object-rest parameter dispatch (Phase 8.3f).
+ *
+ * `function f({ ...rest }) {}` + `f(obj)` + `const obj = { prop: fn }` →
+ * seeds pts["rest.prop"] = {"fn"} so that `rest.prop()` resolves to `fn`.
+ *
+ * Mutates `pts` in place.
+ */
+function buildObjectRestConstraints(
+  pts: PointsToMap,
+  definitionNames: ReadonlySet<string>,
+  importedNames: ReadonlyMap<string, string>,
+  paramBindings: readonly ParamBinding[],
+  objectRestParamBindings: readonly ObjectRestParamBinding[],
+  objectPropBindings: readonly ObjectPropBinding[],
+): void {
+  // Index paramBindings: "callee::argIndex" → argName[] (O(|paramBindings|) build,
+  // O(1) lookup — avoids scanning paramBindings for each rest binding).
+  const paramByCalleeIdx = new Map<string, string[]>();
+  for (const { callee, argIndex, argName } of paramBindings) {
+    const k = `${callee}::${argIndex}`;
+    const list = paramByCalleeIdx.get(k);
+    if (list) list.push(argName);
+    else paramByCalleeIdx.set(k, [argName]);
+  }
 
-    // Index objectPropBindings: objectName → {propName, valueName}[]
-    const propsByObject = new Map<string, Array<{ propName: string; valueName: string }>>();
-    for (const { objectName, propName, valueName } of objectPropBindings) {
-      const list = propsByObject.get(objectName);
-      if (list) list.push({ propName, valueName });
-      else propsByObject.set(objectName, [{ propName, valueName }]);
-    }
+  // Index objectPropBindings: objectName → {propName, valueName}[]
+  const propsByObject = new Map<string, Array<{ propName: string; valueName: string }>>();
+  for (const { objectName, propName, valueName } of objectPropBindings) {
+    const list = propsByObject.get(objectName);
+    if (list) list.push({ propName, valueName });
+    else propsByObject.set(objectName, [{ propName, valueName }]);
+  }
 
-    for (const { callee, restName, argIndex } of objectRestParamBindings) {
-      const argNames = paramByCalleeIdx.get(`${callee}::${argIndex}`) ?? [];
-      for (const argName of argNames) {
-        const props = propsByObject.get(argName) ?? [];
-        for (const { propName, valueName } of props) {
-          if (!definitionNames.has(valueName) && !importedNames.has(valueName)) continue;
-          const key = `${restName}.${propName}`;
-          if (!pts.has(key)) pts.set(key, new Set());
-          pts.get(key)!.add(valueName);
-        }
+  for (const { callee, restName, argIndex } of objectRestParamBindings) {
+    const argNames = paramByCalleeIdx.get(`${callee}::${argIndex}`) ?? [];
+    for (const argName of argNames) {
+      const props = propsByObject.get(argName) ?? [];
+      for (const { propName, valueName } of props) {
+        if (!definitionNames.has(valueName) && !importedNames.has(valueName)) continue;
+        const key = `${restName}.${propName}`;
+        if (!pts.has(key)) pts.set(key, new Set());
+        pts.get(key)!.add(valueName);
       }
     }
   }
+}
 
-  if (constraints.length === 0) return pts;
+/**
+ * Append higher-order constraints to the constraint list based on how
+ * function values flow through call sites, arrays, for-of loops, callbacks,
+ * and object rest-param destructuring.
+ *
+ * Coordinates buildParamAndArrayConstraints (Phase 8.3c/e) and
+ * buildObjectRestConstraints (Phase 8.3f).
+ *
+ * Mutates `pts` (seeds array-element and object-rest entries) and appends to `constraints`.
+ */
+function appendAdvancedConstraints(
+  pts: PointsToMap,
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  definitionNames: ReadonlySet<string>,
+  importedNames: ReadonlyMap<string, string>,
+  paramBindings?: readonly ParamBinding[],
+  definitionParams?: ReadonlyMap<string, readonly string[]>,
+  arrayElemBindings?: readonly ArrayElemBinding[],
+  spreadArgBindings?: readonly SpreadArgBinding[],
+  forOfBindings?: readonly ForOfBinding[],
+  arrayCallbackBindings?: readonly ArrayCallbackBinding[],
+  objectRestParamBindings?: readonly ObjectRestParamBinding[],
+  objectPropBindings?: readonly ObjectPropBinding[],
+): void {
+  buildParamAndArrayConstraints(
+    pts,
+    constraints,
+    paramBindings,
+    definitionParams,
+    arrayElemBindings,
+    spreadArgBindings,
+    forOfBindings,
+    arrayCallbackBindings,
+  );
 
-  // Fixed-point iteration: propagate pts sets until no new information flows.
+  if (objectRestParamBindings && objectPropBindings && paramBindings) {
+    buildObjectRestConstraints(
+      pts,
+      definitionNames,
+      importedNames,
+      paramBindings,
+      objectRestParamBindings,
+      objectPropBindings,
+    );
+  }
+}
+
+/**
+ * Run the fixed-point solver: propagate pts sets through constraints until
+ * no new information flows (or MAX_SOLVER_ITERATIONS is reached).
+ *
+ * Mutates `pts` in place.
+ */
+function buildCallSiteTypeMap(
+  pts: PointsToMap,
+  constraints: ReadonlyArray<{ lhs: string; rhsKey: string }>,
+): void {
   for (let iter = 0; iter < MAX_SOLVER_ITERATIONS; iter++) {
     let changed = false;
     for (const { lhs, rhsKey } of constraints) {
@@ -236,6 +300,65 @@ export function buildPointsToMap(
     }
     if (!changed) break;
   }
+}
+
+/**
+ * Build a points-to map for one file.
+ *
+ * Seeds concrete function names (locally-defined functions + imported names),
+ * then propagates assignments through fixed-point iteration until stable.
+ *
+ * Each "concrete target" in a pts set is a name that `resolveCallTargets` can
+ * look up — either a locally-defined function name (found via byNameAndFile) or
+ * an imported name (found via importedNames → byNameAndFile in the source file).
+ *
+ * @param fnRefBindings         - identifier/member-expr bindings from the extractor
+ * @param definitionNames       - locally-defined callable names in this file
+ * @param importedNames         - names imported into this file (name → resolved file)
+ * @param paramBindings         - call-site arg→param bindings (Phase 8.3c)
+ * @param definitionParams      - per-function ordered parameter names (Phase 8.3c)
+ * @param arrayElemBindings     - array literal element bindings (Phase 8.3e)
+ * @param spreadArgBindings     - spread-argument bindings (Phase 8.3e)
+ * @param forOfBindings         - for-of iteration variable bindings (Phase 8.3e)
+ * @param arrayCallbackBindings - Array.from/callback bindings (Phase 8.3e)
+ */
+export function buildPointsToMap(
+  fnRefBindings: readonly FnRefBinding[],
+  definitionNames: ReadonlySet<string>,
+  importedNames: ReadonlyMap<string, string>,
+  paramBindings?: readonly ParamBinding[],
+  definitionParams?: ReadonlyMap<string, readonly string[]>,
+  arrayElemBindings?: readonly ArrayElemBinding[],
+  spreadArgBindings?: readonly SpreadArgBinding[],
+  forOfBindings?: readonly ForOfBinding[],
+  arrayCallbackBindings?: readonly ArrayCallbackBinding[],
+  objectRestParamBindings?: readonly ObjectRestParamBinding[],
+  objectPropBindings?: readonly ObjectPropBinding[],
+): PointsToMap {
+  const { pts, constraints } = buildThisAssignmentMap(
+    fnRefBindings,
+    definitionNames,
+    importedNames,
+  );
+
+  appendAdvancedConstraints(
+    pts,
+    constraints,
+    definitionNames,
+    importedNames,
+    paramBindings,
+    definitionParams,
+    arrayElemBindings,
+    spreadArgBindings,
+    forOfBindings,
+    arrayCallbackBindings,
+    objectRestParamBindings,
+    objectPropBindings,
+  );
+
+  if (constraints.length === 0) return pts;
+
+  buildCallSiteTypeMap(pts, constraints);
 
   return pts;
 }
