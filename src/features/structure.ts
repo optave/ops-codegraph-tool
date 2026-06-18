@@ -594,15 +594,36 @@ const ANNOTATION_ONLY_KINDS = new Set([
   'record',
 ]);
 
-/** Build the activeFiles set: files with at least one callable connected to the graph. */
-function buildActiveFilesSet(rows: CallableNodeRow[]): Set<string> {
+/**
+ * Build two active-files sets from callable rows:
+ *
+ * - `activeFiles`: files with at least one non-annotation-only callable with
+ *   `fan_in > 0 || fan_out > 0`. Used for annotation-only kinds (constants,
+ *   type defs) which have no callers by design.
+ *
+ * - `calledActiveFiles`: files with at least one non-annotation-only callable
+ *   with `fan_in > 0` (strictly called). Used for method/function kinds to
+ *   prevent a self-sibling loop: a function with `fanIn=0, fanOut>0` as the
+ *   only callable in its file must NOT count itself as an "active sibling" and
+ *   thus promote itself to `leaf`.
+ */
+function buildActiveFilesSet(rows: CallableNodeRow[]): {
+  activeFiles: Set<string>;
+  calledActiveFiles: Set<string>;
+} {
   const activeFiles = new Set<string>();
+  const calledActiveFiles = new Set<string>();
   for (const r of rows) {
-    if ((r.fan_in > 0 || r.fan_out > 0) && !ANNOTATION_ONLY_KINDS.has(r.kind)) {
-      activeFiles.add(r.file);
+    if (!ANNOTATION_ONLY_KINDS.has(r.kind)) {
+      if (r.fan_in > 0 || r.fan_out > 0) {
+        activeFiles.add(r.file);
+      }
+      if (r.fan_in > 0) {
+        calledActiveFiles.add(r.file);
+      }
     }
   }
-  return activeFiles;
+  return { activeFiles, calledActiveFiles };
 }
 
 /** Map callable rows to classifier input objects, attaching exported/prod-fan-in/active-file metadata. */
@@ -611,6 +632,7 @@ function buildClassifierInput(
   exportedIds: Set<number>,
   prodFanInMap: Map<number, number>,
   activeFiles: Set<string>,
+  calledActiveFiles: Set<string>,
 ): Array<{
   id: string;
   name: string;
@@ -631,7 +653,20 @@ function buildClassifierInput(
     fanOut: r.fan_out,
     isExported: exportedIds.has(r.id),
     productionFanIn: prodFanInMap.get(r.id) || 0,
-    hasActiveFileSiblings: ANNOTATION_ONLY_KINDS.has(r.kind) ? activeFiles.has(r.file) : undefined,
+    // Set hasActiveFileSiblings for annotation-only kinds (constants, type defs)
+    // AND for method/function — the latter two can have fanIn === 0 due to
+    // untraced call-site patterns (interface dispatch, logical-or defaults).
+    // The classifier interprets this field differently per kind (see classifyUnreferencedNode).
+    //
+    // IMPORTANT: method/function use calledActiveFiles (fan_in > 0 only) to
+    // prevent a self-sibling false negative: a function with fanIn=0, fanOut>0
+    // as the sole callable in its file must NOT see its own file as "active"
+    // and promote itself to leaf.
+    hasActiveFileSiblings: ANNOTATION_ONLY_KINDS.has(r.kind)
+      ? activeFiles.has(r.file)
+      : r.kind === 'method' || r.kind === 'function'
+        ? calledActiveFiles.has(r.file)
+        : undefined,
   }));
 }
 
@@ -849,8 +884,14 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
   // Compute medians from the already-loaded rows (no extra DB round-trip),
   // pass them as overrides to avoid recomputing inside classifyRoles,
   // and cache them for subsequent incremental builds.
-  const activeFiles = buildActiveFilesSet(rows);
-  const classifierInput = buildClassifierInput(rows, exportedIds, prodFanInMap, activeFiles);
+  const { activeFiles, calledActiveFiles } = buildActiveFilesSet(rows);
+  const classifierInput = buildClassifierInput(
+    rows,
+    exportedIds,
+    prodFanInMap,
+    activeFiles,
+    calledActiveFiles,
+  );
   const nonZeroFanIn = classifierInput
     .filter((n) => n.fanIn > 0)
     .map((n) => n.fanIn)
@@ -1030,8 +1071,14 @@ function classifyNodeRolesIncremental(
   }
 
   // 5. Classify affected nodes using global medians
-  const activeFiles = buildActiveFilesSet(rows);
-  const classifierInput = buildClassifierInput(rows, exportedIds, prodFanInMap, activeFiles);
+  const { activeFiles, calledActiveFiles } = buildActiveFilesSet(rows);
+  const classifierInput = buildClassifierInput(
+    rows,
+    exportedIds,
+    prodFanInMap,
+    activeFiles,
+    calledActiveFiles,
+  );
   const roleMap = classifyRoles(classifierInput, globalMedians);
 
   // 6. Build summary (only for affected nodes) and update only those nodes
