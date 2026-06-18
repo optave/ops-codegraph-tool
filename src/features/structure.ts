@@ -580,11 +580,25 @@ interface CallableNodeRow {
   fan_out: number;
 }
 
+/**
+ * Kinds that are consumed via annotations/references rather than calls.
+ * These do not count as "active callables" for the hasActiveFileSiblings heuristic.
+ */
+const ANNOTATION_ONLY_KINDS = new Set([
+  'constant',
+  'struct',
+  'enum',
+  'trait',
+  'type',
+  'interface',
+  'record',
+]);
+
 /** Build the activeFiles set: files with at least one callable connected to the graph. */
 function buildActiveFilesSet(rows: CallableNodeRow[]): Set<string> {
   const activeFiles = new Set<string>();
   for (const r of rows) {
-    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
+    if ((r.fan_in > 0 || r.fan_out > 0) && !ANNOTATION_ONLY_KINDS.has(r.kind)) {
       activeFiles.add(r.file);
     }
   }
@@ -617,7 +631,7 @@ function buildClassifierInput(
     fanOut: r.fan_out,
     isExported: exportedIds.has(r.id),
     productionFanIn: prodFanInMap.get(r.id) || 0,
-    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
+    hasActiveFileSiblings: ANNOTATION_ONLY_KINDS.has(r.kind) ? activeFiles.has(r.file) : undefined,
   }));
 }
 

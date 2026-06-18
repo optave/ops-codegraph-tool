@@ -253,4 +253,47 @@ describe('classifyNodeRoles', () => {
     const role = db.prepare("SELECT role FROM nodes WHERE name = 'InternalOpts'").get();
     expect(role.role).toBe('dead-unresolved');
   });
+
+  it('does not classify struct/enum/trait as dead when file has active callables (#1584)', () => {
+    // Simulate a Rust file with struct definitions used as type parameters.
+    // The structs have fan_in=0 (no call edges — type annotations don't produce edges),
+    // but the file has active functions. The structs are almost certainly live.
+    insertNode('build_edges.rs', 'file', 'build_edges.rs', 0);
+    // An external caller that makes build_graph "active" (fan_in > 0)
+    const externalCaller = insertNode('main', 'function', 'main.rs', 1);
+    const fn1 = insertNode('build_graph', 'function', 'build_edges.rs', 10);
+    const fn2 = insertNode('resolve_imports', 'function', 'build_edges.rs', 50);
+    insertNode('NodeInfo', 'struct', 'build_edges.rs', 5);
+    insertNode('CallInfo', 'struct', 'build_edges.rs', 15);
+    insertNode('EdgeKind', 'enum', 'build_edges.rs', 25);
+    insertNode('Resolvable', 'trait', 'build_edges.rs', 35);
+
+    // The file has active callables: fn1 is called externally, fn1 calls fn2
+    insertEdge(externalCaller, fn1, 'calls');
+    insertEdge(fn1, fn2, 'calls');
+    // Structs have no call edges (they are used as type annotations only)
+
+    classifyNodeRoles(db);
+
+    const getRole = (name) => db.prepare('SELECT role FROM nodes WHERE name = ?').get(name)?.role;
+
+    // Functions are classified normally (they have edges)
+    expect(getRole('build_graph')).not.toMatch(/^dead/);
+    // Struct/enum/trait with active file siblings should be leaf, not dead
+    expect(getRole('NodeInfo')).toBe('leaf');
+    expect(getRole('CallInfo')).toBe('leaf');
+    expect(getRole('EdgeKind')).toBe('leaf');
+    expect(getRole('Resolvable')).toBe('leaf');
+  });
+
+  it('classifies struct with no active file siblings as dead (#1584 boundary)', () => {
+    // A struct in a file with no other active callables is genuinely dead.
+    insertNode('orphan.rs', 'file', 'orphan.rs', 0);
+    insertNode('OrphanStruct', 'struct', 'orphan.rs', 5);
+
+    classifyNodeRoles(db);
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'OrphanStruct'").get();
+    // No active callables in the file — the struct is dead (dead-ffi for .rs files)
+    expect(role.role).toMatch(/^dead/);
+  });
 });

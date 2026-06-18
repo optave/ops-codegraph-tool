@@ -18,6 +18,14 @@ export const FRAMEWORK_ENTRY_PREFIXES: readonly string[] = ['route:', 'event:', 
 
 const LEAF_KINDS = new Set(['parameter', 'property', 'constant']);
 
+/**
+ * Type definition kinds that are consumed via type annotations rather than calls.
+ * These have no inbound call edges by design — they are "used" by type references,
+ * struct literals, and generic parameters, none of which produce call edges.
+ * If the same file has active callables, type definitions are almost certainly live.
+ */
+const TYPE_DEF_KINDS = new Set(['struct', 'enum', 'trait', 'type', 'interface', 'record']);
+
 const FFI_EXTENSIONS = new Set(['.rs', '.c', '.cpp', '.h', '.go', '.java', '.cs']);
 
 /** Path patterns indicating framework-dispatched entry points. */
@@ -99,11 +107,20 @@ function computeFanMedians(nodes: RoleClassificationNode[]): { fanIn: number; fa
  * Covers framework-active constants, test-only callables, and the dead-* family.
  */
 function classifyUnreferencedNode(node: RoleClassificationNode): Role {
-  if (node.kind === 'constant' && node.hasActiveFileSiblings) {
-    // Constants consumed via identifier reference (not calls) have no
-    // inbound call edges. If the same file has active callables, the
-    // constant is almost certainly used locally — classify as leaf.
-    return 'leaf';
+  if (node.hasActiveFileSiblings) {
+    if (node.kind === 'constant') {
+      // Constants consumed via identifier reference (not calls) have no
+      // inbound call edges. If the same file has active callables, the
+      // constant is almost certainly used locally — classify as leaf.
+      return 'leaf';
+    }
+    if (node.kind && TYPE_DEF_KINDS.has(node.kind)) {
+      // Type definitions (struct, enum, trait, type, interface, record) are
+      // consumed via type annotations and struct literals — not calls — so they
+      // never get inbound call edges. If the same file has active callables,
+      // these types are almost certainly live — classify as leaf.
+      return 'leaf';
+    }
   }
   if (node.testOnlyFanIn != null && node.testOnlyFanIn > 0) return 'test-only';
   return classifyDeadSubRole(node);

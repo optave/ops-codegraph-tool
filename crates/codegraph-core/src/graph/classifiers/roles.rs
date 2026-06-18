@@ -16,6 +16,11 @@ const FRAMEWORK_ENTRY_PREFIXES: &[&str] = &["route:", "event:", "command:"];
 
 const LEAF_KINDS: &[&str] = &["parameter", "property", "constant"];
 
+/// Type definition kinds consumed via type annotations and struct literals, not calls.
+/// These never get inbound call edges by design — no call edge is emitted for type usage.
+/// If the same file has active callables, these types are almost certainly live.
+const TYPE_DEF_KINDS: &[&str] = &["struct", "enum", "trait", "type", "interface", "record"];
+
 /// Path patterns indicating framework-dispatched entry points (matches JS
 /// `ENTRY_PATH_PATTERNS` in `graph/classifiers/roles.ts`).
 const ENTRY_PATH_PATTERNS: &[&str] = &[
@@ -125,11 +130,20 @@ fn classify_node(
     }
 
     if fan_in == 0 && !is_exported {
-        // Constants consumed via identifier reference (not calls) have no
-        // inbound call edges. If the same file has active callables, the
-        // constant is almost certainly used locally — classify as leaf.
-        if kind == "constant" && has_active_file_siblings {
-            return "leaf";
+        if has_active_file_siblings {
+            // Constants consumed via identifier reference (not calls) have no
+            // inbound call edges. If the same file has active callables, the
+            // constant is almost certainly used locally — classify as leaf.
+            if kind == "constant" {
+                return "leaf";
+            }
+            // Type definitions (struct, enum, trait, type, interface, record) are
+            // consumed via type annotations and struct literals — not calls — so they
+            // never get inbound call edges. If the same file has active callables,
+            // these types are almost certainly live — classify as leaf.
+            if TYPE_DEF_KINDS.iter().any(|k| *k == kind) {
+                return "leaf";
+            }
         }
         return classify_dead_sub_role(name, kind, file);
     }
@@ -397,12 +411,14 @@ fn test_file_filter_col(column: &str) -> String {
         .join(" ")
 }
 
-/// Compute the set of files that have at least one non-constant callable connected to the graph.
-/// Constants in these files are likely consumed locally via identifier reference.
+/// Compute the set of files that have at least one callable connected to the graph,
+/// excluding annotation-only kinds (constants, type definitions) which are consumed
+/// via references/type-annotations rather than calls.
 fn compute_active_files(rows: &[(i64, String, String, String, u32, u32)]) -> std::collections::HashSet<String> {
+    let annotation_only: &[&str] = &["constant", "struct", "enum", "trait", "type", "interface", "record"];
     let mut active = std::collections::HashSet::new();
     for (_id, _name, kind, file, fan_in, fan_out) in rows {
-        if (*fan_in > 0 || *fan_out > 0) && kind != "constant" {
+        if (*fan_in > 0 || *fan_out > 0) && !annotation_only.iter().any(|k| *k == kind.as_str()) {
             active.insert(file.clone());
         }
     }
@@ -485,7 +501,9 @@ fn classify_rows(
     for (id, name, kind, file, fan_in, fan_out) in rows {
         let is_exported = exported_ids.contains(id);
         let prod_fi = prod_fan_in.get(id).copied().unwrap_or(0);
-        let has_active_siblings = if kind == "constant" {
+        let is_annotation_only = kind == "constant"
+            || TYPE_DEF_KINDS.iter().any(|k| *k == kind.as_str());
+        let has_active_siblings = if is_annotation_only {
             active_files.contains(file)
         } else {
             false
