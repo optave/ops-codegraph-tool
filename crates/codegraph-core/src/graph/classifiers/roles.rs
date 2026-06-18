@@ -21,6 +21,13 @@ const LEAF_KINDS: &[&str] = &["parameter", "property", "constant"];
 /// If the same file has active callables, these types are almost certainly live.
 const TYPE_DEF_KINDS: &[&str] = &["struct", "enum", "trait", "type", "interface", "record"];
 
+/// All kinds that are consumed via references or type-annotations rather than call edges.
+/// Equals `TYPE_DEF_KINDS` ∪ `{"constant"}`.
+/// Used by `compute_active_files` to exclude annotation-only nodes when deciding whether
+/// a file has any actively-called symbols — mirrors `ANNOTATION_ONLY_KINDS` in the TS classifier.
+const ANNOTATION_ONLY_KINDS: &[&str] =
+    &["constant", "struct", "enum", "trait", "type", "interface", "record"];
+
 /// Path patterns indicating framework-dispatched entry points (matches JS
 /// `ENTRY_PATH_PATTERNS` in `graph/classifiers/roles.ts`).
 const ENTRY_PATH_PATTERNS: &[&str] = &[
@@ -39,6 +46,13 @@ const ENTRY_PATH_PATTERNS: &[&str] = &[
     "middleware/",
     "middleware\\",
 ];
+
+/// Well-known Commander.js dispatch method names.
+/// When a method with one of these names lives in a file matching
+/// ENTRY_PATH_PATTERNS it is the actual framework entry point — not merely a
+/// candidate — so it is classified as `entry` rather than `dead-entry`.
+/// Mirrors `COMMANDER_DISPATCH_NAMES` in `graph/classifiers/roles.ts`.
+const COMMANDER_DISPATCH_NAMES: &[&str] = &["execute", "validate"];
 
 const TEST_FILE_PATTERNS: &[&str] = &[
     "%.test.%",
@@ -130,6 +144,14 @@ fn classify_node(
     }
 
     if fan_in == 0 && !is_exported {
+        // Well-known Commander.js dispatch methods (execute, validate) in framework
+        // directories are confirmed entry points, not candidates. Promote them to
+        // `entry` so they don't appear in `--role dead` output.
+        if COMMANDER_DISPATCH_NAMES.iter().any(|n| *n == name)
+            && ENTRY_PATH_PATTERNS.iter().any(|p| file.contains(p))
+        {
+            return "entry";
+        }
         if has_active_file_siblings {
             // Constants consumed via identifier reference (not calls) have no
             // inbound call edges. If the same file has active callables, the
@@ -415,10 +437,9 @@ fn test_file_filter_col(column: &str) -> String {
 /// excluding annotation-only kinds (constants, type definitions) which are consumed
 /// via references/type-annotations rather than calls.
 fn compute_active_files(rows: &[(i64, String, String, String, u32, u32)]) -> std::collections::HashSet<String> {
-    let annotation_only: &[&str] = &["constant", "struct", "enum", "trait", "type", "interface", "record"];
     let mut active = std::collections::HashSet::new();
     for (_id, _name, kind, file, fan_in, fan_out) in rows {
-        if (*fan_in > 0 || *fan_out > 0) && !annotation_only.iter().any(|k| *k == kind.as_str()) {
+        if (*fan_in > 0 || *fan_out > 0) && !ANNOTATION_ONLY_KINDS.iter().any(|k| *k == kind.as_str()) {
             active.insert(file.clone());
         }
     }
