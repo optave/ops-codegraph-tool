@@ -297,6 +297,38 @@ describe('classifyNodeRoles', () => {
     expect(role.role).toMatch(/^dead/);
   });
 
+  it('classifies Commander.js execute/validate methods in cli/commands/ as entry (#1585)', () => {
+    // Simulate the Commander.js command object pattern:
+    //   export const command = { execute(args, opts, ctx) { ... }, validate(args) { ... } }
+    // These methods have fan_in=0 because Commander dispatches them dynamically.
+    // They must be classified as `entry`, not `dead-entry`, so they don't appear
+    // in `--role dead` output and don't pollute dead-code analysis.
+    insertNode('src/cli/commands/roles.ts', 'file', 'src/cli/commands/roles.ts', 0);
+    insertNode('execute', 'method', 'src/cli/commands/roles.ts', 26);
+    insertNode('validate', 'method', 'src/cli/commands/roles.ts', 21);
+
+    classifyNodeRoles(db);
+
+    const getRole = (name) => db.prepare('SELECT role FROM nodes WHERE name = ?').get(name)?.role;
+
+    expect(getRole('execute')).toBe('entry');
+    expect(getRole('validate')).toBe('entry');
+  });
+
+  it('does not classify execute/validate as entry when not in a framework directory (#1585 boundary)', () => {
+    // An `execute` method in a non-CLI file (e.g. a utility class) should NOT
+    // be promoted to `entry` just because of its name.
+    insertNode('src/utils/executor.ts', 'file', 'src/utils/executor.ts', 0);
+    insertNode('execute', 'method', 'src/utils/executor.ts', 10);
+
+    classifyNodeRoles(db);
+
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'execute'").get()?.role;
+    // Not in a framework directory — should be dead-unresolved (no callers)
+    expect(role).not.toBe('entry');
+    expect(role).toMatch(/^dead/);
+  });
+
   it('incremental path: does not classify exported interface as dead when used only as same-file type annotation (#1583)', () => {
     // Exercises classifyNodeRolesIncremental (triggered by passing changedFiles).
     // An exported=1 interface with no cross-file edges must be promoted to entry,

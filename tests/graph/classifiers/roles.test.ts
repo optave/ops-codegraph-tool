@@ -211,7 +211,7 @@ describe('classifyRoles', () => {
     expect(roles.get('1')).toBe('dead-ffi');
   });
 
-  it('classifies dead-entry for CLI command files', () => {
+  it('classifies entry for Commander dispatch methods in CLI command files', () => {
     const nodes = [
       {
         id: '1',
@@ -224,7 +224,7 @@ describe('classifyRoles', () => {
       },
     ];
     const roles = classifyRoles(nodes);
-    expect(roles.get('1')).toBe('dead-entry');
+    expect(roles.get('1')).toBe('entry');
   });
 
   it('classifies dead-entry for MCP handler files', () => {
