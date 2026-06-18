@@ -1307,7 +1307,38 @@ fn propagate_return_types_across_files(
 ) {
     use crate::domain::graph::builder::stages::build_edges::PROPAGATION_HOP_PENALTY;
 
-    // rel_path → (fn_name → (type_name, confidence))
+    let (return_type_index, global_return_types) = build_return_type_index(file_symbols);
+    if return_type_index.is_empty() {
+        return;
+    }
+
+    for (rel_path, symbols) in file_symbols.iter_mut() {
+        if symbols.call_assignments.is_empty() {
+            continue;
+        }
+        inject_return_types_for_file(
+            rel_path,
+            symbols,
+            import_ctx,
+            &return_type_index,
+            &global_return_types,
+            PROPAGATION_HOP_PENALTY,
+        );
+    }
+}
+
+/// Build per-file and global return-type indexes from `return_type_map` entries.
+///
+/// Returns:
+/// - `return_type_index`: `rel_path → (fn_name → (type_name, confidence))`
+/// - `global_return_types`: flat map for qualified `Type.method` lookups; higher
+///   confidence wins, tie-break is deterministic (paths visited in sorted order).
+fn build_return_type_index(
+    file_symbols: &HashMap<String, FileSymbols>,
+) -> (
+    HashMap<String, HashMap<String, (String, f64)>>,
+    HashMap<String, (String, f64)>,
+) {
     let mut return_type_index: HashMap<String, HashMap<String, (String, f64)>> = HashMap::new();
     for (rel_path, symbols) in file_symbols.iter() {
         if symbols.return_type_map.is_empty() {
@@ -1318,13 +1349,7 @@ fn propagate_return_types_across_files(
             per_file.insert(e.name.clone(), (e.type_name.clone(), e.confidence));
         }
     }
-    if return_type_index.is_empty() {
-        return;
-    }
 
-    // Flat map for qualified `Type.method` lookups. Higher confidence wins;
-    // ties keep the first writer. Files are visited in sorted order so the
-    // tie-break is deterministic (HashMap iteration order is not).
     let mut global_return_types: HashMap<String, (String, f64)> = HashMap::new();
     let mut sorted_paths: Vec<&String> = return_type_index.keys().collect();
     sorted_paths.sort();
@@ -1340,57 +1365,64 @@ fn propagate_return_types_across_files(
         }
     }
 
-    for (rel_path, symbols) in file_symbols.iter_mut() {
-        if symbols.call_assignments.is_empty() {
+    (return_type_index, global_return_types)
+}
+
+/// Inject cross-file return types into a single file's `type_map`.
+///
+/// For each call-assignment in the file (`const x = callee()`), looks up the
+/// callee's return type in `return_type_index` (imported callee) or
+/// `global_return_types` (qualified `Receiver.method` callee) and pushes a
+/// `TypeMapEntry` so downstream call-edge resolution can follow `x.method()`.
+/// Already-resolved locals (`type_map` already has `var_name`) are skipped.
+fn inject_return_types_for_file(
+    rel_path: &str,
+    symbols: &mut FileSymbols,
+    import_ctx: &ImportEdgeContext,
+    return_type_index: &HashMap<String, HashMap<String, (String, f64)>>,
+    global_return_types: &HashMap<String, (String, f64)>,
+    hop_penalty: f64,
+) {
+    let abs_file = Path::new(&import_ctx.root_dir).join(rel_path);
+    let abs_str = abs_file.to_str().unwrap_or("");
+    let imported_names = collect_imported_names_for_file(abs_str, symbols, import_ctx);
+    // Later entries overwrite earlier ones on duplicate names — same as the
+    // HashMap collect in build_call_edges.
+    let imported_map: HashMap<String, String> =
+        imported_names.into_iter().map(|e| (e.name, e.file)).collect();
+
+    let mut injections: Vec<TypeMapEntry> = Vec::new();
+    let mut injected: HashSet<String> = HashSet::new();
+    for ca in &symbols.call_assignments {
+        // Already resolved locally (JS: `typeMap.has(varName)`); first
+        // successful injection wins for repeated assignments to one name.
+        if injected.contains(&ca.var_name) || symbols.type_map.iter().any(|t| t.name == ca.var_name)
+        {
             continue;
         }
 
-        let abs_file = Path::new(&import_ctx.root_dir).join(rel_path.as_str());
-        let abs_str = abs_file.to_str().unwrap_or("");
-        let imported_names = collect_imported_names_for_file(abs_str, symbols, import_ctx);
-        // Later entries overwrite earlier ones on duplicate names — same as the
-        // HashMap collect in build_call_edges.
-        let imported_map: HashMap<String, String> = imported_names
-            .into_iter()
-            .map(|e| (e.name, e.file))
-            .collect();
-
-        let mut injections: Vec<TypeMapEntry> = Vec::new();
-        let mut injected: HashSet<String> = HashSet::new();
-        for ca in &symbols.call_assignments {
-            // Already resolved locally (JS: `typeMap.has(varName)`); first
-            // successful injection wins for repeated assignments to one name.
-            if injected.contains(&ca.var_name)
-                || symbols.type_map.iter().any(|t| t.name == ca.var_name)
-            {
-                continue;
+        let found = match &ca.receiver_type_name {
+            Some(receiver) => {
+                global_return_types.get(&format!("{receiver}.{}", ca.callee_name))
             }
+            None => imported_map.get(&ca.callee_name).and_then(|from| {
+                return_type_index.get(from).and_then(|m| m.get(&ca.callee_name))
+            }),
+        };
 
-            let found = match &ca.receiver_type_name {
-                Some(receiver) => {
-                    global_return_types.get(&format!("{receiver}.{}", ca.callee_name))
-                }
-                None => imported_map.get(&ca.callee_name).and_then(|from| {
-                    return_type_index
-                        .get(from)
-                        .and_then(|m| m.get(&ca.callee_name))
-                }),
-            };
-
-            if let Some((type_name, confidence)) = found {
-                let propagated = confidence - PROPAGATION_HOP_PENALTY;
-                if propagated > 0.0 {
-                    injections.push(TypeMapEntry {
-                        name: ca.var_name.clone(),
-                        type_name: type_name.clone(),
-                        confidence: propagated,
-                    });
-                    injected.insert(ca.var_name.clone());
-                }
+        if let Some((type_name, confidence)) = found {
+            let propagated = confidence - hop_penalty;
+            if propagated > 0.0 {
+                injections.push(TypeMapEntry {
+                    name: ca.var_name.clone(),
+                    type_name: type_name.clone(),
+                    confidence: propagated,
+                });
+                injected.insert(ca.var_name.clone());
             }
         }
-        symbols.type_map.extend(injections);
     }
+    symbols.type_map.extend(injections);
 }
 
 /// Insert the edges produced by the native edge builder into the edges table.
@@ -1825,76 +1857,101 @@ fn write_dataflow(
             Some(d) => d,
             None => continue,
         };
-
-        // argFlows → flows_to edges
-        for flow in &data.arg_flows {
-            let caller = match &flow.caller_func {
-                Some(name) => name.as_str(),
-                None => continue,
-            };
-            let src = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, caller, file);
-            let tgt = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, &flow.callee_name, file);
-            if let (Some(src), Some(tgt)) = (src, tgt) {
-                let _ = insert_stmt.execute(rusqlite::params![
-                    src,
-                    tgt,
-                    "flows_to",
-                    flow.arg_index,
-                    &flow.expression,
-                    flow.line,
-                    flow.confidence,
-                ]);
-            }
-        }
-
-        // assignments → returns edges
-        for assignment in &data.assignments {
-            let consumer = match &assignment.caller_func {
-                Some(name) => name.as_str(),
-                None => continue,
-            };
-            let producer = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, &assignment.source_call_name, file);
-            let consumer_id = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, consumer, file);
-            if let (Some(producer), Some(consumer_id)) = (producer, consumer_id) {
-                let _ = insert_stmt.execute(rusqlite::params![
-                    producer,
-                    consumer_id,
-                    "returns",
-                    Option::<u32>::None,
-                    &assignment.expression,
-                    assignment.line,
-                    1.0_f64,
-                ]);
-            }
-        }
-
-        // mutations → mutates edges (only for param bindings)
-        for mutation in &data.mutations {
-            if mutation.binding_type.as_deref() != Some("param") {
-                continue;
-            }
-            let func = match &mutation.func_name {
-                Some(name) => name.as_str(),
-                None => continue,
-            };
-            if let Some(node_id) = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, func, file) {
-                let _ = insert_stmt.execute(rusqlite::params![
-                    node_id,
-                    node_id,
-                    "mutates",
-                    Option::<u32>::None,
-                    &mutation.mutating_expr,
-                    mutation.line,
-                    1.0_f64,
-                ]);
-            }
-        }
+        write_dataflow_arg_flows(&mut insert_stmt, &mut local_stmt, &mut global_stmt, data, file);
+        write_dataflow_assignments(&mut insert_stmt, &mut local_stmt, &mut global_stmt, data, file);
+        write_dataflow_mutations(&mut insert_stmt, &mut local_stmt, &mut global_stmt, data, file);
     }
 
     drop(insert_stmt);
     drop(local_stmt);
     drop(global_stmt);
     tx.commit().is_ok()
+}
+
+/// Emit `flows_to` edges for each argFlow entry: caller → callee via argument passing.
+fn write_dataflow_arg_flows(
+    insert_stmt: &mut rusqlite::Statement,
+    local_stmt: &mut rusqlite::Statement,
+    global_stmt: &mut rusqlite::Statement,
+    data: &crate::types::DataflowResult,
+    file: &str,
+) {
+    for flow in &data.arg_flows {
+        let caller = match &flow.caller_func {
+            Some(name) => name.as_str(),
+            None => continue,
+        };
+        let src = resolve_dataflow_node(local_stmt, global_stmt, caller, file);
+        let tgt = resolve_dataflow_node(local_stmt, global_stmt, &flow.callee_name, file);
+        if let (Some(src), Some(tgt)) = (src, tgt) {
+            let _ = insert_stmt.execute(rusqlite::params![
+                src, tgt, "flows_to", flow.arg_index, &flow.expression, flow.line, flow.confidence,
+            ]);
+        }
+    }
+}
+
+/// Emit `returns` edges for each assignment entry: producer → consumer via
+/// return-value assignment (`const x = callee()`).
+fn write_dataflow_assignments(
+    insert_stmt: &mut rusqlite::Statement,
+    local_stmt: &mut rusqlite::Statement,
+    global_stmt: &mut rusqlite::Statement,
+    data: &crate::types::DataflowResult,
+    file: &str,
+) {
+    for assignment in &data.assignments {
+        let consumer = match &assignment.caller_func {
+            Some(name) => name.as_str(),
+            None => continue,
+        };
+        let producer =
+            resolve_dataflow_node(local_stmt, global_stmt, &assignment.source_call_name, file);
+        let consumer_id = resolve_dataflow_node(local_stmt, global_stmt, consumer, file);
+        if let (Some(producer), Some(consumer_id)) = (producer, consumer_id) {
+            let _ = insert_stmt.execute(rusqlite::params![
+                producer,
+                consumer_id,
+                "returns",
+                Option::<u32>::None,
+                &assignment.expression,
+                assignment.line,
+                1.0_f64,
+            ]);
+        }
+    }
+}
+
+/// Emit `mutates` edges for param-binding mutation entries. Only fires for
+/// mutations where `binding_type == "param"` — other mutation kinds are
+/// informational and not persisted as dataflow edges.
+fn write_dataflow_mutations(
+    insert_stmt: &mut rusqlite::Statement,
+    local_stmt: &mut rusqlite::Statement,
+    global_stmt: &mut rusqlite::Statement,
+    data: &crate::types::DataflowResult,
+    file: &str,
+) {
+    for mutation in &data.mutations {
+        if mutation.binding_type.as_deref() != Some("param") {
+            continue;
+        }
+        let func = match &mutation.func_name {
+            Some(name) => name.as_str(),
+            None => continue,
+        };
+        if let Some(node_id) = resolve_dataflow_node(local_stmt, global_stmt, func, file) {
+            let _ = insert_stmt.execute(rusqlite::params![
+                node_id,
+                node_id,
+                "mutates",
+                Option::<u32>::None,
+                &mutation.mutating_expr,
+                mutation.line,
+                1.0_f64,
+            ]);
+        }
+    }
 }
 
 /// Resolve a function name to a node ID, trying same-file first then global.

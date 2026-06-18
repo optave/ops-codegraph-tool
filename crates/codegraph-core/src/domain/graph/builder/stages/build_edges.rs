@@ -443,23 +443,24 @@ pub fn build_call_edges(
     edges
 }
 
-/// Process a single file: build per-file maps and emit call/receiver/hierarchy edges.
-fn process_file<'a>(
-    ctx: &EdgeContext<'a>,
-    file_input: &'a FileEdgeInput,
-    all_nodes: &'a [NodeInfo],
-    edges: &mut Vec<ComputedEdge>,
-) {
-    let rel_path = &file_input.file;
-    let file_node_id = file_input.file_node_id;
+/// Per-file lookup structures built once and shared by the call/receiver/hierarchy
+/// edge emission loops. Encapsulates what was formerly the setup block of `process_file`.
+struct FileContext<'a> {
+    rel_path: &'a str,
+    file_node_id: u32,
+    imported_names: HashMap<&'a str, &'a str>,
+    type_map: HashMap<&'a str, (&'a str, f64)>,
+    defs_with_ids: Vec<DefWithId<'a>>,
+    pts_map: Option<HashMap<String, HashSet<String>>>,
+    /// lhs names from the *raw* fnRefBindings only (thisCall conversions are
+    /// scoped keys and never flat-matched). Used for case-(c) pts gate.
+    fn_ref_binding_lhs: HashSet<&'a str>,
+}
 
-    let imported_names: HashMap<&str, &str> = file_input
-        .imported_names.iter()
-        .map(|im| (im.name.as_str(), im.file.as_str()))
-        .collect();
-
-    // Build type map keeping the highest-confidence entry per name
-    // (first-wins on tie), matching the JS setTypeMapEntry behaviour.
+/// Build the per-file type map from the input's type_map entries.
+/// Keeps the highest-confidence entry per name (first-wins on tie), matching
+/// the JS `setTypeMapEntry` behaviour.
+fn build_type_map<'a>(file_input: &'a FileEdgeInput) -> HashMap<&'a str, (&'a str, f64)> {
     let mut type_map: HashMap<&str, (&str, f64)> = HashMap::new();
     for tm in &file_input.type_map {
         let entry = type_map.entry(tm.name.as_str());
@@ -474,16 +475,21 @@ fn process_file<'a>(
             }
         }
     }
+    type_map
+}
 
-    let file_nodes: Vec<&NodeInfo> = all_nodes.iter().filter(|n| n.file == *rel_path).collect();
-    let defs_with_ids: Vec<DefWithId> = file_input.definitions.iter().map(|d| {
-        let node_id = file_nodes.iter()
-            .find(|n| n.name == d.name && n.kind == d.kind && n.line == d.line)
-            .map(|n| n.id);
-        DefWithId { name: &d.name, kind: &d.kind, line: d.line, end_line: d.end_line.unwrap_or(u32::MAX), node_id }
-    }).collect();
-    // Phase 8.3: build pts map for alias resolution — mirrors buildPointsToMapForFile.
-    // Only callable (function/method) defs are seeded as concrete targets.
+/// Build the points-to map for a file.
+///
+/// Constructs the `PtsBindings` from `file_input`, merges `this_call_bindings`
+/// into scoped `fn::this → ctx` fnRefBindings, builds `def_names` and
+/// `definition_params`, then delegates to `build_points_to_map`.
+/// Returns `None` when the file has no pts inputs (fast path).
+///
+/// Mirrors `buildPointsToMapForFile` in `src/domain/graph/resolver/points-to.ts`.
+fn build_pts_map_for_file(
+    file_input: &FileEdgeInput,
+    imported_names: &HashMap<&str, &str>,
+) -> Option<HashMap<String, HashSet<String>>> {
     let raw_fn_ref: &[FnRefBinding] = file_input.fn_ref_bindings.as_deref().unwrap_or(&[]);
     let this_calls: &[ThisCallBinding] = file_input.this_call_bindings.as_deref().unwrap_or(&[]);
     let bindings = PtsBindings {
@@ -505,48 +511,206 @@ fn process_file<'a>(
         || !bindings.object_rest_param_bindings.is_empty()
         || !bindings.object_prop_bindings.is_empty()
         || !this_calls.is_empty();
+    if !has_pts_inputs {
+        return None;
+    }
+
+    let def_names: HashSet<&str> = file_input.definitions.iter()
+        .filter(|d| d.kind == "function" || d.kind == "method")
+        .map(|d| d.name.as_str())
+        .collect();
+    // First-wins on duplicate names — mirrors buildDefinitionParamsMap.
+    let mut definition_params: HashMap<&str, Vec<&str>> = HashMap::new();
+    for d in &file_input.definitions {
+        if d.kind != "function" && d.kind != "method" { continue; }
+        let Some(params) = d.params.as_ref().filter(|p| !p.is_empty()) else { continue };
+        definition_params.entry(d.name.as_str())
+            .or_insert_with(|| params.iter().map(|s| s.as_str()).collect());
+    }
+
     // Convert thisCallBindings into scoped fnRefBindings (`fn::this → ctx`) so
     // `this()` calls inside `fn` resolve via the scoped key `fn::this`.
-    let all_fn_ref_bindings: Vec<FnRefBinding>;
-    let pts_map: Option<HashMap<String, HashSet<String>>> = if has_pts_inputs {
-        let def_names: HashSet<&str> = file_input.definitions.iter()
-            .filter(|d| d.kind == "function" || d.kind == "method")
-            .map(|d| d.name.as_str())
-            .collect();
-        // First-wins on duplicate names — mirrors buildDefinitionParamsMap.
-        let mut definition_params: HashMap<&str, Vec<&str>> = HashMap::new();
-        for d in &file_input.definitions {
-            if d.kind != "function" && d.kind != "method" { continue; }
-            let Some(params) = d.params.as_ref().filter(|p| !p.is_empty()) else { continue };
-            definition_params.entry(d.name.as_str())
-                .or_insert_with(|| params.iter().map(|s| s.as_str()).collect());
-        }
-        let bindings = if this_calls.is_empty() {
-            bindings
-        } else {
-            let mut merged = raw_fn_ref.to_vec();
-            merged.extend(this_calls.iter().map(|b| FnRefBinding {
-                lhs: format!("{}::this", b.callee),
-                rhs: b.this_arg.clone(),
-                rhs_receiver: None,
-            }));
-            all_fn_ref_bindings = merged;
-            PtsBindings { fn_ref_bindings: &all_fn_ref_bindings, ..bindings }
-        };
-        Some(build_points_to_map(&bindings, &def_names, &imported_names, &definition_params))
+    // The merged vec must outlive the PtsBindings borrow — stored here.
+    let merged_fn_ref: Vec<FnRefBinding>;
+    let final_bindings = if this_calls.is_empty() {
+        bindings
     } else {
-        None
+        let mut merged = raw_fn_ref.to_vec();
+        merged.extend(this_calls.iter().map(|b| FnRefBinding {
+            lhs: format!("{}::this", b.callee),
+            rhs: b.this_arg.clone(),
+            rhs_receiver: None,
+        }));
+        merged_fn_ref = merged;
+        PtsBindings { fn_ref_bindings: &merged_fn_ref, ..bindings }
     };
+
+    Some(build_points_to_map(&final_bindings, &def_names, imported_names, &definition_params))
+}
+
+/// Build all per-file lookup structures needed for edge emission.
+fn build_file_context<'a>(
+    file_input: &'a FileEdgeInput,
+    all_nodes: &'a [NodeInfo],
+) -> FileContext<'a> {
+    let rel_path = file_input.file.as_str();
+    let imported_names: HashMap<&str, &str> = file_input
+        .imported_names.iter()
+        .map(|im| (im.name.as_str(), im.file.as_str()))
+        .collect();
+    let type_map = build_type_map(file_input);
+    let file_nodes: Vec<&NodeInfo> = all_nodes.iter().filter(|n| n.file == rel_path).collect();
+    let defs_with_ids: Vec<DefWithId> = file_input.definitions.iter().map(|d| {
+        let node_id = file_nodes.iter()
+            .find(|n| n.name == d.name && n.kind == d.kind && n.line == d.line)
+            .map(|n| n.id);
+        DefWithId {
+            name: &d.name,
+            kind: &d.kind,
+            line: d.line,
+            end_line: d.end_line.unwrap_or(u32::MAX),
+            node_id,
+        }
+    }).collect();
+    let pts_map = build_pts_map_for_file(file_input, &imported_names);
+    let raw_fn_ref: &[FnRefBinding] = file_input.fn_ref_bindings.as_deref().unwrap_or(&[]);
     // Case (c) flat-key gate set: lhs names from the *raw* fnRefBindings only
     // (thisCall conversions are scoped keys and never flat-matched).
     let fn_ref_binding_lhs: HashSet<&str> = raw_fn_ref.iter().map(|b| b.lhs.as_str()).collect();
+    FileContext {
+        rel_path,
+        file_node_id: file_input.file_node_id,
+        imported_names,
+        type_map,
+        defs_with_ids,
+        pts_map,
+        fn_ref_binding_lhs,
+    }
+}
 
-    let mut seen_edges: HashSet<u64> = HashSet::new();
+/// Resolve and emit pts-alias edges for a no-receiver unresolved call.
+///
+/// Implements the four-case gate from buildFileCallEdges (build-edges.ts):
+///   (a) dynamic alias calls — flat `call.name` lookup;
+///   (b) parameter / this-rebinding / for-of variable calls — scoped key
+///       `caller::name`, with the `<module>::name` sentinel for top-level for-of loops;
+///   (c) module-level alias bindings (`const f = handler`, `f = fn.bind(ctx)`)
+///       — flat key, gated on fnRefBindingLhs so self-seeded local definitions never fire.
+/// Confidence is penalised by one hop to reflect the indirection.
+fn emit_no_receiver_pts_edges<'a>(
+    ctx: &EdgeContext<'a>,
+    fc: &FileContext<'a>,
+    call: &CallInfo,
+    caller_id: u32,
+    caller_name: &'a str,
+    is_dynamic: u32,
+    seen_edges: &HashSet<u64>,
+    pts_edge_map: &mut HashMap<u64, usize>,
+    edges: &mut Vec<ComputedEdge>,
+) {
+    let pts = match fc.pts_map.as_ref() { Some(p) => p, None => return };
+    let is_dyn_call = call.dynamic.unwrap_or(false);
+    let scoped_key = if caller_name.is_empty() { None } else {
+        Some(format!("{}::{}", caller_name, call.name))
+            .filter(|k| pts.contains_key(k.as_str()))
+    };
+    let module_key = if caller_name.is_empty() {
+        Some(format!("<module>::{}", call.name))
+            .filter(|k| pts.contains_key(k.as_str()))
+    } else {
+        None
+    };
+    let flat_ok = !is_dyn_call
+        && fc.fn_ref_binding_lhs.contains(call.name.as_str())
+        && pts.contains_key(call.name.as_str());
+    let lookup_name: Option<String> = if is_dyn_call {
+        Some(call.name.clone())
+    } else if let Some(k) = scoped_key {
+        Some(k)
+    } else if let Some(k) = module_key {
+        Some(k)
+    } else if flat_ok {
+        Some(call.name.clone())
+    } else {
+        None
+    };
+    if let Some(lookup_name) = lookup_name {
+        emit_pts_alias_edges(
+            ctx,
+            &PtsAliasCtx {
+                pts,
+                lookup_name: &lookup_name,
+                call_line: call.line,
+                caller_id,
+                caller_name,
+                is_dynamic,
+                rel_path: fc.rel_path,
+                imported_names: &fc.imported_names,
+                type_map: &fc.type_map,
+            },
+            seen_edges,
+            pts_edge_map,
+            edges,
+        );
+    }
+}
+
+/// Resolve and emit pts-alias edges for a receiver call via object-rest bindings.
+///
+/// Phase 8.3f: `rest.prop()` resolves when pts["rest.prop"] was seeded by the
+/// rest-dispatch chain. Builtin receivers are already skipped at the call-loop top.
+fn emit_receiver_pts_edges<'a>(
+    ctx: &EdgeContext<'a>,
+    fc: &FileContext<'a>,
+    call: &CallInfo,
+    caller_id: u32,
+    caller_name: &'a str,
+    is_dynamic: u32,
+    seen_edges: &HashSet<u64>,
+    pts_edge_map: &mut HashMap<u64, usize>,
+    edges: &mut Vec<ComputedEdge>,
+) {
+    let (receiver, pts) = match (call.receiver.as_deref(), fc.pts_map.as_ref()) {
+        (Some(r), Some(p)) => (r, p),
+        _ => return,
+    };
+    if receiver == "this" || receiver == "self" || receiver == "super" { return; }
+    let receiver_key = format!("{}.{}", receiver, call.name);
+    if !pts.contains_key(receiver_key.as_str()) { return; }
+    emit_pts_alias_edges(
+        ctx,
+        &PtsAliasCtx {
+            pts,
+            lookup_name: &receiver_key,
+            call_line: call.line,
+            caller_id,
+            caller_name,
+            is_dynamic,
+            rel_path: fc.rel_path,
+            imported_names: &fc.imported_names,
+            type_map: &fc.type_map,
+        },
+        seen_edges,
+        pts_edge_map,
+        edges,
+    );
+}
+
+/// Process a single file: build per-file lookup context and emit call/receiver/hierarchy edges.
+fn process_file<'a>(
+    ctx: &EdgeContext<'a>,
+    file_input: &'a FileEdgeInput,
+    all_nodes: &'a [NodeInfo],
+    edges: &mut Vec<ComputedEdge>,
+) {
+    let fc = build_file_context(file_input, all_nodes);
+
     // Phase 8.3: tracks pts-resolved edges separately from seen_edges so that a
     // subsequent direct call to the same caller→target pair can upgrade confidence
     // in-place rather than being silently dropped by the dedup guard.
     // Mirrors `ptsEdgeRows` in `src/domain/graph/builder/stages/build-edges.ts`.
     // Key: edge_key (same as seen_edges). Value: index into `edges` vec.
+    let mut seen_edges: HashSet<u64> = HashSet::new();
     let mut pts_edge_map: HashMap<u64, usize> = HashMap::new();
 
     for call in &file_input.calls {
@@ -554,110 +718,26 @@ fn process_file<'a>(
             if ctx.builtin_set.contains(receiver.as_str()) { continue; }
         }
 
-        let (caller_id, caller_name) = find_enclosing_caller(&defs_with_ids, call.line, file_node_id);
+        let (caller_id, caller_name) = find_enclosing_caller(&fc.defs_with_ids, call.line, fc.file_node_id);
         let is_dynamic = if call.dynamic.unwrap_or(false) { 1u32 } else { 0u32 };
-        let imported_from = imported_names.get(call.name.as_str()).copied();
+        let imported_from = fc.imported_names.get(call.name.as_str()).copied();
 
-        let mut targets = resolve_call_targets(ctx, call, rel_path, imported_from, &type_map, caller_name);
-        sort_targets_by_confidence(&mut targets, rel_path, imported_from);
-        emit_call_edges(&targets, caller_id, is_dynamic, rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
+        let mut targets = resolve_call_targets(ctx, call, fc.rel_path, imported_from, &fc.type_map, caller_name);
+        sort_targets_by_confidence(&mut targets, fc.rel_path, imported_from);
+        emit_call_edges(&targets, caller_id, is_dynamic, fc.rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
 
-        // Phase 8.3 / 8.3c / 8.3e: points-to fallback for unresolved calls.
-        // Mirrors the four-case gate in buildFileCallEdges (build-edges.ts):
-        //   (a) dynamic alias calls — flat `call.name` lookup;
-        //   (b) parameter / this-rebinding / for-of variable calls — scoped key
-        //       `caller::name`, with the `<module>::name` sentinel for
-        //       top-level for-of loops;
-        //   (c) module-level alias bindings (`const f = handler`, `f = fn.bind(ctx)`)
-        //       — flat key, gated on fnRefBindingLhs so self-seeded local
-        //       definitions never fire.
-        // Confidence is penalised by one hop to reflect the indirection.
-        //
-        // Pts edges go into pts_edge_map (not seen_edges) so a later direct call
-        // to the same target can upgrade confidence in-place — mirroring ptsEdgeRows.
         if targets.is_empty() && call.receiver.is_none() {
-            if let Some(ref pts) = pts_map {
-                let is_dyn_call = call.dynamic.unwrap_or(false);
-                let scoped_key = if caller_name.is_empty() { None } else {
-                    Some(format!("{}::{}", caller_name, call.name))
-                        .filter(|k| pts.contains_key(k.as_str()))
-                };
-                let module_key = if caller_name.is_empty() {
-                    Some(format!("<module>::{}", call.name))
-                        .filter(|k| pts.contains_key(k.as_str()))
-                } else {
-                    None
-                };
-                let flat_ok = !is_dyn_call
-                    && fn_ref_binding_lhs.contains(call.name.as_str())
-                    && pts.contains_key(call.name.as_str());
-                let lookup_name: Option<String> = if is_dyn_call {
-                    Some(call.name.clone())
-                } else if let Some(k) = scoped_key {
-                    Some(k)
-                } else if let Some(k) = module_key {
-                    Some(k)
-                } else if flat_ok {
-                    Some(call.name.clone())
-                } else {
-                    None
-                };
-                if let Some(lookup_name) = lookup_name {
-                    emit_pts_alias_edges(
-                        ctx,
-                        &PtsAliasCtx {
-                            pts,
-                            lookup_name: &lookup_name,
-                            call_line: call.line,
-                            caller_id,
-                            caller_name,
-                            is_dynamic,
-                            rel_path,
-                            imported_names: &imported_names,
-                            type_map: &type_map,
-                        },
-                        &seen_edges,
-                        &mut pts_edge_map,
-                        edges,
-                    );
-                }
-            }
+            emit_no_receiver_pts_edges(ctx, &fc, call, caller_id, caller_name, is_dynamic, &seen_edges, &mut pts_edge_map, edges);
         }
 
-        // Phase 8.3f: pts fallback for receiver calls via object-rest bindings.
-        // `rest.prop()` resolves when pts["rest.prop"] was seeded by the
-        // rest-dispatch chain. Builtin receivers were skipped at loop top.
         if targets.is_empty() {
-            if let (Some(receiver), Some(pts)) = (call.receiver.as_deref(), pts_map.as_ref()) {
-                if receiver != "this" && receiver != "self" && receiver != "super" {
-                    let receiver_key = format!("{}.{}", receiver, call.name);
-                    if pts.contains_key(receiver_key.as_str()) {
-                        emit_pts_alias_edges(
-                            ctx,
-                            &PtsAliasCtx {
-                                pts,
-                                lookup_name: &receiver_key,
-                                call_line: call.line,
-                                caller_id,
-                                caller_name,
-                                is_dynamic,
-                                rel_path,
-                                imported_names: &imported_names,
-                                type_map: &type_map,
-                            },
-                            &seen_edges,
-                            &mut pts_edge_map,
-                            edges,
-                        );
-                    }
-                }
-            }
+            emit_receiver_pts_edges(ctx, &fc, call, caller_id, caller_name, is_dynamic, &seen_edges, &mut pts_edge_map, edges);
         }
 
-        emit_receiver_edge(ctx, call, caller_id, rel_path, &type_map, &imported_names, &mut seen_edges, edges);
+        emit_receiver_edge(ctx, call, caller_id, fc.rel_path, &fc.type_map, &fc.imported_names, &mut seen_edges, edges);
     }
 
-    emit_hierarchy_edges(ctx, file_input, rel_path, edges);
+    emit_hierarchy_edges(ctx, file_input, fc.rel_path, edges);
 }
 
 /// Callable definition kinds — only function/method bodies act as enclosing

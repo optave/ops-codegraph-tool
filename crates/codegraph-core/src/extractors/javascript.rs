@@ -113,161 +113,168 @@ fn enclosing_type_map_class<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a
 
 fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "variable_declarator" => {
-            if let Some(name_n) = node.child_by_field_name("name") {
-                if name_n.kind() == "identifier" {
-                    let var_name = node_text(&name_n, source);
-                    // Type annotation: confidence 0.9
-                    if let Some(type_anno) = find_child(node, "type_annotation") {
-                        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
-                            push_type_map_entry(symbols, var_name.to_string(), type_name.to_string());
-                        }
-                    }
-                    // Constructor: confidence 1.0 (overrides annotation in edge builder)
-                    if let Some(value_n) = node.child_by_field_name("value") {
-                        if value_n.kind() == "new_expression" {
-                            if let Some(type_name) = extract_new_expr_type_name(&value_n, source) {
-                                symbols.type_map.push(TypeMapEntry {
-                                    name: var_name.to_string(),
-                                    type_name: type_name.to_string(),
-                                    confidence: 1.0,
-                                });
-                            }
-                        }
-                        // Phase 8.3e: Object.create({ key: fn }) → composite pts key per property
-                        if value_n.kind() == "call_expression" {
-                            seed_object_create_entries(var_name, &value_n, source, symbols);
-                        }
-                        // Phase 8.3f parity: seed composite typeMap keys for ALL object-literal
-                        // declarations (`const`, `let`, `var`) when at non-function scope.
-                        // Mirrors WASM handleVarDeclaratorTypeMap (no isConst guard there).
-                        // For `const`, extract_object_literal_functions already seeds these entries;
-                        // dedup_type_map collapses any duplicates at equal confidence.
-                        if value_n.kind() == "object" && find_parent_of_types(node, &[
-                            "function_declaration", "arrow_function", "function_expression",
-                            "method_definition", "generator_function_declaration", "generator_function",
-                        ]).is_none() {
-                            seed_objlit_type_map_entries(var_name, &value_n, source, symbols);
-                        }
-                    }
-                }
-            }
-        }
+        "variable_declarator" => handle_var_declarator_type_map(node, source, symbols),
         // Phase 8.3e: Object.defineProperty / defineProperties → composite pts key
-        "call_expression" => {
-            seed_define_property_entries(node, source, symbols);
-        }
-        "required_parameter" | "optional_parameter" => {
-            let name_node = node.child_by_field_name("pattern")
-                .or_else(|| node.child_by_field_name("left"))
-                .or_else(|| node.child(0));
-            if let Some(name_node) = name_node {
-                if name_node.kind() == "identifier" {
-                    if let Some(type_anno) = find_child(node, "type_annotation") {
-                        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
-                            push_type_map_entry(
-                                symbols,
-                                node_text(&name_node, source).to_string(),
-                                type_name.to_string(),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        // Phase 8.3d: property-write pts tracking — `obj.prop = fn` seeds composite key.
-        // Also seeds `this.prop = new Ctor()` constructor-assigned property types,
-        // keyed as `ClassName.prop` (class-scoped) so two classes with identically-named
-        // properties don't overwrite each other's typeMap entry (issue #1323).
+        "call_expression" => seed_define_property_entries(node, source, symbols),
+        "required_parameter" | "optional_parameter" => handle_param_type_map(node, source, symbols),
+        // Phase 8.3d: property-write pts tracking.
         // Mirrors handlePropWriteTypeMap in src/extractors/javascript.ts.
-        "assignment_expression" => {
-            let lhs = node.child_by_field_name("left");
-            let rhs = node.child_by_field_name("right");
-            if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
-                if lhs.kind() == "member_expression" {
-                    let obj = lhs.child_by_field_name("object");
-                    let prop = lhs.child_by_field_name("property");
-                    if let (Some(obj), Some(prop)) = (obj, prop) {
-                        // Guard: only static property access, not computed subscripts.
-                        let prop_kind = prop.kind();
-                        if prop_kind == "property_identifier" || prop_kind == "identifier" {
-                            if obj.kind() == "this" && rhs.kind() == "new_expression" {
-                                if let Some(ctor_type) = extract_new_expr_type_name(&rhs, source) {
-                                    let key = match enclosing_type_map_class(node, source) {
-                                        Some(class_name) => {
-                                            format!("{}.{}", class_name, node_text(&prop, source))
-                                        }
-                                        None => format!("this.{}", node_text(&prop, source)),
-                                    };
-                                    symbols.type_map.push(TypeMapEntry {
-                                        name: key,
-                                        type_name: ctor_type.to_string(),
-                                        confidence: 1.0,
-                                    });
-                                }
-                            } else if obj.kind() == "identifier" && rhs.kind() == "identifier" {
-                                let obj_name = node_text(&obj, source);
-                                if !is_js_builtin_global(obj_name) {
-                                    let key = format!("{}.{}", obj_name, node_text(&prop, source));
-                                    let rhs_name = node_text(&rhs, source).to_string();
-                                    symbols.type_map.push(TypeMapEntry {
-                                        name: key,
-                                        type_name: rhs_name,
-                                        confidence: 0.85,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // TypeScript class field declarations: `private repo: Repository<User>`
-        // Seeds a class-scoped key `ClassName.field` (confidence 0.9) as the primary
-        // entry so that two classes with identically-named fields don't overwrite each
-        // other's typeMap entry (issue #1458). The resolver's `CallerClass.X` fallback
-        // looks up exactly this key.
-        // Bare `field` and `this.field` keys are kept at lower confidence (0.6) as
-        // fallbacks for single-class files where the resolver may lack callerClass context.
+        "assignment_expression" => handle_assignment_type_map(node, source, symbols),
+        // TypeScript class field declarations.
         // Mirrors handleFieldDefTypeMap in src/extractors/javascript.ts.
-        "public_field_definition" | "field_definition" => {
-            let name_node = node.child_by_field_name("name")
-                .or_else(|| node.child_by_field_name("property"))
-                .or_else(|| find_child(node, "property_identifier"));
-            if let Some(name_node) = name_node {
-                let kind = name_node.kind();
-                if kind == "property_identifier" || kind == "identifier"
-                    || kind == "private_property_identifier"
-                {
-                    let field_name = node_text(&name_node, source).to_string();
-                    if let Some(type_anno) = find_child(node, "type_annotation") {
-                        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
-                            match enclosing_type_map_class(node, source) {
-                                Some(class_name) => {
-                                    // Primary: class-scoped key prevents cross-class collision.
-                                    set_type_map_entry(
-                                        symbols,
-                                        format!("{}.{}", class_name, field_name),
-                                        type_name.to_string(),
-                                        0.9,
-                                    );
-                                    // Fallback bare keys at lower confidence.
-                                    set_type_map_entry(symbols, field_name.clone(), type_name.to_string(), 0.6);
-                                    set_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string(), 0.6);
-                                }
-                                None => {
-                                    // No enclosing class declaration (e.g. class expression)
-                                    // — use bare keys only at full confidence.
-                                    set_type_map_entry(symbols, field_name.clone(), type_name.to_string(), 0.9);
-                                    set_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string(), 0.9);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        "public_field_definition" | "field_definition" => handle_field_def_type_map(node, source, symbols),
         _ => {}
+    }
+}
+
+/// Handle `variable_declarator` nodes in the type-map walk.
+///
+/// Seeds type-map entries from:
+/// - type annotations (`confidence = 0.9`)
+/// - constructor calls (`confidence = 1.0`)
+/// - Object.create({ key: fn }) composite pts keys (Phase 8.3e)
+/// - object-literal declarations at non-function scope (Phase 8.3f parity)
+fn handle_var_declarator_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(name_n) = node.child_by_field_name("name") else { return };
+    if name_n.kind() != "identifier" { return; }
+    let var_name = node_text(&name_n, source);
+    // Type annotation: confidence 0.9
+    if let Some(type_anno) = find_child(node, "type_annotation") {
+        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
+            push_type_map_entry(symbols, var_name.to_string(), type_name.to_string());
+        }
+    }
+    let Some(value_n) = node.child_by_field_name("value") else { return };
+    // Constructor: confidence 1.0 (overrides annotation in edge builder)
+    if value_n.kind() == "new_expression" {
+        if let Some(type_name) = extract_new_expr_type_name(&value_n, source) {
+            symbols.type_map.push(TypeMapEntry {
+                name: var_name.to_string(),
+                type_name: type_name.to_string(),
+                confidence: 1.0,
+            });
+        }
+    }
+    // Phase 8.3e: Object.create({ key: fn }) → composite pts key per property
+    if value_n.kind() == "call_expression" {
+        seed_object_create_entries(var_name, &value_n, source, symbols);
+    }
+    // Phase 8.3f parity: seed composite typeMap keys for ALL object-literal
+    // declarations (`const`, `let`, `var`) when at non-function scope.
+    // Mirrors WASM handleVarDeclaratorTypeMap (no isConst guard there).
+    // For `const`, extract_object_literal_functions already seeds these entries;
+    // dedup_type_map collapses any duplicates at equal confidence.
+    if value_n.kind() == "object" && find_parent_of_types(node, &[
+        "function_declaration", "arrow_function", "function_expression",
+        "method_definition", "generator_function_declaration", "generator_function",
+    ]).is_none() {
+        seed_objlit_type_map_entries(var_name, &value_n, source, symbols);
+    }
+}
+
+/// Handle `required_parameter` / `optional_parameter` nodes in the type-map walk.
+///
+/// Seeds a type-map entry when the parameter carries a TypeScript type annotation.
+fn handle_param_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("pattern")
+        .or_else(|| node.child_by_field_name("left"))
+        .or_else(|| node.child(0));
+    let Some(name_node) = name_node else { return };
+    if name_node.kind() != "identifier" { return };
+    let Some(type_anno) = find_child(node, "type_annotation") else { return };
+    if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
+        push_type_map_entry(
+            symbols,
+            node_text(&name_node, source).to_string(),
+            type_name.to_string(),
+        );
+    }
+}
+
+/// Handle `assignment_expression` nodes in the type-map walk.
+///
+/// Seeds two kinds of entries:
+/// - `this.prop = new Ctor()` → class-scoped key `ClassName.prop` (confidence 1.0)
+/// - `obj.prop = identifier` → composite key `obj.prop` (confidence 0.85)
+///
+/// Mirrors `handlePropWriteTypeMap` in `src/extractors/javascript.ts`.
+fn handle_assignment_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let lhs = node.child_by_field_name("left");
+    let rhs = node.child_by_field_name("right");
+    let (Some(lhs), Some(rhs)) = (lhs, rhs) else { return };
+    if lhs.kind() != "member_expression" { return; }
+    let obj = lhs.child_by_field_name("object");
+    let prop = lhs.child_by_field_name("property");
+    let (Some(obj), Some(prop)) = (obj, prop) else { return };
+    // Guard: only static property access, not computed subscripts.
+    let prop_kind = prop.kind();
+    if prop_kind != "property_identifier" && prop_kind != "identifier" { return; }
+    if obj.kind() == "this" && rhs.kind() == "new_expression" {
+        if let Some(ctor_type) = extract_new_expr_type_name(&rhs, source) {
+            let key = match enclosing_type_map_class(node, source) {
+                Some(class_name) => format!("{}.{}", class_name, node_text(&prop, source)),
+                None => format!("this.{}", node_text(&prop, source)),
+            };
+            symbols.type_map.push(TypeMapEntry {
+                name: key,
+                type_name: ctor_type.to_string(),
+                confidence: 1.0,
+            });
+        }
+    } else if obj.kind() == "identifier" && rhs.kind() == "identifier" {
+        let obj_name = node_text(&obj, source);
+        if !is_js_builtin_global(obj_name) {
+            let key = format!("{}.{}", obj_name, node_text(&prop, source));
+            let rhs_name = node_text(&rhs, source).to_string();
+            symbols.type_map.push(TypeMapEntry {
+                name: key,
+                type_name: rhs_name,
+                confidence: 0.85,
+            });
+        }
+    }
+}
+
+/// Handle `public_field_definition` / `field_definition` nodes in the type-map walk.
+///
+/// Seeds a class-scoped key `ClassName.field` (confidence 0.9) as the primary entry
+/// so that two classes with identically-named fields don't overwrite each other's
+/// typeMap entry (issue #1458). The resolver's `CallerClass.X` fallback looks up
+/// exactly this key. Bare `field` and `this.field` keys are kept at lower confidence
+/// (0.6) as fallbacks for single-class files where the resolver may lack callerClass.
+///
+/// Mirrors `handleFieldDefTypeMap` in `src/extractors/javascript.ts`.
+fn handle_field_def_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("property"))
+        .or_else(|| find_child(node, "property_identifier"));
+    let Some(name_node) = name_node else { return };
+    let kind = name_node.kind();
+    if kind != "property_identifier" && kind != "identifier" && kind != "private_property_identifier" {
+        return;
+    }
+    let field_name = node_text(&name_node, source).to_string();
+    let Some(type_anno) = find_child(node, "type_annotation") else { return };
+    let Some(type_name) = extract_simple_type_name(&type_anno, source) else { return };
+    match enclosing_type_map_class(node, source) {
+        Some(class_name) => {
+            // Primary: class-scoped key prevents cross-class collision.
+            set_type_map_entry(
+                symbols,
+                format!("{}.{}", class_name, field_name),
+                type_name.to_string(),
+                0.9,
+            );
+            // Fallback bare keys at lower confidence.
+            set_type_map_entry(symbols, field_name.clone(), type_name.to_string(), 0.6);
+            set_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string(), 0.6);
+        }
+        None => {
+            // No enclosing class declaration (e.g. class expression)
+            // — use bare keys only at full confidence.
+            set_type_map_entry(symbols, field_name.clone(), type_name.to_string(), 0.9);
+            set_type_map_entry(symbols, format!("this.{}", field_name), type_name.to_string(), 0.9);
+        }
     }
 }
 
