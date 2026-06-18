@@ -311,6 +311,23 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
         }
     }
 
+    // 3c. Mark symbols with exported=1 as exported — the extractor sets this flag when the
+    // author writes `export interface Foo { }` / `export type Bar = ...` / `export function`.
+    // Cross-file edge inference misses these when the symbol is only used as a type annotation
+    // within the same file (no calls/imports-type edge is produced for same-file type usage).
+    // This fixes false dead-unresolved classification for exported interfaces (#1583).
+    {
+        let mut stmt = tx.prepare(
+            "SELECT id FROM nodes
+             WHERE exported = 1
+               AND kind NOT IN ('file', 'directory', 'parameter', 'property')",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        for r in rows.flatten() {
+            exported_ids.insert(r);
+        }
+    }
+
     // 4. Production fan-in (excluding test files, including imports-type)
     let prod_fan_in: HashMap<i64, u32> = {
         let sql = format!(
@@ -663,6 +680,27 @@ pub(crate) fn do_classify_incremental(
         }
         let mut rrows = stmt.raw_query();
         while let Some(row) = rrows.next()? {
+            exported_ids.insert(row.get::<_, i64>(0)?);
+        }
+    }
+
+    // 3c. Mark symbols with exported=1 as exported — scoped to affected files only.
+    // Same rationale as the full-classify path: the extractor's exported flag is
+    // authoritative for same-file-only type annotations that produce no edges (#1583).
+    {
+        let explicit_sql = format!(
+            "SELECT id FROM nodes
+             WHERE exported = 1
+               AND kind NOT IN ('file', 'directory', 'parameter', 'property')
+               AND file IN ({})",
+            affected_ph
+        );
+        let mut stmt = tx.prepare(&explicit_sql)?;
+        for (i, f) in all_affected.iter().enumerate() {
+            stmt.raw_bind_parameter(i + 1, *f)?;
+        }
+        let mut erows = stmt.raw_query();
+        while let Some(row) = erows.next()? {
             exported_ids.insert(row.get::<_, i64>(0)?);
         }
     }

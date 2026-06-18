@@ -801,6 +801,20 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     .all() as { id: number }[];
   for (const r of reexportExported) exportedIds.add(r.id);
 
+  // Mark symbols with exported=1 as exported — the extractor sets this flag when the
+  // author writes `export interface Foo { }` / `export type Bar = ...` / `export function`.
+  // Cross-file edge inference misses these when the symbol is only used as a type annotation
+  // within the same file (no calls/imports-type edge is produced for same-file type usage).
+  // This fixes false dead-unresolved classification for exported interfaces with no external callers (#1583).
+  const explicitlyExported = db
+    .prepare(
+      `SELECT id FROM nodes
+      WHERE exported = 1
+        AND kind NOT IN ('file', 'directory', 'parameter', 'property')`,
+    )
+    .all() as { id: number }[];
+  for (const r of explicitlyExported) exportedIds.add(r.id);
+
   // Compute production fan-in (excluding callers in test files)
   const prodFanInMap = new Map<number, number>();
   const prodRows = db
@@ -967,6 +981,21 @@ function classifyNodeRolesIncremental(
     )
     .all(...allAffectedFiles) as { id: number }[];
   for (const r of reexportExported) exportedIds.add(r.id);
+
+  // 3c. Mark symbols with exported=1 as exported — the extractor sets this flag when the
+  // author writes `export interface Foo { }` / `export type Bar = ...` / `export function`.
+  // Cross-file edge inference misses these when the symbol is only used as a type annotation
+  // within the same file (no calls/imports-type edge is produced for same-file type usage).
+  // Scoped to affected files only for the incremental path (#1583).
+  const explicitlyExported = db
+    .prepare(
+      `SELECT id FROM nodes
+      WHERE exported = 1
+        AND kind NOT IN ('file', 'directory', 'parameter', 'property')
+        AND file IN (${placeholders})`,
+    )
+    .all(...allAffectedFiles) as { id: number }[];
+  for (const r of explicitlyExported) exportedIds.add(r.id);
 
   // 4. Production fan-in for affected nodes only
   const prodFanInMap = new Map<number, number>();
