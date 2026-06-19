@@ -106,6 +106,9 @@ static JS_TS_DATAFLOW: DataflowRules = DataflowRules {
         "arrow_function",
         "function_expression",
         "function",
+        // Generator functions — tree-sitter-javascript produces separate node types for these
+        "generator_function_declaration",
+        "generator_function",
     ],
     name_field: "name",
     var_assigned_fn_parent: Some("variable_declarator"),
