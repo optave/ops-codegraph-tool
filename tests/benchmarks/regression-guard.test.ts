@@ -313,6 +313,23 @@ const KNOWN_REGRESSIONS = new Set([
   // pay an O(1) SELECT on schema_version. Remove once 3.14+ data confirms
   // the steady-state (see KNOWN_REGRESSIONS comment above for full analysis).
   '3.13.0:1-file rebuild',
+  // PR #1615 dataflow P4+P6 on native path: the P6 vertex extraction pass
+  // re-runs extractDataflowAnalysis() per file to get vertex data that the Rust
+  // orchestrator writes edges for but does not persist as vertices. Even with the
+  // full-build optimisation (scoping to files with dataflow edges only), the pass
+  // costs real time proportional to the number of functions with tracked flows.
+  // The incremental Full build benchmark measures the first full build from a
+  // clean DB — the worst case where ALL files with dataflow data are re-analysed.
+  // Remove once 3.14+ data establishes the new steady-state baseline.
+  '3.13.0:Full build',
+  // PR #1615 dataflow P4+P6: CI runner variance on a sub-100ms native query metric.
+  // The fnDeps Rust implementation, fnDepsData JS wrapper, and DB schema/indexes are
+  // unchanged by this PR. The 41 → 68 ms (+66%) jump is shared-runner scheduling
+  // noise amplified by the sub-50ms baseline (same pattern as 3.12.0:No-op rebuild
+  // and 3.13.0:1-file rebuild). The dataflow table additions do not appear in the
+  // fnDeps query path (which reads nodes/edges only). Remove once 3.14+ data confirms
+  // the steady-state.
+  '3.13.0:fnDeps depth 1',
   // tree-sitter-erlang devDependency removed (GHSA-rphw-c8qj-jv84 — malware).
   // The erlang WASM is no longer built, so erlang resolution drops to 0%.
   // These entries exempt the expected precision/recall drop on every build

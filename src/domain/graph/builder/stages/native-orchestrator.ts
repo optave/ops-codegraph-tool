@@ -323,12 +323,44 @@ async function runDataflowVertexPass(
   if (changedFiles && changedFiles.length > 0) {
     filesToProcess = changedFiles;
   } else {
-    // Full build or no scope — scan all source files from DB (exclude directory nodes).
+    // Full build: scope to files that need vertex extraction rather than scanning every
+    // file in the project. Two categories:
+    //   (a) Non-native language files — NATIVE_SUPPORTED_EXTENSIONS doesn't cover them,
+    //       so extractDataflowAnalysis returns null; the wasmStubs path calls buildDataflowEdges
+    //       which writes both edges AND vertices for those files.
+    //   (b) Native-language files with dataflow edges already written by the Rust orchestrator
+    //       (flows_to/returns/mutates) — those need vertex rows to connect them.
+    //
+    // Skipping native-language files with no dataflow edges is safe: extractDataflowAnalysis
+    // would return argFlows=[], assignments=[], mutations=[] for them, producing zero vertices
+    // and zero inter-procedural edges. Excluding them avoids O(n_total_files) re-analysis on
+    // every full build (codegraph itself: ~2000 files, ~50-80% with no dataflow edges).
+    const filesWithDataflow = new Set(
+      (
+        ctx.db
+          .prepare(
+            `SELECT DISTINCT n.file
+             FROM dataflow d
+             JOIN nodes n ON n.id = d.source_id
+             WHERE n.file IS NOT NULL`,
+          )
+          .all() as { file: string }[]
+      ).map((r) => r.file),
+    );
+
     filesToProcess = (
       ctx.db
         .prepare(`SELECT DISTINCT file FROM nodes WHERE file IS NOT NULL AND kind != 'directory'`)
         .all() as { file: string }[]
-    ).map((r) => r.file);
+    )
+      .map((r) => r.file)
+      .filter((f) => {
+        const ext = path.extname(f).toLowerCase();
+        // Non-native files: always include (WASM handles them via wasmStubs path).
+        if (!NATIVE_SUPPORTED_EXTENSIONS.has(ext)) return true;
+        // Native files: only include when Rust wrote dataflow edges for them.
+        return filesWithDataflow.has(f);
+      });
   }
 
   // Split files into two buckets:
