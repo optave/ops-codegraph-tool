@@ -836,6 +836,56 @@ export function buildDataflowVerticesFromMap(
   return buildInterproceduralStitch(db, allCandidates, allCaptures);
 }
 
+/**
+ * P4 re-stitch for the native orchestrator path.
+ *
+ * When only callee files changed, their old param vertices are purged and
+ * recreated by P6's vertex pass, but unchanged caller files are never
+ * re-processed — their arg_in edges are deleted and never replaced.
+ * This function finds those caller files, parses them with WASM (lazy init),
+ * and re-inserts the missing arg_in / return_out edges.
+ *
+ * Safe to call after buildDataflowVerticesFromMap — only inserts new edges.
+ */
+export async function buildDataflowP4ForNative(
+  db: BetterSqlite3Database,
+  changedFiles: string[],
+  rootDir: string,
+): Promise<void> {
+  if (changedFiles.length === 0) return;
+
+  // Skip on full builds — all files were in the changed set, so there are no
+  // unchanged callers to re-stitch.
+  const totalFilesInDb = (
+    db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
+  ).n;
+  if (changedFiles.length >= totalFilesInDb) return;
+
+  const extToLang = buildExtToLangMap();
+  const changedRelPaths = new Set(changedFiles);
+  const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
+  if (changedFuncIds.length === 0) return;
+
+  // parsers=null, getParserFn=null → collectCallerStitchCandidates initialises
+  // WASM parsers lazily for the caller files it needs to re-parse.
+  const { candidates, captures } = await collectCallerStitchCandidates(
+    db,
+    changedFuncIds,
+    changedRelPaths,
+    rootDir,
+    extToLang,
+    null,
+    null,
+  );
+
+  if (candidates.length > 0) {
+    const count = buildInterproceduralStitch(db, candidates, captures);
+    if (count > 0) {
+      info(`Dataflow (native P4): ${count} inter-procedural edges re-stitched`);
+    }
+  }
+}
+
 export async function buildDataflowEdges(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbolsDataflow>,
