@@ -589,6 +589,124 @@ function buildInterproceduralStitch(
 
 // ── buildDataflowEdges ──────────────────────────────────────────────────────
 
+// ── P4 helpers ───────────────────────────────────────────────────────────────
+
+/** Return IDs of all function/method nodes in the given relative file paths. */
+function collectFuncIdsForFiles(db: BetterSqlite3Database, relPaths: Iterable<string>): number[] {
+  const stmt = db.prepare(`SELECT id FROM nodes WHERE file = ? AND kind IN ('function', 'method')`);
+  const ids: number[] = [];
+  for (const p of relPaths) {
+    for (const row of stmt.all(p) as { id: number }[]) ids.push(row.id);
+  }
+  return ids;
+}
+
+/**
+ * P4: Re-collect stitch candidates from caller files that were NOT in the
+ * changed set but contain calls to functions that WERE changed.
+ *
+ * During an incremental build the changed files' param vertices are purged
+ * and recreated, but the callers' files are never re-parsed — so their
+ * arg_in edges (pointing to the old param vertices) are deleted and never
+ * replaced. This function reads those caller files from disk and rebuilds
+ * the StitchCandidate list so buildInterproceduralStitch can reconnect them.
+ */
+async function collectCallerStitchCandidates(
+  db: BetterSqlite3Database,
+  changedFuncIds: number[],
+  changedRelPaths: Set<string>,
+  rootDir: string,
+  extToLang: Map<string, string>,
+  parsers: unknown,
+  getParserFn: ((parsers: any, absPath: string) => any) | null,
+): Promise<{ candidates: StitchCandidate[]; captures: ReturnCapture[] }> {
+  if (changedFuncIds.length === 0) return { candidates: [], captures: [] };
+
+  // Find distinct caller files that have flows_to edges targeting any changed
+  // function and are NOT already in the changed file set (those are handled by
+  // the main per-file loop).
+  const placeholders = changedFuncIds.map(() => '?').join(',');
+  const callerFileRows = db
+    .prepare(
+      `SELECT DISTINCT n.file AS caller_file
+       FROM dataflow d
+       JOIN nodes n ON n.id = d.source_id
+       WHERE d.target_id IN (${placeholders})
+         AND d.kind = 'flows_to'`,
+    )
+    .all(...changedFuncIds) as { caller_file: string }[];
+
+  const callerFiles = callerFileRows
+    .map((r) => r.caller_file)
+    .filter((f) => !changedRelPaths.has(f));
+
+  if (callerFiles.length === 0) return { candidates: [], captures: [] };
+
+  // Ensure parsers are available — the main loop may have skipped loading them
+  // if all changed files came through the native bulk-insert path.
+  let activeParsers = parsers;
+  let activeGetParserFn = getParserFn;
+  if (!activeGetParserFn) {
+    const { createParsers, getParser } = await import('../domain/parser.js');
+    activeParsers = await createParsers();
+    activeGetParserFn = getParser;
+  }
+
+  const changedFuncIdSet = new Set(changedFuncIds);
+  const stmts = prepareNodeResolvers(db);
+  const candidates: StitchCandidate[] = [];
+  const captures: ReturnCapture[] = [];
+
+  for (const callerFile of callerFiles) {
+    // Read the caller file from disk without touching its existing DB rows.
+    const stub: FileSymbolsDataflow = { definitions: [], _langId: null, _tree: null };
+    const data = getDataflowForFile(
+      stub,
+      callerFile,
+      rootDir,
+      extToLang,
+      activeParsers,
+      activeGetParserFn,
+    );
+    if (!data) continue;
+
+    const resolver = makeNodeResolver(stmts, callerFile);
+    const argFlows = data.argFlows as unknown as VisitorArgFlow[];
+    const assignments = data.assignments as unknown as VisitorAssignment[];
+
+    for (const af of argFlows) {
+      const callerFn = resolver(af.callerFunc);
+      const calleeFn = resolver(af.calleeName);
+      if (!callerFn || !calleeFn) continue;
+      if (!changedFuncIdSet.has(calleeFn.id)) continue; // only re-stitch calls to changed callees
+      candidates.push({
+        callerFuncId: callerFn.id,
+        calleeFuncId: calleeFn.id,
+        argIndex: af.argIndex,
+        bindingType: af.binding.type,
+        bindingIndex: af.binding.index,
+        argName: af.argName,
+        expression: af.expression,
+        line: af.line,
+        confidence: af.confidence,
+      });
+    }
+
+    for (const a of assignments) {
+      const callerFn = resolver(a.callerFunc);
+      const calleeFn = resolver(a.sourceCallName);
+      if (!callerFn || !calleeFn) continue;
+      if (!changedFuncIdSet.has(calleeFn.id)) continue;
+      captures.push({ callerFuncId: callerFn.id, calleeFuncId: calleeFn.id, varName: a.varName });
+    }
+  }
+
+  debug(
+    `Dataflow P4: re-stitched ${candidates.length} candidate(s) from ${callerFiles.length} caller file(s)`,
+  );
+  return { candidates, captures };
+}
+
 function prepareNodeResolvers(db: BetterSqlite3Database): {
   getNodeByNameAndFile: ReturnType<BetterSqlite3Database['prepare']>;
   getNodeByName: ReturnType<BetterSqlite3Database['prepare']>;
@@ -747,6 +865,26 @@ export async function buildDataflowEdges(
   });
 
   tx();
+
+  // P4: Incremental re-stitch — if only a subset of files changed, callers of
+  // the changed functions were not in fileSymbols, so their arg_in edges were
+  // deleted by the purge but never reconstructed. Re-collect stitch candidates
+  // from those caller files now (read from disk, no DB writes).
+  if (vstmts.available) {
+    const changedRelPaths = new Set<string>(fileSymbols.keys());
+    const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
+    const extra = await collectCallerStitchCandidates(
+      db,
+      changedFuncIds,
+      changedRelPaths,
+      rootDir,
+      extToLang,
+      parsers,
+      getParserFn,
+    );
+    allCandidates.push(...extra.candidates);
+    allCaptures.push(...extra.captures);
+  }
 
   // P2: inter-procedural stitch — runs after all per-file vertices + summaries committed
   const interCount = vstmts.available
