@@ -843,6 +843,38 @@ export async function buildDataflowEdges(
         }
         info(`Dataflow (native bulk): ${inserted} edges inserted`);
       }
+
+      // P6: vertex extraction on the native path.
+      // Rust DataflowResult already contains parameters/returns — no re-parse needed.
+      // P4 (incremental re-stitch of unchanged callers) is not run on this path;
+      // full rebuilds are guaranteed by the v19 migration sentinel.
+      const vstmts = prepareVertexStmts(db);
+      if (vstmts.available) {
+        const allCandidates: StitchCandidate[] = [];
+        const allCaptures: ReturnCapture[] = [];
+
+        const txVertex = db.transaction(() => {
+          for (const [relPath, symbols] of fileSymbols) {
+            if (!symbols.dataflow) continue;
+            const ext = path.extname(relPath).toLowerCase();
+            if (!DATAFLOW_EXTENSIONS.has(ext)) continue;
+            const resolver = makeNodeResolver(stmts, relPath);
+            const { candidates, captures } = buildDataflowVerticesAndEdges(
+              db,
+              vstmts,
+              symbols.dataflow,
+              resolver,
+            );
+            allCandidates.push(...candidates);
+            allCaptures.push(...captures);
+          }
+        });
+        txVertex();
+
+        const interCount = buildInterproceduralStitch(db, allCandidates, allCaptures);
+        info(`Dataflow (native): ${interCount} inter-procedural edges inserted`);
+      }
+
       return;
     }
     debug('Dataflow: some files lack pre-computed data — falling back to JS');

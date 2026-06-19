@@ -317,6 +317,13 @@ export const MIGRATIONS: Migration[] = [
         WHERE sv.func_id != tv.func_id;
     `,
   },
+  {
+    version: 19,
+    // P6 sentinel: forces a full rebuild so that databases built with the native
+    // fast path (which skipped vertex extraction before P6) backfill
+    // dataflow_vertices and dataflow_summary on the next `codegraph build`.
+    up: `SELECT 1`,
+  },
 ];
 
 interface PragmaColumnInfo {
