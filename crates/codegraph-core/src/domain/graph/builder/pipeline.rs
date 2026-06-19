@@ -811,6 +811,16 @@ fn reparse_barrel_candidates(
             // merged into file_symbols here in Stage 6b *after* Stage 5 has
             // already run, so wiping contains/parameter_of would permanently
             // drop them.
+            // Clear dataflow rows that reference these outgoing edges via call_edge_id
+            // before deleting the edges — avoids SQLITE_CONSTRAINT_FOREIGNKEY when
+            // PRAGMA foreign_keys is ON (dataflow.call_edge_id REFERENCES edges.id).
+            let _ = conn.execute(
+                "DELETE FROM dataflow WHERE call_edge_id IN \
+                 (SELECT id FROM edges WHERE source_id IN \
+                  (SELECT id FROM nodes WHERE file = ?1) \
+                  AND kind NOT IN ('contains', 'parameter_of'))",
+                rusqlite::params![&rel],
+            );
             let _ = conn.execute(
                 "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) \
                  AND kind NOT IN ('contains', 'parameter_of')",
