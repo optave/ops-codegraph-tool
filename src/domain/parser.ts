@@ -716,7 +716,17 @@ function patchReturnTypeMap(r: any): void {
 }
 
 /** Wrap bindingType into binding object for dataflow argFlows and mutations. */
-function patchDataflow(dataflow: any): void {
+/**
+ * Normalise a DataflowResult from the native Rust extractor to the VisitorArgFlow
+ * shape expected by the TypeScript dataflow analysis layer.
+ *
+ * The Rust `DataflowArgFlow` emits `bindingType: string | null` as a flat field.
+ * The TS analysis layer (`buildDataflowVerticesAndEdges`, `collectCallerStitchCandidates`)
+ * expects `binding: { type: string; index?: number }` on each argFlow/mutation entry.
+ * This normalisation must be applied whenever `extractDataflowAnalysis` is called
+ * outside the standard `patchNativeResult` pipeline.
+ */
+export function patchDataflowResult(dataflow: any): void {
   if (dataflow.argFlows) {
     for (const f of dataflow.argFlows) {
       f.binding = f.bindingType ? { type: f.bindingType } : null;
@@ -727,6 +737,10 @@ function patchDataflow(dataflow: any): void {
       m.binding = m.bindingType ? { type: m.bindingType } : null;
     }
   }
+}
+
+function patchDataflow(dataflow: any): void {
+  patchDataflowResult(dataflow);
 }
 
 function patchNativeResult(r: any): ExtractorOutput {

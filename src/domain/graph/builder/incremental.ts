@@ -114,10 +114,12 @@ function buildContainmentEdges(
 // Lazily-cached prepared statements for reverse-dep operations
 let _revDepDb: BetterSqlite3Database | null = null;
 let _findRevDepsStmt: SqliteStatement | null = null;
+let _deleteDataflowByCallEdgeStmt: SqliteStatement | null | undefined; // undefined = not yet tried
 let _deleteOutEdgesStmt: SqliteStatement | null = null;
 
 function getRevDepStmts(db: BetterSqlite3Database): {
   findRevDepsStmt: SqliteStatement;
+  deleteDataflowByCallEdgeStmt: SqliteStatement | null;
   deleteOutEdgesStmt: SqliteStatement;
 } {
   if (_revDepDb !== db) {
@@ -128,12 +130,24 @@ function getRevDepStmts(db: BetterSqlite3Database): {
        JOIN nodes n_tgt ON e.target_id = n_tgt.id
        WHERE n_tgt.file = ? AND n_src.file != ? AND n_src.kind != 'directory'`,
     );
+    // Delete inter-procedural dataflow rows whose call_edge_id references an
+    // outgoing edge from this file. Must run before deleteOutEdgesStmt to avoid
+    // SQLITE_CONSTRAINT_FOREIGNKEY: dataflow.call_edge_id REFERENCES edges(id).
+    try {
+      _deleteDataflowByCallEdgeStmt = db.prepare(
+        `DELETE FROM dataflow WHERE call_edge_id IN
+           (SELECT id FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?))`,
+      );
+    } catch {
+      _deleteDataflowByCallEdgeStmt = null; // dataflow table or call_edge_id column absent
+    }
     _deleteOutEdgesStmt = db.prepare(
       'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
     );
   }
   return {
     findRevDepsStmt: _findRevDepsStmt!,
+    deleteDataflowByCallEdgeStmt: _deleteDataflowByCallEdgeStmt ?? null,
     deleteOutEdgesStmt: _deleteOutEdgesStmt!,
   };
 }
@@ -144,7 +158,10 @@ function findReverseDeps(db: BetterSqlite3Database, relPath: string): string[] {
 }
 
 function deleteOutgoingEdges(db: BetterSqlite3Database, relPath: string): void {
-  const { deleteOutEdgesStmt } = getRevDepStmts(db);
+  const { deleteDataflowByCallEdgeStmt, deleteOutEdgesStmt } = getRevDepStmts(db);
+  // Clear any inter-procedural dataflow rows that reference outgoing edges via
+  // call_edge_id before deleting those edges (FK: dataflow.call_edge_id → edges.id).
+  deleteDataflowByCallEdgeStmt?.run(relPath);
   deleteOutEdgesStmt.run(relPath);
 }
 

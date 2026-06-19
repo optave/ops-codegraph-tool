@@ -937,7 +937,7 @@ const { results: fused } = await multiSearchData(
 - **TypeScript compiler integration is auto-enabled** — when `typescript` is installed and a `tsconfig.json` is found, the TypeScript compiler API pass runs automatically; disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` if you want faster builds without it; heuristic type inference (annotations, `new` expressions, assignment chains) is always active as a baseline
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
-- **Dataflow analysis** — interprocedural edges (`arg_in`, `return_out`) are re-stitched incrementally when callee files change; adding a brand-new callee file with no prior `flows_to` record requires a full rebuild to connect it
+- **Dataflow analysis** — interprocedural edges (`arg_in`, `return_out`) require a full build after adding new callee files; incremental re-stitch fires on both the JS and native engine paths (P4 re-stitch closes issue #1614)
 
 ## 🗺️ Roadmap
 

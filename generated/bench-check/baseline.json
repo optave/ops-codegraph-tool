@@ -1,0 +1,26 @@
+{
+  "savedAt": "2026-06-19T06:37:46.259657Z",
+  "version": "3.13.0",
+  "gitRef": "02e55f70",
+  "threshold": 15,
+  "metrics": {
+    "build.native.ms": 11441,
+    "build.wasm.ms": 11861,
+    "build.native.perFile.ms": 16.2,
+    "build.wasm.perFile.ms": 16.8,
+    "dataflow.native.ms": 741.1,
+    "dataflow.wasm.ms": 744.9,
+    "incremental.native.noOp.ms": 22,
+    "incremental.native.oneFile.ms": 207,
+    "incremental.wasm.noOp.ms": 22,
+    "incremental.wasm.oneFile.ms": 130,
+    "query.fnDeps.ms": 2.3,
+    "query.fnImpact.ms": 2.6,
+    "query.roles.ms": 23.1,
+    "resolve.native.ms": 4.1,
+    "resolve.js.ms": 7.1,
+    "graph.nodes": 22164,
+    "graph.edges": 45676,
+    "graph.files": 707
+  }
+}
