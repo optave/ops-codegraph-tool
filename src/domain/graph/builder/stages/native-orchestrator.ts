@@ -41,6 +41,7 @@ import {
   getInstalledWasmExtensions,
   NATIVE_SUPPORTED_EXTENSIONS,
   parseFilesWasmForBackfill,
+  patchDataflowResult,
 } from '../../../parser.js';
 import { computeConfidence } from '../../resolve.js';
 import type { CallNodeLookup } from '../call-resolver.js';
@@ -322,12 +323,44 @@ async function runDataflowVertexPass(
   if (changedFiles && changedFiles.length > 0) {
     filesToProcess = changedFiles;
   } else {
-    // Full build or no scope — scan all files from DB.
+    // Full build: scope to files that need vertex extraction rather than scanning every
+    // file in the project. Two categories:
+    //   (a) Non-native language files — NATIVE_SUPPORTED_EXTENSIONS doesn't cover them,
+    //       so extractDataflowAnalysis returns null; the wasmStubs path calls buildDataflowEdges
+    //       which writes both edges AND vertices for those files.
+    //   (b) Native-language files with dataflow edges already written by the Rust orchestrator
+    //       (flows_to/returns/mutates) — those need vertex rows to connect them.
+    //
+    // Skipping native-language files with no dataflow edges is safe: extractDataflowAnalysis
+    // would return argFlows=[], assignments=[], mutations=[] for them, producing zero vertices
+    // and zero inter-procedural edges. Excluding them avoids O(n_total_files) re-analysis on
+    // every full build (codegraph itself: ~2000 files, ~50-80% with no dataflow edges).
+    const filesWithDataflow = new Set(
+      (
+        ctx.db
+          .prepare(
+            `SELECT DISTINCT n.file
+             FROM dataflow d
+             JOIN nodes n ON n.id = d.source_id
+             WHERE n.file IS NOT NULL`,
+          )
+          .all() as { file: string }[]
+      ).map((r) => r.file),
+    );
+
     filesToProcess = (
-      ctx.db.prepare(`SELECT DISTINCT file FROM nodes WHERE file IS NOT NULL`).all() as {
-        file: string;
-      }[]
-    ).map((r) => r.file);
+      ctx.db
+        .prepare(`SELECT DISTINCT file FROM nodes WHERE file IS NOT NULL AND kind != 'directory'`)
+        .all() as { file: string }[]
+    )
+      .map((r) => r.file)
+      .filter((f) => {
+        const ext = path.extname(f).toLowerCase();
+        // Non-native files: always include (WASM handles them via wasmStubs path).
+        if (!NATIVE_SUPPORTED_EXTENSIONS.has(ext)) return true;
+        // Native files: only include when Rust wrote dataflow edges for them.
+        return filesWithDataflow.has(f);
+      });
   }
 
   // Split files into two buckets:
@@ -347,6 +380,12 @@ async function runDataflowVertexPass(
       // Language-specific parse failure — fall through to WASM.
     }
     if (result) {
+      // Normalise the native DataflowResult: Rust emits `bindingType: string | null`
+      // (flat) while the TS dataflow layer expects `binding: { type, index? }` (object).
+      // patchNativeResult handles this via patchDataflow for the full parse path;
+      // extractDataflowAnalysis is a vertex-only fast path that bypasses patchNativeResult,
+      // so we apply the same normalisation here.
+      patchDataflowResult(result);
       nativeDataflow.set(relPath, result);
     } else {
       // Rust has no dataflow rules for this language; WASM fallback will handle
@@ -356,47 +395,125 @@ async function runDataflowVertexPass(
     }
   }
 
-  const { buildDataflowVerticesFromMap, buildDataflowEdges, buildDataflowP4ForNative } =
-    (await import('../../../../features/dataflow.js')) as {
-      buildDataflowVerticesFromMap: (
-        db: BetterSqlite3Database,
-        dataflowMap: Map<string, DataflowResult>,
-      ) => number;
-      buildDataflowEdges: (
-        db: BetterSqlite3Database,
-        fileSymbols: Map<string, unknown>,
-        rootDir: string,
-        engineOpts?: unknown,
-      ) => Promise<void>;
-      buildDataflowP4ForNative: (
-        db: BetterSqlite3Database,
-        changedFiles: string[],
-        rootDir: string,
-      ) => Promise<void>;
-    };
+  const { buildExtToLangMap } = (await import('../../../../ast-analysis/shared.js')) as {
+    buildExtToLangMap: () => Map<string, string>;
+  };
+
+  const {
+    buildDataflowVerticesFromMap,
+    buildDataflowEdges,
+    collectCallerStitchCandidates,
+    collectFuncIdsForFiles,
+  } = (await import('../../../../features/dataflow.js')) as {
+    buildDataflowVerticesFromMap: (
+      db: BetterSqlite3Database,
+      dataflowMap: Map<string, DataflowResult>,
+      extraCandidates?: Array<{
+        callerFuncId: number;
+        calleeFuncId: number;
+        argIndex: number;
+        bindingType: string;
+        bindingIndex: number;
+        argName: string;
+        expression: string | null;
+        line: number;
+        confidence: number;
+      }>,
+      extraCaptures?: Array<{ callerFuncId: number; calleeFuncId: number; varName: string }>,
+    ) => number;
+    buildDataflowEdges: (
+      db: BetterSqlite3Database,
+      fileSymbols: Map<string, unknown>,
+      rootDir: string,
+      engineOpts?: unknown,
+    ) => Promise<void>;
+    collectCallerStitchCandidates: (
+      db: BetterSqlite3Database,
+      changedFuncIds: number[],
+      changedRelPaths: Set<string>,
+      rootDir: string,
+      extToLang: Map<string, string>,
+      parsers: unknown,
+      getParserFn: unknown,
+    ) => Promise<{
+      candidates: Array<{
+        callerFuncId: number;
+        calleeFuncId: number;
+        argIndex: number;
+        bindingType: string;
+        bindingIndex: number;
+        argName: string;
+        expression: string | null;
+        line: number;
+        confidence: number;
+      }>;
+      captures: Array<{ callerFuncId: number; calleeFuncId: number; varName: string }>;
+    }>;
+    collectFuncIdsForFiles: (db: BetterSqlite3Database, relPaths: Iterable<string>) => number[];
+  };
 
   // Rust-supported languages: build vertices only (edges already written by Rust orchestrator).
   if (nativeDataflow.size > 0) {
-    const interCount = buildDataflowVerticesFromMap(ctx.db, nativeDataflow);
+    // P4: On incremental builds, unchanged caller files' arg_in edges were deleted when
+    // the changed files' param vertices were purged and recreated. Re-collect stitch
+    // candidates from those caller files so buildInterproceduralStitch can reconnect them.
+    // Skip on full builds (changedFiles absent/empty) — nativeDataflow covers all files.
+    let p4Candidates: Array<{
+      callerFuncId: number;
+      calleeFuncId: number;
+      argIndex: number;
+      bindingType: string;
+      bindingIndex: number;
+      argName: string;
+      expression: string | null;
+      line: number;
+      confidence: number;
+    }> = [];
+    let p4Captures: Array<{ callerFuncId: number; calleeFuncId: number; varName: string }> = [];
+
+    if (changedFiles && changedFiles.length > 0) {
+      const changedSet = new Set(changedFiles);
+      const totalFilesInDb = (
+        ctx.db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
+      ).n;
+      // Only run P4 when this is a real incremental build (not all files changed).
+      if (nativeDataflow.size < totalFilesInDb) {
+        const changedFuncIds = collectFuncIdsForFiles(ctx.db, changedSet);
+        if (changedFuncIds.length > 0) {
+          const extra = await collectCallerStitchCandidates(
+            ctx.db,
+            changedFuncIds,
+            changedSet,
+            ctx.rootDir,
+            buildExtToLangMap(),
+            null, // parsers — lazily loaded inside collectCallerStitchCandidates
+            null, // getParserFn — lazily loaded inside collectCallerStitchCandidates
+          );
+          p4Candidates = extra.candidates as typeof p4Candidates;
+          p4Captures = extra.captures;
+        }
+      }
+    }
+
+    const interCount = buildDataflowVerticesFromMap(
+      ctx.db,
+      nativeDataflow,
+      p4Candidates.length > 0 ? p4Candidates : undefined,
+      p4Captures.length > 0 ? p4Captures : undefined,
+    );
     if (interCount > 0) {
-      info(`Dataflow (native orchestrator): ${interCount} inter-procedural edges inserted`);
+      info(
+        `Dataflow (native orchestrator): ${interCount} inter-procedural edges inserted${p4Candidates.length > 0 ? ` (P4: ${p4Candidates.length} re-stitch candidate(s) from unchanged callers)` : ''}`,
+      );
     }
   }
 
   // Rust-unsupported languages: run the full WASM extraction (edges + vertices).
-  // Passing nativeDb so the P6 vertex path fires after WASM inserts edges.
+  // wasmStubs entries have no `.dataflow` property, so the native bulk-insert
+  // fast path in buildDataflowEdges is always skipped for them — WASM runs
+  // both edge insertion and vertex extraction end-to-end.
   if (wasmStubs.size > 0) {
-    await buildDataflowEdges(ctx.db, wasmStubs, ctx.rootDir, {
-      nativeDb: ctx.nativeDb,
-      suspendJsDb: () => {},
-      resumeJsDb: () => {},
-    });
-  }
-
-  // P4: Re-stitch arg_in edges for unchanged callers of changed callees.
-  // Only meaningful on incremental builds where some files were not re-parsed.
-  if (changedFiles && changedFiles.length > 0) {
-    await buildDataflowP4ForNative(ctx.db, changedFiles, ctx.rootDir);
+    await buildDataflowEdges(ctx.db, wasmStubs, ctx.rootDir);
   }
 }
 

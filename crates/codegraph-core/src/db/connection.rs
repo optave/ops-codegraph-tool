@@ -1360,7 +1360,15 @@ impl NativeDatabase {
             ("DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
             ("DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
             ("DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            // Delete dataflow rows that reference edges touching this file via call_edge_id
+            // BEFORE deleting those edges — dataflow.call_edge_id REFERENCES edges(id)
+            // causes SQLITE_CONSTRAINT_FOREIGNKEY if edges are deleted first.
+            ("DELETE FROM dataflow WHERE call_edge_id IN (SELECT id FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1))", false),
             ("DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            // dataflow rows linked via vertex FK (v18+ schemas).
+            ("DELETE FROM dataflow WHERE source_vertex IN (SELECT id FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1)) OR target_vertex IN (SELECT id FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1))", false),
+            ("DELETE FROM dataflow_summary WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            ("DELETE FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
             ("DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
             ("DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
             ("DELETE FROM ast_nodes WHERE file = ?1", false),
@@ -1388,17 +1396,22 @@ impl NativeDatabase {
 
         // Delete outgoing edges for reverse-dep files in the same transaction (#670).
         // These files keep their nodes but need outgoing edges rebuilt.
+        // Clear dataflow rows referencing those outgoing edges via call_edge_id first
+        // to satisfy the FK constraint: dataflow.call_edge_id REFERENCES edges(id).
         if let Some(ref rev_files) = reverse_dep_files {
+            let dfcall_sql = "DELETE FROM dataflow WHERE call_edge_id IN \
+                (SELECT id FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1))";
+            let edge_sql =
+                "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1)";
             for file in rev_files {
-                tx.execute(
-                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1)",
-                    params![file],
-                )
-                .map_err(|e| {
-                    napi::Error::from_reason(format!(
-                        "reverse-dep edge purge failed for \"{file}\": {e}"
-                    ))
-                })?;
+                // Optional — column absent in pre-v18 schemas; ignore errors.
+                let _ = tx.execute(dfcall_sql, params![file]);
+                tx.execute(edge_sql, params![file])
+                    .map_err(|e| {
+                        napi::Error::from_reason(format!(
+                            "reverse-dep edge purge failed for \"{file}\": {e}"
+                        ))
+                    })?;
             }
         }
 

@@ -592,7 +592,10 @@ function buildInterproceduralStitch(
 // ── P4 helpers ───────────────────────────────────────────────────────────────
 
 /** Return IDs of all function/method nodes in the given relative file paths. */
-function collectFuncIdsForFiles(db: BetterSqlite3Database, relPaths: Iterable<string>): number[] {
+export function collectFuncIdsForFiles(
+  db: BetterSqlite3Database,
+  relPaths: Iterable<string>,
+): number[] {
   const stmt = db.prepare(`SELECT id FROM nodes WHERE file = ? AND kind IN ('function', 'method')`);
   const ids: number[] = [];
   for (const p of relPaths) {
@@ -611,7 +614,7 @@ function collectFuncIdsForFiles(db: BetterSqlite3Database, relPaths: Iterable<st
  * replaced. This function reads those caller files from disk and rebuilds
  * the StitchCandidate list so buildInterproceduralStitch can reconnect them.
  */
-async function collectCallerStitchCandidates(
+export async function collectCallerStitchCandidates(
   db: BetterSqlite3Database,
   changedFuncIds: number[],
   changedRelPaths: Set<string>,
@@ -815,6 +818,8 @@ function collectNativeEdges(
 export function buildDataflowVerticesFromMap(
   db: BetterSqlite3Database,
   dataflowMap: Map<string, DataflowResult>,
+  extraCandidates?: StitchCandidate[],
+  extraCaptures?: ReturnCapture[],
 ): number {
   const vstmts = prepareVertexStmts(db);
   if (!vstmts.available || dataflowMap.size === 0) return 0;
@@ -833,57 +838,11 @@ export function buildDataflowVerticesFromMap(
   });
   tx();
 
+  // P4: merge in stitch candidates from unchanged caller files if provided.
+  if (extraCandidates && extraCandidates.length > 0) allCandidates.push(...extraCandidates);
+  if (extraCaptures && extraCaptures.length > 0) allCaptures.push(...extraCaptures);
+
   return buildInterproceduralStitch(db, allCandidates, allCaptures);
-}
-
-/**
- * P4 re-stitch for the native orchestrator path.
- *
- * When only callee files changed, their old param vertices are purged and
- * recreated by P6's vertex pass, but unchanged caller files are never
- * re-processed — their arg_in edges are deleted and never replaced.
- * This function finds those caller files, parses them with WASM (lazy init),
- * and re-inserts the missing arg_in / return_out edges.
- *
- * Safe to call after buildDataflowVerticesFromMap — only inserts new edges.
- */
-export async function buildDataflowP4ForNative(
-  db: BetterSqlite3Database,
-  changedFiles: string[],
-  rootDir: string,
-): Promise<void> {
-  if (changedFiles.length === 0) return;
-
-  // Skip on full builds — all files were in the changed set, so there are no
-  // unchanged callers to re-stitch.
-  const totalFilesInDb = (
-    db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
-  ).n;
-  if (changedFiles.length >= totalFilesInDb) return;
-
-  const extToLang = buildExtToLangMap();
-  const changedRelPaths = new Set(changedFiles);
-  const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
-  if (changedFuncIds.length === 0) return;
-
-  // parsers=null, getParserFn=null → collectCallerStitchCandidates initialises
-  // WASM parsers lazily for the caller files it needs to re-parse.
-  const { candidates, captures } = await collectCallerStitchCandidates(
-    db,
-    changedFuncIds,
-    changedRelPaths,
-    rootDir,
-    extToLang,
-    null,
-    null,
-  );
-
-  if (candidates.length > 0) {
-    const count = buildInterproceduralStitch(db, candidates, captures);
-    if (count > 0) {
-      info(`Dataflow (native P4): ${count} inter-procedural edges re-stitched`);
-    }
-  }
 }
 
 export async function buildDataflowEdges(
@@ -930,8 +889,6 @@ export async function buildDataflowEdges(
 
       // P6: vertex extraction on the native path.
       // Rust DataflowResult already contains parameters/returns — no re-parse needed.
-      // P4 (incremental re-stitch of unchanged callers) is not run on this path;
-      // full rebuilds are guaranteed by the v19 migration sentinel.
       const vstmts = prepareVertexStmts(db);
       if (vstmts.available) {
         const allCandidates: StitchCandidate[] = [];
@@ -955,8 +912,38 @@ export async function buildDataflowEdges(
         });
         txVertex();
 
+        // P4: Incremental re-stitch — unchanged caller files are not in
+        // fileSymbols so their arg_in edges to the old param vertices were
+        // deleted by the purge and never recreated. Re-collect stitch
+        // candidates from those caller files by parsing them from disk.
+        //
+        // Skip on full builds: fileSymbols covers every file in the DB, so
+        // there are no unchanged callers to re-stitch.
+        const totalFilesInDb = (
+          db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
+        ).n;
+        let p4CallerCount = 0;
+        if (fileSymbols.size < totalFilesInDb) {
+          const changedRelPaths = new Set<string>(fileSymbols.keys());
+          const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
+          const extra = await collectCallerStitchCandidates(
+            db,
+            changedFuncIds,
+            changedRelPaths,
+            rootDir,
+            extToLang,
+            null,
+            null,
+          );
+          allCandidates.push(...extra.candidates);
+          allCaptures.push(...extra.captures);
+          p4CallerCount = extra.candidates.length;
+        }
+
         const interCount = buildInterproceduralStitch(db, allCandidates, allCaptures);
-        info(`Dataflow (native): ${interCount} inter-procedural edges inserted`);
+        info(
+          `Dataflow (native): ${interCount} inter-procedural edges inserted${p4CallerCount > 0 ? ` (P4: ${p4CallerCount} re-stitch candidate(s) from unchanged callers)` : ''}`,
+        );
       }
 
       return;

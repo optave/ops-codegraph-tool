@@ -566,12 +566,23 @@ pub fn purge_changed_files(
 
     // Purge each file across all tables. Optional tables are silently skipped
     // if they don't exist. Order: analysis dependents → edges → nodes.
+    //
+    // Note: PRAGMA foreign_keys may be ON (set by clear_all_graph_data on the same
+    // connection during the prior full build). The ordering below ensures child rows
+    // are deleted before their parent rows to avoid SQLITE_CONSTRAINT_FOREIGNKEY.
     let purge_sql: &[(&str, bool)] = &[
         // Analysis tables (optional — may not exist)
         ("DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
         ("DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
         ("DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        // Delete dataflow rows that reference edges touching this file via call_edge_id
+        // BEFORE deleting those edges — dataflow.call_edge_id REFERENCES edges(id).
+        ("DELETE FROM dataflow WHERE call_edge_id IN (SELECT id FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1))", false),
         ("DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        // dataflow rows linked via vertex FK (v18+ schemas).
+        ("DELETE FROM dataflow WHERE source_vertex IN (SELECT id FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1)) OR target_vertex IN (SELECT id FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1))", false),
+        ("DELETE FROM dataflow_summary WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        ("DELETE FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
         ("DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
         ("DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
         ("DELETE FROM ast_nodes WHERE file = ?1", false),
@@ -594,13 +605,17 @@ pub fn purge_changed_files(
 
     // Delete outgoing edges for reverse-dep files (they'll be re-built).
     // These files keep their nodes but need outgoing edges rebuilt.
+    // Clear dataflow rows referencing those outgoing edges via call_edge_id first
+    // to satisfy the FK constraint when PRAGMA foreign_keys is ON.
     if !reverse_dep_files.is_empty() {
-        if let Ok(mut stmt) =
-            tx.prepare("DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)")
-        {
-            for f in reverse_dep_files {
-                let _ = stmt.execute([f]);
-            }
+        let dfcall_sql = "DELETE FROM dataflow WHERE call_edge_id IN \
+             (SELECT id FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?))";
+        let edge_sql =
+            "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)";
+        for f in reverse_dep_files {
+            // Optional — column absent in pre-v18 schemas; ignore errors.
+            let _ = tx.execute(dfcall_sql, [f]);
+            let _ = tx.execute(edge_sql, [f]);
         }
     }
 
