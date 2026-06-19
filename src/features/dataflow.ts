@@ -802,6 +802,40 @@ function collectNativeEdges(
   }
 }
 
+/**
+ * P6 vertex-only pass for the native orchestrator path.
+ *
+ * When the Rust orchestrator runs with analysisComplete=true it inserts
+ * flows_to/returns/mutates edges directly into the DB but never writes to
+ * dataflow_vertices or dataflow_summary. This function takes pre-extracted
+ * DataflowResult objects (from native.extractDataflowAnalysis) and builds
+ * the missing vertex rows and inter-procedural edges — without touching the
+ * already-correct function-level edges.
+ */
+export function buildDataflowVerticesFromMap(
+  db: BetterSqlite3Database,
+  dataflowMap: Map<string, DataflowResult>,
+): number {
+  const vstmts = prepareVertexStmts(db);
+  if (!vstmts.available || dataflowMap.size === 0) return 0;
+
+  const stmts = prepareNodeResolvers(db);
+  const allCandidates: StitchCandidate[] = [];
+  const allCaptures: ReturnCapture[] = [];
+
+  const tx = db.transaction(() => {
+    for (const [relPath, data] of dataflowMap) {
+      const resolver = makeNodeResolver(stmts, relPath);
+      const { candidates, captures } = buildDataflowVerticesAndEdges(db, vstmts, data, resolver);
+      allCandidates.push(...candidates);
+      allCaptures.push(...captures);
+    }
+  });
+  tx();
+
+  return buildInterproceduralStitch(db, allCandidates, allCaptures);
+}
+
 export async function buildDataflowEdges(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbolsDataflow>,

@@ -30,6 +30,7 @@ import { CODEGRAPH_VERSION } from '../../../../shared/version.js';
 import type {
   BetterSqlite3Database,
   BuildResult,
+  DataflowResult,
   Definition,
   ExtractorOutput,
   SqliteStatement,
@@ -292,6 +293,101 @@ async function runPostNativeStructure(
     warn(`Structure phase failed after native build: ${toErrorMessage(err)}`);
   }
   return performance.now() - structureStart;
+}
+
+/**
+ * P6: Build dataflow_vertices and inter-procedural edges after the Rust
+ * orchestrator completes.
+ *
+ * The Rust pipeline writes flows_to/returns/mutates edges directly to the DB
+ * but never writes to dataflow_vertices or dataflow_summary. This pass re-runs
+ * the Rust dataflow visitor (via extractDataflowAnalysis — fast, no re-parse)
+ * to get the DataflowResult and calls buildDataflowVerticesFromMap.
+ *
+ * Languages for which Rust has no dataflow rules return null from
+ * extractDataflowAnalysis and are silently skipped here. A follow-up issue
+ * (#1614 adjacent) will add WASM fallback for those languages.
+ */
+async function runDataflowVertexPass(
+  ctx: PipelineContext,
+  changedFiles: string[] | undefined,
+): Promise<void> {
+  if (ctx.opts.dataflow === false) return;
+
+  const native = loadNative();
+  if (!native?.extractDataflowAnalysis) return;
+
+  // Determine which files to process: changed files for incremental, all for full builds.
+  let filesToProcess: string[];
+  if (changedFiles && changedFiles.length > 0) {
+    filesToProcess = changedFiles;
+  } else {
+    // Full build or no scope — scan all files from DB.
+    filesToProcess = (
+      ctx.db.prepare(`SELECT DISTINCT file FROM nodes WHERE file IS NOT NULL`).all() as {
+        file: string;
+      }[]
+    ).map((r) => r.file);
+  }
+
+  // Split files into two buckets:
+  //   nativeDataflow — Rust extracted data (vertex-only pass; edges already in DB)
+  //   wasmStubs      — Rust returned null (WASM will handle edges + vertices)
+  const nativeDataflow = new Map<string, DataflowResult>();
+  const wasmStubs = new Map<string, { definitions: []; _langId: null; _tree: null }>();
+
+  for (const relPath of filesToProcess) {
+    const absPath = path.join(ctx.rootDir, relPath);
+    const source = readFileSafe(absPath);
+    if (!source) continue;
+    let result: DataflowResult | null = null;
+    try {
+      result = native.extractDataflowAnalysis(source, absPath);
+    } catch {
+      // Language-specific parse failure — fall through to WASM.
+    }
+    if (result) {
+      nativeDataflow.set(relPath, result);
+    } else {
+      // Rust has no dataflow rules for this language; WASM fallback will handle
+      // both edge insertion and vertex extraction. Since Rust inserted 0 dataflow
+      // edges for these files, there is no risk of duplicates.
+      wasmStubs.set(relPath, { definitions: [], _langId: null, _tree: null });
+    }
+  }
+
+  const { buildDataflowVerticesFromMap, buildDataflowEdges } = (await import(
+    '../../../../features/dataflow.js'
+  )) as {
+    buildDataflowVerticesFromMap: (
+      db: BetterSqlite3Database,
+      dataflowMap: Map<string, DataflowResult>,
+    ) => number;
+    buildDataflowEdges: (
+      db: BetterSqlite3Database,
+      fileSymbols: Map<string, unknown>,
+      rootDir: string,
+      engineOpts?: unknown,
+    ) => Promise<void>;
+  };
+
+  // Rust-supported languages: build vertices only (edges already written by Rust orchestrator).
+  if (nativeDataflow.size > 0) {
+    const interCount = buildDataflowVerticesFromMap(ctx.db, nativeDataflow);
+    if (interCount > 0) {
+      info(`Dataflow (native orchestrator): ${interCount} inter-procedural edges inserted`);
+    }
+  }
+
+  // Rust-unsupported languages: run the full WASM extraction (edges + vertices).
+  // Passing nativeDb so the P6 vertex path fires after WASM inserts edges.
+  if (wasmStubs.size > 0) {
+    await buildDataflowEdges(ctx.db, wasmStubs, ctx.rootDir, {
+      nativeDb: ctx.nativeDb,
+      suspendJsDb: () => {},
+      resumeJsDb: () => {},
+    });
+  }
 }
 
 /**
@@ -1923,6 +2019,17 @@ export async function tryNativeOrchestrator(
     if (needsAnalysisFallback) {
       analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
     }
+  }
+
+  // P6: Vertex extraction for the analysisComplete=true path.
+  // When needsAnalysisFallback=false (the normal native case), runPostNativeAnalysis
+  // was skipped, so buildDataflowEdges never ran and dataflow_vertices were never
+  // populated. Re-run the Rust dataflow visitor per file (fast — no re-parse) to
+  // get the DataflowResult, then build vertices and inter-procedural edges.
+  // Languages where Rust has no dataflow rules are silently skipped; a WASM
+  // fallback for those is tracked in issue #1614.
+  if (ctx.opts.dataflow !== false && !needsAnalysisFallback) {
+    await runDataflowVertexPass(ctx, result.changedFiles);
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });

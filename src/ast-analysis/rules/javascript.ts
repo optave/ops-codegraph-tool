@@ -212,6 +212,9 @@ export const dataflow: DataflowRulesConfig = makeDataflowRules({
     'arrow_function',
     'function_expression',
     'function',
+    // Generator functions — tree-sitter-javascript produces separate node types for these
+    'generator_function_declaration',
+    'generator_function',
   ]),
   varAssignedFnParent: 'variable_declarator',
   assignmentFnParent: 'assignment_expression',
