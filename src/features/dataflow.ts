@@ -592,7 +592,10 @@ function buildInterproceduralStitch(
 // ── P4 helpers ───────────────────────────────────────────────────────────────
 
 /** Return IDs of all function/method nodes in the given relative file paths. */
-function collectFuncIdsForFiles(db: BetterSqlite3Database, relPaths: Iterable<string>): number[] {
+export function collectFuncIdsForFiles(
+  db: BetterSqlite3Database,
+  relPaths: Iterable<string>,
+): number[] {
   const stmt = db.prepare(`SELECT id FROM nodes WHERE file = ? AND kind IN ('function', 'method')`);
   const ids: number[] = [];
   for (const p of relPaths) {
@@ -611,7 +614,7 @@ function collectFuncIdsForFiles(db: BetterSqlite3Database, relPaths: Iterable<st
  * replaced. This function reads those caller files from disk and rebuilds
  * the StitchCandidate list so buildInterproceduralStitch can reconnect them.
  */
-async function collectCallerStitchCandidates(
+export async function collectCallerStitchCandidates(
   db: BetterSqlite3Database,
   changedFuncIds: number[],
   changedRelPaths: Set<string>,
@@ -815,6 +818,8 @@ function collectNativeEdges(
 export function buildDataflowVerticesFromMap(
   db: BetterSqlite3Database,
   dataflowMap: Map<string, DataflowResult>,
+  extraCandidates?: StitchCandidate[],
+  extraCaptures?: ReturnCapture[],
 ): number {
   const vstmts = prepareVertexStmts(db);
   if (!vstmts.available || dataflowMap.size === 0) return 0;
@@ -832,6 +837,10 @@ export function buildDataflowVerticesFromMap(
     }
   });
   tx();
+
+  // P4: merge in stitch candidates from unchanged caller files if provided.
+  if (extraCandidates && extraCandidates.length > 0) allCandidates.push(...extraCandidates);
+  if (extraCaptures && extraCaptures.length > 0) allCaptures.push(...extraCaptures);
 
   return buildInterproceduralStitch(db, allCandidates, allCaptures);
 }
