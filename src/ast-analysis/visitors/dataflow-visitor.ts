@@ -434,7 +434,9 @@ function enterFunctionScope(
   parameters: DataflowParam[],
 ): void {
   const name = functionName(funcNode, rules);
-  const paramsNode = funcNode.childForFieldName(rules.paramListField);
+  const paramsNode = rules.getParamListNode
+    ? rules.getParamListNode(funcNode)
+    : funcNode.childForFieldName(rules.paramListField);
   const paramList = extractParams(paramsNode, rules);
   const paramMap = new Map<string, number>();
   for (const p of paramList) {

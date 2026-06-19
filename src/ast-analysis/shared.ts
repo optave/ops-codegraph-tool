@@ -87,6 +87,7 @@ export const DATAFLOW_DEFAULTS: DataflowRulesConfig = {
 
   // Parameters
   paramListField: 'parameters',
+  getParamListNode: null, // override for nested param lists (C/C++: function_definition→declarator→parameters)
   paramIdentifier: 'identifier',
   paramWrapperTypes: new Set(),
   defaultParamType: null,

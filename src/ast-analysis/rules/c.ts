@@ -31,8 +31,12 @@ function extractCFunctionName(node: TreeSitterNode): string | null {
   const decl = node.childForFieldName('declarator');
   if (!decl) return null;
 
-  // decl is typically function_declarator for a top-level function
-  const funcDecl = decl.type === 'function_declarator' ? decl : null;
+  // For pointer/reference-returning functions (int *foo(), T &bar()), the direct
+  // child is a pointer_declarator or similar wrapper — unwrap one level first.
+  const unwrapped = DECLARATOR_WRAPPERS.has(decl.type)
+    ? decl.childForFieldName('declarator')
+    : decl;
+  const funcDecl = unwrapped?.type === 'function_declarator' ? unwrapped : null;
   if (!funcDecl) return null;
 
   const inner = funcDecl.childForFieldName('declarator');
@@ -53,17 +57,40 @@ function extractCFunctionName(node: TreeSitterNode): string | null {
     : null;
 }
 
+// Traverse through pointer/reference/array wrappers to reach function_declarator.
+function findFuncDeclarator(node: TreeSitterNode | null): TreeSitterNode | null {
+  if (!node) return null;
+  if (node.type === 'function_declarator') return node;
+  if (DECLARATOR_WRAPPERS.has(node.type)) {
+    return findFuncDeclarator(node.childForFieldName('declarator'));
+  }
+  return null;
+}
+
+// Navigate function_definition → (optional wrapper) → function_declarator → parameters.
+// Needed because C/C++ params are on function_declarator, not directly on function_definition.
+function getCParamListNode(funcNode: TreeSitterNode): TreeSitterNode | null {
+  const decl = funcNode.childForFieldName('declarator');
+  return findFuncDeclarator(decl)?.childForFieldName('parameters') ?? null;
+}
+
 function extractCParamName(node: TreeSitterNode): string[] | null {
   if (node.type !== 'parameter_declaration') return null;
   const decl = node.childForFieldName('declarator');
+  if (!decl) return null;
+
+  // Reference declarator (T& name, T&& name): tree-sitter-cpp uses no named
+  // 'declarator' field inside reference_declarator, so unwrapDeclarator would
+  // return null. Handle it first by taking the last named child.
+  if (decl.type === 'reference_declarator') {
+    const inner = decl.namedChild(decl.namedChildCount - 1);
+    if (inner?.type === 'identifier') return [inner.text];
+    return null;
+  }
+
   const nameNode = unwrapDeclarator(decl);
   if (!nameNode) return null;
   if (nameNode.type === 'identifier') return [nameNode.text];
-  // Reference declarator: &name (C++)
-  if (nameNode.type === 'reference_declarator') {
-    const inner = unwrapDeclarator(nameNode);
-    if (inner?.type === 'identifier') return [inner.text];
-  }
   return null;
 }
 
@@ -75,6 +102,7 @@ export const dataflow: DataflowRulesConfig = makeDataflowRules({
   nameExtractor: extractCFunctionName,
 
   paramListField: 'parameters',
+  getParamListNode: getCParamListNode,
   paramIdentifier: 'identifier',
   paramWrapperTypes: new Set(['parameter_declaration']),
   extractParamName: extractCParamName,
@@ -106,7 +134,10 @@ export const dataflowCpp: DataflowRulesConfig = makeDataflowRules({
   ...dataflow,
   functionNodes: new Set([
     'function_definition',
-    'function_declaration', // prototype with body in C++
+    // function_declaration is a forward declaration (no body) in tree-sitter-cpp;
+    // including it creates spurious param vertices from prototypes and can overwrite
+    // correct dataflow_summary rows with flows_to_return=0 when the declaration is
+    // processed after the definition.
   ]),
   // C++ call expressions can use :: scope resolution
   mutatingMethods: new Set([

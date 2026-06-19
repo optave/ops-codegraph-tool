@@ -966,6 +966,8 @@ export interface DataflowRulesConfig {
   assignmentFnParent: string | null;
   pairFnParent: string | null;
   paramListField: string;
+  /** Override for languages where the param list is nested (e.g. C: function_definition → declarator → parameters). */
+  getParamListNode: ((funcNode: TreeSitterNode) => TreeSitterNode | null) | null;
   paramIdentifier: string;
   paramWrapperTypes: Set<string>;
   defaultParamType: string | null;
