@@ -356,20 +356,24 @@ async function runDataflowVertexPass(
     }
   }
 
-  const { buildDataflowVerticesFromMap, buildDataflowEdges } = (await import(
-    '../../../../features/dataflow.js'
-  )) as {
-    buildDataflowVerticesFromMap: (
-      db: BetterSqlite3Database,
-      dataflowMap: Map<string, DataflowResult>,
-    ) => number;
-    buildDataflowEdges: (
-      db: BetterSqlite3Database,
-      fileSymbols: Map<string, unknown>,
-      rootDir: string,
-      engineOpts?: unknown,
-    ) => Promise<void>;
-  };
+  const { buildDataflowVerticesFromMap, buildDataflowEdges, buildDataflowP4ForNative } =
+    (await import('../../../../features/dataflow.js')) as {
+      buildDataflowVerticesFromMap: (
+        db: BetterSqlite3Database,
+        dataflowMap: Map<string, DataflowResult>,
+      ) => number;
+      buildDataflowEdges: (
+        db: BetterSqlite3Database,
+        fileSymbols: Map<string, unknown>,
+        rootDir: string,
+        engineOpts?: unknown,
+      ) => Promise<void>;
+      buildDataflowP4ForNative: (
+        db: BetterSqlite3Database,
+        changedFiles: string[],
+        rootDir: string,
+      ) => Promise<void>;
+    };
 
   // Rust-supported languages: build vertices only (edges already written by Rust orchestrator).
   if (nativeDataflow.size > 0) {
@@ -387,6 +391,12 @@ async function runDataflowVertexPass(
       suspendJsDb: () => {},
       resumeJsDb: () => {},
     });
+  }
+
+  // P4: Re-stitch arg_in edges for unchanged callers of changed callees.
+  // Only meaningful on incremental builds where some files were not re-parsed.
+  if (changedFiles && changedFiles.length > 0) {
+    await buildDataflowP4ForNative(ctx.db, changedFiles, ctx.rootDir);
   }
 }
 
