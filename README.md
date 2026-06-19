@@ -107,7 +107,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
 | **🌐** | **Multi-language, one graph** | 34 languages in a single graph — JS/TS, Python, Go, Rust, Java, C#, PHP, Ruby, C/C++, Kotlin, Swift, Scala, Bash, HCL, Elixir, Lua, Dart, Zig, Haskell, OCaml, F#, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, Verilog — agents don't need per-language tools |
 | **🧠** | **Hybrid search** | BM25 keyword + semantic embeddings fused via RRF — `hybrid` (default), `semantic`, or `keyword` mode; multi-query via `"auth; token; JWT"` |
-| **🔬** | **Dataflow + CFG** | Track how data flows through functions (`flows_to`, `returns`, `mutates`) and visualize intraprocedural control flow graphs for all 34 languages |
+| **🔬** | **Dataflow + CFG** | Track how data flows through and between functions — function-level edges (`flows_to`, `returns`, `mutates`), interprocedural variable-level edges (`arg_in`, `return_out`, `def_use`), and intraprocedural control flow graphs — all 34 languages |
 | **🔓** | **Fully local, zero cost** | No API keys, no accounts, no network calls. Optionally bring your own LLM provider — your code only goes where you choose |
 
 ---
@@ -200,7 +200,7 @@ cd codegraph && npm install && npm link
 | ✅ | **CI validation predicates** | `check` command with configurable gates: complexity, blast radius, cycles, boundary violations — exit code 0/1 for CI |
 | 📋 | **Composite audit** | Single `audit` command combining explain + impact + health metrics per function — one call instead of 3-4 |
 | 🚦 | **Triage queue** | `triage` merges connectivity, hotspots, roles, and complexity into a ranked audit priority queue |
-| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — all 34 languages, included by default, skip with `--no-dataflow` |
+| 🔬 | **Dataflow analysis** | Track how data moves through and between functions — function-level (`flows_to`, `returns`, `mutates`) and interprocedural variable-level edges (`arg_in`, `return_out`, `def_use`) — all 34 languages, included by default, skip with `--no-dataflow` |
 | 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 34 languages — `cfg` command with text/DOT/Mermaid output, included by default, skip with `--no-cfg` |
 | 🔎 | **AST node querying** | Stored queryable AST nodes (calls, `new`, string, regex, throw, await) — `ast` command with SQL GLOB pattern matching |
 | 🧬 | **Expanded node/edge types** | `parameter`, `property`, `constant` node kinds with `parent_id` for sub-declaration queries; `contains`, `parameter_of`, `receiver` edge kinds |
@@ -937,7 +937,7 @@ const { results: fused } = await multiSearchData(
 - **TypeScript compiler integration is auto-enabled** — when `typescript` is installed and a `tsconfig.json` is found, the TypeScript compiler API pass runs automatically; disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` if you want faster builds without it; heuristic type inference (annotations, `new` expressions, assignment chains) is always active as a baseline
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
-- **Dataflow analysis** — intraprocedural (single-function scope), not interprocedural
+- **Dataflow analysis** — interprocedural edges (`arg_in`, `return_out`) require a full build after adding new callee files; the incremental re-stitch pass only fires on the JS engine path (native engine incremental re-stitch tracked in issue #1614)
 
 ## 🗺️ Roadmap
 
