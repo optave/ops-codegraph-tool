@@ -880,8 +880,6 @@ export async function buildDataflowEdges(
 
       // P6: vertex extraction on the native path.
       // Rust DataflowResult already contains parameters/returns — no re-parse needed.
-      // P4 (incremental re-stitch of unchanged callers) is not run on this path;
-      // full rebuilds are guaranteed by the v19 migration sentinel.
       const vstmts = prepareVertexStmts(db);
       if (vstmts.available) {
         const allCandidates: StitchCandidate[] = [];
@@ -905,8 +903,38 @@ export async function buildDataflowEdges(
         });
         txVertex();
 
+        // P4: Incremental re-stitch — unchanged caller files are not in
+        // fileSymbols so their arg_in edges to the old param vertices were
+        // deleted by the purge and never recreated. Re-collect stitch
+        // candidates from those caller files by parsing them from disk.
+        //
+        // Skip on full builds: fileSymbols covers every file in the DB, so
+        // there are no unchanged callers to re-stitch.
+        const totalFilesInDb = (
+          db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
+        ).n;
+        let p4CallerCount = 0;
+        if (fileSymbols.size < totalFilesInDb) {
+          const changedRelPaths = new Set<string>(fileSymbols.keys());
+          const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
+          const extra = await collectCallerStitchCandidates(
+            db,
+            changedFuncIds,
+            changedRelPaths,
+            rootDir,
+            extToLang,
+            null,
+            null,
+          );
+          allCandidates.push(...extra.candidates);
+          allCaptures.push(...extra.captures);
+          p4CallerCount = extra.candidates.length;
+        }
+
         const interCount = buildInterproceduralStitch(db, allCandidates, allCaptures);
-        info(`Dataflow (native): ${interCount} inter-procedural edges inserted`);
+        info(
+          `Dataflow (native): ${interCount} inter-procedural edges inserted${p4CallerCount > 0 ? ` (P4: ${p4CallerCount} re-stitch candidate(s) from unchanged callers)` : ''}`,
+        );
       }
 
       return;
