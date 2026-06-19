@@ -308,8 +308,10 @@ for (const fixture of fixtures) {
           for (const d of edgeDiffs) {
             console.log(`  [edge] ${d.key}  wasm=${d.base} ${variantName}=${d.other}`);
           }
-          for (const d of dfVertexDiffs) {
-            console.log(`  [df-vertex] ${d.key}  wasm=${d.base} ${variantName}=${d.other}`);
+          if (dfVertexDiffs) {
+            for (const d of dfVertexDiffs) {
+              console.log(`  [df-vertex] ${d.key}  wasm=${d.base} ${variantName}=${d.other}`);
+            }
           }
         }
       }
