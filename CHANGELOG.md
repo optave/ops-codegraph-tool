@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.14.0](https://github.com/optave/ops-codegraph-tool/compare/v3.13.0...v3.14.0) (2026-06-19)
+
+**Interprocedural dataflow analysis ships in full, plus a sweep of role-classifier accuracy fixes.** The headline feature is a complete variable-level dataflow model: `dataflow_vertices` tracks param, return, and local variable locations per function; `def_use` edges connect definitions to uses within a function; `arg_in` and `return_out` edges stitch caller and callee dataflow across call boundaries. All 34 supported languages have dataflow rules. Incremental re-stitch (P4) fires on both the WASM/JS and native engine paths so `arg_in` edges are rebuilt when only a callee file changes, without a full rebuild. `codegraph fn-impact --json` gains `direct` and `transitive` shorthand fields alongside the existing `levels` breakdown. The role classifier received five accuracy fixes that eliminate a family of false-positive dead-symbol reports on real TypeScript and Rust codebases: exported interfaces with no cross-file call edges, type-def kinds in files with active callables, Commander.js dispatch methods, methods with active file siblings, and self-sibling sole-callable false-negatives. Erlang WASM parity is restored after the malicious package removal in v3.13.0.
+
+### Features
+
+* **dataflow:** interprocedural variable-level model across all 34 languages — new `def_use` (intra-function define-use), `arg_in` (caller arg → callee param), and `return_out` (callee return → caller capture) edge kinds; `dataflow_vertices` table tracks param/return/local locations; `dataflow_summary` table stores per-param transfer functions (`flows_to_return`, `is_mutated`); DB migrations v18 + v19; P4 incremental re-stitch runs on both JS and native engine paths so `arg_in` edges are rebuilt on callee-only changes without a full rebuild; `parity-compare.mjs --dataflow` flag for vertex multiset comparison ([#1608](https://github.com/optave/ops-codegraph-tool/pull/1608), [#1612](https://github.com/optave/ops-codegraph-tool/pull/1612), [#1615](https://github.com/optave/ops-codegraph-tool/pull/1615))
+
+### Bug Fixes
+
+* **fn-impact:** add `direct` and `transitive` shorthand counts to JSON output — `direct` is the level-1 caller count, `transitive` is all callers at depth 2+; computed from the existing BFS levels data with no extra DB queries; fully backward-compatible ([#1603](https://github.com/optave/ops-codegraph-tool/pull/1603))
+* **roles:** honour `exported=1` flag for interfaces and type aliases with no cross-file edges — exported symbols used only as same-file type annotations now classify as `entry` rather than `dead-unresolved` ([#1599](https://github.com/optave/ops-codegraph-tool/pull/1599))
+* **roles:** classify type-def kinds as `leaf` when the file has active callables — `type`, `interface`, `struct`, `enum`, and `trait` definitions in files with at least one callable (fan-in or fan-out > 0) no longer produce `dead-ffi` or `dead-unresolved` false positives ([#1600](https://github.com/optave/ops-codegraph-tool/pull/1600))
+* **roles:** classify Commander.js `execute`/`validate` methods in framework dispatch directories as `entry` — eliminates ~12,000 false positives in `codegraph roles --role dead` output on Commander.js-based CLIs ([#1601](https://github.com/optave/ops-codegraph-tool/pull/1601))
+* **roles:** classify methods and functions with active file siblings as `leaf` — interface-dispatch callbacks (visitor pattern), logical-or function defaults, and handler-table property callbacks no longer report as `dead-unresolved`; `fanOut > 0` guard prevents over-promotion of trivial helpers; mirrored in Rust native classifier ([#1602](https://github.com/optave/ops-codegraph-tool/pull/1602))
+* **roles:** prevent sole-callable self-sibling false-negative — a function whose only active file sibling is itself no longer satisfies the `hasActiveFileSiblings` heuristic; applied symmetrically in TypeScript and Rust classifiers ([#1603](https://github.com/optave/ops-codegraph-tool/pull/1603))
+* **db:** derive `rootDir` from `customDbPath` when a custom `--db` path is set — `openRepo`/`openReadonlyWithNative` no longer always default to `process.cwd()` when a custom DB path is provided ([#1606](https://github.com/optave/ops-codegraph-tool/pull/1606))
+* **config:** wire `config.build.engine` from `.codegraphrc.json` into pipeline and DB connection — `openRepo`/`openReadonlyWithNative` now read the file-level engine config; CLI `--engine` flag still takes priority ([#1604](https://github.com/optave/ops-codegraph-tool/pull/1604))
+* **dataflow:** guard C/C++ function name and parameter extraction against unnamed declarators ([#1608](https://github.com/optave/ops-codegraph-tool/pull/1608))
+* **dataflow:** guard `exitFunction` scope-stack pop against early-return from `enterFunctionScope` ([#1612](https://github.com/optave/ops-codegraph-tool/pull/1612))
+* **parity:** restore Erlang WASM grammar — the grammar was lost when the malicious `tree-sitter-erlang` npm package was removed in v3.13.0; the validated WASM is now committed directly via a `.gitignore` negation rule so the WASM engine has Erlang support without reinstating the removed devDependency ([#1598](https://github.com/optave/ops-codegraph-tool/pull/1598))
+* **ci:** fix Windows SSH git dependency resolution — add `--add` flag to the second `git config insteadOf` call to prevent silent overwrite on Windows runners ([#1597](https://github.com/optave/ops-codegraph-tool/pull/1597))
+
+### Refactors
+
+* **native-orchestrator:** decompose into focused helper functions; extract call-resolution strategy dispatch to `resolver/strategy.ts` ([#1591](https://github.com/optave/ops-codegraph-tool/pull/1591), [#1592](https://github.com/optave/ops-codegraph-tool/pull/1592))
+* **cfg:** replace TS and Rust `processStatement` switch with handler-table dispatch — O(1) single-type handler lookup ([#1590](https://github.com/optave/ops-codegraph-tool/pull/1590))
+* **types:** consolidate shared interfaces and extract DRY abstractions ([#1588](https://github.com/optave/ops-codegraph-tool/pull/1588))
+* **config:** split config command subcommands; move JS type-resolution confidence threshold and engine env vars to `DEFAULTS` ([#1589](https://github.com/optave/ops-codegraph-tool/pull/1589))
+* **complexity:** address warn-level complexity in ast-analysis visitors, features domain, and infrastructure ([#1593](https://github.com/optave/ops-codegraph-tool/pull/1593))
+* **roles:** extract `ANNOTATION_ONLY_KINDS` constant in Rust classifier for parity with TS ([#1602](https://github.com/optave/ops-codegraph-tool/pull/1602))
+
+### Chores
+
+* **bench:** update resolution benchmarks and embedding benchmarks for v3.13.0 ([#1580](https://github.com/optave/ops-codegraph-tool/pull/1580), [#1581](https://github.com/optave/ops-codegraph-tool/pull/1581))
+* **bench:** prune stale 3.11.x `KNOWN_REGRESSIONS` entries ([#1580](https://github.com/optave/ops-codegraph-tool/pull/1580))
+
 ## [3.13.0](https://github.com/optave/ops-codegraph-tool/compare/v3.12.0...v3.13.0) (2026-06-16)
 
 **User-level global config, `codegraph config` scaffolding, and an `explain` alias land.** The headline feature is a new user-level configuration layer (`~/.config/codegraph/config.json` via XDG, or `~/.codegraph/config.json` fallback) with an interactive per-repo consent model — DEFAULTS → global (if consented) → project → env → secrets. `codegraph config` now shows a human-friendly key/value/source table by default (pass `--json` for machine output), and gains `--init` (scaffold a `.codegraphrc.json` with all sections pre-populated), `--edit` (open in `$EDITOR`), `--enable-global`, `--disable-global`, and `--list-global` flags. Global `--user-config [path]` and `--no-user-config` CLI flags are also new. The `explain` command lands as a discoverable alias for `audit`. TypeScript compiler-based type resolution now auto-enables for TS projects that have a `tsconfig.json`. A supply-chain incident is resolved — a malicious `tree-sitter-erlang` npm package is replaced with a clean source build. On engine accuracy, super-dispatch cross-file false edges are eliminated, CHA confidence is aligned between WASM and native, and a sweep of parity fixes improves call-graph correctness for Go, Python, C++, CUDA, Haskell, and Zig.

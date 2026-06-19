@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.13.0 | **Status:** Active development | **Updated:** 2026-06-16
+> **Current version:** 3.14.0 | **Status:** Active development | **Updated:** 2026-06-19
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -388,6 +388,14 @@ Define-use chain extraction tracking how data flows between functions.
 - ✅ MCP tool: `dataflow` with `edges` and `impact` modes (path mode removed during CLI consolidation PR #263)
 
 **New file:** `src/dataflow.js` (1,187 lines)
+
+**Progress (v3.14.0) — Interprocedural extension (Backlog #72):**
+- ✅ Variable-level vertex model: `dataflow_vertices` table tracks `param`, `return`, and `local` data locations per function; `dataflow_summary` stores per-param transfer functions (`flows_to_return`, `is_mutated`) — DB migrations v18 + v19 ([#1608](https://github.com/optave/ops-codegraph-tool/pull/1608))
+- ✅ New edge kinds: `def_use` (intra-function define-use chain), `arg_in` (caller arg → callee param vertex), `return_out` (callee return → caller capture local) ([#1608](https://github.com/optave/ops-codegraph-tool/pull/1608))
+- ✅ Interprocedural stitching post-pass: `buildInterproceduralStitch` connects `arg_in` and `return_out` edges across all call boundaries after per-file processing ([#1608](https://github.com/optave/ops-codegraph-tool/pull/1608))
+- ✅ DATAFLOW_RULES for all 34 supported languages — C/C++/ObjC/CUDA (P5 B1), plus Kotlin/Swift/Scala/Dart/Groovy/Lua/R/Julia/Bash/Haskell/OCaml/F#/Gleam/Elixir/Erlang/Clojure/Zig/Solidity (P5 B2–B5) ([#1608](https://github.com/optave/ops-codegraph-tool/pull/1608), [#1612](https://github.com/optave/ops-codegraph-tool/pull/1612))
+- ✅ P4 incremental re-stitch: `arg_in` edges rebuilt on callee-file-only changes without a full rebuild; runs on both the JS engine path and the native bulk-insert fast path ([#1612](https://github.com/optave/ops-codegraph-tool/pull/1612), [#1615](https://github.com/optave/ops-codegraph-tool/pull/1615))
+- ✅ Vertex extraction on native orchestrator path (P6): Rust dataflow visitor re-runs post-orchestrator so `dataflow_vertices` is populated regardless of engine ([#1612](https://github.com/optave/ops-codegraph-tool/pull/1612))
 
 ### 2.7.2 -- Expanded Node Types (Phase 1) ✅
 
