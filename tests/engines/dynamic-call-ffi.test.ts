@@ -84,6 +84,16 @@ describe('dynamic call classification — dynamicKind and keyExpr fields', () =>
     expect(c?.dynamicKind).toBe('reflection');
   });
 
+  it('tags obj[a + b]() as unresolved-dynamic kind', () => {
+    const out = parseJS(`
+      function test(handlers, a, b) { handlers[a + b]('arg'); }
+    `);
+    const c = out.calls.find((c) => c.name === '<dynamic:unresolved>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('unresolved-dynamic');
+    expect(c?.dynamic).toBe(true);
+  });
+
   it('does not set dynamicKind on normal function calls', () => {
     const out = parseJS(`
       function test() { greet('world'); }
