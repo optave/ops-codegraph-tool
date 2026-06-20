@@ -1,0 +1,21 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "python",
+  "description": "Phase 3 Python fixture: getattr with literal name resolved; eval/exec/variable-getattr flagged as sink edges.",
+  "edges": [
+    {
+      "source": { "name": "run_getattr_literal", "file": "dispatch.py" },
+      "target": { "name": "greet", "file": "dispatch.py" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "getattr(obj, 'greet') — reflection kind, resolves to greet()"
+    },
+    {
+      "source": { "name": "run_getattr_farewell", "file": "dispatch.py" },
+      "target": { "name": "farewell", "file": "dispatch.py" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "getattr(obj, 'farewell') — reflection kind, resolves to farewell()"
+    }
+  ]
+}
