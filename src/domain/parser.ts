@@ -739,10 +739,6 @@ export function patchDataflowResult(dataflow: any): void {
   }
 }
 
-function patchDataflow(dataflow: any): void {
-  patchDataflowResult(dataflow);
-}
-
 function patchNativeResult(r: any): ExtractorOutput {
   // lineCount: napi(js_name) emits "lineCount"; older binaries may emit "line_count"
   r.lineCount = r.lineCount ?? r.line_count ?? null;
@@ -752,7 +748,7 @@ function patchNativeResult(r: any): ExtractorOutput {
   if (r.imports) patchImports(r.imports);
   patchTypeMap(r);
   patchReturnTypeMap(r);
-  if (r.dataflow) patchDataflow(r.dataflow);
+  if (r.dataflow) patchDataflowResult(r.dataflow);
 
   return r;
 }
