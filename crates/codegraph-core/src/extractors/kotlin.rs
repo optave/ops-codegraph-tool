@@ -319,6 +319,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                             line: start_line(node),
                             dynamic: None,
                             receiver: None,
+                            ..Default::default()
                         });
                     }
                     "navigation_expression" => {
@@ -348,6 +349,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                             line: start_line(node),
                             dynamic: None,
                             receiver,
+                            ..Default::default()
                         });
                     }
                     _ => {
@@ -356,6 +358,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                             line: start_line(node),
                             dynamic: None,
                             receiver: None,
+                            ..Default::default()
                         });
                     }
                 }

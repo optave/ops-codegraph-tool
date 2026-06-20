@@ -301,6 +301,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                             line: start_line(node),
                             dynamic: None,
                             receiver: None,
+                            ..Default::default()
                         });
                     }
                     "field_expression" => {
@@ -314,6 +315,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                             line: start_line(node),
                             dynamic: None,
                             receiver,
+                            ..Default::default()
                         });
                     }
                     _ => {
@@ -322,6 +324,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                             line: start_line(node),
                             dynamic: None,
                             receiver: None,
+                            ..Default::default()
                         });
                     }
                 }

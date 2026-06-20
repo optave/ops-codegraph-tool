@@ -303,6 +303,7 @@ fn handle_scala_call_expression(node: &Node, source: &[u8], symbols: &mut FileSy
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
             "field_expression" => {
@@ -318,6 +319,7 @@ fn handle_scala_call_expression(node: &Node, source: &[u8], symbols: &mut FileSy
                     line: start_line(node),
                     dynamic: None,
                     receiver,
+                    ..Default::default()
                 });
             }
             _ => {
@@ -326,6 +328,7 @@ fn handle_scala_call_expression(node: &Node, source: &[u8], symbols: &mut FileSy
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
         }

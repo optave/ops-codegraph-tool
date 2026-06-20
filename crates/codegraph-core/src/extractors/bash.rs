@@ -64,6 +64,7 @@ fn match_bash_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth
                             line: start_line(node),
                             dynamic: None,
                             receiver: None,
+                            ..Default::default()
                         });
                     }
                 }

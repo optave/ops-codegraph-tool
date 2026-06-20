@@ -186,6 +186,7 @@ export interface EdgeRow {
   kind: EdgeKind;
   confidence: number | null;
   dynamic: 0 | 1;
+  dynamic_kind?: string | null;
 }
 
 /** Callee/caller node shape (from findCallees / findCallers). */
@@ -475,12 +476,27 @@ export interface LOCMetrics {
   commentLines: number;
 }
 
+/**
+ * Taxonomy for dynamic/computed call sites — distinguishes resolvable kinds
+ * (computed-literal, reflection) from flag-only kinds (eval, computed-key,
+ * unresolved-dynamic) that cannot be resolved statically.
+ */
+export type DynamicKind =
+  | 'computed-literal' // obj["foo"]()    — resolvable; already emitted as normal edge
+  | 'computed-key' // obj[k]()        — potentially resolvable via pts; else flagged
+  | 'reflection' // .call/.apply/.bind — usually resolved; flagged if target unknown
+  | 'eval' // eval() / new Function() — undecidable; always flagged
+  | 'unresolved-dynamic'; // any other detected dynamic pattern; flagged
+
 /** A function/method call detected by an extractor. */
 export interface Call {
   name: string;
   line: number;
   receiver?: string;
   dynamic?: boolean;
+  dynamicKind?: DynamicKind;
+  /** Raw key/arg text — used for diagnostics and future RES-1 const-string resolution. */
+  keyExpr?: string;
 }
 
 /** An import statement detected by an extractor. */

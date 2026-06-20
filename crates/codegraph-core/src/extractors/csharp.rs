@@ -231,6 +231,7 @@ fn handle_invocation_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols)
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         "member_access_expression" => {
@@ -242,6 +243,7 @@ fn handle_invocation_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols)
                     line: start_line(node),
                     dynamic: None,
                     receiver,
+                    ..Default::default()
                 });
             }
         }
@@ -253,6 +255,7 @@ fn handle_invocation_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols)
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
         }
@@ -274,6 +277,7 @@ fn handle_object_creation(node: &Node, source: &[u8], symbols: &mut FileSymbols)
             line: start_line(node),
             dynamic: None,
             receiver: None,
+            ..Default::default()
         });
     }
 }

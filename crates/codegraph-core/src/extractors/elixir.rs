@@ -40,6 +40,7 @@ fn match_elixir_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
         }
@@ -380,5 +381,6 @@ fn handle_dot_call(node: &Node, dot_node: &Node, source: &[u8], symbols: &mut Fi
         line: start_line(node),
         dynamic: None,
         receiver,
+        ..Default::default()
     });
 }

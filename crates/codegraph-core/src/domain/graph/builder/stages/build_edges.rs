@@ -36,6 +36,10 @@ pub struct CallInfo {
     pub line: u32,
     pub dynamic: Option<bool>,
     pub receiver: Option<String>,
+    #[napi(js_name = "dynamicKind")]
+    pub dynamic_kind: Option<String>,
+    #[napi(js_name = "keyExpr")]
+    pub key_expr: Option<String>,
 }
 
 #[napi(object)]
@@ -122,6 +126,8 @@ pub struct ComputedEdge {
     pub kind: String,
     pub confidence: f64,
     pub dynamic: u32,
+    #[napi(js_name = "dynamic_kind")]
+    pub dynamic_kind: Option<String>,
 }
 
 /// Internal struct for caller resolution (def line range → node ID).
@@ -398,6 +404,8 @@ fn emit_pts_alias_edges<'a>(
             line: alias_ctx.call_line,
             dynamic: Some(true),
             receiver: None,
+            dynamic_kind: None,
+            key_expr: None,
         };
         let mut alias_targets = resolve_call_targets(
             ctx, &alias_call, alias_ctx.rel_path, alias_imported_from, alias_ctx.type_map, alias_ctx.caller_name,
@@ -416,6 +424,7 @@ fn emit_pts_alias_edges<'a>(
                         kind: "calls".to_string(),
                         confidence: conf,
                         dynamic: alias_ctx.is_dynamic,
+                        dynamic_kind: None,
                     });
                 }
             }
@@ -735,6 +744,29 @@ fn process_file<'a>(
         }
 
         emit_receiver_edge(ctx, call, caller_id, fc.rel_path, &fc.type_map, &fc.imported_names, &mut seen_edges, edges);
+
+        // Sink edge: flag-only dynamic calls with no resolved target are emitted as
+        // a (caller → file_node) edge at confidence=0.0 with dynamic_kind set.
+        // This makes them queryable (`codegraph roles --dynamic`) instead of silent drops.
+        if targets.is_empty() {
+            if let Some(ref dk) = call.dynamic_kind {
+                if dk == "eval" || dk == "computed-key" || dk == "unresolved-dynamic" {
+                    let sink_key = ((caller_id as u64) << 32) | (fc.file_node_id as u64)
+                        | ((dk.as_bytes()[0] as u64) << 56); // differentiate by kind
+                    if !seen_edges.contains(&sink_key) {
+                        seen_edges.insert(sink_key);
+                        edges.push(ComputedEdge {
+                            source_id: caller_id,
+                            target_id: fc.file_node_id,
+                            kind: "calls".to_string(),
+                            confidence: 0.0,
+                            dynamic: 1,
+                            dynamic_kind: Some(dk.clone()),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     emit_hierarchy_edges(ctx, file_input, fc.rel_path, edges);
@@ -848,6 +880,12 @@ fn resolve_call_targets<'a>(
     type_map: &HashMap<&str, (&str, f64)>,
     caller_name: &str,
 ) -> Vec<&'a NodeInfo> {
+    // Flagged dynamic calls use synthetic names like "<dynamic:eval>". Short-circuit
+    // so they never accidentally match a real symbol via name lookup.
+    if call.name.starts_with("<dynamic:") {
+        return vec![];
+    }
+
     // 1. Import-aware resolution
     if let Some(imp_file) = imported_from {
         let targets = ctx.nodes_by_name_and_file
@@ -1124,6 +1162,7 @@ fn emit_call_edges(
                 edges.push(ComputedEdge {
                     source_id: caller_id, target_id: t.id,
                     kind: "calls".to_string(), confidence, dynamic: is_dynamic,
+                    dynamic_kind: None,
                 });
             }
         }
@@ -1180,6 +1219,7 @@ fn emit_receiver_edge(
             edges.push(ComputedEdge {
                 source_id: caller_id, target_id: recv_target.id,
                 kind: "receiver".to_string(), confidence, dynamic: 0,
+                dynamic_kind: None,
             });
         }
     }
@@ -1205,6 +1245,7 @@ fn emit_hierarchy_edges(
                 edges.push(ComputedEdge {
                     source_id: source.id, target_id: t.id,
                     kind: "extends".to_string(), confidence: 1.0, dynamic: 0,
+                    dynamic_kind: None,
                 });
             }
         }
@@ -1216,6 +1257,7 @@ fn emit_hierarchy_edges(
                 edges.push(ComputedEdge {
                     source_id: source.id, target_id: t.id,
                     kind: "implements".to_string(), confidence: 1.0, dynamic: 0,
+                    dynamic_kind: None,
                 });
             }
         }
@@ -1459,6 +1501,7 @@ fn emit_type_only_symbol_edges(
                 kind: "imports-type".to_string(),
                 confidence: 1.0,
                 dynamic: 0,
+                dynamic_kind: None,
             });
         }
     }
@@ -1508,6 +1551,7 @@ fn emit_barrel_through_edges(
                 kind: barrel_kind.to_string(),
                 confidence: 0.9,
                 dynamic: 0,
+                dynamic_kind: None,
             });
         }
         resolved_sources.insert(actual_source);
@@ -1542,6 +1586,7 @@ fn process_single_import(
         kind: edge_kind.to_string(),
         confidence: 1.0,
         dynamic: 0,
+        dynamic_kind: None,
     });
     emit_type_only_symbol_edges(edges, file_input, imp, resolved_path, ctx);
     emit_barrel_through_edges(edges, file_input, imp, resolved_path, edge_kind, ctx);
@@ -1861,7 +1906,14 @@ mod call_edge_tests {
     }
 
     fn call(name: &str, line: u32, receiver: Option<&str>) -> CallInfo {
-        CallInfo { name: name.to_string(), line, dynamic: None, receiver: receiver.map(|s| s.to_string()) }
+        CallInfo {
+            name: name.to_string(),
+            line,
+            dynamic: None,
+            receiver: receiver.map(|s| s.to_string()),
+            dynamic_kind: None,
+            key_expr: None,
+        }
     }
 
     fn type_map_entry(name: &str, type_name: &str, confidence: f64) -> TypeMapInput {

@@ -413,7 +413,7 @@ function purgeAndAddReverseDeps(
         const saveEdgesStmt = db.prepare(`
           SELECT e.source_id, n_tgt.name AS tgt_name, n_tgt.kind AS tgt_kind,
                  n_tgt.file AS tgt_file, n_tgt.line AS tgt_line,
-                 e.kind AS edge_kind, e.confidence, e.dynamic, e.technique,
+                 e.kind AS edge_kind, e.confidence, e.dynamic, e.technique, e.dynamic_kind,
                  n_src.file AS src_file
           FROM edges e
           JOIN nodes n_src ON e.source_id = n_src.id
@@ -431,6 +431,7 @@ function purgeAndAddReverseDeps(
             confidence: number;
             dynamic: number;
             technique: string | null;
+            dynamic_kind: string | null;
             src_file: string;
           }>) {
             // Skip edges whose source is also being purged — buildEdges will
@@ -446,6 +447,7 @@ function purgeAndAddReverseDeps(
               confidence: row.confidence,
               dynamic: row.dynamic,
               technique: row.technique,
+              dynamicKind: row.dynamic_kind,
             });
           }
         }

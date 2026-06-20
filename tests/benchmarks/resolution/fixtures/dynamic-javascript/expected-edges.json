@@ -1,0 +1,35 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Dynamic call resolution fixture: computed-literal and reflection patterns. Flagged kinds (eval, computed-key) emit sink edges and are excluded from expected-edges.",
+  "edges": [
+    {
+      "source": { "name": "runCall", "file": "reflection.js" },
+      "target": { "name": "greet", "file": "reflection.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "greet.call(ctx, 'world') — reflection kind, resolves to greet()"
+    },
+    {
+      "source": { "name": "runApply", "file": "reflection.js" },
+      "target": { "name": "greet", "file": "reflection.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "greet.apply(ctx, ['world']) — reflection kind, resolves to greet()"
+    },
+    {
+      "source": { "name": "runInvokerCall", "file": "reflection.js" },
+      "target": { "name": "invoker", "file": "reflection.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "invoker.call(handler, 10) — reflection kind, resolves to invoker()"
+    },
+    {
+      "source": { "name": "runComputedLiteral", "file": "dispatch.js" },
+      "target": { "name": "greet", "file": "dispatch.js" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "obj[\"greet\"](\"world\") — computed-literal kind, resolves to greet()"
+    }
+  ]
+}

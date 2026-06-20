@@ -1,5 +1,11 @@
 import path from 'node:path';
-import { kindIcon, moduleMapData, rolesData, statsData } from '../../domain/queries.js';
+import {
+  dynamicCallsData,
+  kindIcon,
+  moduleMapData,
+  rolesData,
+  statsData,
+} from '../../domain/queries.js';
 import { debug } from '../../infrastructure/logger.js';
 import { outputResult } from '../../infrastructure/result-formatter.js';
 import { toErrorMessage } from '../../shared/errors.js';
@@ -315,6 +321,34 @@ function printRoleGroup(role: string, symbols: RoleSymbol[]): void {
     console.log(`  ... and ${symbols.length - 30} more`);
   }
   console.log();
+}
+
+export function dynamicCalls(customDbPath: string, opts: OutputOpts = {}): void {
+  const rows = dynamicCallsData(customDbPath);
+  if (opts.json || opts.ndjson) {
+    outputResult(
+      { dynamic_calls: rows } as unknown as Record<string, unknown>,
+      'dynamic_calls',
+      opts,
+    );
+    return;
+  }
+  if (rows.length === 0) {
+    console.log(
+      'No flagged dynamic calls found. Run "codegraph build" first, or add JavaScript files with eval/computed-key patterns.',
+    );
+    return;
+  }
+  console.log('\nFlagged dynamic calls (confidence=0.0 sink edges):\n');
+  const total = rows.reduce((s, r) => s + r.count, 0);
+  for (const { dynamic_kind, count } of rows) {
+    const bar = '█'.repeat(Math.min(30, Math.round((count / total) * 30)));
+    console.log(`  ${dynamic_kind.padEnd(20)} ${String(count).padStart(5)}  ${bar}`);
+  }
+  console.log(`\n  Total flagged: ${total}\n`);
+  console.log(
+    '  Kinds: eval — undecidable; computed-key — obj[var](); unresolved-dynamic — other\n',
+  );
 }
 
 export function roles(customDbPath: string, opts: OutputOpts = {}): void {

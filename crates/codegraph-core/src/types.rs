@@ -102,12 +102,16 @@ pub struct Definition {
 }
 
 #[napi(object)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Call {
     pub name: String,
     pub line: u32,
     pub dynamic: Option<bool>,
     pub receiver: Option<String>,
+    #[napi(js_name = "dynamicKind")]
+    pub dynamic_kind: Option<String>,
+    #[napi(js_name = "keyExpr")]
+    pub key_expr: Option<String>,
 }
 
 #[napi(object)]

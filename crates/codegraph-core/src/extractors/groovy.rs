@@ -319,6 +319,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             line: start_line(node),
             dynamic: None,
             receiver,
+            ..Default::default()
         });
         return;
     }
@@ -348,6 +349,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         line: start_line(node),
                         dynamic: None,
                         receiver: obj.map(|n| node_text(&n, source).to_string()),
+                        ..Default::default()
                     });
                 }
             }
@@ -357,6 +359,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
         }
@@ -376,6 +379,7 @@ fn handle_object_creation(node: &Node, source: &[u8], symbols: &mut FileSymbols)
             line: start_line(node),
             dynamic: None,
             receiver: None,
+            ..Default::default()
         });
     }
 }

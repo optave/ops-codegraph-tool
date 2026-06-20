@@ -1,5 +1,6 @@
 import type {
   Call,
+  DynamicKind,
   ExtractorOutput,
   Import,
   SubDeclaration,
@@ -270,18 +271,20 @@ export function extractModifierVisibility(
 
 /**
  * Append a `Call` to the extractor output. `line` defaults to the start line of
- * `node`; pass `extra` for `receiver` / `dynamic` flags.
+ * `node`; pass `extra` for `receiver` / `dynamic` / `dynamicKind` / `keyExpr` fields.
  */
 export function pushCall(
   ctx: ExtractorOutput,
   node: TreeSitterNode,
   name: string,
-  extra: { receiver?: string; dynamic?: boolean } = {},
+  extra: { receiver?: string; dynamic?: boolean; dynamicKind?: DynamicKind; keyExpr?: string } = {},
 ): void {
   if (!name) return;
   const call: Call = { name, line: nodeStartLine(node) };
   if (extra.receiver !== undefined) call.receiver = extra.receiver;
   if (extra.dynamic !== undefined) call.dynamic = extra.dynamic;
+  if (extra.dynamicKind !== undefined) call.dynamicKind = extra.dynamicKind;
+  if (extra.keyExpr !== undefined) call.keyExpr = extra.keyExpr;
   ctx.calls.push(call);
 }
 

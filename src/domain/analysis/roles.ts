@@ -6,6 +6,29 @@ import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 import type { NodeRow } from '../../types.js';
 
+export interface DynamicCallCount {
+  dynamic_kind: string;
+  count: number;
+}
+
+/** Return a count of flagged dynamic call sink edges, grouped by kind. */
+export function dynamicCallsData(customDbPath: string): DynamicCallCount[] {
+  const db = openReadonlyOrFail(customDbPath);
+  try {
+    return db
+      .prepare(
+        `SELECT dynamic_kind, COUNT(*) AS count
+         FROM edges
+         WHERE dynamic_kind IS NOT NULL
+         GROUP BY dynamic_kind
+         ORDER BY count DESC`,
+      )
+      .all() as DynamicCallCount[];
+  } finally {
+    db.close();
+  }
+}
+
 export function rolesData(
   customDbPath: string,
   opts: {

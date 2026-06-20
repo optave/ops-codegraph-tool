@@ -193,6 +193,12 @@ export function resolveCallTargets(
   typeMap: Map<string, unknown>,
   callerName?: string | null,
 ): { targets: Array<{ id: number; file: string }>; importedFrom: string | undefined } {
+  // Flagged dynamic calls use synthetic names like '<dynamic:eval>'. Short-circuit
+  // so they never accidentally match a real symbol via lookup.byName.
+  if (call.name.startsWith('<dynamic:')) {
+    return { targets: [], importedFrom: undefined };
+  }
+
   const importedFrom = importedNames.get(call.name);
   let targets: ReadonlyArray<{ id: number; file: string }> | undefined;
 

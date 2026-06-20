@@ -131,6 +131,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             line: start_line(node),
             dynamic: None,
             receiver,
+            ..Default::default()
         });
     }
 }
