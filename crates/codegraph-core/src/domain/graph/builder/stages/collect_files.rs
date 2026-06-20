@@ -28,9 +28,6 @@ const DEFAULT_IGNORE_DIRS: &[&str] = &[
     "venv",
     "env",
     ".env",
-    // Rust workspace convention — contains only Rust source and NAPI-RS generated
-    // binding artifacts (index.js / index.d.ts) that produce false complexity readings.
-    "crates",
 ];
 
 /// All supported file extensions (mirrors the JS `EXTENSIONS` set).
