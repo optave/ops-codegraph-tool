@@ -845,6 +845,59 @@ export function buildDataflowVerticesFromMap(
   return buildInterproceduralStitch(db, allCandidates, allCaptures);
 }
 
+/**
+ * P4 re-stitch pass for the native engine path.
+ *
+ * On incremental builds the changed files' param vertices are purged and
+ * recreated by the P6 vertex pass, but unchanged caller files are never
+ * re-parsed — so their arg_in edges (which pointed to the old param vertex
+ * IDs) are deleted and not replaced. This function re-parses those caller
+ * files and rebuilds the arg_in edges for any call that targets a function
+ * in one of the changed callee files.
+ *
+ * Called by the native orchestrator after buildDataflowVerticesFromMap.
+ * Safe to call on full builds — the guard below exits early when
+ * changedFiles covers all distinct files in the DB.
+ */
+export async function buildDataflowP4ForNative(
+  db: BetterSqlite3Database,
+  changedFiles: string[],
+  rootDir: string,
+): Promise<void> {
+  if (changedFiles.length === 0) return;
+
+  // Skip on full builds — all files were in the changed set, so there are no
+  // unchanged callers to re-stitch.
+  const totalFilesInDb = (
+    db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
+  ).n;
+  if (changedFiles.length >= totalFilesInDb) return;
+
+  const extToLang = buildExtToLangMap();
+  const changedRelPaths = new Set(changedFiles);
+  const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
+  if (changedFuncIds.length === 0) return;
+
+  // parsers=null, getParserFn=null → collectCallerStitchCandidates initialises
+  // WASM parsers lazily for the caller files it needs to re-parse.
+  const { candidates, captures } = await collectCallerStitchCandidates(
+    db,
+    changedFuncIds,
+    changedRelPaths,
+    rootDir,
+    extToLang,
+    null,
+    null,
+  );
+
+  if (candidates.length > 0) {
+    const count = buildInterproceduralStitch(db, candidates, captures);
+    if (count > 0) {
+      info(`Dataflow (native P4): ${count} inter-procedural edges re-stitched`);
+    }
+  }
+}
+
 export async function buildDataflowEdges(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbolsDataflow>,
