@@ -24,6 +24,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates, language-specific analysis reference map (34 languages, Jelly-equivalents, fixture acquisition guide) | **Complete** (v3.12.0) |
 | [**9**](#phase-9--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
 | [**10**](#phase-10--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | In Progress |
+| [**10.5**](#phase-105--architectural-health) | Architectural Health | Split god files (types.ts/dataflow.ts), missing ADRs, language quality tiers, ts-compiler resolver, dataflow query surface, per-edge confidence transparency | Planned |
 | [**11**](#phase-11--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**12**](#phase-12--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
 | [**13**](#phase-13--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, LLM-enhanced PR review, visual impact graphs, SARIF output | Planned |
@@ -42,7 +43,7 @@ Phase 1 (Rust Core)
                                             |-->  Phase 6 (Native Analysis Acceleration)
                                             |-->  Phase 7 (Expanded Language Support)  -->  Phase 8 (Analysis Depth)
                                             |-->  Phase 9 (Runtime & Extensibility)
-                                            |-->  Phase 10 (Quality, Security & Technical Debt)
+                                            |-->  Phase 10 (Quality, Security & Technical Debt)  -->  Phase 10.5 (Architectural Health)
                                             |-->  Phase 11 (Intelligent Embeddings)  -->  Phase 12 (Natural Language Queries)
                                             |-->  Phase 13 (GitHub Integration & CI) <-- Phase 11 (risk_score, side_effects)
 Phases 1-13 -->  Phase 14 (Advanced Features)
@@ -2348,6 +2349,123 @@ Items to remove or rework, identified by architectural audit:
 2. **Scope Halstead metrics to imperative code** — Halstead operator/operand counting is meaningless for JSX, template literals, HCL, and declarative code. Either scope to imperative code blocks or remove
 3. **Migrate custom `graph/model.js` to `graphology`** — `graphology` is already a runtime dependency. The custom model reimplements `addNode`, `addEdge`, `successors`, `predecessors`, `inDegree`, `outDegree` — all available natively in `graphology`. Migrate during the TypeScript migration to avoid maintaining two graph representations
 4. **Skip WASM loading on platforms with native binaries** — On supported platforms (darwin-arm64, linux-x64, win32-x64), WASM should not be loaded at all. Currently `loadNative()` is checked on every call in `resolve.js`
+
+---
+
+## Phase 10.5 -- Architectural Health
+
+> **Status:** Planned
+> **Source:** v3.13.0 architectural audit findings (2026-06-19)
+
+**Goal:** Close the structural and documentation debt accumulated across Phases 6–8. This phase does not add user-facing features — it closes the gap between the codebase's current state and its own architectural standards, as measured by the tool's own analysis of itself.
+
+### 10.5.1 -- Split `types.ts` God File
+
+**Gap:** `src/types.ts` has grown from 1,851 LOC (v3.4.0) to 2,855 LOC (v3.13.0, +54% in three months) with fan-in 185. Every layer depends on it. At the current growth rate it reaches 5,000 LOC within a year. Identified in both the v3.4.0 and v3.13.0 architectural audits.
+
+**Deliverables:**
+
+1. Create domain-scoped type files under `src/types/`:
+   - `src/types/db.ts` — DB row shapes, repository contracts (`NodeRow`, `EdgeRow`, `ComplexityRow`, etc.)
+   - `src/types/graph.ts` — `CodeGraph`, `NodeAttrs`, `EdgeAttrs`, graph model interfaces
+   - `src/types/mcp.ts` — `McpToolContext`, `McpTool`, tool handler signatures
+   - `src/types/dataflow.ts` — `DataflowEdge`, `DataflowVertex`, `StitchCandidate`, interprocedural types
+   - `src/types/config.ts` — `CodegraphConfig`, `DEFAULTS`, all config-related interfaces
+   - `src/types/analysis.ts` — `SymbolRow`, `ContextResult`, `ImpactResult`, query return shapes
+2. Keep `src/types.ts` as a barrel re-export (`export * from './types/db'`, etc.) during the transition
+3. Migrate imports module by module; remove the barrel when all imports point to domain files
+
+**Acceptance criteria:** `src/types.ts` fan-in drops below 20; no single type file exceeds 400 LOC.
+
+**Affected files:** `src/types.ts` → `src/types/` directory
+
+### 10.5.2 -- Split `dataflow.ts` God File
+
+**Gap:** `src/features/dataflow.ts` grew from 701 LOC (v3.4.0) to 1,586 LOC (v3.13.0, +126%) as interprocedural phases P0–P6 were appended to the same file. It now combines five distinct concerns: data model definitions, WASM parser setup, DB insertion, interprocedural stitching, and BFS query traversal.
+
+**Deliverables:**
+
+1. Create `src/features/dataflow/` subdirectory:
+   - `model.ts` — all data structure definitions (`ArgFlow`, `Assignment`, `Mutation`, `StitchCandidate`, `DataflowStmts`, etc.)
+   - `extraction.ts` — WASM parser initialisation and `getDataflowForFile`
+   - `insertion.ts` — `insertDataflowEdges`, `buildDataflowVerticesAndEdges`, `prepareVertexStmts`
+   - `stitching.ts` — `buildInterproceduralStitch`, `collectFuncIdsForFiles`, `collectCallerStitchCandidates`
+   - `query.ts` — `buildDataflowResult`, `bfsDataflowPath`, `bfsReturnConsumers`, `dataflowData`, `dataflowPathData`, `dataflowImpactData`
+2. Keep `src/features/dataflow.ts` as a barrel re-export for backwards compatibility
+
+**Acceptance criteria:** No single file in `src/features/dataflow/` exceeds 400 LOC; `buildDataflowEdges` cognitive complexity drops below 30.
+
+**Affected files:** `src/features/dataflow.ts` → `src/features/dataflow/` directory
+
+### 10.5.3 -- Write Missing Architecture Decision Records
+
+**Gap:** One ADR exists (ADR-001, dual-engine) for a codebase at v3.13.0. Six architectural decisions made since v3.4.0 have no documentation. Each new contributor or AI agent must reconstruct these decisions from git history.
+
+**Deliverables** — one ADR per decision, following the ADR-001 format:
+
+1. **ADR-002: TypeScript migration** — rationale for migrating from JS to TS, build pipeline changes (`tsup`, path aliases, `#shared/*` imports), `nodenext` module resolution choice
+2. **ADR-003: Repository pattern in `db/`** — why `SqliteRepository` / `InMemoryRepository` over flat SQL functions, what the interface contract is, how `InMemoryRepository` enables unit testing
+3. **ADR-004: MCP tool architecture** — barrel pattern in `tools/index.ts`, middleware layer, lazy-loading of `@modelcontextprotocol/sdk`, single-repo isolation default, `buildToolList(multiRepo)` dynamic schema
+4. **ADR-005: Interprocedural dataflow model** — vertex schema design, `arg_in`/`return_out`/`def_use` edge semantics, stitching algorithm, phased P0–P6 delivery strategy, tradeoffs vs a purely intra-procedural model
+5. **ADR-006: TypeScript-native (ts-native) resolution technique** — what the technique does differently from the 6-level heuristic, why it was introduced alongside rather than replacing the existing resolver, known confidence tradeoffs, calibration plan
+6. **ADR-007: User-level config and consent model** — XDG location, layered merge order (user > repo > defaults), per-repo consent mechanics, config-hash invalidation, security trust model
+
+**Affected files:** `docs/architecture/decisions/` (6 new files)
+
+### 10.5.4 -- Document Language Quality Tiers
+
+**Gap:** codegraph claims "34 languages" in the README without caveat. Quality depth ranges from 571 TypeScript files benchmarked against Jelly to 4–5 fixture files for CUDA, Verilog, and Gleam. A Verilog user has no way to know what level of support to expect.
+
+**Deliverables:**
+
+1. Define three quality tiers:
+   - **T1 (Production):** JS, TS, TSX, Python, Go, Rust — 100+ fixture files, precision/recall CI gates, dynamic tracer coverage
+   - **T2 (Supported):** Java, C#, PHP, Ruby, C, C++, Kotlin, Swift, Scala, Bash — parser + extractor + integration test coverage
+   - **T3 (Experimental):** Remaining 16 languages — 4–5 fixture files, best-effort extractor, no CI recall gate
+2. Add a "Language support tiers" table to `README.md`
+3. Add `tier: 1 | 2 | 3` to each `LANGUAGE_REGISTRY` entry
+4. Emit a `[WARN]` on `codegraph build` when T3 language files exceed 20% of the indexed corpus
+
+**Affected files:** `README.md`, `src/domain/parser.ts`, `src/shared/constants.ts`
+
+### 10.5.5 -- Replace Heuristic Resolver with TypeScript Language Service
+
+**Gap:** Caller coverage is capped at 41% because the 6-level heuristic resolver cannot handle TypeScript's full module resolution semantics. The ts-native pass added 12,776 edges but at 73% confidence (down from 81%), lowering precision. The tool reimplements TypeScript module resolution heuristically rather than delegating to the compiler.
+
+**Deliverables:**
+
+1. Introduce a `ts.createProgram`-backed resolution pass in `src/domain/graph/resolve.ts`
+2. When `tsconfig.json` is present, use `ts.resolveModuleName` for `.ts`/`.tsx` imports instead of the 6-level heuristic
+3. Tag edges with `technique: 'ts-compiler'` for separate confidence/recall tracking
+4. Gate behind `--resolution ts-compiler` or auto-enable when tsconfig is present
+5. Baseline recall on Jelly micro-fixtures before and after; target ≥75% caller coverage for TypeScript-primary projects without dropping confidence below 78%
+
+**Affected files:** `src/domain/graph/resolve.ts`, `src/domain/graph/builder/stages/build-edges.ts`
+
+### 10.5.6 -- Dataflow-Aware Query Surface
+
+**Gap:** The interprocedural dataflow model (P0–P6) stores `arg_in`, `return_out`, and `def_use` edges but the CLI and MCP tools don't expose dataflow-aware impact analysis. The data is in the DB; it just has no query entry point.
+
+**Deliverables:**
+
+1. **`codegraph dataflow --flows-into <func>`** — list all argument sources reaching `<func>` via `arg_in` edges
+2. **`codegraph dataflow --param-impact <func> <param_index>`** — list functions transitively affected if `param_index` changes, via `return_out`/`def_use` traversal
+3. Expose both as MCP tools: `dataflow_sources` and `dataflow_param_impact`
+4. Add `--dataflow` flag to `codegraph diff-impact` to augment call-graph blast radius with dataflow-dependent functions
+
+**Affected files:** `src/features/dataflow/`, `src/mcp/tools/`, `src/cli/commands/dataflow.ts`
+
+### 10.5.7 -- Per-Edge Confidence Transparency
+
+**Gap:** Call confidence (73% at v3.13.0) is tracked per-edge in the DB but surfaced only as an aggregate statistic. Users cannot distinguish reliable edges from heuristic inference when inspecting callers. This matters for dead-code classification and blast-radius analysis.
+
+**Deliverables:**
+
+1. `--show-confidence` flag on `codegraph context`, `codegraph query`, `codegraph fn-impact` — annotate each caller/callee with confidence score and technique (`ts-native`, `cha`, `ts-compiler`, `heuristic`)
+2. Add opt-in `confidence` and `technique` fields to MCP `context` and `fn_impact` tool responses
+3. In `codegraph roles --role dead`, distinguish "no callers" from "no high-confidence callers (≥0.8)" — surface the latter as `dead-low-confidence`
+
+**Affected files:** `src/domain/analysis/context.ts`, `src/domain/analysis/impact.ts`, `src/mcp/tools/`
 
 ---
 
