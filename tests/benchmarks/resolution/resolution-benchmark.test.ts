@@ -142,6 +142,16 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // dynamic-typescript: Phase 1 fixture — Reflect.apply/construct/get + TS decorators.
   //   3 expected edges (Reflect.apply → greet, Reflect.construct → UserService, Reflect.get → greet).
   'dynamic-typescript': { precision: 1.0, recall: 0.75 },
+  // Phase 2 JVM fixtures — reflection and dynamic dispatch patterns.
+  // Java/Scala/Groovy: detection works but method names are class-qualified in the DB,
+  //   so lookup-by-name fails for getMethod("foo") → 0% recall until RES-3 adds type-aware lookup.
+  //   invoke() and forName() emit sink edges (confidence=0.0, excluded from metrics).
+  'dynamic-java': { precision: 0.0, recall: 0.0 },
+  // Kotlin: ::fn callable refs resolve correctly (top-level fns are unqualified in DB).
+  //   invoke() emits sink edge (excluded). 100% recall achievable.
+  'dynamic-kotlin': { precision: 1.0, recall: 1.0 },
+  'dynamic-scala': { precision: 0.0, recall: 0.0 },
+  'dynamic-groovy': { precision: 0.0, recall: 0.0 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).

@@ -258,11 +258,79 @@ function handleJavaImportDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
   }
 }
 
+/** Extract the first string literal argument from a method_invocation node. */
+function getFirstStringArgJava(node: TreeSitterNode): string | null {
+  const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
+  if (!args) return null;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',') continue;
+    if (t === 'string_literal' || t === 'string_fragment') {
+      return child.text.replace(/^["']|["']$/g, '');
+    }
+    break; // First real argument is not a string — stop
+  }
+  return null;
+}
+
 function handleJavaMethodInvocation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const obj = node.childForFieldName('object');
-  pushCall(ctx, node, nameNode.text, obj ? { receiver: obj.text } : {});
+  const methodName = nameNode.text;
+  const receiver = obj?.text;
+
+  // Method.invoke(target, args) — runtime reflection, target not statically knowable
+  if (methodName === 'invoke') {
+    pushCall(ctx, node, '<dynamic:unresolved>', {
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      receiver,
+    });
+    return;
+  }
+
+  // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal arg
+  if (methodName === 'getMethod' || methodName === 'getDeclaredMethod') {
+    const literal = getFirstStringArgJava(node);
+    if (literal) {
+      pushCall(ctx, node, literal, {
+        dynamic: true,
+        dynamicKind: 'reflection',
+        keyExpr: literal,
+        receiver,
+      });
+    } else {
+      const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
+      const firstArg = args?.child(1); // skip '('
+      const keyExpr = firstArg?.text;
+      pushCall(ctx, node, '<dynamic:computed-key>', {
+        dynamic: true,
+        dynamicKind: 'computed-key',
+        keyExpr: keyExpr ?? undefined,
+        receiver,
+      });
+    }
+    return;
+  }
+
+  // Class.forName("pkg.ClassName") — dynamic class loading; flag as unresolved
+  // (loading a class is not the same as calling it — don't emit a call edge)
+  if (methodName === 'forName') {
+    const literal = getFirstStringArgJava(node);
+    pushCall(ctx, node, '<dynamic:unresolved>', {
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      keyExpr: literal ?? undefined,
+      receiver,
+    });
+    return;
+  }
+
+  // Normal method invocation
+  pushCall(ctx, node, methodName, receiver ? { receiver } : {});
 }
 
 function handleJavaLocalVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
