@@ -8,7 +8,12 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createParsers, extractSymbols, getParser } from '../../src/domain/parser.js';
+import {
+  createParsers,
+  extractPythonSymbols,
+  extractSymbols,
+  getParser,
+} from '../../src/domain/parser.js';
 
 let parsers: Awaited<ReturnType<typeof createParsers>>;
 
@@ -183,5 +188,86 @@ describe('Phase 1: TypeScript decorator detection', () => {
     const c = out.calls.find((c) => c.name === 'log');
     expect(c).toBeDefined();
     expect(c?.dynamicKind).toBe('reflection');
+  });
+});
+
+describe('Phase 3: Python dynamic dispatch detection', () => {
+  let parsers: Awaited<ReturnType<typeof createParsers>>;
+
+  beforeAll(async () => {
+    parsers = await createParsers();
+  }, 30_000);
+
+  function parsePy(code: string) {
+    const parser = getParser(parsers, 'test.py');
+    if (!parser) throw new Error('Python parser not available');
+    const tree = parser.parse(code);
+    return extractPythonSymbols(tree, 'test.py');
+  }
+
+  it('eval(code) tags as eval kind', () => {
+    const out = parsePy(`
+def test(code):
+    eval(code)
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:eval>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('eval');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('exec(code) tags as eval kind', () => {
+    const out = parsePy(`
+def test(code):
+    exec(code)
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:eval>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('eval');
+  });
+
+  it("getattr(obj, 'method') with string literal tags as reflection", () => {
+    const out = parsePy(`
+def test(obj):
+    getattr(obj, 'greet')
+`);
+    const c = out.calls.find((c) => c.name === 'greet');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.keyExpr).toContain('greet');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('getattr(obj, variable) with identifier key tags as computed-key', () => {
+    const out = parsePy(`
+def test(obj, method_name):
+    getattr(obj, method_name)
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:computed-key>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('computed-key');
+    expect(c?.keyExpr).toBe('method_name');
+  });
+
+  it('functools.partial(fn, ...) extracts fn as reflection kind', () => {
+    const out = parsePy(`
+import functools
+def test():
+    functools.partial(greet, 'world')
+`);
+    const c = out.calls.find((c) => c.name === 'greet');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+  });
+
+  it('does not tag normal calls dynamically', () => {
+    const out = parsePy(`
+def test():
+    greet('world')
+`);
+    const c = out.calls.find((c) => c.name === 'greet');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBeUndefined();
+    expect(c?.dynamic).toBeUndefined();
   });
 });
