@@ -1,0 +1,14 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "groovy",
+  "description": "Phase 2 JVM fixture: Groovy dynamic dispatch. invokeMethod resolved if literal; GString flagged.",
+  "edges": [
+    {
+      "source": { "name": "DynamicDispatch.runInvokeMethod", "file": "DynamicDispatch.groovy" },
+      "target": { "name": "DynamicDispatch.greet", "file": "DynamicDispatch.groovy" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "obj.invokeMethod('greet', args) — reflection kind, resolved to DynamicDispatch.greet()"
+    }
+  ]
+}
