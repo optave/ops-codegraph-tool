@@ -29,7 +29,7 @@ The competitive pressure is intensifying. GitNexus jumped from 19.9k to 42.5k st
 | **Correctness & Soundness** | 6/10 | 9/10 | 3 | Caller coverage improved 29%→41% (real signal). Call confidence regressed 81%→73% (new ts-native edges are lower-confidence). The tool's quality score is 65/100. Tool's own generated artifact dominates the complexity triage list. Two false-positive warnings for Rust constructors (Import.new, FileSymbols.new). |
 | **Type Safety** | 8/10 | 9/10 | 1 | TypeScript throughout src/. Same baseline as v3.4.0. No meaningful change. |
 | **Error Handling** | 7/10 | 8/10 | 1 | Clean domain error hierarchy. Bare catch blocks still present. Same baseline. |
-| **Testing Strategy** | 7/10 | 9/10 | 2 | 349 test files, 83K LOC tests. Good integration coverage. New dataflow parser tests added for 8+ languages. No property-based tests, no fuzz tests for parsers. |
+| **Testing Strategy** | 7/10 | 9/10 | 2 | 349 test files, 83K LOC tests. Good integration coverage. New dataflow parser tests added for 10 languages. No property-based tests, no fuzz tests for parsers. |
 | **Security** | 8/10 | 9/10 | 1 | Same minimal attack surface. `apiKeyCommand` arbitrary execution still present. User-level consent model (PR #1559) is a positive addition for multi-user scenarios. |
 | **API Design** | 8/10 | 9/10 | 1 | No meaningful change since last audit. |
 | **Documentation** | 5/10 | 9/10 | 4 | One ADR for a codebase that shipped 9 minor versions in 3 months. Interprocedural dataflow, user-level config, 23 new languages, native orchestrator — zero ADRs. CLAUDE.md is current and accurate. The doc deficit is widening. |
@@ -174,7 +174,7 @@ Actual source code only (excluding the `index.js` artifact):
 | `build_points_to_map` | build_edges.rs | 74 | 36 | 36.4 |
 | `walk` | src/extractors/javascript.ts | 72 | 52 | 37.2 |
 | `collectObjectRestParams` | src/extractors/javascript.ts | 70 | 39 | 44.3 |
-| `handle_var_decl` | src/extractors/javascript.rs | 70 | 33 | 42.1 |
+| `handle_var_decl` | crates/codegraph-core/src/extractors/javascript.rs | 70 | 33 | 42.1 |
 | `buildChaPostPass` | builder/stages/build-edges.ts | 61 | 24 | 49.1 |
 | `buildDataflowEdges` | src/features/dataflow.ts | 53 | 19 | 40.6 |
 
@@ -309,7 +309,7 @@ But the WASM backfill warning during this audit's build shows the native pipelin
 **Current State: 7/10 | State of the Art: 9/10 | Gap: 2**
 
 - 349 test files (up from 115 in v3.4.0 — 3x growth)
-- New dataflow parser tests for 8 languages (php, rust, c, cpp, ruby, java, js, python, go, csharp — 10 files)
+- New dataflow parser tests for 10 languages (php, rust, c, cpp, ruby, java, js, python, go, csharp — 10 files)
 - New dataflow integration tests (`dataflow-incremental.test.ts`, `dataflow-vertices.test.ts`)
 - Engine parity tests updated
 - Resolution benchmark fixtures updated (jelly-micro baseline)
