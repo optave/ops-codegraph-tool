@@ -10,10 +10,14 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { debug, info } from '../../../../infrastructure/logger.js';
 import { normalizePath } from '../../../../shared/constants.js';
-import { compileGlobs } from '../../../../shared/globs.js';
+import { compileGlobs, matchesAny } from '../../../../shared/globs.js';
 import { readJournal } from '../../journal.js';
 import type { PipelineContext } from '../context.js';
-import { collectFiles as collectFilesUtil, passesIncludeExclude } from '../helpers.js';
+import {
+  collectFiles as collectFilesUtil,
+  passesIncludeExclude,
+  readGitignorePatterns,
+} from '../helpers.js';
 
 /**
  * Reconstruct allFiles from DB file_hashes + journal deltas.
@@ -75,17 +79,19 @@ function tryFastCollect(
   // 5. Convert to absolute paths and compute directories, honoring
   //    config.include / config.exclude globs so incremental builds reflect
   //    config changes (paths from the DB were collected under older config).
+  //    Also apply gitignore patterns so the incremental fast path is consistent
+  //    with the full filesystem walk (which calls readGitignorePatterns too).
   const includeRegexes = compileGlobs(config?.include);
   const excludeRegexes = compileGlobs(config?.exclude);
   const hasGlobFilters = includeRegexes.length > 0 || excludeRegexes.length > 0;
+  const gitignoreRegexes = readGitignorePatterns(rootDir);
 
   const files: string[] = [];
   const directories = new Set<string>();
   for (const relPath of fileSet) {
-    if (hasGlobFilters) {
-      const normRel = normalizePath(relPath);
-      if (!passesIncludeExclude(normRel, includeRegexes, excludeRegexes)) continue;
-    }
+    const normRel = normalizePath(relPath);
+    if (gitignoreRegexes.length > 0 && matchesAny(gitignoreRegexes, normRel)) continue;
+    if (hasGlobFilters && !passesIncludeExclude(normRel, includeRegexes, excludeRegexes)) continue;
     const absPath = path.join(rootDir, relPath);
     files.push(absPath);
     directories.add(path.dirname(absPath));
