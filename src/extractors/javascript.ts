@@ -816,6 +816,9 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'enum_declaration':
       handleEnumDecl(node, ctx);
       break;
+    case 'decorator':
+      handleDecorator(node, ctx.calls);
+      break;
     case 'call_expression':
       handleCallExpr(node, ctx);
       break;
@@ -1285,6 +1288,37 @@ function handleNewExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   } else if (ctor.type === 'member_expression') {
     const callInfo = extractCallInfo(ctor, node);
     if (callInfo) ctx.calls.push(callInfo);
+  }
+}
+
+/**
+ * Handle a TypeScript/JS decorator node.
+ *
+ * Only handles bare-identifier and bare-member-expression decorators
+ * (`@Foo`, `@Foo.bar`) since decorated call expressions (`@Foo()`, `@Foo.bar()`)
+ * are already visited as `call_expression` children by the recursive walker.
+ */
+function handleDecorator(node: TreeSitterNode, calls: Call[]): void {
+  // Decorators wrap their expression; find the first non-@ child
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child || child.type === '@') continue;
+    const t = child.type;
+    if (t === 'identifier') {
+      // @Foo — the identifier is the decorator factory; emit as reflection call
+      calls.push({
+        name: child.text,
+        line: nodeStartLine(node),
+        dynamic: true,
+        dynamicKind: 'reflection',
+      });
+    } else if (t === 'member_expression') {
+      // @Foo.bar — emit as reflection; always mark dynamic since it's decorator dispatch
+      const callInfo = extractCallInfo(child, node);
+      if (callInfo) calls.push({ ...callInfo, dynamic: true, dynamicKind: 'reflection' });
+    }
+    // call_expression / other — handled by the recursive walker automatically
+    break;
   }
 }
 
@@ -2892,6 +2926,45 @@ function extractCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | n
   return null;
 }
 
+/** Return the first non-punctuation argument node from a call_expression. */
+function getFirstCallArg(callNode: TreeSitterNode): TreeSitterNode | null {
+  const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
+  if (!args) return null;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',') continue;
+    return child;
+  }
+  return null;
+}
+
+/** Extract the logical callee from a Reflect.apply/call/construct first-arg. */
+function extractReflectCalleeFromArg(firstArg: TreeSitterNode | null, callLine: number): Call {
+  if (firstArg?.type === 'identifier') {
+    return { name: firstArg.text, line: callLine, dynamic: true, dynamicKind: 'reflection' };
+  }
+  if (firstArg?.type === 'member_expression') {
+    const innerProp = firstArg.childForFieldName('property');
+    if (innerProp?.type === 'identifier') {
+      return {
+        name: innerProp.text,
+        line: callLine,
+        dynamic: true,
+        dynamicKind: 'reflection',
+        receiver: extractReceiverName(firstArg.childForFieldName('object')),
+      };
+    }
+  }
+  return {
+    name: '<dynamic:unresolved>',
+    line: callLine,
+    dynamic: true,
+    dynamicKind: 'unresolved-dynamic',
+  };
+}
+
 /** Extract call info from a member_expression function node (obj.method()). */
 function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | null {
   const obj = fn.childForFieldName('object');
@@ -2900,6 +2973,69 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
 
   const callLine = nodeStartLine(callNode);
   const propText = prop.text;
+  const isReflect = obj?.type === 'identifier' && obj.text === 'Reflect';
+
+  // Reflect.apply(fn, thisArg, args) / Reflect.call(fn, ...) — extract the first arg as callee
+  if (isReflect && (propText === 'apply' || propText === 'call')) {
+    return extractReflectCalleeFromArg(getFirstCallArg(callNode), callLine);
+  }
+
+  // Reflect.construct(Target, args) — extract the constructor as the callee
+  if (isReflect && propText === 'construct') {
+    return extractReflectCalleeFromArg(getFirstCallArg(callNode), callLine);
+  }
+
+  // Reflect.get(target, prop) — property access via reflection
+  if (isReflect && propText === 'get') {
+    const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
+    if (args) {
+      let argIdx = 0;
+      let firstArg: TreeSitterNode | null = null;
+      let secondArg: TreeSitterNode | null = null;
+      for (let i = 0; i < args.childCount; i++) {
+        const child = args.child(i);
+        if (!child) continue;
+        const t = child.type;
+        if (t === '(' || t === ')' || t === ',') continue;
+        if (argIdx === 0) firstArg = child;
+        else if (argIdx === 1) secondArg = child;
+        argIdx++;
+      }
+      if (secondArg) {
+        const receiver = firstArg ? extractReceiverName(firstArg) : undefined;
+        const st = secondArg.type;
+        if (st === 'string' || st === 'string_fragment') {
+          const propName = secondArg.text.replace(/['"]/g, '');
+          if (propName) {
+            return {
+              name: propName,
+              line: callLine,
+              dynamic: true,
+              dynamicKind: 'computed-literal',
+              keyExpr: secondArg.text,
+              receiver,
+            };
+          }
+        }
+        if (st === 'identifier') {
+          return {
+            name: '<dynamic:computed-key>',
+            line: callLine,
+            dynamic: true,
+            dynamicKind: 'computed-key',
+            keyExpr: secondArg.text,
+            receiver,
+          };
+        }
+      }
+    }
+    return {
+      name: '<dynamic:unresolved>',
+      line: callLine,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+    };
+  }
 
   // .call()/.apply()/.bind() — this-rebinding; target is statically known
   if (propText === 'call' || propText === 'apply' || propText === 'bind') {
@@ -3289,6 +3425,10 @@ function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTarget
       case 'new_expression': {
         const name = extractNewExprTypeName(node);
         if (name) targets.newExpressions.push(name);
+        break;
+      }
+      case 'decorator': {
+        if (targets.calls) handleDecorator(node, targets.calls);
         break;
       }
       case 'field_definition':
