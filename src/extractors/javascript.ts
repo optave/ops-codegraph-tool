@@ -6,6 +6,7 @@ import type {
   CallAssignment,
   ClassRelation,
   Definition,
+  DynamicKind,
   Export,
   ExtractorOutput,
   FnRefBinding,
@@ -311,10 +312,9 @@ function dispatchQueryMatch(
   } else if (c.exp_node) {
     handleExportCapture(c, exps, imports);
   } else if (c.callfn_node) {
-    calls.push({
-      name: c.callfn_name!.text,
-      line: nodeStartLine(c.callfn_node),
-    });
+    // Route through extractCallInfo so special identifier calls (eval) get classified.
+    const callfnInfo = extractCallInfo(c.callfn_name!, c.callfn_node);
+    if (callfnInfo) calls.push(callfnInfo);
     calls.push(...extractCallbackReferenceCalls(c.callfn_node));
   } else if (c.callmem_node) {
     const callInfo = extractCallInfo(c.callmem_fn!, c.callmem_node);
@@ -327,10 +327,20 @@ function dispatchQueryMatch(
     if (callInfo) calls.push(callInfo);
     calls.push(...extractCallbackReferenceCalls(c.callsub_node));
   } else if (c.newfn_node) {
-    calls.push({
-      name: c.newfn_name!.text,
-      line: nodeStartLine(c.newfn_node),
-    });
+    if (c.newfn_name!.text === 'Function') {
+      // new Function(body) — dynamic code execution; classify as eval kind
+      calls.push({
+        name: '<dynamic:eval>',
+        line: nodeStartLine(c.newfn_node),
+        dynamic: true,
+        dynamicKind: 'eval',
+      });
+    } else {
+      calls.push({
+        name: c.newfn_name!.text,
+        line: nodeStartLine(c.newfn_node),
+      });
+    }
   } else if (c.newmem_node) {
     const callInfo = extractCallInfo(c.newmem_fn!, c.newmem_node);
     if (callInfo) calls.push(callInfo);
@@ -1261,7 +1271,17 @@ function handleNewExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const ctor = node.childForFieldName('constructor') || node.child(1);
   if (!ctor) return;
   if (ctor.type === 'identifier') {
-    ctx.calls.push({ name: ctor.text, line: nodeStartLine(node) });
+    if (ctor.text === 'Function') {
+      // new Function(body) — dynamic code execution; undecidable static target
+      ctx.calls.push({
+        name: '<dynamic:eval>',
+        line: nodeStartLine(node),
+        dynamic: true,
+        dynamicKind: 'eval' as DynamicKind,
+      });
+    } else {
+      ctx.calls.push({ name: ctor.text, line: nodeStartLine(node) });
+    }
   } else if (ctor.type === 'member_expression') {
     const callInfo = extractCallInfo(ctor, node);
     if (callInfo) ctx.calls.push(callInfo);
@@ -2839,6 +2859,28 @@ function extractReceiverName(objNode: TreeSitterNode | null): string | undefined
 function extractCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | null {
   const fnType = fn.type;
   if (fnType === 'identifier') {
+    if (fn.text === 'eval') {
+      // eval(code) — dynamic code execution; capture first arg if it's a string literal
+      const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
+      let keyExpr: string | undefined;
+      if (args) {
+        for (let i = 0; i < args.childCount; i++) {
+          const child = args.child(i);
+          if (!child) continue;
+          const t = child.type;
+          if (t === '(' || t === ')' || t === ',') continue;
+          if (t === 'string' || t === 'template_string') keyExpr = child.text;
+          break;
+        }
+      }
+      return {
+        name: '<dynamic:eval>',
+        line: nodeStartLine(callNode),
+        dynamic: true,
+        dynamicKind: 'eval',
+        keyExpr,
+      };
+    }
     return { name: fn.text, line: nodeStartLine(callNode) };
   }
   if (fnType === 'member_expression') {
@@ -2859,22 +2901,30 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
   const callLine = nodeStartLine(callNode);
   const propText = prop.text;
 
-  // .call()/.apply()/.bind() — dynamic invocation
+  // .call()/.apply()/.bind() — this-rebinding; target is statically known
   if (propText === 'call' || propText === 'apply' || propText === 'bind') {
-    if (obj && obj.type === 'identifier') return { name: obj.text, line: callLine, dynamic: true };
+    if (obj && obj.type === 'identifier')
+      return { name: obj.text, line: callLine, dynamic: true, dynamicKind: 'reflection' };
     if (obj && obj.type === 'member_expression') {
       const innerProp = obj.childForFieldName('property');
-      if (innerProp) return { name: innerProp.text, line: callLine, dynamic: true };
+      if (innerProp)
+        return { name: innerProp.text, line: callLine, dynamic: true, dynamicKind: 'reflection' };
     }
   }
 
-  // Computed property: obj["method"]()
+  // Computed string property: obj["method"]() — target is a literal; resolvable
   const propType = prop.type;
   if (propType === 'string' || propType === 'string_fragment') {
     const methodName = propText.replace(/['"]/g, '');
     if (methodName) {
       const receiver = extractReceiverName(obj);
-      return { name: methodName, line: callLine, dynamic: true, receiver };
+      return {
+        name: methodName,
+        line: callLine,
+        dynamic: true,
+        dynamicKind: 'computed-literal',
+        receiver,
+      };
     }
   }
 
@@ -2882,7 +2932,7 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
   return { name: propText, line: callLine, receiver };
 }
 
-/** Extract call info from a subscript_expression function node (obj["method"]()). */
+/** Extract call info from a subscript_expression function node (obj[key]()). */
 function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | null {
   const obj = fn.childForFieldName('object');
   const index = fn.childForFieldName('index');
@@ -2897,11 +2947,32 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
         name: methodName,
         line: nodeStartLine(callNode),
         dynamic: true,
+        dynamicKind: 'computed-literal',
         receiver,
       };
     }
   }
-  return null;
+
+  // obj[variable]() — key is a variable; may be resolvable via pts (RES-1), else flagged
+  if (indexType === 'identifier') {
+    const receiver = extractReceiverName(obj);
+    return {
+      name: '<dynamic:computed-key>',
+      line: nodeStartLine(callNode),
+      dynamic: true,
+      dynamicKind: 'computed-key',
+      keyExpr: index.text,
+      receiver,
+    };
+  }
+
+  // Any other index expression (binary, call, template with ${}…) — not statically resolvable
+  return {
+    name: '<dynamic:unresolved>',
+    line: nodeStartLine(callNode),
+    dynamic: true,
+    dynamicKind: 'unresolved-dynamic',
+  };
 }
 
 /**

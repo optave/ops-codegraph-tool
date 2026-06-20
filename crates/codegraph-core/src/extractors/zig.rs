@@ -188,6 +188,7 @@ fn handle_zig_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver: value.map(|v| node_text(&v, source).to_string()),
+                    ..Default::default()
                 });
             }
         }
@@ -197,6 +198,7 @@ fn handle_zig_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
     }
@@ -233,6 +235,7 @@ fn handle_zig_builtin(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         line: start_line(node),
         dynamic: None,
         receiver: None,
+        ..Default::default()
     });
 }
 

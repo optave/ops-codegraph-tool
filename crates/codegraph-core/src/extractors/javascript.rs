@@ -2116,6 +2116,7 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
                     line: call_line,
                     dynamic: Some(true),
                     receiver: None,
+                    ..Default::default()
                 });
             }
             "member_expression" if member_expr_args_allowed => {
@@ -2127,6 +2128,7 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
                         line: call_line,
                         dynamic: Some(true),
                         receiver,
+                        ..Default::default()
                     });
                 }
             }
@@ -2215,6 +2217,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             line: start_line(call_node),
             dynamic: None,
             receiver: None,
+            ..Default::default()
         }),
         "member_expression" => {
             let obj = fn_node.child_by_field_name("object");
@@ -2230,6 +2233,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                             line: start_line(call_node),
                             dynamic: Some(true),
                             receiver: None,
+                            ..Default::default()
                         });
                     }
                     if obj.kind() == "member_expression" {
@@ -2239,6 +2243,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                                 line: start_line(call_node),
                                 dynamic: Some(true),
                                 receiver: None,
+                                ..Default::default()
                             });
                         }
                     }
@@ -2254,6 +2259,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                         line: start_line(call_node),
                         dynamic: Some(true),
                         receiver,
+                        ..Default::default()
                     });
                 }
             }
@@ -2264,6 +2270,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                 line: start_line(call_node),
                 dynamic: None,
                 receiver,
+                ..Default::default()
             })
         }
         "subscript_expression" => {
@@ -2280,6 +2287,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                             line: start_line(call_node),
                             dynamic: Some(true),
                             receiver,
+                            ..Default::default()
                         });
                     }
                 }
@@ -2712,6 +2720,7 @@ fn collect_this_call_and_bindings(node: &Node, source: &[u8], symbols: &mut File
             line: start_line(node),
             dynamic: None,
             receiver: None,
+            ..Default::default()
         });
         return;
     }

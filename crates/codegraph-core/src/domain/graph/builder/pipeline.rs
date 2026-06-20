@@ -1529,6 +1529,8 @@ fn build_and_insert_call_edges(
                     line: c.line,
                     dynamic: c.dynamic,
                     receiver: c.receiver.clone(),
+                    dynamic_kind: c.dynamic_kind.clone(),
+                    key_expr: c.key_expr.clone(),
                 })
                 .collect(),
             imported_names,

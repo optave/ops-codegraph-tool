@@ -190,6 +190,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         "field_expression" => {
@@ -201,6 +202,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver,
+                    ..Default::default()
                 });
             }
         }
@@ -213,6 +215,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver,
+                    ..Default::default()
                 });
             }
         }
@@ -227,6 +230,7 @@ fn handle_macro_invocation(node: &Node, source: &[u8], symbols: &mut FileSymbols
             line: start_line(node),
             dynamic: None,
             receiver: None,
+            ..Default::default()
         });
     }
 }

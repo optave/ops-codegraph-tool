@@ -296,6 +296,7 @@ fn handle_haskell_apply(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         _ => {}

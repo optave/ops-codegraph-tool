@@ -241,6 +241,7 @@ fn handle_module_instantiation(node: &Node, source: &[u8], symbols: &mut FileSym
         line: start_line(node),
         dynamic: None,
         receiver: None,
+        ..Default::default()
     });
 }
 

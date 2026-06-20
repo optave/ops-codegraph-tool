@@ -1,6 +1,6 @@
 import { collectFile } from '../../db/query-builder.js';
 import { VALID_ROLES } from '../../domain/queries.js';
-import { roles } from '../../presentation/queries-cli.js';
+import { dynamicCalls, roles } from '../../presentation/queries-cli.js';
 import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
@@ -17,6 +17,7 @@ export const command: CommandDefinition = {
     ['-n, --limit <number>', 'Max results to return'],
     ['--offset <number>', 'Skip N results (default: 0)'],
     ['--ndjson', 'Newline-delimited JSON output'],
+    ['--dynamic', 'Show flagged dynamic call sites instead of symbol roles'],
   ],
   validate(_args, opts) {
     if (opts.role && !(VALID_ROLES as readonly string[]).includes(opts.role)) {
@@ -24,6 +25,10 @@ export const command: CommandDefinition = {
     }
   },
   execute(_args, opts, ctx) {
+    if (opts.dynamic) {
+      dynamicCalls(opts.db, ctx.resolveQueryOpts(opts));
+      return;
+    }
     roles(opts.db, {
       role: opts.role,
       file: opts.file,

@@ -822,6 +822,7 @@ pub fn push_call(
         line: start_line(node),
         dynamic,
         receiver,
+        ..Default::default()
     });
 }
 

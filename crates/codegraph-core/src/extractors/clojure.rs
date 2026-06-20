@@ -114,6 +114,7 @@ fn handle_list_form(
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
         }

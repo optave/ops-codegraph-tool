@@ -39,7 +39,7 @@ export {
   moduleMapData,
   statsData,
 } from './analysis/module-map.js';
-export { rolesData } from './analysis/roles.js';
+export { dynamicCallsData, rolesData } from './analysis/roles.js';
 // ── Analysis modules ─────────────────────────────────────────────────────
 export {
   childrenData,

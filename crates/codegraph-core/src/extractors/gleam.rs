@@ -262,6 +262,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         "field_access" | "module_select" => {
@@ -287,6 +288,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver,
+                    ..Default::default()
                 });
             }
         }

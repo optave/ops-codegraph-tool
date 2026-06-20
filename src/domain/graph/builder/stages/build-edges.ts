@@ -18,6 +18,7 @@ import type {
   Call,
   ClassRelation,
   Definition,
+  DynamicKind,
   ExtractorOutput,
   FnRefBinding,
   ForOfBinding,
@@ -56,7 +57,8 @@ import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-
 
 // ── Local types ──────────────────────────────────────────────────────────
 
-type EdgeRowTuple = [number, number, string, number, number, string | null];
+type EdgeRowTuple = [number, number, string, number, number, string | null, string | null];
+//                   src    tgt    kind   conf   dyn   technique             dynamic_kind
 
 interface NodeIdStmt {
   get(name: string, kind: string, file: string, line: number): { id: number } | undefined;
@@ -105,6 +107,7 @@ interface NativeEdge {
   kind: string;
   confidence: number;
   dynamic: number;
+  dynamic_kind?: string | null;
 }
 
 // ── Node lookup setup ───────────────────────────────────────────────────
@@ -163,7 +166,7 @@ function emitTypeOnlySymbolEdges(
     }
     const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
     if (candidates && candidates.length > 0) {
-      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0, null]);
+      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0, null, null]);
     }
   }
 }
@@ -185,7 +188,7 @@ function emitEdgesForImport(
   if (!targetRow) return;
 
   const edgeKind = importEdgeKind(imp);
-  allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0, null]);
+  allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0, null, null]);
 
   if (imp.typeOnly) {
     emitTypeOnlySymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows);
@@ -240,7 +243,7 @@ function buildBarrelEdges(
             : edgeKind === 'dynamic-imports'
               ? 'dynamic-imports'
               : 'imports';
-        edgeRows.push([fileNodeId, actualRow.id, kind, 0.9, 0, null]);
+        edgeRows.push([fileNodeId, actualRow.id, kind, 0.9, 0, null, null]);
       }
     }
   }
@@ -423,7 +426,7 @@ function buildImportEdgesNative(
   ) as NativeEdge[];
 
   for (const e of nativeEdges) {
-    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic, null]);
+    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic, null, null]);
   }
 }
 
@@ -577,6 +580,7 @@ function buildCallEdgesNative(
       e.confidence,
       e.dynamic,
       e.kind === 'calls' ? 'ts-native' : null,
+      e.dynamic_kind ?? null,
     ]);
   }
 }
@@ -661,7 +665,7 @@ function buildDefinePropertyPostPass(
           const conf = computeConfidence(relPath, t.file, null);
           if (conf > 0) {
             seenByPair.add(edgeKey);
-            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'ts-native']);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'ts-native', null]);
           }
         }
       }
@@ -751,7 +755,7 @@ function buildChaPostPass(
             // Tag super-dispatch edges distinctly so runChaPostPass can exclude them
             // from further CHA expansion (super calls are not virtual dispatch).
             const technique = call.receiver === 'super' ? 'super-dispatch' : 'cha';
-            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, technique]);
+            allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, technique, null]);
           }
         }
       }
@@ -1161,7 +1165,7 @@ function emitDirectCallEdgesForCall(
       seenCallEdges.add(edgeKey);
     } else {
       seenCallEdges.add(edgeKey);
-      allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native']);
+      allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native', null]);
     }
   }
 }
@@ -1255,7 +1259,7 @@ function emitPtsNoReceiverEdges(
           computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
         if (conf > 0) {
           ptsEdgeRows.set(edgeKey, allEdgeRows.length);
-          allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+          allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to', null]);
         }
       }
     }
@@ -1309,7 +1313,7 @@ function emitPtsReceiverEdges(
           computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
         if (conf > 0) {
           ptsEdgeRows.set(edgeKey, allEdgeRows.length);
-          allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to']);
+          allEdgeRows.push([caller.id, t.id, 'calls', conf, isDynamic, 'points-to', null]);
         }
       }
     }
@@ -1370,11 +1374,22 @@ function emitChaCallEdgesForCall(
         : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
       if (conf > 0) {
         seenCallEdges.add(edgeKey);
-        allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha']);
+        allEdgeRows.push([caller.id, t.id, 'calls', conf, 0, 'cha', null]);
       }
     }
   }
 }
+
+/**
+ * Dynamic kinds that can never be resolved statically — emit a sink edge to the
+ * file node instead of silently dropping the call site.  confidence=0.0 keeps
+ * these below DEFAULT_MIN_CONFIDENCE so they never appear in normal query results.
+ */
+const FLAG_ONLY_KINDS: ReadonlySet<DynamicKind> = new Set([
+  'eval',
+  'computed-key',
+  'unresolved-dynamic',
+]);
 
 /**
  * Build call edges for all calls in a single file (WASM/JS engine path).
@@ -1387,6 +1402,7 @@ function emitChaCallEdgesForCall(
  *   4. `emitPtsReceiverEdges`    — Phase 8.3f pts fallback for rest-param receiver calls
  *   5. Inline `resolveReceiverEdge` — emit `receiver` edge for external receivers
  *   6. `emitChaCallEdgesForCall` — Phase 8.5 CHA + RTA dispatch expansion
+ *   7. Sink edge for flag-only dynamic kinds (eval, computed-key, unresolved-dynamic)
  */
 function buildFileCallEdges(
   relPath: string,
@@ -1503,7 +1519,15 @@ function buildFileCallEdges(
         importedNames,
       );
       if (recv) {
-        allEdgeRows.push([recv.callerId, recv.receiverId, 'receiver', recv.confidence, 0, null]);
+        allEdgeRows.push([
+          recv.callerId,
+          recv.receiverId,
+          'receiver',
+          recv.confidence,
+          0,
+          null,
+          null,
+        ]);
       }
     }
 
@@ -1520,6 +1544,18 @@ function buildFileCallEdges(
         ptsEdgeRows,
         allEdgeRows,
       );
+    }
+
+    // Step 7: Flag-only dynamic kinds with no resolved target → sink edge to the
+    // file node.  confidence=0.0 keeps it below DEFAULT_MIN_CONFIDENCE so it never
+    // appears in normal query results, but is queryable via `codegraph roles --dynamic`.
+    if (targets.length === 0 && call.dynamicKind && FLAG_ONLY_KINDS.has(call.dynamicKind)) {
+      // Key per (caller, file, kind) so each kind gets at most one sink edge per caller.
+      const sinkKey = `${caller.id}:${fileNodeRow.id}:${call.dynamicKind}`;
+      if (!seenCallEdges.has(sinkKey)) {
+        seenCallEdges.add(sinkKey);
+        allEdgeRows.push([caller.id, fileNodeRow.id, 'calls', 0.0, 1, null, call.dynamicKind]);
+      }
     }
   }
 }
@@ -1546,7 +1582,7 @@ function buildClassHierarchyEdges(
       );
       if (sourceRow) {
         for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null]);
+          allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null, null]);
         }
       }
     }
@@ -1560,7 +1596,7 @@ function buildClassHierarchyEdges(
       );
       if (sourceRow) {
         for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null]);
+          allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null, null]);
         }
       }
     }
@@ -1592,6 +1628,9 @@ function applyEdgeTechniquesAfterNativeInsert(
   // Chunk to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
   const CHUNK_SIZE = 500;
 
+  // Rows that carry an explicit dynamic_kind (sink edges for flagged dynamic calls).
+  const dynamicKindRows = callRows.filter((r) => r[6] != null);
+
   const tx = db.transaction(() => {
     if (taggedRows.length > 0) {
       const stmt = db.prepare(
@@ -1605,6 +1644,15 @@ function applyEdgeTechniquesAfterNativeInsert(
       db.prepare(
         `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
       ).run(...chunk);
+    }
+    // Back-fill dynamic_kind for flagged sink edges emitted by the native engine.
+    // Include dynamic_kind in the WHERE clause so two sink edges from the same caller
+    // to the same file node with different kinds don't clobber each other.
+    if (dynamicKindRows.length > 0) {
+      const stmt = db.prepare(
+        "UPDATE edges SET dynamic_kind = ? WHERE kind = 'calls' AND source_id = ? AND target_id = ? AND (dynamic_kind IS NULL OR dynamic_kind = ?)",
+      );
+      for (const r of dynamicKindRows) stmt.run(r[6], r[0], r[1], r[6]);
     }
   });
   tx();
@@ -1643,6 +1691,7 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
         saved.confidence,
         saved.dynamic,
         saved.technique,
+        saved.dynamicKind ?? null,
       ]);
     } else {
       // Target was removed or renamed in the changed file — edge is stale

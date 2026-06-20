@@ -120,6 +120,7 @@ fn handle_lua_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbol
                     line: start_line(node),
                     dynamic: None,
                     receiver: table.map(|t| node_text(&t, source).to_string()),
+                    ..Default::default()
                 });
             }
         }
@@ -132,6 +133,7 @@ fn handle_lua_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbol
                     line: start_line(node),
                     dynamic: None,
                     receiver: table.map(|t| node_text(&t, source).to_string()),
+                    ..Default::default()
                 });
             }
         }
@@ -141,6 +143,7 @@ fn handle_lua_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbol
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
     }

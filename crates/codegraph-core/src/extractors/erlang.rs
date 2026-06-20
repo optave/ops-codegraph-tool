@@ -320,6 +320,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         "remote" => {
@@ -342,6 +343,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver: Some(receiver),
+                    ..Default::default()
                 });
             } else if atoms.len() == 1 {
                 symbols.calls.push(Call {
@@ -349,6 +351,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
         }

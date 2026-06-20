@@ -324,6 +324,13 @@ export const MIGRATIONS: Migration[] = [
     // dataflow_vertices and dataflow_summary on the next `codegraph build`.
     up: `SELECT 1`,
   },
+  {
+    version: 20,
+    up: `
+      ALTER TABLE edges ADD COLUMN dynamic_kind TEXT;
+      CREATE INDEX IF NOT EXISTS idx_edges_dynamic_kind ON edges(dynamic_kind) WHERE dynamic_kind IS NOT NULL;
+    `,
+  },
 ];
 
 interface PragmaColumnInfo {

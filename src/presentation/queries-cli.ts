@@ -12,6 +12,7 @@ export {
   children,
   context,
   diffImpact,
+  dynamicCalls,
   explain,
   fileDeps,
   fileExports,

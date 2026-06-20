@@ -313,6 +313,7 @@ fn handle_application(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         "long_identifier_or_op" => {
@@ -329,6 +330,7 @@ fn handle_application(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     dynamic: None,
                     receiver: None,
+                    ..Default::default()
                 });
             }
         }
@@ -358,6 +360,7 @@ fn handle_dot_expression(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
             line: start_line(node),
             dynamic: None,
             receiver: Some(receiver),
+            ..Default::default()
         });
     }
 }

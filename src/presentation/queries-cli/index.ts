@@ -9,5 +9,5 @@ export {
   queryName,
   where,
 } from './inspect.js';
-export { moduleMap, roles, stats } from './overview.js';
+export { dynamicCalls, moduleMap, roles, stats } from './overview.js';
 export { symbolPath } from './path.js';

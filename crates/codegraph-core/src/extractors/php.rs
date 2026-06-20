@@ -238,6 +238,7 @@ fn handle_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         "qualified_name" => {
@@ -248,6 +249,7 @@ fn handle_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 line: start_line(node),
                 dynamic: None,
                 receiver: None,
+                ..Default::default()
             });
         }
         _ => {}
@@ -263,6 +265,7 @@ fn handle_member_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             line: start_line(node),
             dynamic: None,
             receiver,
+            ..Default::default()
         });
     }
 }
@@ -276,6 +279,7 @@ fn handle_scoped_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             line: start_line(node),
             dynamic: None,
             receiver,
+            ..Default::default()
         });
     }
 }
@@ -290,6 +294,7 @@ fn handle_object_creation(node: &Node, source: &[u8], symbols: &mut FileSymbols)
         line: start_line(node),
         dynamic: None,
         receiver: None,
+        ..Default::default()
     });
 }
 

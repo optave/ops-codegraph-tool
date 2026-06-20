@@ -136,6 +136,9 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   too broad for the main JS fixture. Patterns split per file to prevent intra-fixture FPs.
   //   Currently resolves all 13 expected edges (100% recall, 100% precision).
   'pts-javascript': { precision: 1.0, recall: 0.9 },
+  // dynamic-javascript: Phase 0 dynamic-call fixture — reflection (.call/.apply) + computed-literal.
+  //   Flagged kinds (eval, computed-key) emit sink edges (confidence=0.0) excluded from metrics.
+  'dynamic-javascript': { precision: 1.0, recall: 0.75 },
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
@@ -246,8 +249,31 @@ function extractResolvedEdges(fixtureDir: string) {
       JOIN nodes tgt ON e.target_id = tgt.id
       WHERE e.kind = 'calls'
         AND src.kind IN ('function', 'method')
+        AND (e.confidence IS NULL OR e.confidence > 0 OR e.dynamic_kind IS NULL)
     `)
       .all();
+  } finally {
+    db.close();
+  }
+}
+
+/** Count flagged dynamic call sink edges (confidence=0, dynamic_kind IS NOT NULL) per kind. */
+function extractFlaggedDynamicCalls(fixtureDir: string): Record<string, number> {
+  const dbPath = path.join(fixtureDir, '.codegraph', 'graph.db');
+  const db = openReadonlyOrFail(dbPath);
+  try {
+    const rows = db
+      .prepare(`
+      SELECT dynamic_kind, COUNT(*) AS count
+      FROM edges
+      WHERE confidence = 0 AND dynamic_kind IS NOT NULL
+      GROUP BY dynamic_kind
+      ORDER BY count DESC
+    `)
+      .all() as { dynamic_kind: string; count: number }[];
+    return Object.fromEntries(rows.map((r) => [r.dynamic_kind, r.count]));
+  } catch {
+    return {}; // Column may not exist in older DBs
   } finally {
     db.close();
   }
@@ -556,6 +582,16 @@ describe('Call Resolution Precision/Recall', () => {
           const expectedEdges: ExpectedEdge[] = manifest.edges;
 
           metrics = computeMetrics(resolvedEdges, expectedEdges);
+
+          // Log flagged dynamic call sink edges (confidence=0) for visibility.
+          const flagged = extractFlaggedDynamicCalls(fixtureDir);
+          if (Object.keys(flagged).length > 0) {
+            const total = Object.values(flagged).reduce((s, c) => s + c, 0);
+            const breakdown = Object.entries(flagged)
+              .map(([k, v]) => `${k}:${v}`)
+              .join(' ');
+            console.log(`  [${lang}] flagged dynamic calls: ${total} (${breakdown})`);
+          }
         }
         allResults[lang] = metrics;
       }, 60_000);
