@@ -721,6 +721,10 @@ fn process_file<'a>(
     // Key: edge_key (same as seen_edges). Value: index into `edges` vec.
     let mut seen_edges: HashSet<u64> = HashSet::new();
     let mut pts_edge_map: HashMap<u64, usize> = HashMap::new();
+    // Separate dedup set for sink edges: (caller_id, file_node_id, dynamic_kind_byte).
+    // Using a distinct set avoids the bit-packing collision that would occur when
+    // caller_id >= 16 M (upper 8 bits of caller_id would overlap with the kind byte).
+    let mut seen_sink_edges: HashSet<(u32, u32, u8)> = HashSet::new();
 
     for call in &file_input.calls {
         if let Some(ref receiver) = call.receiver {
@@ -751,10 +755,9 @@ fn process_file<'a>(
         if targets.is_empty() {
             if let Some(ref dk) = call.dynamic_kind {
                 if dk == "eval" || dk == "computed-key" || dk == "unresolved-dynamic" {
-                    let sink_key = ((caller_id as u64) << 32) | (fc.file_node_id as u64)
-                        | ((dk.as_bytes()[0] as u64) << 56); // differentiate by kind
-                    if !seen_edges.contains(&sink_key) {
-                        seen_edges.insert(sink_key);
+                    let sink_key = (caller_id, fc.file_node_id, dk.as_bytes()[0]);
+                    if !seen_sink_edges.contains(&sink_key) {
+                        seen_sink_edges.insert(sink_key);
                         edges.push(ComputedEdge {
                             source_id: caller_id,
                             target_id: fc.file_node_id,
@@ -2301,7 +2304,7 @@ mod call_edge_tests {
                 // this() inside invoker
                 call("this", 2, None),
                 // invoker.call(handler, 10) — extractor emits dynamic call to invoker
-                CallInfo { name: "invoker".to_string(), line: 9, dynamic: Some(true), receiver: None },
+                CallInfo { name: "invoker".to_string(), line: 9, dynamic: Some(true), receiver: None, dynamic_kind: None, key_expr: None },
             ],
             vec![],
             vec![],
@@ -2384,7 +2387,7 @@ mod call_edge_tests {
             vec![def("f3", "function", 1, 3), def("main", "function", 8, 10)],
             vec![
                 // eerest.e4() inside f3
-                CallInfo { name: "e4".to_string(), line: 2, dynamic: None, receiver: Some("eerest".to_string()) },
+                CallInfo { name: "e4".to_string(), line: 2, dynamic: None, receiver: Some("eerest".to_string()), dynamic_kind: None, key_expr: None },
                 call("f3", 9, None),
             ],
             vec![],

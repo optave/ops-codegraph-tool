@@ -1646,11 +1646,13 @@ function applyEdgeTechniquesAfterNativeInsert(
       ).run(...chunk);
     }
     // Back-fill dynamic_kind for flagged sink edges emitted by the native engine.
+    // Include dynamic_kind in the WHERE clause so two sink edges from the same caller
+    // to the same file node with different kinds don't clobber each other.
     if (dynamicKindRows.length > 0) {
       const stmt = db.prepare(
-        "UPDATE edges SET dynamic_kind = ? WHERE kind = 'calls' AND source_id = ? AND target_id = ? AND dynamic_kind IS NULL",
+        "UPDATE edges SET dynamic_kind = ? WHERE kind = 'calls' AND source_id = ? AND target_id = ? AND (dynamic_kind IS NULL OR dynamic_kind = ?)",
       );
-      for (const r of dynamicKindRows) stmt.run(r[6], r[0], r[1]);
+      for (const r of dynamicKindRows) stmt.run(r[6], r[0], r[1], r[6]);
     }
   });
   tx();

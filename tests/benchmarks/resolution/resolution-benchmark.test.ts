@@ -249,7 +249,7 @@ function extractResolvedEdges(fixtureDir: string) {
       JOIN nodes tgt ON e.target_id = tgt.id
       WHERE e.kind = 'calls'
         AND src.kind IN ('function', 'method')
-        AND (e.confidence IS NULL OR e.confidence > 0)
+        AND (e.confidence IS NULL OR e.confidence > 0 OR e.dynamic_kind IS NULL)
     `)
       .all();
   } finally {
