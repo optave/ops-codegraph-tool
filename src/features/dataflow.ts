@@ -866,15 +866,18 @@ export async function buildDataflowP4ForNative(
 ): Promise<void> {
   if (changedFiles.length === 0) return;
 
+  // Deduplicate upfront so the full-build guard uses unique-file count, not
+  // raw array length (the orchestrator may emit the same path more than once).
+  const changedRelPaths = new Set(changedFiles);
+
   // Skip on full builds — all files were in the changed set, so there are no
   // unchanged callers to re-stitch.
   const totalFilesInDb = (
     db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
   ).n;
-  if (changedFiles.length >= totalFilesInDb) return;
+  if (changedRelPaths.size >= totalFilesInDb) return;
 
   const extToLang = buildExtToLangMap();
-  const changedRelPaths = new Set(changedFiles);
   const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
   if (changedFuncIds.length === 0) return;
 
