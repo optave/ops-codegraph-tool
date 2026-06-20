@@ -891,6 +891,18 @@ export async function buildDataflowP4ForNative(
   );
 
   if (candidates.length > 0) {
+    // Purge any existing arg_in edges targeting the changed callees from unchanged
+    // caller files. These edges were inserted by a previous P4 pass. Without this
+    // guard, repeated calls to buildDataflowP4ForNative insert duplicates because
+    // the dataflow table has no UNIQUE constraint on (source_vertex, target_vertex).
+    const placeholders = changedFuncIds.map(() => '?').join(',');
+    db.prepare(
+      `DELETE FROM dataflow
+       WHERE kind = 'arg_in'
+         AND target_id IN (${placeholders})
+         AND source_id NOT IN (${placeholders})`,
+    ).run(...changedFuncIds, ...changedFuncIds);
+
     const count = buildInterproceduralStitch(db, candidates, captures);
     if (count > 0) {
       info(`Dataflow (native P4): ${count} inter-procedural edges re-stitched`);

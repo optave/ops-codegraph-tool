@@ -150,7 +150,7 @@ describe('P4-on-native: buildDataflowP4ForNative', () => {
     ).n;
     db2.close();
     // SQLite UNIQUE constraints prevent duplicates; count stays at 1.
-    expect(count).toBeGreaterThanOrEqual(1);
+    expect(count).toBe(1);
   });
 
   test('full build guard: skips P4 when changedFiles covers all DB files', async () => {
