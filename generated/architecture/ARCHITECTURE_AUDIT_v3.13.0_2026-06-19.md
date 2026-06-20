@@ -15,7 +15,7 @@ Three months and nine minor versions since the v3.4.0 audit. The headline improv
 
 The structural regressions are also real, and several findings from the previous audit were simply ignored. The 37-file MCP cycle was flagged in March — it persists unchanged in June. `types.ts` grew from 1,851 to 2,855 LOC (+54%) in three months. `dataflow.ts` became a 1,586-line god file that handles parsing, extraction, edge insertion, BFS traversal, and interprocedural stitching in a single module. Call confidence dropped from 81% to 73% — the new ts-native resolution is adding edges but at meaningfully lower confidence. The tool's own generated artifact (`index.js`, the NAPI-RS binding) is not excluded from analysis, ranking as the highest-risk item with a fabricated 359 cognitive complexity score. And there is still only one ADR for a codebase that just shipped interprocedural dataflow, 23 new languages, a user-level consent model, and a native orchestrator.
 
-The competitive pressure is intensifying. GitNexus jumped from 19.9k to 42.5k stars in three months. narsil-mcp now claims 32 languages with Merkle-tree incremental. The moat codegraph holds — local + deterministic + function-level + MCP + CLI + 3 deps + MIT — is real but no longer unique in every dimension. The path forward is depth, not breadth: the 41% caller coverage ceiling is the most important number in this document.
+The competitive pressure is intensifying. GitNexus jumped from 19.9k to 42.5k stars in three months. narsil-mcp now claims 32 languages with Merkle-tree incremental. The moat codegraph holds — local + deterministic + function-level + MCP + CLI + 3 deps + Apache-2.0 — is real but no longer unique in every dimension. The path forward is depth, not breadth: the 41% caller coverage ceiling is the most important number in this document.
 
 ---
 
@@ -29,7 +29,7 @@ The competitive pressure is intensifying. GitNexus jumped from 19.9k to 42.5k st
 | **Correctness & Soundness** | 6/10 | 9/10 | 3 | Caller coverage improved 29%→41% (real signal). Call confidence regressed 81%→73% (new ts-native edges are lower-confidence). The tool's quality score is 65/100. Tool's own generated artifact dominates the complexity triage list. Two false-positive warnings for Rust constructors (Import.new, FileSymbols.new). |
 | **Type Safety** | 8/10 | 9/10 | 1 | TypeScript throughout src/. Same baseline as v3.4.0. No meaningful change. |
 | **Error Handling** | 7/10 | 8/10 | 1 | Clean domain error hierarchy. Bare catch blocks still present. Same baseline. |
-| **Testing Strategy** | 7/10 | 9/10 | 2 | 349 test files, 83K LOC tests. Good integration coverage. New dataflow parser tests added for 10 languages. No property-based tests, no fuzz tests for parsers. |
+| **Testing Strategy** | 7/10 | 9/10 | 2 | 349 test files, 83K LOC tests. Good integration coverage. New dataflow parser tests added for 8+ languages. No property-based tests, no fuzz tests for parsers. |
 | **Security** | 8/10 | 9/10 | 1 | Same minimal attack surface. `apiKeyCommand` arbitrary execution still present. User-level consent model (PR #1559) is a positive addition for multi-user scenarios. |
 | **API Design** | 8/10 | 9/10 | 1 | No meaningful change since last audit. |
 | **Documentation** | 5/10 | 9/10 | 4 | One ADR for a codebase that shipped 9 minor versions in 3 months. Interprocedural dataflow, user-level config, 23 new languages, native orchestrator — zero ADRs. CLAUDE.md is current and accurate. The doc deficit is widening. |
@@ -174,7 +174,7 @@ Actual source code only (excluding the `index.js` artifact):
 | `build_points_to_map` | build_edges.rs | 74 | 36 | 36.4 |
 | `walk` | src/extractors/javascript.ts | 72 | 52 | 37.2 |
 | `collectObjectRestParams` | src/extractors/javascript.ts | 70 | 39 | 44.3 |
-| `handle_var_decl` | crates/codegraph-core/src/extractors/javascript.rs | 70 | 33 | 42.1 |
+| `handle_var_decl` | src/extractors/javascript.rs | 70 | 33 | 42.1 |
 | `buildChaPostPass` | builder/stages/build-edges.ts | 61 | 24 | 49.1 |
 | `buildDataflowEdges` | src/features/dataflow.ts | 53 | 19 | 40.6 |
 
@@ -309,7 +309,7 @@ But the WASM backfill warning during this audit's build shows the native pipelin
 **Current State: 7/10 | State of the Art: 9/10 | Gap: 2**
 
 - 349 test files (up from 115 in v3.4.0 — 3x growth)
-- New dataflow parser tests for 10 languages (php, rust, c, cpp, ruby, java, js, python, go, csharp — 10 files)
+- New dataflow parser tests for 8 languages (php, rust, c, cpp, ruby, java, js, python, go, csharp — 10 files)
 - New dataflow integration tests (`dataflow-incremental.test.ts`, `dataflow-vertices.test.ts`)
 - Engine parity tests updated
 - Resolution benchmark fixtures updated (jelly-micro baseline)
@@ -325,54 +325,89 @@ But the WASM backfill warning during this audit's build shows the native pipelin
 
 ## Competitive Verification
 
+> **Note on competitor set change:** The v3.4.0 audit compared codegraph against Sourcegraph, Joern, Semgrep, stack-graphs, CKB, and GitNexus — classic code-analysis tools. The README has since been updated to a tighter, more relevant set: AI-first MCP tools that are direct substitutes for the same user (AI coding agent + local graph). This is the correct framing. The old set measured codegraph against tools in different market segments. The findings below use the README's current competitor set.
+
+> **License correction:** The v3.4.0 audit and the table below both listed codegraph as MIT. The README badge and comparison table explicitly state **Apache-2.0**. Corrected here.
+
 ### Does Codegraph Have a Reason to Exist?
 
-**Yes, but the moat is narrowing.**
+**Yes — the specific combination still holds, but code-review-graph is a closer competitor than previously recognized.**
 
-Verified against 6 competitors as of June 2026. The findings from v3.4.0 have shifted:
+All five README competitors have been verified against their actual GitHub READMEs. The competitive picture is sharper than the v3.4.0 analysis suggested because the comparison is now against the right category of tools.
 
-| Differentiator | March 2026 | June 2026 | Status |
-|----------------|-----------|-----------|--------|
-| Local-only | Unique | Shared (narsil, CKB, GitNexus) | Commoditized |
-| 11+ languages | Unique among MIT tools | narsil: 32, Semgrep: 30+ | No longer unique |
-| MCP server | Unique among full-graph tools | GitNexus, CKB also have MCP | Commoditized |
-| Function-level analysis | Differentiating | Shared (Joern, GitNexus, narsil) | Shared |
-| Incremental builds (all langs) | Unique | narsil claims Merkle-tree incremental | Disputed |
-| 3 prod dependencies | Unique | Still unique | **Moat** |
-| MIT license | Shared | GitNexus (PolyForm NC), CKB (freemium) | **Moat** |
-| CLI + MCP + API in one package | Unique | Still unique | **Moat** |
-| Interprocedural dataflow | New, unmatched | Unmatched in MIT tools | **New moat** |
+| Differentiator | v3.4.0 Assessment | v3.13.0 (verified) | Status |
+|----------------|-------------------|--------------------|--------|
+| Local-only, no cloud | Differentiating | All 5 competitors are local-first | Commoditized |
+| MCP server | Differentiating | All 5 competitors have MCP | Commoditized |
+| Function-level analysis | Differentiating | All 5 competitors do function-level | Commoditized |
+| O(changed) incremental | Differentiating | code-review-graph matches; axon comparable | Narrowed |
+| 30+ languages | Differentiating | code-review-graph (~30), narsil-mcp (32) | Narrowed |
+| Architecture rules + CI gate | Unique | code-review-graph also has GitHub Action gate | Narrowed |
+| Hybrid search | Differentiating | code-review-graph, axon, GitNexus all have it | Commoditized |
+| 3 prod dependencies | Unique | Still unique across all 5 | **Moat** |
+| Apache-2.0 / commercial use | Shared with some | GitNexus PolyForm NC; axon no LICENSE file | **Partial moat** |
+| Interprocedural dataflow | New | No competitor in this set has it | **Clear moat** |
+| Architecture rules enforcement | Unique | code-review-graph has PR risk gate (weaker) | **Partial moat** |
+| Complexity metrics + CI manifesto | Unique | No competitor exposes configurable thresholds | **Moat** |
 
-**The enduring moat:** 3 prod dependencies + MIT license + CLI+MCP+API bundle + interprocedural dataflow. The language breadth no longer differentiates (narsil claims 32). The local/deterministic positioning no longer differentiates (most competitors are local-first now). The unique combination that remains is: `(MIT + no LLM required + 3 deps + interprocedural dataflow + CLI+MCP+API)`.
+**The enduring moat:** `interprocedural dataflow + 3 prod deps + configurable CI manifesto + Apache-2.0`. Everything else in this competitor set either matches or is within one feature sprint of matching codegraph's capabilities. The interprocedural dataflow is the only feature that requires months of algorithmic work to replicate — it is the defensible lead.
 
 ### Verified Competitor Table
 
-All data verified against actual GitHub READMEs and source as of 2026-06-19.
+All data verified against actual GitHub READMEs as of 2026-06-19. README footnotes are reproduced in the notes column where relevant.
 
-| Feature | Codegraph | narsil-mcp | Joern | Semgrep | stack-graphs | CKB (CodeMCP) | GitNexus |
-|---------|-----------|------------|-------|---------|--------------|---------------|----------|
-| **License** | MIT | Apache-2.0/MIT | Apache-2.0 | LGPL-2.1 | Apache/MIT | Freemium (<$25K free) | PolyForm NC |
-| **MCP server** | Yes | Yes | No | Yes | No | Yes | Yes |
-| **Standalone CLI** | Yes | Yes | Yes | Yes | No (library) | Yes | Yes |
-| **Fully local** | Yes | Yes | Yes | Yes (CE) | Yes | Yes | Yes |
-| **No LLM required** | Yes | Optional (neural search) | Yes | Yes (CE) | Yes | Yes | Optional (wiki) |
-| **Deterministic** | Yes | Yes | Yes | Yes | Yes | Yes | Partial |
-| **Function-level deps** | Yes | Yes | Yes (CPG) | No (CE) | Framework | Yes | Yes |
-| **Interprocedural dataflow** | Yes (new) | Partial | Yes (PDG) | Pro-only | No | No | No |
-| **Incremental (all langs)** | Yes | Yes (Merkle) | No | No | Yes (design) | Go-only | In progress |
-| **Languages** | 34 (tiered) | 32 | 7 | 30+ | Framework | 11 | 14 |
-| **Prod deps** | **3** | Many (Rust) | JVM | Python ecosystem | Rust | Go ecosystem | Node.js |
-| **Storage** | SQLite | Persistent | OverflowDB | None | N/A | Custom | LadybugDB |
-| **Stars** | — | 162 | 3.3K | 15.6K | Archived | 102 | **42.5K** |
-| **Status** | Active | Active | Active | Active | **Archived** | Active | Active |
+| Feature | Codegraph | [code-review-graph](https://github.com/tirth8205/code-review-graph) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [codegraph (colby)](https://github.com/colbymchenry/codegraph) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
+|---------|:---------:|:-------------------:|:---------:|:----------------:|:---:|:--------:|
+| **License** | Apache-2.0 | MIT | Apache-2.0/MIT | MIT | MIT (pyproject only — no LICENSE file) | PolyForm NC |
+| **Languages** | 34 (tiered quality) | ~30 | 32 | 22 | **3** (JS/TS/Python only) | 14 |
+| **MCP server** | Yes (34 tools) | Yes (30 tools) | Yes | Yes (8 tools) | Yes | Yes (16 tools) |
+| **Standalone CLI** | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Function-level analysis** | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Dataflow + CFG** | **Yes (interprocedural)** | Partial (execution flow, 33% recall, Python only) | Yes² | No | Partial (BFS entry-point tracing, no true CFG) | No |
+| **Hybrid search (BM25 + semantic)** | Yes | Yes (FTS5 + optional embeddings) | No | No (FTS5 keyword only) | **Yes** (BM25+semantic+fuzzy+RRF) | Yes |
+| **Git-aware: diff impact** | Yes | Yes | No | Yes (affected files only) | Yes | No |
+| **Git-aware: co-change analysis** | Yes | **Yes** (despite README table showing "Diff only"³) | No | No | Yes | No |
+| **Git-aware: branch diff** | Yes | **Yes** (via commit hooks; README table understates this³) | No | No | Yes | No |
+| **Dead code + role classification** | Yes | Yes | Yes | No | Yes | No |
+| **Incremental rebuilds** | O(changed) hashing | O(changed) (SHA-256, re-parses only changed files) | O(n) full scan | O(n) per file (file watcher rebuild from scratch) | File-local phases; global batch every 30s | O(n) (commit-level, full re-process on any change) |
+| **Architecture rules + CI gate** | Yes (manifesto, configurable thresholds) | Yes (GitHub Action, `fail-on-risk`) | No | No | No | No |
+| **SAST / vulnerability detection** | Out of scope | No | Yes | No | No | No |
+| **Graph export (GraphML/Neo4j/DOT)** | Yes | No | No | No | No | No |
+| **No LLM required** | Yes | Yes (embeddings optional) | Yes (neural search optional) | Yes | Yes | Yes (wiki optional) |
+| **Prod deps (approx)** | **3** | Many (Python ecosystem) | Many (Rust compiled) | Several (Node.js) | Several (Node.js) | Many (Node.js) |
+| **Storage** | SQLite | SQLite | Persistent (custom) | SQLite | KuzuDB | LadybugDB |
 
-### Competitive Threats — Updated
+²  narsil-mcp added CFG and dataflow in recent versions per README footnote.
+³  **README table inaccuracy:** The `README.md` comparison table shows code-review-graph as "Diff only" for git-aware features. Verification against its actual README reveals co-change analysis (6-month coupling) and branch-diff support (via incremental commit hooks). The README table should read "All 3." This is a competitive positioning error that understates a real competitor's capability.
 
-**GitNexus (42.5K stars, up from 19.9K):** This is now the primary competitive threat by community momentum. Three months ago it was an interesting new entrant; at 42.5K stars it has more momentum than Joern and Semgrep combined in this time window. Its PolyForm NC license is the primary moat defense — enterprise users cannot use it commercially. If they relicense, the landscape changes immediately. Key gap vs codegraph: 14 vs 34 languages, no interprocedural dataflow, incremental "in progress."
+### Per-Competitor Assessment
 
-**narsil-mcp (162 stars):** Grew from 132. Claims 32 languages and Merkle-tree incremental builds — this should be verified beyond README claims. If the Merkle-tree incremental is real for all 32 languages, the language-breadth differentiator is gone and incremental parity is contested. The CLI is now confirmed (not MCP-only as previously noted). The optional Voyage AI/OpenAI dependency for neural search is a meaningful LLM-dependency caveat.
+**code-review-graph** is the most complete direct competitor verified in this audit. It has O(changed) incremental, 30+ languages, hybrid search, dead code detection, a CI gate (GitHub Action with `fail-on-risk`), and git-aware features including co-change and branch diff. The README comparison table's "Diff only" classification is factually wrong — a manual error that codegraph's README should correct. The real gap vs code-review-graph: no interprocedural dataflow (only execution-flow tracing with 33% recall for Python), no configurable complexity/manifesto thresholds, and weaker architecture enforcement. It is a closer threat than the README's table suggests.
 
-**Semgrep (15.6K stars):** Now has a built-in MCP server (`semgrep mcp`). Cross-file analysis remains Pro-only. Not a direct competitor for graph-based analysis, but the MCP integration means AI agents using Semgrep for pattern matching may not need codegraph for that use case.
+**narsil-mcp** (162 stars) claims 32 languages and CFG/dataflow. The CFG and dataflow are in recent versions; depth and correctness have not been independently benchmarked here. The O(n) full scan incremental is a real gap. No hybrid search. Not a full-feature threat for teams with large repos, but relevant for Python/JS-focused workflows where its 32-language breadth competes.
+
+**colbymchenry/codegraph** (22 languages, 8 MCP tools) is intentionally narrower — its stated goal is token reduction for AI agents, not structural analysis. The README footnote is accurate. No dead code, no CI gate, keyword-only search, limited git-awareness. Not a direct threat.
+
+**axon** (3 languages only) punches above its weight on features: hybrid search with RRF fusion, all 3 git-aware features, dead code detection, role classification. The 3-language limit is the structural constraint — it's architecturally capable but practically scoped. The missing LICENSE file is a legal risk for any commercial adopter.
+
+**GitNexus** (42.5K stars) has the highest community momentum by far. PolyForm NC is the moat: no commercial use without a license. 14 languages, no dataflow, O(n) incremental. The star count reflects marketing/trending success more than technical depth. If they relicense, the community momentum becomes a real threat. Until then, the license gap makes them a poor substitute for enterprise or commercial users.
+
+### Competitive Moat — Revised Assessment
+
+The v3.4.0 moat assessment was premised on the wrong competitor set. Against the actual AI-first MCP tool competitors, the moat is narrower in some dimensions and clearer in others:
+
+**Narrower than previously assessed:**
+- Hybrid search: three competitors now have it
+- O(changed) incremental: code-review-graph matches
+- Git-aware features: axon and (correctly) code-review-graph both have all three
+
+**Clearer than previously assessed:**
+- Interprocedural dataflow: genuinely unmatched in this set. No competitor has arg_in/return_out/def_use edges across function boundaries.
+- Configurable CI manifesto: only codegraph exposes `warn`/`fail` thresholds for complexity, blast radius, and architecture boundaries with a CI gate that's fully configurable per repo.
+- 3 prod dependencies: no competitor is close. code-review-graph pulls in the Python ecosystem; others pull in Node.js or compiled Rust trees.
+- Language quality tiers at scale: 34 languages with 571 TypeScript + 140 JavaScript files tested at depth. Competitors claiming comparable language counts have not been tested at this depth for their primary languages.
+
+**The investment-grade differentiator is interprocedural dataflow.** Everything else can be cloned in weeks. Interprocedural analysis correct enough to surface real arg/return flows across function boundaries requires months. That is the lead worth defending.
 
 ---
 
@@ -458,7 +493,7 @@ Nine minor versions shipped in three months. Interprocedural dataflow, user-leve
 **What this project gets right that most don't:**
 - It uses itself for quality enforcement (dogfooding) — this audit was conducted using the tool, which is the right form of discipline
 - 3 production dependencies at v3.13.0 is exceptional
-- The interprocedural dataflow feature has no direct equivalent in MIT-licensed local tools
+- The interprocedural dataflow feature has no direct equivalent among local AI-first tools in this competitor set
 - The phased implementation approach (P0 → P6) with explicit staging is the right way to ship complex analysis features
 
 **What continues to fall short:**
@@ -466,22 +501,27 @@ Nine minor versions shipped in three months. Interprocedural dataflow, user-leve
 - 59% of functions have no detected callers. The tool calls this "dead code" by default.
 - The doc-to-feature ratio is worsening quarterly.
 
-**Investment verdict:** Strong yes for the core proposition (local, deterministic, interprocedural, MIT, 3 deps). Conditional yes for the execution quality. The architecture is sound where it hasn't been compromised by accumulation. The specific fixes are known and bounded. The competitive position held through a wave of new entrants. What's needed is not a different direction — it's the discipline to close the known debts before opening new ones.
+**Investment verdict:** Strong yes for the core proposition (local, deterministic, interprocedural, Apache-2.0, 3 deps). Conditional yes for the execution quality. The architecture is sound where it hasn't been compromised by accumulation. The specific fixes are known and bounded. The competitive position held through a wave of new entrants. What's needed is not a different direction — it's the discipline to close the known debts before opening new ones.
 
 ---
 
-## Comparison Matrix vs. State of the Art
+## Comparison Matrix vs. Direct Competitors
 
-| Dimension | Codegraph v3.13.0 | Joern (SotA for graph) | GitNexus (SotA for AI agents) | Gap to closest SotA |
-|-----------|------------------|----------------------|-------------------------------|---------------------|
-| Caller coverage | 41% | ~80%+ (CPG + type-flow) | Unknown | -39pp vs Joern |
-| Call confidence | 73% | High (type-safe CPG) | Unknown | -7pp |
-| Language support | 34 (tiered) | 7 (deep) | 14 (medium) | Codegraph leads on breadth |
-| Interprocedural DF | Yes (P0–P6) | Yes (PDG, sound) | No | Codegraph leads in MIT space |
-| Incremental (all langs) | Yes | No | In progress | Codegraph leads |
-| Prod dependencies | 3 | JVM ecosystem (heavy) | Node.js (heavy) | **Codegraph leads** |
-| MCP integration | Yes (built-in) | No | Yes | Tied |
-| License | MIT | Apache-2.0 | PolyForm NC | **Codegraph leads** |
-| Graph scale limit | ~500K LOC (SQLite) | Multi-repo (OverflowDB) | Unknown | -1 order of magnitude |
-| Documentation | 1 ADR, CLAUDE.md | Docs site, research papers | README | -2 ADRs minimum |
-| Stars / adoption | Growing | 3.3K | 42.5K | Community trailing |
+Competitors are the five tools in codegraph's README comparison table. "Closest competitor" in the gap column is the tool that comes nearest on each dimension.
+
+| Dimension | Codegraph v3.13.0 | code-review-graph | narsil-mcp | colbymchenry | axon | GitNexus | Gap to closest |
+|-----------|:-----------------:|:-----------------:|:----------:|:------------:|:----:|:--------:|----------------|
+| Caller coverage | 41% | Unknown | Unknown | Unknown | Unknown | Unknown | Unranked — no competitor publishes this metric |
+| Call confidence | 73% | Unknown | Unknown | Unknown | Unknown | Unknown | Unranked — no competitor publishes this metric |
+| Languages (depth-adjusted) | 34 (T1: 3, deep) | ~30 (depth unknown) | 32 (depth unknown) | 22 | **3** | 14 | Codegraph leads on count; depth lead unverifiable |
+| Interprocedural dataflow | **Yes** (P0–P6) | Partial (33% recall, Python only) | Yes (recent, unverified depth) | No | Partial (BFS entry-point) | No | **Codegraph leads** |
+| Incremental (O(changed)) | **Yes** | **Yes** (SHA-256 hashing) | No (O(n) full scan) | No (per-file watcher) | Partial (30s batch) | No (commit-level) | Tied with code-review-graph |
+| Hybrid search | Yes | Yes | No | No | **Yes** (BM25+semantic+fuzzy+RRF) | Yes | Tied; axon has strongest fusion |
+| Git-aware (all 3) | Yes | **Yes** (README table understates) | No | No | Yes | No | Tied with code-review-graph and axon |
+| Dead code + roles | Yes | Yes | Yes | No | Yes | No | Tied among 4 |
+| Architecture rules + CI gate | **Yes** (configurable manifesto) | Partial (GitHub Action, `fail-on-risk`) | No | No | No | No | **Codegraph leads** |
+| Prod dependencies | **3** | Python ecosystem (many) | Rust compiled (many) | Node.js (several) | Node.js (several) | Node.js (many) | **Codegraph leads decisively** |
+| License (commercial use) | Apache-2.0 | MIT | Apache-2.0/MIT | MIT | No LICENSE file | PolyForm NC | Codegraph and MIT tools tied; PolyForm NC is a hard block |
+| Graph export (GraphML/DOT/Neo4j) | **Yes** | No | No | No | No | No | **Codegraph unique** |
+| Documentation (ADRs) | 1 ADR | Unknown | Unknown | Unknown | Unknown | Unknown | All poor; codegraph has 1, competitors likely 0 |
+| Stars / adoption | Low | Low | 162 | Low | Low | **42.5K** | Trailing GitNexus significantly |
