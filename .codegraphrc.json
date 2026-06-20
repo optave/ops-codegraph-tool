@@ -1,3 +1,4 @@
 {
-  "embeddings": { "model": "bge-large" }
+  "embeddings": { "model": "bge-large" },
+  "exclude": ["crates/**"]
 }

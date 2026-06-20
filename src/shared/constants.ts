@@ -31,9 +31,6 @@ export const IGNORE_DIRS: ArrayCompatSet<string> = withArrayCompat(
     'venv',
     'env',
     '.env',
-    // Rust workspace convention — contains only Rust source and NAPI-RS generated
-    // binding artifacts (index.js / index.d.ts) that produce false complexity readings.
-    'crates',
   ]),
 );
 
@@ -54,3 +51,9 @@ export function isSupportedFile(filePath: string): boolean {
 export function normalizePath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
+
+/**
+ * Minimum confidence for resolved `ts-native` call edges.
+ * See build-edges.ts and native-orchestrator.ts for usage.
+ */
+export const TS_NATIVE_CONFIDENCE_FLOOR = 0.5;

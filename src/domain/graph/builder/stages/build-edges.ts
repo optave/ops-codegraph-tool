@@ -11,6 +11,7 @@ import { setTypeMapEntry } from '../../../../extractors/helpers.js';
 import { PROPAGATION_HOP_PENALTY } from '../../../../extractors/javascript.js';
 import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
+import { TS_NATIVE_CONFIDENCE_FLOOR } from '../../../../shared/constants.js';
 import type {
   ArrayCallbackBinding,
   ArrayElemBinding,
@@ -1604,18 +1605,6 @@ function buildClassHierarchyEdges(
 }
 
 // ── Native bulk-insert technique back-fill ──────────────────────────────
-
-/**
- * Minimum confidence for resolved `ts-native` call edges.
- *
- * The proximity heuristic returns 0.3 for cross-module calls where there is no
- * import-path evidence.  For ts-native edges the engine performed actual
- * name-based symbol lookup, which is stronger evidence than pure file-proximity.
- * Clamping to 0.5 (same-parent-directory level) avoids unfairly dragging down
- * the call-confidence metric.  Sink edges (confidence = 0.0) are excluded so
- * they stay below DEFAULT_MIN_CONFIDENCE and never appear in normal queries.
- */
-const TS_NATIVE_CONFIDENCE_FLOOR = 0.5;
 
 /**
  * After native bulkInsertEdges (which does not write the technique column),

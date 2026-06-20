@@ -24,7 +24,7 @@ import {
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import { semverCompare } from '../../../../infrastructure/update-check.js';
-import { normalizePath } from '../../../../shared/constants.js';
+import { normalizePath, TS_NATIVE_CONFIDENCE_FLOOR } from '../../../../shared/constants.js';
 import { toErrorMessage } from '../../../../shared/errors.js';
 import { CODEGRAPH_VERSION } from '../../../../shared/version.js';
 import type {
@@ -1757,22 +1757,6 @@ async function backfillNativeDroppedFiles(
   // Mirrors the cleanup discipline established for #931.
   cleanupThisDispatchWasmTrees(wasmResults);
 }
-
-/**
- * Minimum confidence assigned to `ts-native` resolved edges.
- *
- * The proximity heuristic (`computeConfidence`) returns 0.3 for cross-module
- * calls where no import-path evidence is available.  For ts-native edges the
- * native engine performed actual name-based symbol lookup, which is stronger
- * evidence than pure file-proximity.  Clamping to 0.5 places these edges at
- * the same level as same-parent-directory calls — a conservative but correct
- * floor that avoids dragging down the call-confidence metric.
- *
- * Sink edges (confidence = 0.0) are intentionally excluded: they flag
- * unresolvable dynamic calls and must stay at 0.0 so they remain below
- * DEFAULT_MIN_CONFIDENCE and never appear in normal query results.
- */
-const TS_NATIVE_CONFIDENCE_FLOOR = 0.5;
 
 /**
  * Backfill the `technique` column on `calls` edges written by the native Rust
