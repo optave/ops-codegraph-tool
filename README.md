@@ -85,7 +85,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 | MCP server | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
 | Dataflow + CFG + AST querying | **Yes** | AST only | **Yes**² | — | — | — |
 | Hybrid search (BM25 + semantic) | **Yes** | **Yes** | — | Keyword only | **Yes** | **Yes** |
-| Git-aware (diff impact, co-change, branch diff) | **All 3** | Diff only | — | — | **All 3** | — |
+| Git-aware (diff impact, co-change, branch diff) | **All 3** | **All 3** | — | — | **All 3** | — |
 | Dead code / role classification | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
 | Incremental rebuilds | **O(changed)** | **O(changed)** | O(n) | O(n)³ | **Yes**⁴ | O(n)⁵ |
 | Architecture rules + CI gate | **Yes** | — | — | — | — | — |
