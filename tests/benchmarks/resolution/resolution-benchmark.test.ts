@@ -139,6 +139,10 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // dynamic-javascript: Phase 0 dynamic-call fixture — reflection (.call/.apply) + computed-literal.
   //   Flagged kinds (eval, computed-key) emit sink edges (confidence=0.0) excluded from metrics.
   'dynamic-javascript': { precision: 1.0, recall: 0.75 },
+  // dynamic-typescript: Phase 1 fixture — Reflect.apply/construct/get + TS decorators.
+  //   3 expected edges (Reflect.apply → greet, Reflect.construct → UserService, Reflect.get → greet).
+  'dynamic-typescript': { precision: 1.0, recall: 0.75 },
+
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
