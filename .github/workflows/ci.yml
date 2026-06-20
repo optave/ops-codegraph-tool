@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Lint
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -56,7 +56,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Native host build (${{ matrix.os }})
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -106,7 +106,7 @@ jobs:
     name: Test Node ${{ matrix.node-version }} (${{ matrix.os }})
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     name: TypeScript type check
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -178,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Security audit
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Audit production dependencies
         # --package-lock-only reads the lock file directly — no npm install needed.
@@ -196,7 +196,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Verify dynamic imports
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -212,7 +212,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Grammar version parity
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -233,7 +233,7 @@ jobs:
     name: Engine parity (${{ matrix.os }})
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -323,7 +323,7 @@ jobs:
     name: Rust compile check
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -362,7 +362,7 @@ jobs:
       CODEGRAPH_FAST_SKIP_DIAG: "1"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
