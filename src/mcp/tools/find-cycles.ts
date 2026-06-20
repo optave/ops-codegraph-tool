@@ -1,6 +1,6 @@
 import { findDbPath } from '../../db/index.js';
 import { findCycles } from '../../domain/graph/cycles.js';
-import type { McpToolContext } from '../server.js';
+import type { McpToolContext } from '../types.js';
 
 export const name = 'find_cycles';
 

@@ -1,5 +1,5 @@
 import { effectiveLimit, effectiveOffset } from '../middleware.js';
-import type { McpToolContext } from '../server.js';
+import type { McpToolContext } from '../types.js';
 
 export const name = 'file_exports';
 
