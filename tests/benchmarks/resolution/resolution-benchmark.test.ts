@@ -145,7 +145,7 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // dynamic-python: Phase 3 fixture — getattr('name') resolved; eval/exec/variable-getattr flagged.
   'dynamic-python': { precision: 1.0, recall: 0.75 },
   // Phase 4 scripting fixtures: Ruby send/public_send + PHP call_user_func/variable calls.
-  'dynamic-ruby': { precision: 1.0, recall: 0.75 },
+  'dynamic-ruby': { precision: 1.0, recall: 1.0 },
   'dynamic-php': { precision: 1.0, recall: 1.0 },
   // Phase 2 JVM fixtures — reflection and dynamic dispatch patterns.
   // Java/Scala/Groovy: detection works but method names are class-qualified in the DB,
