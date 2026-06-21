@@ -1458,6 +1458,87 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+/// RES-2: Inline object-literal dispatch table — `({a:fnA,b:fnB})[key]()`.
+///
+/// Mirrors `extractSubscriptCallInfo` in `src/extractors/javascript.ts` (lines 3196–3233).
+/// When the subscript object is an object literal (or parenthesized object literal) and
+/// the index is an identifier, collect each value identifier as an array-elem binding
+/// under a synthetic `<dt_line_col>` name, then return a `<dt_line_col>[*]` call so
+/// the PTS solver can resolve the wildcard to each concrete target function.
+///
+/// Returns `None` if the pattern does not match (caller falls through to `extract_call_info`).
+fn extract_dispatch_table_call(
+    fn_node: &Node,
+    call_node: &Node,
+    source: &[u8],
+    array_elem_bindings: &mut Vec<ArrayElemBinding>,
+) -> Option<Call> {
+    let index = fn_node.child_by_field_name("index")?;
+    if index.kind() != "identifier" {
+        return None;
+    }
+    let obj = fn_node.child_by_field_name("object")?;
+    // Unwrap parenthesized_expression: ({a:fn})[key]()
+    let obj_node = if obj.kind() == "parenthesized_expression" {
+        // child(1) skips the opening paren; field "expression" is not always available
+        obj.child_by_field_name("expression")
+            .or_else(|| obj.child(1))
+            .unwrap_or(obj)
+    } else {
+        obj
+    };
+    if obj_node.kind() != "object" {
+        return None;
+    }
+    let line = start_line(call_node);
+    let col = call_node.start_position().column;
+    let table_name = format!("<dt_{}_{}>", line, col);
+    let mut idx: u32 = 0;
+    for i in 0..obj_node.child_count() {
+        let Some(child) = obj_node.child(i) else { continue };
+        match child.kind() {
+            "shorthand_property_identifier" => {
+                let text = node_text(&child, source);
+                if !JS_BUILTIN_GLOBALS.contains(&text) {
+                    array_elem_bindings.push(ArrayElemBinding {
+                        array_name: table_name.clone(),
+                        index: idx,
+                        elem_name: text.to_string(),
+                    });
+                    idx += 1;
+                }
+            }
+            "pair" => {
+                if let Some(val) = child.child_by_field_name("value") {
+                    if val.kind() == "identifier" {
+                        let text = node_text(&val, source);
+                        if !JS_BUILTIN_GLOBALS.contains(&text) {
+                            array_elem_bindings.push(ArrayElemBinding {
+                                array_name: table_name.clone(),
+                                index: idx,
+                                elem_name: text.to_string(),
+                            });
+                            idx += 1;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if idx == 0 {
+        return None;
+    }
+    Some(Call {
+        name: format!("{}[*]", table_name),
+        line,
+        dynamic: Some(true),
+        dynamic_kind: Some("dispatch-table".to_string()),
+        key_expr: Some(node_text(&index, source).to_string()),
+        ..Default::default()
+    })
+}
+
 fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(fn_node) = node.child_by_field_name("function") else { return };
     if fn_node.kind() == "import" {
@@ -1476,6 +1557,22 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // Mirrors the early-return guard in the TS handleCallExpr (javascript.ts:1135).
     if fn_node.kind() == "this" || fn_node.kind() == "super" {
         return;
+    }
+    // RES-2: {a:fnA,b:fnB}[k]() — inline object literal dispatch table.
+    // Mirrors extractSubscriptCallInfo in src/extractors/javascript.ts (lines 3196–3233).
+    // When the callee is a subscript_expression whose object is an object literal
+    // (possibly wrapped in parentheses) and whose index is an identifier, collect
+    // the values as array-elem bindings under a synthetic `<dt_line_col>` name and
+    // emit a `<dt_line_col>[*]` call so the PTS solver can resolve each target.
+    if fn_node.kind() == "subscript_expression" {
+        if let Some(call) = extract_dispatch_table_call(&fn_node, node, source, &mut symbols.array_elem_bindings) {
+            symbols.calls.push(call);
+            if let Some(cb_def) = extract_callback_definition(node, source) {
+                symbols.definitions.push(cb_def);
+            }
+            extract_callback_reference_calls(node, source, &mut symbols.calls);
+            return;
+        }
     }
     if let Some(call_info) = extract_call_info(&fn_node, node, source) {
         symbols.calls.push(call_info);
@@ -4899,5 +4996,42 @@ mod tests {
         let call = s.calls.iter().find(|c| c.name == "bark");
         assert!(call.is_some(), "bark() call missing; got: {:?}", s.calls);
         assert_eq!(call.unwrap().receiver.as_deref(), Some("Dog"));
+    }
+
+    // RES-2: inline object-literal dispatch table — `({a:fnA,b:fnB})[key]()`
+    // Mirrors WASM extractSubscriptCallInfo dispatch-table branch (javascript.ts:3196–3233).
+    #[test]
+    fn dispatch_table_emits_dt_call_and_array_elem_bindings() {
+        let s = parse_js(
+            "function dtFn1() {}\n\
+             function dtFn2() {}\n\
+             function runDispatch(key) { ({ a: dtFn1, b: dtFn2 })[key](); }",
+        );
+        // The call name must be <dt_line_col>[*]
+        let dt_call = s.calls.iter().find(|c| c.name.starts_with("<dt_") && c.name.ends_with(">[*]"));
+        assert!(dt_call.is_some(), "dispatch-table call missing; got: {:?}", s.calls);
+        let dt_call = dt_call.unwrap();
+        assert_eq!(dt_call.dynamic, Some(true));
+        assert_eq!(dt_call.dynamic_kind.as_deref(), Some("dispatch-table"));
+
+        // The array_elem_bindings must contain dtFn1 and dtFn2 under the same table name
+        let table_name = dt_call.name.trim_end_matches("[*]");
+        let elem1 = s.array_elem_bindings.iter().find(|b| b.array_name == table_name && b.elem_name == "dtFn1");
+        let elem2 = s.array_elem_bindings.iter().find(|b| b.array_name == table_name && b.elem_name == "dtFn2");
+        assert!(elem1.is_some(), "dtFn1 array_elem_binding missing; got: {:?}", s.array_elem_bindings);
+        assert!(elem2.is_some(), "dtFn2 array_elem_binding missing; got: {:?}", s.array_elem_bindings);
+        assert_eq!(elem1.unwrap().index, 0);
+        assert_eq!(elem2.unwrap().index, 1);
+    }
+
+    #[test]
+    fn dispatch_table_parenthesized_object_also_works() {
+        let s = parse_js(
+            "function fnA() {}\n\
+             function fnB() {}\n\
+             function run(k) { ({a: fnA, b: fnB})[k](); }",
+        );
+        let dt_call = s.calls.iter().find(|c| c.name.starts_with("<dt_") && c.name.ends_with(">[*]"));
+        assert!(dt_call.is_some(), "dispatch-table call missing for parenthesized object; got: {:?}", s.calls);
     }
 }
