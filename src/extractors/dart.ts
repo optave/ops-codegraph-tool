@@ -255,14 +255,62 @@ function handleDartSelector(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const argPart = findChild(node, 'argument_part');
   if (!argPart) return;
 
-  // Look for the identifier this selector belongs to
+  const line = node.startPosition.row + 1;
+
+  // Look for the identifier this selector belongs to.
+  // Two layouts are possible depending on grammar version:
+  //   A) selector has both unconditional_assignable_selector + argument_part (same node)
+  //   B) one selector node holds unconditional_assignable_selector (.method),
+  //      the next holds argument_part (the call args) — method name is in the previous sibling
   const unconditional = findChild(node, 'unconditional_assignable_selector');
+  let methodName: string | null = null;
+  let receiverText: string | null = null;
+
   if (unconditional) {
     const id = findChild(unconditional, 'identifier');
-    if (id) {
-      ctx.calls.push({ name: id.text, line: node.startPosition.row + 1 });
+    if (id) methodName = id.text;
+  } else {
+    // Layout B: look at the previous sibling selector for the method name
+    const parent = node.parent;
+    if (parent) {
+      for (let i = 0; i < parent.childCount; i++) {
+        const sibling = parent.child(i);
+        if (sibling === node) break;
+        if (sibling?.type === 'selector') {
+          const unc2 = findChild(sibling, 'unconditional_assignable_selector');
+          if (unc2) {
+            const id2 = findChild(unc2, 'identifier');
+            if (id2) methodName = id2.text;
+          }
+        } else {
+          receiverText = sibling?.text ?? null;
+        }
+      }
     }
   }
+
+  if (!methodName) return;
+
+  // Function.apply(fn, positionalArgs, namedArgs) — dynamic higher-order dispatch
+  if (methodName === 'apply') {
+    const parent = node.parent;
+    if (parent) {
+      for (let i = 0; i < parent.childCount; i++) {
+        const sibling = parent.child(i);
+        if (sibling && sibling !== node && sibling.text === 'Function') {
+          ctx.calls.push({
+            name: '<dynamic:unresolved>',
+            line,
+            dynamic: true,
+            dynamicKind: 'unresolved-dynamic',
+          });
+          return;
+        }
+      }
+    }
+  }
+
+  ctx.calls.push({ name: methodName, line });
 }
 
 function handleDartTypeAlias(node: TreeSitterNode, ctx: ExtractorOutput): void {

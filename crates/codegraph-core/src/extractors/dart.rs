@@ -33,6 +33,7 @@ fn match_dart_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth
         "library_import" => handle_dart_import(node, source, symbols),
         "constructor_invocation" | "new_expression" => handle_dart_constructor_call(node, source, symbols),
         "type_alias" => handle_dart_type_alias(node, source, symbols),
+        "selector" => handle_dart_selector(node, source, symbols),
         _ => {}
     }
 }
@@ -306,6 +307,44 @@ fn handle_dart_type_alias(node: &Node, source: &[u8], symbols: &mut FileSymbols)
             children: None,
         });
     }
+}
+
+fn handle_dart_selector(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    // selector with argument_part represents a function call; mirrors handleDartSelector in dart.ts
+    if find_child(node, "argument_part").is_none() {
+        return;
+    }
+    let unconditional = match find_child(node, "unconditional_assignable_selector") {
+        Some(n) => n,
+        None => return,
+    };
+    let id = match find_child(&unconditional, "identifier") {
+        Some(n) => n,
+        None => return,
+    };
+    let method_name = node_text(&id, source);
+
+    // Function.apply(fn, positionalArgs, namedArgs) — dynamic higher-order dispatch
+    if method_name == "apply" {
+        if let Some(parent) = node.parent() {
+            for i in 0..parent.child_count() {
+                if let Some(sibling) = parent.child(i) {
+                    if sibling.id() != node.id() && node_text(&sibling, source) == "Function" {
+                        symbols.calls.push(Call {
+                            name: "<dynamic:unresolved>".to_string(),
+                            line: start_line(node),
+                            dynamic: Some(true),
+                            dynamic_kind: Some("unresolved-dynamic".to_string()),
+                            ..Default::default()
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    push_simple_call(symbols, node, method_name);
 }
 
 fn is_inside_class(node: &Node) -> bool {
