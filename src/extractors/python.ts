@@ -187,16 +187,16 @@ function handlePyCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
       return;
     }
 
-    // getattr(obj, 'method') — resolvable if literal; computed-key if variable
+    // getattr(obj, 'method') — resolvable if name is a literal; computed-key or sink if variable
     if (name === 'getattr') {
       const argIter = iterPyArgs(node);
       const firstArg = argIter.next().value as TreeSitterNode | undefined;
       const secondArg = argIter.next().value as TreeSitterNode | undefined;
-      const receiver = firstArg?.type === 'identifier' ? firstArg.text : firstArg?.text;
+      const receiver = firstArg?.text;
       if (secondArg) {
         const st = secondArg.type;
         if (st === 'string' || st === 'concatenated_string') {
-          const attrName = secondArg.text.replace(/^['"]|['"]$/g, '');
+          const attrName = secondArg.text.replace(/^['"]{1,3}|['"]{1,3}$/g, '');
           if (attrName && !attrName.includes('{')) {
             ctx.calls.push({
               name: attrName,
