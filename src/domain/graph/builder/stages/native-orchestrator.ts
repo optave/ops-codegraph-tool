@@ -1434,6 +1434,7 @@ function queryGitIgnoredFiles(rootDir: string, relPaths: Iterable<string>): Set<
       cwd: rootDir,
       input: stdin,
       encoding: 'utf-8',
+      maxBuffer: 100 * 1024 * 1024,
       // git check-ignore exits with 1 when none of the paths are ignored —
       // that is not an error for our purposes. stdio: 'pipe' lets us capture
       // stdout without swallowing stderr, and the try/catch handles the
@@ -1442,7 +1443,7 @@ function queryGitIgnoredFiles(rootDir: string, relPaths: Iterable<string>): Set<
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     for (const line of output.split('\n')) {
-      const trimmed = line.trim();
+      const trimmed = normalizePath(line.trim());
       if (trimmed) ignored.add(trimmed);
     }
   } catch (e: unknown) {
