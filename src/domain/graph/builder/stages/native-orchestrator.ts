@@ -2046,8 +2046,9 @@ export async function tryNativeOrchestrator(
   // nodes/edges during incremental builds, so FK enforcement causes the purge
   // statements to fail silently — leaving stale nodes and edges that then get
   // duplicated when the barrel-candidate re-parse re-inserts them (issue #1644).
-  // Disabling FK before buildGraph() lets the purge succeed. FK enforcement is
-  // restored automatically when this connection is closed after the build.
+  // Disable FK only for the duration of the Rust-side buildGraph() call, then
+  // restore it immediately so subsequent writes on this connection retain FK
+  // protection.
   try {
     ctx.nativeDb.exec('PRAGMA foreign_keys = OFF');
   } catch {
@@ -2060,6 +2061,15 @@ export async function tryNativeOrchestrator(
     JSON.stringify(ctx.aliases),
     JSON.stringify(ctx.opts),
   );
+
+  // Restore FK enforcement immediately after buildGraph() so any subsequent
+  // writes to this connection (gap-repair, structure patch) retain FK protection.
+  try {
+    ctx.nativeDb.exec('PRAGMA foreign_keys = ON');
+  } catch {
+    // safe to ignore on very old addon versions
+  }
+
   const result = JSON.parse(resultJson) as NativeOrchestratorResult;
 
   if (result.earlyExit) {

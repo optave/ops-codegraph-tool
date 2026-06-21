@@ -469,15 +469,6 @@ function buildDataflowVerticesAndEdges(
 // ── P2: interprocedural stitching ─────────────────────────────────────────────
 
 /**
- * Post-pass: connect arg-flow candidates to vertex-level inter-procedural edges.
- * Runs after all per-file vertices + summaries have been committed.
- *
- * For each resolved argFlow (A calls B with arg x → B.param[j]):
- *  - Emits 'arg_in' inter edge: A's source vertex → B.param[j] vertex
- *  - If B's summary shows B.param[j] reaches B's return: emits 'return_out'
- *    inter edge: B.return → A's capture local (if any)
- */
-/**
  * Core stitch logic — must be called inside an already-open transaction.
  *
  * Separated from buildInterproceduralStitch so callers that manage their own
