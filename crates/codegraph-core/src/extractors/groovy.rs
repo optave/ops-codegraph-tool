@@ -393,6 +393,19 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     .child_by_field_name("argument")
                     .or_else(|| func_node.child_by_field_name("object"));
                 if let Some(field) = field {
+                    // obj."$dyn"() or obj."${var}"() — GString method name; mirrors the
+                    // `gstring`/`template_string` check in `handleGroovyCallExpr` (groovy.ts).
+                    if field.kind() == "gstring" || field.kind() == "template_string" {
+                        symbols.calls.push(Call {
+                            name: "<dynamic:unresolved>".to_string(),
+                            line: start_line(node),
+                            dynamic: Some(true),
+                            dynamic_kind: Some("unresolved-dynamic".to_string()),
+                            receiver: obj.map(|n| node_text(&n, source).to_string()),
+                            ..Default::default()
+                        });
+                        return;
+                    }
                     symbols.calls.push(Call {
                         name: node_text(&field, source).to_string(),
                         line: start_line(node),
