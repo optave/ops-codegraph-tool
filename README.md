@@ -234,6 +234,7 @@ codegraph where --file src/db.js  # List symbols, imports, exports for a file
 codegraph stats                # Graph health: nodes, edges, languages, quality score
 codegraph roles                # Node role classification (entry, core, utility, adapter, dead, leaf)
 codegraph roles --role dead -T # Find dead code (unreferenced, non-exported symbols)
+codegraph roles --dynamic      # Show dynamic call sink edges (eval, computed-key, unresolved)
 codegraph roles --role core --file src/  # Core symbols in src/
 codegraph exports src/queries.js  # Per-symbol consumer analysis (who calls each export)
 codegraph children <name>         # List parameters, properties, constants of a symbol
@@ -821,6 +822,7 @@ Create a `.codegraphrc.json` in your project root to customize behavior. The sni
   "include": ["src/**", "lib/**"],
   "exclude": ["**/*.test.js", "**/__mocks__/**"],
   "ignoreDirs": ["node_modules", ".git", "dist"],
+  "ignoreAdditionalDirs": ["crates", "vendor"],
   "extensions": [".js", ".ts", ".tsx", ".py"],
   "aliases": {
     "@/": "./src/",
@@ -955,10 +957,11 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 10. ~~**Analysis Depth**~~ — **Complete** (v3.12.0) — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, barrel re-export chain resolution, CHA+RTA dynamic dispatch
 11. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
 12. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
-13. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
-14. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-15. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
-16. **Advanced Features** — dead code detection, monorepo support, agentic search
+13. **Architectural Health** — split god files (`types.ts`, `dataflow.ts`), missing ADRs, language quality tiers, per-edge confidence transparency
+14. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
+15. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+16. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
+17. **Advanced Features** — dead code detection, monorepo support, agentic search
 
 ## 🤝 Contributing
 

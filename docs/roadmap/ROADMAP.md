@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.13.0 | **Status:** Active development | **Updated:** 2026-06-16
+> **Current version:** 3.15.0 | **Status:** Active development | **Updated:** 2026-06-21
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -2406,9 +2406,10 @@ Items to remove or rework, identified by architectural audit:
 1. **ADR-002: TypeScript migration** — rationale for migrating from JS to TS, build pipeline changes (`tsup`, path aliases, `#shared/*` imports), `nodenext` module resolution choice
 2. **ADR-003: Repository pattern in `db/`** — why `SqliteRepository` / `InMemoryRepository` over flat SQL functions, what the interface contract is, how `InMemoryRepository` enables unit testing
 3. **ADR-004: MCP tool architecture** — barrel pattern in `tools/index.ts`, middleware layer, lazy-loading of `@modelcontextprotocol/sdk`, single-repo isolation default, `buildToolList(multiRepo)` dynamic schema
-4. **ADR-005: Interprocedural dataflow model** — vertex schema design, `arg_in`/`return_out`/`def_use` edge semantics, stitching algorithm, phased P0–P6 delivery strategy, tradeoffs vs a purely intra-procedural model
+4. ✅ **ADR-005: Interprocedural dataflow model** — vertex schema design, `arg_in`/`return_out`/`def_use` edge semantics, stitching algorithm, phased P0–P6 delivery strategy, tradeoffs vs a purely intra-procedural model (v3.15.0, [#1675](https://github.com/optave/ops-codegraph-tool/pull/1675))
 5. **ADR-006: TypeScript-native (ts-native) resolution technique** — what the technique does differently from the 6-level heuristic, why it was introduced alongside rather than replacing the existing resolver, known confidence tradeoffs, calibration plan
 6. **ADR-007: User-level config and consent model** — XDG location, layered merge order (user > repo > defaults), per-repo consent mechanics, config-hash invalidation, security trust model
+7. ✅ **ADR-008: Dynamic call resolution** — `DynamicKind` taxonomy, Phase 0–6 detection strategy, sink-edge semantics, RES-1/2/3 resolution passes, why flag-only vs resolve-and-flag distinction was chosen (v3.15.0, [#1675](https://github.com/optave/ops-codegraph-tool/pull/1675))
 
 **Affected files:** `docs/architecture/decisions/` (6 new files)
 
