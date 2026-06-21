@@ -80,6 +80,50 @@ function handleElixirCall(
       case 'alias':
         handleElixirImport(node, ctx, keyword);
         return;
+      case 'apply': {
+        // apply(module, :function, args) — Elixir dynamic dispatch
+        const applyArgs = node.childForFieldName('arguments');
+        if (applyArgs) {
+          let argIdx = 0;
+          let secondArg: TreeSitterNode | null = null;
+          for (let i = 0; i < applyArgs.childCount; i++) {
+            const child = applyArgs.child(i);
+            if (!child) continue;
+            const t = child.type;
+            if (t === '(' || t === ')' || t === ',') continue;
+            if (argIdx === 1) {
+              secondArg = child;
+              break;
+            }
+            argIdx++;
+          }
+          if (secondArg) {
+            // :atom — strip leading colon to get function name
+            if (secondArg.type === 'atom' || secondArg.type === 'atom_literal') {
+              const fnName = secondArg.text.replace(/^:/, '');
+              ctx.calls.push({
+                name: fnName,
+                line: node.startPosition.row + 1,
+                dynamic: true,
+                dynamicKind: 'reflection',
+                keyExpr: secondArg.text,
+              });
+              return;
+            }
+            // Variable function name — computed-key
+            ctx.calls.push({
+              name: '<dynamic:computed-key>',
+              line: node.startPosition.row + 1,
+              dynamic: true,
+              dynamicKind: 'computed-key',
+              keyExpr: secondArg.text,
+            });
+            return;
+          }
+        }
+        ctx.calls.push({ name: 'apply', line: node.startPosition.row + 1 });
+        return;
+      }
       default:
         // Regular function call
         ctx.calls.push({ name: keyword, line: node.startPosition.row + 1 });

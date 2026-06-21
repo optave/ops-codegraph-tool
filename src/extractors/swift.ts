@@ -278,7 +278,56 @@ function handleSwiftCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
   } else {
     call.name = funcNode.text;
   }
-  if (call.name) ctx.calls.push(call);
+
+  if (!call.name) return;
+
+  // performSelector — ObjC-style dynamic dispatch; selector not statically knowable
+  if (call.name === 'performSelector') {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: call.line,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      receiver: call.receiver,
+    });
+    return;
+  }
+
+  // NSSelectorFromString("name") — selector from literal string
+  if (call.name === 'NSSelectorFromString') {
+    // Search the call_expression subtree for a string literal (BFS)
+    const queue: TreeSitterNode[] = [node];
+    let literal: string | null = null;
+    while (queue.length > 0 && !literal) {
+      const curr = queue.shift()!;
+      if (curr.type === 'line_string_literal' || curr.type === 'string_literal') {
+        // Look for inner string_content node
+        for (let i = 0; i < curr.childCount; i++) {
+          const ch = curr.child(i);
+          if (ch?.type === 'string_content') {
+            literal = ch.text;
+            break;
+          }
+        }
+        if (!literal) literal = curr.text.replace(/^["']|["']$/g, '');
+        break;
+      }
+      for (let i = 0; i < curr.childCount; i++) {
+        const ch = curr.child(i);
+        if (ch) queue.push(ch);
+      }
+    }
+    ctx.calls.push({
+      name: literal ?? '<dynamic:unresolved>',
+      line: call.line,
+      dynamic: true,
+      dynamicKind: literal ? 'reflection' : 'unresolved-dynamic',
+      keyExpr: literal ?? undefined,
+    });
+    return;
+  }
+
+  ctx.calls.push(call);
 }
 
 /**

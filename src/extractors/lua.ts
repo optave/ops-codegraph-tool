@@ -132,6 +132,20 @@ function handleLuaFunctionCall(node: TreeSitterNode, ctx: ExtractorOutput): void
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
 
+  // load(chunk) / loadstring(chunk) — dynamic code execution; always undecidable
+  if (
+    nameNode.type === 'identifier' &&
+    (nameNode.text === 'load' || nameNode.text === 'loadstring' || nameNode.text === 'dofile')
+  ) {
+    ctx.calls.push({
+      name: '<dynamic:eval>',
+      line: node.startPosition.row + 1,
+      dynamic: true,
+      dynamicKind: 'eval',
+    });
+    return;
+  }
+
   // Check for require() as import
   if (nameNode.type === 'identifier' && nameNode.text === 'require') {
     const args = node.childForFieldName('arguments');
@@ -161,6 +175,25 @@ function handleLuaFunctionCall(node: TreeSitterNode, ctx: ExtractorOutput): void
     const field = nameNode.childForFieldName('field');
     if (field) call.name = field.text;
     if (table) call.receiver = table.text;
+  } else if (nameNode.type === 'bracket_index_expression') {
+    // t[k]() — bracket-index function call; key may be variable
+    const table = nameNode.childForFieldName('table');
+    const key = nameNode.child(nameNode.childCount - 2); // the expression before ']'
+    if (key && (key.type === 'string' || key.type === 'string_literal')) {
+      call.name = key.text.replace(/['"]/g, '');
+      call.receiver = table?.text;
+    } else {
+      // Variable key — flagged as computed-key
+      ctx.calls.push({
+        name: '<dynamic:computed-key>',
+        line: call.line,
+        dynamic: true,
+        dynamicKind: 'computed-key',
+        keyExpr: key?.text,
+        receiver: table?.text,
+      });
+      return;
+    }
   } else {
     call.name = nameNode.text;
   }

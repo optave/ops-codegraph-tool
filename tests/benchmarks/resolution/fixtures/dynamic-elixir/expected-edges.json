@@ -1,0 +1,14 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "elixir",
+  "description": "Phase 6 Elixir fixture: apply(module, :fn, args) detected; module-qualified names → 0% recall until RES-3.",
+  "edges": [
+    {
+      "source": { "name": "DynamicDispatch.run_apply_atom", "file": "dispatch.ex" },
+      "target": { "name": "DynamicDispatch.greet", "file": "dispatch.ex" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "apply(DynamicDispatch, :greet, args) — reflection kind; 0% recall (module-qualified DB names)"
+    }
+  ]
+}
