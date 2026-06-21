@@ -316,8 +316,10 @@ fn handle_scala_call_expression(node: &Node, source: &[u8], symbols: &mut FileSy
                     .map(|n| node_text(&n, source).to_string());
                 let call_line = start_line(node);
                 match name.as_str() {
-                    // method.invoke(target, args) — runtime reflection; flag
-                    "invoke" => {
+                    // method.invoke(target, args) — runtime reflection; flag.
+                    // Require a non-null receiver to avoid false positives on user-defined
+                    // `invoke` methods.
+                    "invoke" if receiver.is_some() => {
                         symbols.calls.push(Call {
                             name: "<dynamic:unresolved>".to_string(),
                             line: call_line,

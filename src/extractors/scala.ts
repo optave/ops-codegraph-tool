@@ -173,8 +173,9 @@ function handleScalaCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
   }
   if (!call.name) return;
 
-  // method.invoke(target, args) — Java/Scala reflection; target unknown statically
-  if (call.name === 'invoke') {
+  // method.invoke(target, args) — Java/Scala reflection; target unknown statically.
+  // Require a non-null receiver to avoid false positives on user-defined `invoke` methods.
+  if (call.name === 'invoke' && call.receiver !== undefined) {
     ctx.calls.push({
       name: '<dynamic:unresolved>',
       line: call.line,
