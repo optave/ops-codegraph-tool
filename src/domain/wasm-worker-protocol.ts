@@ -79,6 +79,8 @@ export interface SerializedExtractorOutput {
   callAssignments?: CallAssignment[];
   /** Variable-level dataflow vertices extracted during parsing (P1+). */
   dataflowVertices?: import('../types.js').DataflowVertex[];
+  /** CJS require bindings — see ExtractorOutput.cjsRequireBindings (#1661). */
+  cjsRequireBindings?: Array<{ names: string[]; source: string }>;
 }
 
 export interface WorkerParseResponseOk {
