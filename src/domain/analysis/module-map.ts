@@ -381,11 +381,29 @@ function queryFalsePositiveRows(
     .all(fpThreshold) as FalsePositiveRow[];
 }
 
+/**
+ * Returns true when a high-caller-count row is a known structural false positive
+ * that should be silently excluded from warnings.
+ *
+ * Rust `::new()` methods (kind = method, local name = "new", file ends in ".rs")
+ * are conventional constructors — their high call counts are expected and carry
+ * no architectural signal.  Any pattern-based exclusion should be added here
+ * rather than hardcoding specific symbol names.
+ */
+function isStructuralFalsePositive(r: FalsePositiveRow): boolean {
+  const localName = r.name.includes('.') ? r.name.split('.').pop()! : r.name;
+  // Rust ::new() constructors are always high-caller by design.
+  if (localName === 'new' && r.file.endsWith('.rs')) return true;
+  return false;
+}
+
 /** Filter false-positive rows by the configured name set and shape them for the report. */
 function buildFalsePositiveWarnings(rows: FalsePositiveRow[]) {
   return rows
-    .filter((r) =>
-      FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop()! : r.name),
+    .filter(
+      (r) =>
+        !isStructuralFalsePositive(r) &&
+        FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop()! : r.name),
     )
     .map((r) => ({ name: r.name, file: r.file, line: r.line, callerCount: r.caller_count }));
 }
@@ -441,9 +459,10 @@ function buildStatsFromNative(
     s.quality.callEdges > 0 ? s.quality.highConfCallEdges / s.quality.callEdges : 0;
 
   // False-positive analysis still uses JS (needs FALSE_POSITIVE_NAMES set).
-  // FP ratio uses the *total* calls count (including sinks) as denominator so
-  // it reflects the full edge set rather than just the resolved subset.
-  const totalCallEdgesForFp = edgesByKind.calls ?? s.quality.callEdges;
+  // FP ratio uses the total calls count as denominator. When edgesByKind['calls']
+  // is undefined there are no call edges at all, so fpEdgeCount is 0 and the
+  // > 0 guard below returns 0 regardless — use 0 as the safe fallback.
+  const totalCallEdgesForFp = edgesByKind.calls ?? 0;
   const fpThreshold = config.analysis?.falsePositiveCallers ?? FALSE_POSITIVE_CALLER_THRESHOLD;
   const falsePositiveWarnings = buildFalsePositiveWarnings(queryFalsePositiveRows(db, fpThreshold));
   let fpEdgeCount = 0;
