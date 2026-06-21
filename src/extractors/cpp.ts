@@ -250,16 +250,46 @@ function handleCppDeclaration(node: TreeSitterNode, ctx: ExtractorOutput): void 
 function handleCppCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const funcNode = node.childForFieldName('function');
   if (!funcNode) return;
-  const call: Call = { name: '', line: node.startPosition.row + 1 };
+  const callLine = node.startPosition.row + 1;
+
   if (funcNode.type === 'field_expression') {
     const field = funcNode.childForFieldName('field');
     const argument = funcNode.childForFieldName('argument');
-    if (field) call.name = field.text;
-    if (argument) call.receiver = argument.text;
-  } else {
-    call.name = funcNode.text;
+    if (field) {
+      ctx.calls.push({
+        name: field.text,
+        line: callLine,
+        ...(argument ? { receiver: argument.text } : {}),
+      });
+    }
+    return;
   }
-  if (call.name) ctx.calls.push(call);
+
+  // (*fp)(args) — function pointer dereference call; unresolvable statically
+  if (funcNode.type === 'parenthesized_expression' || funcNode.type === 'pointer_expression') {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: callLine,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+    });
+    return;
+  }
+
+  const fnName = funcNode.text;
+  // dlsym(handle, "symbol") — dynamic symbol loading
+  if (fnName === 'dlsym' || fnName === 'dlvsym') {
+    // For simplicity, flag as unresolved (symbol might not be in the codebase)
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: callLine,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+    });
+    return;
+  }
+
+  if (fnName) ctx.calls.push({ name: fnName, line: callLine });
 }
 
 // ── Utility helpers ─────────────────────────────────────────────────────────

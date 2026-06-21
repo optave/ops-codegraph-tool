@@ -144,6 +144,9 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   'dynamic-typescript': { precision: 1.0, recall: 0.75 },
   // dynamic-python: Phase 3 fixture — getattr('name') resolved; eval/exec/variable-getattr flagged.
   'dynamic-python': { precision: 1.0, recall: 0.75 },
+  // Phase 5: Go + C/C++ dynamic dispatch patterns.
+  'dynamic-go': { precision: 1.0, recall: 1.0 },
+  'dynamic-c': { precision: 1.0, recall: 1.0 },
   // Phase 4 scripting fixtures: Ruby send/public_send + PHP call_user_func/variable calls.
   'dynamic-ruby': { precision: 1.0, recall: 0.75 },
   'dynamic-php': { precision: 1.0, recall: 1.0 },

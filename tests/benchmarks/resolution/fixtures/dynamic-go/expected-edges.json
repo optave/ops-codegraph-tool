@@ -1,0 +1,14 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "go",
+  "description": "Phase 5 Go fixture: reflect.Value.MethodByName resolved; variable name flagged.",
+  "edges": [
+    {
+      "source": { "name": "runMethodByNameLiteral", "file": "reflect.go" },
+      "target": { "name": "Greet", "file": "reflect.go" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "v.MethodByName('Greet') — reflection kind, resolves to top-level Greet()"
+    }
+  ]
+}

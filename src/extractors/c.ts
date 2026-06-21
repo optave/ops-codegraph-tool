@@ -142,19 +142,81 @@ function handleCInclude(node: TreeSitterNode, ctx: ExtractorOutput): void {
   });
 }
 
+/** Get the Nth non-punctuation argument from a C call_expression. */
+function getCArg(node: TreeSitterNode, index: number): TreeSitterNode | null {
+  const args = node.childForFieldName('arguments');
+  if (!args) return null;
+  let count = 0;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',' || t === 'comment') continue;
+    if (count === index) return child;
+    count++;
+  }
+  return null;
+}
+
 function handleCCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const funcNode = node.childForFieldName('function');
   if (!funcNode) return;
-  const call: Call = { name: '', line: node.startPosition.row + 1 };
+  const callLine = node.startPosition.row + 1;
+
   if (funcNode.type === 'field_expression') {
     const field = funcNode.childForFieldName('field');
     const argument = funcNode.childForFieldName('argument');
-    if (field) call.name = field.text;
-    if (argument) call.receiver = argument.text;
-  } else {
-    call.name = funcNode.text;
+    if (field) {
+      ctx.calls.push({
+        name: field.text,
+        line: callLine,
+        ...(argument ? { receiver: argument.text } : {}),
+      });
+    }
+    return;
   }
-  if (call.name) ctx.calls.push(call);
+
+  // (*fp)(args) — function pointer call through dereference; unresolvable statically
+  if (funcNode.type === 'parenthesized_expression' || funcNode.type === 'pointer_expression') {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: callLine,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+    });
+    return;
+  }
+
+  const fnName = funcNode.text;
+
+  // dlsym(handle, "symbol") — dynamic symbol loading
+  if (fnName === 'dlsym' || fnName === 'dlvsym') {
+    const nameArg = getCArg(node, 1); // second arg is the symbol name
+    if (nameArg && (nameArg.type === 'string_literal' || nameArg.type === 'string_content')) {
+      const sym = nameArg.text.replace(/['"]/g, '');
+      if (sym) {
+        ctx.calls.push({
+          name: sym,
+          line: callLine,
+          dynamic: true,
+          dynamicKind: 'reflection',
+          keyExpr: nameArg.text,
+        });
+        return;
+      }
+    }
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: callLine,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+    });
+    return;
+  }
+
+  if (fnName) {
+    ctx.calls.push({ name: fnName, line: callLine });
+  }
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
