@@ -94,6 +94,21 @@ fn handle_lua_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbol
         None => return,
     };
 
+    // load(chunk) / loadstring(chunk) / dofile — dynamic code execution; always undecidable
+    if name_node.kind() == "identifier" {
+        let ident = node_text(&name_node, source);
+        if matches!(ident, "load" | "loadstring" | "dofile") {
+            symbols.calls.push(Call {
+                name: "<dynamic:eval>".to_string(),
+                line: start_line(node),
+                dynamic: Some(true),
+                dynamic_kind: Some("eval".to_string()),
+                ..Default::default()
+            });
+            return;
+        }
+    }
+
     // Check for require() as import
     if name_node.kind() == "identifier" && node_text(&name_node, source) == "require" {
         if let Some(args) = node.child_by_field_name("arguments") {
@@ -135,6 +150,42 @@ fn handle_lua_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbol
                     receiver: table.map(|t| node_text(&t, source).to_string()),
                     ..Default::default()
                 });
+            }
+        }
+        "bracket_index_expression" => {
+            // t[k]() — bracket-index call; key may be variable.
+            let table = name_node.child_by_field_name("table");
+            let table_id = table.as_ref().map(|n| n.id());
+            let mut key: Option<Node> = None;
+            for i in 0..name_node.child_count() {
+                let Some(ch) = name_node.child(i) else { continue };
+                if matches!(ch.kind(), "[" | "]") { continue; }
+                if table_id == Some(ch.id()) { continue; }
+                key = Some(ch);
+                break;
+            }
+            if let Some(k) = key {
+                if k.kind() == "string" || k.kind() == "string_literal" {
+                    let raw = node_text(&k, source);
+                    let call_name = raw.trim_matches(|c| c == '\'' || c == '"').to_string();
+                    symbols.calls.push(Call {
+                        name: call_name,
+                        line: start_line(node),
+                        receiver: table.map(|t| node_text(&t, source).to_string()),
+                        ..Default::default()
+                    });
+                } else {
+                    let key_expr = node_text(&k, source).to_string();
+                    symbols.calls.push(Call {
+                        name: "<dynamic:computed-key>".to_string(),
+                        line: start_line(node),
+                        dynamic: Some(true),
+                        dynamic_kind: Some("computed-key".to_string()),
+                        key_expr: Some(key_expr),
+                        receiver: table.map(|t| node_text(&t, source).to_string()),
+                        ..Default::default()
+                    });
+                }
             }
         }
         _ => {

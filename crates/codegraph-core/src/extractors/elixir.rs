@@ -34,6 +34,7 @@ fn match_elixir_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
             "defprotocol" => handle_defprotocol(node, source, symbols),
             "defimpl" => handle_defimpl(node, source, symbols),
             "import" | "use" | "require" | "alias" => handle_elixir_import(node, source, symbols, keyword),
+            "apply" => handle_elixir_apply(node, source, symbols),
             _ => {
                 symbols.calls.push(Call {
                     name: keyword.to_string(),
@@ -364,6 +365,72 @@ fn handle_elixir_import(node: &Node, source: &[u8], symbols: &mut FileSymbols, k
         vec![keyword.to_string()],
         start_line(node),
     ));
+}
+
+/// apply(module, :function, args) — Elixir dynamic dispatch.
+/// Second argument is an atom literal → reflection; variable → computed-key.
+fn handle_elixir_apply(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let args = match find_child(node, "arguments") {
+        Some(a) => a,
+        None => {
+            symbols.calls.push(Call {
+                name: "apply".to_string(),
+                line: start_line(node),
+                ..Default::default()
+            });
+            return;
+        }
+    };
+
+    // Locate the second argument (skip punctuation and the first arg)
+    let mut arg_idx = 0u32;
+    let mut second_arg: Option<Node> = None;
+    for i in 0..args.child_count() {
+        let Some(child) = args.child(i) else { continue };
+        let t = child.kind();
+        if matches!(t, "(" | ")" | ",") { continue; }
+        if arg_idx == 1 {
+            second_arg = Some(child);
+            break;
+        }
+        arg_idx += 1;
+    }
+
+    let Some(second) = second_arg else {
+        symbols.calls.push(Call {
+            name: "apply".to_string(),
+            line: start_line(node),
+            ..Default::default()
+        });
+        return;
+    };
+
+    let t = second.kind();
+    if t == "atom" || t == "atom_literal" {
+        // :atom — strip leading colon to get function name
+        let raw = node_text(&second, source);
+        let fn_name = raw.trim_start_matches(':').to_string();
+        let key_expr = raw.to_string();
+        symbols.calls.push(Call {
+            name: fn_name,
+            line: start_line(node),
+            dynamic: Some(true),
+            dynamic_kind: Some("reflection".to_string()),
+            key_expr: Some(key_expr),
+            ..Default::default()
+        });
+    } else {
+        // Variable function name — computed-key
+        let key_expr = node_text(&second, source).to_string();
+        symbols.calls.push(Call {
+            name: "<dynamic:computed-key>".to_string(),
+            line: start_line(node),
+            dynamic: Some(true),
+            dynamic_kind: Some("computed-key".to_string()),
+            key_expr: Some(key_expr),
+            ..Default::default()
+        });
+    }
 }
 
 fn handle_dot_call(node: &Node, dot_node: &Node, source: &[u8], symbols: &mut FileSymbols) {

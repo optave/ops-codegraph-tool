@@ -221,40 +221,100 @@ fn handle_using_directive(node: &Node, source: &[u8], symbols: &mut FileSymbols)
     }
 }
 
+/// Get the first string-literal argument text from a C# invocation node.
+fn get_cs_first_string_arg(node: &Node, source: &[u8]) -> Option<String> {
+    let args = node.child_by_field_name("argument_list")
+        .or_else(|| find_child(node, "argument_list"))?;
+    for i in 0..args.child_count() {
+        let Some(child) = args.child(i) else { continue };
+        let t = child.kind();
+        if matches!(t, "(" | ")" | ",") { continue; }
+        // argument node may wrap the literal
+        let target = if t == "argument" {
+            child.child(0).unwrap_or(child)
+        } else {
+            child
+        };
+        let tt = target.kind();
+        if tt == "string_literal" || tt == "verbatim_string_literal" {
+            let raw = node_text(&target, source);
+            return Some(raw.trim_matches(|c| c == '"' || c == '@').to_string());
+        }
+        break;
+    }
+    None
+}
+
 fn handle_invocation_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let fn_node = node.child_by_field_name("function").or_else(|| node.child(0));
     let Some(fn_node) = fn_node else { return };
+    let call_line = start_line(node);
     match fn_node.kind() {
         "identifier" => {
             symbols.calls.push(Call {
                 name: node_text(&fn_node, source).to_string(),
-                line: start_line(node),
-                dynamic: None,
-                receiver: None,
+                line: call_line,
                 ..Default::default()
             });
         }
         "member_access_expression" => {
-            if let Some(name) = fn_node.child_by_field_name("name") {
-                let receiver = named_child_text(&fn_node, "expression", source)
-                    .map(|s| s.to_string());
+            let Some(name) = fn_node.child_by_field_name("name") else { return };
+            let method_name = node_text(&name, source);
+            let receiver = named_child_text(&fn_node, "expression", source)
+                .map(|s| s.to_string());
+
+            // method.Invoke(target, args) — runtime reflection; target unknown
+            if method_name == "Invoke" {
                 symbols.calls.push(Call {
-                    name: node_text(&name, source).to_string(),
-                    line: start_line(node),
-                    dynamic: None,
+                    name: "<dynamic:unresolved>".to_string(),
+                    line: call_line,
+                    dynamic: Some(true),
+                    dynamic_kind: Some("unresolved-dynamic".to_string()),
                     receiver,
                     ..Default::default()
                 });
+                return;
             }
+
+            // type.GetMethod("name") / GetRuntimeMethod / GetDeclaredMethod — resolvable if literal
+            if matches!(method_name, "GetMethod" | "GetRuntimeMethod" | "GetDeclaredMethod") {
+                let literal = get_cs_first_string_arg(node, source);
+                if let Some(lit) = literal {
+                    symbols.calls.push(Call {
+                        name: lit.clone(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("reflection".to_string()),
+                        key_expr: Some(lit),
+                        receiver,
+                        ..Default::default()
+                    });
+                } else {
+                    symbols.calls.push(Call {
+                        name: "<dynamic:computed-key>".to_string(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("computed-key".to_string()),
+                        receiver,
+                        ..Default::default()
+                    });
+                }
+                return;
+            }
+
+            symbols.calls.push(Call {
+                name: method_name.to_string(),
+                line: call_line,
+                receiver,
+                ..Default::default()
+            });
         }
         "generic_name" | "member_binding_expression" => {
             let name = fn_node.child_by_field_name("name").or_else(|| fn_node.child(0));
             if let Some(name) = name {
                 symbols.calls.push(Call {
                     name: node_text(&name, source).to_string(),
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver: None,
+                    line: call_line,
                     ..Default::default()
                 });
             }

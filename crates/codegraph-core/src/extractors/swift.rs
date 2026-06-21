@@ -189,6 +189,39 @@ fn extract_swift_inheritance(node: &Node, source: &[u8], class_name: &str, symbo
     }
 }
 
+/// Extract the text content of the first string literal argument in a Swift call_expression.
+/// Inspects call_suffix → value_arguments → value_argument → line_string_literal.
+fn get_swift_first_string_literal(call_node: &Node, source: &[u8]) -> Option<String> {
+    let call_suffix = find_child(call_node, "call_suffix")?;
+    let value_args = find_child(&call_suffix, "value_arguments")
+        .unwrap_or(call_suffix);
+    for i in 0..value_args.child_count() {
+        let Some(arg) = value_args.child(i) else { continue };
+        let t = arg.kind();
+        if matches!(t, "(" | ")" | ",") { continue; }
+        let value_node = if t == "value_argument" {
+            arg.child_by_field_name("value")
+                .or_else(|| arg.child(arg.child_count().saturating_sub(1)))
+                .unwrap_or(arg)
+        } else {
+            arg
+        };
+        let vt = value_node.kind();
+        if vt == "line_string_literal" || vt == "string_literal" {
+            for j in 0..value_node.child_count() {
+                let Some(ch) = value_node.child(j) else { continue };
+                if ch.kind() == "line_str_text" || ch.kind() == "string_content" {
+                    return Some(node_text(&ch, source).to_string());
+                }
+            }
+            let raw = node_text(&value_node, source);
+            return Some(raw.trim_matches(|c| c == '"' || c == '\'').to_string());
+        }
+        break;
+    }
+    None
+}
+
 fn match_swift_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "class_declaration" => {
@@ -288,16 +321,8 @@ fn match_swift_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
 
         "call_expression" => {
             if let Some(fn_node) = node.child(0) {
-                match fn_node.kind() {
-                    "simple_identifier" => {
-                        symbols.calls.push(Call {
-                            name: node_text(&fn_node, source).to_string(),
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver: None,
-                            ..Default::default()
-                        });
-                    }
+                let call_line = start_line(node);
+                let (call_name, call_receiver) = match fn_node.kind() {
                     "navigation_expression" => {
                         let last = fn_node.child(fn_node.child_count().saturating_sub(1));
                         // Swift's grammar wraps the method name in a `navigation_suffix` node
@@ -318,24 +343,52 @@ fn match_swift_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
                         }).unwrap_or_else(|| node_text(&fn_node, source).to_string());
                         let receiver = fn_node.child(0)
                             .map(|n| node_text(&n, source).to_string());
-                        symbols.calls.push(Call {
-                            name,
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver,
-                            ..Default::default()
-                        });
+                        (name, receiver)
                     }
-                    _ => {
-                        symbols.calls.push(Call {
-                            name: node_text(&fn_node, source).to_string(),
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver: None,
-                            ..Default::default()
-                        });
-                    }
+                    _ => (node_text(&fn_node, source).to_string(), None),
+                };
+
+                if call_name.is_empty() {
+                    return;
                 }
+
+                // performSelector — ObjC-style dynamic dispatch; selector not statically knowable
+                if call_name == "performSelector" {
+                    symbols.calls.push(Call {
+                        name: "<dynamic:unresolved>".to_string(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("unresolved-dynamic".to_string()),
+                        receiver: call_receiver,
+                        ..Default::default()
+                    });
+                    return;
+                }
+
+                // NSSelectorFromString("name") — selector from literal string
+                if call_name == "NSSelectorFromString" {
+                    let literal = get_swift_first_string_literal(node, source);
+                    symbols.calls.push(Call {
+                        name: literal.clone().unwrap_or_else(|| "<dynamic:unresolved>".to_string()),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some(if literal.is_some() {
+                            "reflection".to_string()
+                        } else {
+                            "unresolved-dynamic".to_string()
+                        }),
+                        key_expr: literal,
+                        ..Default::default()
+                    });
+                    return;
+                }
+
+                symbols.calls.push(Call {
+                    name: call_name,
+                    line: call_line,
+                    receiver: call_receiver,
+                    ..Default::default()
+                });
             }
         }
 
