@@ -56,7 +56,11 @@ import 'package:flutter/material.dart';`);
   var r = Function.apply(callback, []);
 }`);
     expect(symbols.calls).toContainEqual(
-      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+      expect.objectContaining({
+        name: '<dynamic:unresolved>',
+        dynamic: true,
+        dynamicKind: 'unresolved-dynamic',
+      }),
     );
   });
 });
