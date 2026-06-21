@@ -1446,13 +1446,16 @@ function emitChaCallEdgesForCall(
 }
 
 /**
- * Dynamic kinds that can never be resolved statically — emit a sink edge to the
+ * Dynamic kinds that cannot be resolved statically — emit a sink edge to the
  * file node instead of silently dropping the call site.  confidence=0.0 keeps
  * these below DEFAULT_MIN_CONFIDENCE so they never appear in normal query results.
+ * Includes reflection so that Reflect.apply/getMethod/callable-ref calls whose
+ * target is not found in the codebase still produce a visible sink edge.
  */
 const FLAG_ONLY_KINDS: ReadonlySet<DynamicKind> = new Set([
   'eval',
   'computed-key',
+  'reflection',
   'unresolved-dynamic',
 ]);
 
@@ -1467,7 +1470,7 @@ const FLAG_ONLY_KINDS: ReadonlySet<DynamicKind> = new Set([
  *   4. `emitPtsReceiverEdges`    — Phase 8.3f pts fallback for rest-param receiver calls
  *   5. Inline `resolveReceiverEdge` — emit `receiver` edge for external receivers
  *   6. `emitChaCallEdgesForCall` — Phase 8.5 CHA + RTA dispatch expansion
- *   7. Sink edge for flag-only dynamic kinds (eval, computed-key, unresolved-dynamic)
+ *   7. Sink edge for flag-only dynamic kinds (eval, computed-key, reflection, unresolved-dynamic)
  */
 function buildFileCallEdges(
   relPath: string,
