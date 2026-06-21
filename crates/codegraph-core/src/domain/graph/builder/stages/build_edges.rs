@@ -721,10 +721,10 @@ fn process_file<'a>(
     // Key: edge_key (same as seen_edges). Value: index into `edges` vec.
     let mut seen_edges: HashSet<u64> = HashSet::new();
     let mut pts_edge_map: HashMap<u64, usize> = HashMap::new();
-    // Separate dedup set for sink edges: (caller_id, file_node_id, dynamic_kind_byte).
-    // Using a distinct set avoids the bit-packing collision that would occur when
-    // caller_id >= 16 M (upper 8 bits of caller_id would overlap with the kind byte).
-    let mut seen_sink_edges: HashSet<(u32, u32, u8)> = HashSet::new();
+    // Separate dedup set for sink edges: (caller_id, file_node_id, dynamic_kind).
+    // Uses the full kind string rather than the first byte to avoid collisions between
+    // kinds that share a prefix (e.g. "computed-key" and "computed-literal" both start with b'c').
+    let mut seen_sink_edges: HashSet<(u32, u32, String)> = HashSet::new();
 
     for call in &file_input.calls {
         if let Some(ref receiver) = call.receiver {
@@ -755,7 +755,7 @@ fn process_file<'a>(
         if targets.is_empty() {
             if let Some(ref dk) = call.dynamic_kind {
                 if dk == "eval" || dk == "computed-key" || dk == "unresolved-dynamic" {
-                    let sink_key = (caller_id, fc.file_node_id, dk.as_bytes()[0]);
+                    let sink_key = (caller_id, fc.file_node_id, dk.clone());
                     if !seen_sink_edges.contains(&sink_key) {
                         seen_sink_edges.insert(sink_key);
                         edges.push(ComputedEdge {

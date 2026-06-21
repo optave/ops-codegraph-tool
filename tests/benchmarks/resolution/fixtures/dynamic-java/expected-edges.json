@@ -1,0 +1,14 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "java",
+  "description": "Phase 2 JVM fixture: Java reflection patterns. getMethod('name') resolved; invoke() flagged.",
+  "edges": [
+    {
+      "source": { "name": "runGetMethod", "file": "Reflection.java" },
+      "target": { "name": "greet", "file": "Reflection.java" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "clazz.getMethod('greet') — reflection kind, resolved to greet() in same class"
+    }
+  ]
+}

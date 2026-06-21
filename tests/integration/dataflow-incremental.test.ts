@@ -233,96 +233,96 @@ describe('P4: incremental re-stitch', () => {
 // mock that has bulkInsertDataflow — exercising the native fast path branch.
 // P4 must fire even though the caller file was not in fileSymbols.
 
-let nativeTmpDir: string;
-let nativeDbPath: string;
-let nativeMainParamVertexId: number;
-
-beforeAll(async () => {
-  nativeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-p4-native-'));
-  fs.mkdirSync(path.join(nativeTmpDir, '.codegraph'));
-  fs.mkdirSync(path.join(nativeTmpDir, 'src'), { recursive: true });
-
-  const nativeCallerRelPath = 'src/caller.js';
-  const nativeCalleeRelPath = 'src/callee.js';
-
-  // Write real source files to disk (P4 re-parses caller from disk).
-  fs.writeFileSync(
-    path.join(nativeTmpDir, nativeCallerRelPath),
-    'function main(input) { helper(input); }\n',
-  );
-  fs.writeFileSync(
-    path.join(nativeTmpDir, nativeCalleeRelPath),
-    'function helper(x) { return x; }\n',
-  );
-
-  nativeDbPath = path.join(nativeTmpDir, '.codegraph', 'graph.db');
-  const db = new Database(nativeDbPath);
-  db.pragma('journal_mode = WAL');
-  initSchema(db);
-
-  const nativeMainId = insertNode(db, 'main', 'function', nativeCallerRelPath, 1);
-  const nativeHelperId = insertNode(db, 'helper', 'function', nativeCalleeRelPath, 1);
-
-  // Simulate post-purge state: flows_to edge still present, main's param
-  // vertex exists, helper's param vertex was purged.
-  db.prepare(
-    `INSERT INTO dataflow (source_id, target_id, kind, param_index, expression, line, confidence)
-     VALUES (?, ?, 'flows_to', 0, 'input', 1, 1.0)`,
-  ).run(nativeMainId, nativeHelperId);
-
-  db.prepare(`INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'calls')`).run(
-    nativeMainId,
-    nativeHelperId,
-  );
-
-  const vr = db
-    .prepare(
-      `INSERT INTO dataflow_vertices (func_id, kind, name, param_index, line, node_id)
-       VALUES (?, 'param', 'input', 0, 1, NULL)`,
-    )
-    .run(nativeMainId);
-  nativeMainParamVertexId = vr.lastInsertRowid as number;
-
-  db.close();
-
-  // Run buildDataflowEdges with the native fast path (bulkInsertDataflow mock).
-  // Only the callee file is in fileSymbols — P4 must re-stitch the caller.
-  const db2 = new Database(nativeDbPath);
-  db2.pragma('journal_mode = WAL');
-
-  const mockCalleeDataflow = {
-    parameters: [{ funcName: 'helper', paramName: 'x', paramIndex: 0, line: 1 }],
-    returns: [{ funcName: 'helper', expression: 'x', referencedNames: ['x'], line: 1 }],
-    assignments: [],
-    argFlows: [],
-    mutations: [],
-  };
-
-  const fileSymbols = new Map([
-    [
-      nativeCalleeRelPath,
-      {
-        definitions: [{ name: 'helper', kind: 'function', line: 1 }],
-        dataflow: mockCalleeDataflow as any,
-        _langId: 'javascript' as any,
-        _tree: null,
-      },
-    ],
-  ]);
-
-  const nativeDb = {
-    bulkInsertDataflow: (_edges: Array<Record<string, unknown>>) => _edges.length,
-  };
-
-  await buildDataflowEdges(db2, fileSymbols as any, nativeTmpDir, { nativeDb });
-  db2.close();
-});
-
-afterAll(() => {
-  fs.rmSync(nativeTmpDir, { recursive: true, force: true });
-});
-
 describe('P4 on native fast path', () => {
+  let nativeTmpDir: string;
+  let nativeDbPath: string;
+  let nativeMainParamVertexId: number;
+
+  beforeAll(async () => {
+    nativeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-p4-native-'));
+    fs.mkdirSync(path.join(nativeTmpDir, '.codegraph'));
+    fs.mkdirSync(path.join(nativeTmpDir, 'src'), { recursive: true });
+
+    const nativeCallerRelPath = 'src/caller.js';
+    const nativeCalleeRelPath = 'src/callee.js';
+
+    // Write real source files to disk (P4 re-parses caller from disk).
+    fs.writeFileSync(
+      path.join(nativeTmpDir, nativeCallerRelPath),
+      'function main(input) { helper(input); }\n',
+    );
+    fs.writeFileSync(
+      path.join(nativeTmpDir, nativeCalleeRelPath),
+      'function helper(x) { return x; }\n',
+    );
+
+    nativeDbPath = path.join(nativeTmpDir, '.codegraph', 'graph.db');
+    const db = new Database(nativeDbPath);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+
+    const nativeMainId = insertNode(db, 'main', 'function', nativeCallerRelPath, 1);
+    const nativeHelperId = insertNode(db, 'helper', 'function', nativeCalleeRelPath, 1);
+
+    // Simulate post-purge state: flows_to edge still present, main's param
+    // vertex exists, helper's param vertex was purged.
+    db.prepare(
+      `INSERT INTO dataflow (source_id, target_id, kind, param_index, expression, line, confidence)
+       VALUES (?, ?, 'flows_to', 0, 'input', 1, 1.0)`,
+    ).run(nativeMainId, nativeHelperId);
+
+    db.prepare(`INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'calls')`).run(
+      nativeMainId,
+      nativeHelperId,
+    );
+
+    const vr = db
+      .prepare(
+        `INSERT INTO dataflow_vertices (func_id, kind, name, param_index, line, node_id)
+         VALUES (?, 'param', 'input', 0, 1, NULL)`,
+      )
+      .run(nativeMainId);
+    nativeMainParamVertexId = vr.lastInsertRowid as number;
+
+    db.close();
+
+    // Run buildDataflowEdges with the native fast path (bulkInsertDataflow mock).
+    // Only the callee file is in fileSymbols — P4 must re-stitch the caller.
+    const db2 = new Database(nativeDbPath);
+    db2.pragma('journal_mode = WAL');
+
+    const mockCalleeDataflow = {
+      parameters: [{ funcName: 'helper', paramName: 'x', paramIndex: 0, line: 1 }],
+      returns: [{ funcName: 'helper', expression: 'x', referencedNames: ['x'], line: 1 }],
+      assignments: [],
+      argFlows: [],
+      mutations: [],
+    };
+
+    const fileSymbols = new Map([
+      [
+        nativeCalleeRelPath,
+        {
+          definitions: [{ name: 'helper', kind: 'function', line: 1 }],
+          dataflow: mockCalleeDataflow as any,
+          _langId: 'javascript' as any,
+          _tree: null,
+        },
+      ],
+    ]);
+
+    const nativeDb = {
+      bulkInsertDataflow: (_edges: Array<Record<string, unknown>>) => _edges.length,
+    };
+
+    await buildDataflowEdges(db2, fileSymbols as any, nativeTmpDir, { nativeDb });
+    db2.close();
+  });
+
+  afterAll(() => {
+    fs.rmSync(nativeTmpDir, { recursive: true, force: true });
+  });
+
   function openNativeDb() {
     return new Database(nativeDbPath, { readonly: true });
   }

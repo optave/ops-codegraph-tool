@@ -308,15 +308,64 @@ fn handle_import_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 // ── Calls ───────────────────────────────────────────────────────────────────
 
+/// Extract first string literal argument from a Groovy call node.
+fn get_first_string_arg_groovy(node: &Node, source: &[u8]) -> Option<String> {
+    let args = node.child_by_field_name("arguments")
+        .or_else(|| find_child(node, "argument_list"))?;
+    for i in 0..args.child_count() {
+        let child = args.child(i)?;
+        match child.kind() {
+            "(" | ")" | "," => continue,
+            "string" | "string_literal" | "string_fragment" => {
+                return Some(node_text(&child, source).replace(&['"', '\''][..], ""));
+            }
+            _ => break,
+        }
+    }
+    None
+}
+
 fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // method_invocation has `name` (identifier) and optional `object` (receiver).
     if let Some(name_node) = node.child_by_field_name("name") {
+        let method_name = node_text(&name_node, source);
         let receiver = node
             .child_by_field_name("object")
             .map(|n| node_text(&n, source).to_string());
+        let call_line = start_line(node);
+
+        // obj.invokeMethod("name", args) — Groovy's explicit dynamic dispatch
+        if method_name == "invokeMethod" {
+            let literal = get_first_string_arg_groovy(node, source);
+            match literal {
+                Some(name) => {
+                    symbols.calls.push(Call {
+                        name: name.clone(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("reflection".to_string()),
+                        key_expr: Some(name),
+                        receiver,
+                        ..Default::default()
+                    });
+                }
+                None => {
+                    symbols.calls.push(Call {
+                        name: "<dynamic:computed-key>".to_string(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("computed-key".to_string()),
+                        receiver,
+                        ..Default::default()
+                    });
+                }
+            }
+            return;
+        }
+
         symbols.calls.push(Call {
-            name: node_text(&name_node, source).to_string(),
-            line: start_line(node),
+            name: method_name.to_string(),
+            line: call_line,
             dynamic: None,
             receiver,
             ..Default::default()
@@ -344,6 +393,19 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     .child_by_field_name("argument")
                     .or_else(|| func_node.child_by_field_name("object"));
                 if let Some(field) = field {
+                    // obj."$dyn"() or obj."${var}"() — GString method name; mirrors the
+                    // `gstring`/`template_string` check in `handleGroovyCallExpr` (groovy.ts).
+                    if field.kind() == "gstring" || field.kind() == "template_string" {
+                        symbols.calls.push(Call {
+                            name: "<dynamic:unresolved>".to_string(),
+                            line: start_line(node),
+                            dynamic: Some(true),
+                            dynamic_kind: Some("unresolved-dynamic".to_string()),
+                            receiver: obj.map(|n| node_text(&n, source).to_string()),
+                            ..Default::default()
+                        });
+                        return;
+                    }
                     symbols.calls.push(Call {
                         name: node_text(&field, source).to_string(),
                         line: start_line(node),

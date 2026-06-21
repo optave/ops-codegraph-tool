@@ -1,0 +1,28 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "typescript",
+  "description": "Phase 1 dynamic call fixture: Reflect.apply/construct/get and TypeScript decorators. Flagged kinds (computed-key) emit sink edges excluded from expected-edges.",
+  "edges": [
+    {
+      "source": { "name": "runReflectApply", "file": "reflect.ts" },
+      "target": { "name": "greet", "file": "reflect.ts" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "Reflect.apply(greet, ctx, args) — reflection kind, resolves to greet()"
+    },
+    {
+      "source": { "name": "runReflectConstruct", "file": "reflect.ts" },
+      "target": { "name": "UserService", "file": "reflect.ts" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "Reflect.construct(UserService, args) — reflection kind, resolves to UserService class"
+    },
+    {
+      "source": { "name": "runReflectGetLiteral", "file": "reflect.ts" },
+      "target": { "name": "greet", "file": "reflect.ts" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "Reflect.get(obj, 'greet') — computed-literal kind, resolves to greet()"
+    }
+  ]
+}

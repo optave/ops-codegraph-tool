@@ -44,6 +44,9 @@ function walkKotlinNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'navigation_expression':
       handleKotlinNavExpression(node, ctx);
       break;
+    case 'callable_reference':
+      handleKotlinCallableRef(node, ctx);
+      break;
   }
 
   for (let i = 0; i < node.childCount; i++) {
@@ -270,7 +273,10 @@ function handleKotlinCallExpression(node: TreeSitterNode, ctx: ExtractorOutput):
   const funcNode = node.child(0);
   if (!funcNode) return;
   if (funcNode.type === 'simple_identifier') {
-    ctx.calls.push({ name: funcNode.text, line: node.startPosition.row + 1 });
+    const name = funcNode.text;
+    // Bare invoke() with no receiver is a resolvable operator fun invoke() self-call —
+    // only flag as unresolved-dynamic when called on a receiver (handled in handleKotlinNavExpression).
+    ctx.calls.push({ name, line: node.startPosition.row + 1 });
   }
 }
 
@@ -280,9 +286,57 @@ function handleKotlinNavExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
   const lastChild = node.child(node.childCount - 1);
   const firstChild = node.child(0);
   if (lastChild && lastChild.type === 'simple_identifier' && firstChild) {
-    const call: Call = { name: lastChild.text, line: node.startPosition.row + 1 };
-    call.receiver = firstChild.text;
+    const methodName = lastChild.text;
+    const receiver = firstChild.text;
+    // fn.invoke(args) on a Kotlin callable — unresolvable without type info
+    if (methodName === 'invoke') {
+      ctx.calls.push({
+        name: '<dynamic:unresolved>',
+        line: node.startPosition.row + 1,
+        dynamic: true,
+        dynamicKind: 'unresolved-dynamic',
+        receiver,
+      });
+      return;
+    }
+    const call: Call = { name: methodName, line: node.startPosition.row + 1 };
+    call.receiver = receiver;
     ctx.calls.push(call);
+  }
+}
+
+/**
+ * Handle Kotlin callable references: `::greet` and `obj::method`.
+ * Emits a reflection-kind call with the referenced member name.
+ */
+function handleKotlinCallableRef(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  // callable_reference: [qualifier '::'] simple_identifier
+  // Find the simple_identifier after '::'
+  let foundDoubleColon = false;
+  let qualifier: string | undefined;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (child.type === '::') {
+      foundDoubleColon = true;
+      continue;
+    }
+    if (!foundDoubleColon) {
+      // Everything before '::' is the qualifier
+      if (child.type === 'simple_identifier' || child.type === 'type_identifier') {
+        qualifier = child.text;
+      }
+    } else if (child.type === 'simple_identifier') {
+      // The member name
+      ctx.calls.push({
+        name: child.text,
+        line: node.startPosition.row + 1,
+        dynamic: true,
+        dynamicKind: 'reflection',
+        receiver: qualifier,
+      });
+      return;
+    }
   }
 }
 

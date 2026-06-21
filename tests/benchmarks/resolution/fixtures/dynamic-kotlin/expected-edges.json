@@ -1,0 +1,21 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "kotlin",
+  "description": "Phase 2 JVM fixture: Kotlin callable references. ::fn resolved as reflection; invoke() flagged.",
+  "edges": [
+    {
+      "source": { "name": "runCallableRef", "file": "reflection.kt" },
+      "target": { "name": "greet", "file": "reflection.kt" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "::greet callable reference — reflection kind, resolves to top-level greet()"
+    },
+    {
+      "source": { "name": "runFarewellRef", "file": "reflection.kt" },
+      "target": { "name": "farewell", "file": "reflection.kt" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "::farewell callable reference — reflection kind, resolves to top-level farewell()"
+    }
+  ]
+}
