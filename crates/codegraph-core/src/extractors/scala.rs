@@ -314,13 +314,76 @@ fn handle_scala_call_expression(node: &Node, source: &[u8], symbols: &mut FileSy
                 let receiver = fn_node.child_by_field_name("value")
                     .or_else(|| fn_node.child(0))
                     .map(|n| node_text(&n, source).to_string());
-                symbols.calls.push(Call {
-                    name,
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver,
-                    ..Default::default()
-                });
+                let call_line = start_line(node);
+                match name.as_str() {
+                    // method.invoke(target, args) — runtime reflection; flag.
+                    // Require a non-null receiver to avoid false positives on user-defined
+                    // `invoke` methods.
+                    "invoke" if receiver.is_some() => {
+                        symbols.calls.push(Call {
+                            name: "<dynamic:unresolved>".to_string(),
+                            line: call_line,
+                            dynamic: Some(true),
+                            dynamic_kind: Some("unresolved-dynamic".to_string()),
+                            receiver,
+                            ..Default::default()
+                        });
+                    }
+                    // clazz.getMethod("name") — resolvable if literal.
+                    // Require a non-null receiver to avoid false positives on gRPC
+                    // ServiceDescriptor.getMethod(), Spring AnnotationUtils.getDeclaredMethod(),
+                    // proto-generated descriptors, and any other API that exposes a method by
+                    // this name unrelated to java.lang.Class reflection.
+                    "getMethod" | "getDeclaredMethod" if receiver.is_some() => {
+                        // Extract first string arg from the call_expression (not fn_node)
+                        let mut literal: Option<String> = None;
+                        if let Some(args) = node.child_by_field_name("arguments")
+                            .or_else(|| find_child(node, "arguments"))
+                        {
+                            for i in 0..args.child_count() {
+                                if let Some(child) = args.child(i) {
+                                    match child.kind() {
+                                        "(" | ")" | "," => continue,
+                                        "string" | "string_literal" => {
+                                            literal = Some(node_text(&child, source)
+                                                .replace(&['"', '\''][..], ""));
+                                            break;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                            }
+                        }
+                        match literal {
+                            Some(lit) => symbols.calls.push(Call {
+                                name: lit.clone(),
+                                line: call_line,
+                                dynamic: Some(true),
+                                dynamic_kind: Some("reflection".to_string()),
+                                key_expr: Some(lit),
+                                receiver,
+                                ..Default::default()
+                            }),
+                            None => symbols.calls.push(Call {
+                                name: "<dynamic:computed-key>".to_string(),
+                                line: call_line,
+                                dynamic: Some(true),
+                                dynamic_kind: Some("computed-key".to_string()),
+                                receiver,
+                                ..Default::default()
+                            }),
+                        }
+                    }
+                    _ => {
+                        symbols.calls.push(Call {
+                            name,
+                            line: call_line,
+                            dynamic: None,
+                            receiver,
+                            ..Default::default()
+                        });
+                    }
+                }
             }
             _ => {
                 symbols.calls.push(Call {

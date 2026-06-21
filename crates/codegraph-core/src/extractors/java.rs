@@ -273,17 +273,92 @@ fn handle_import_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+/// Return the text of the first non-punctuation argument in an argument_list.
+fn get_first_string_arg_java(node: &Node, source: &[u8]) -> Option<String> {
+    let args = node.child_by_field_name("arguments")
+        .or_else(|| find_child(node, "argument_list"))?;
+    for i in 0..args.child_count() {
+        let child = args.child(i)?;
+        match child.kind() {
+            "(" | ")" | "," => continue,
+            "string_literal" | "string_fragment" => {
+                return Some(node_text(&child, source).replace(&['"', '\''][..], ""));
+            }
+            _ => break,
+        }
+    }
+    None
+}
+
 fn handle_method_invocation(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    if let Some(name_node) = node.child_by_field_name("name") {
-        let receiver = named_child_text(node, "object", source)
-            .map(|s| s.to_string());
-        push_call(
-            symbols,
-            node,
-            node_text(&name_node, source).to_string(),
-            receiver,
-            None,
-        );
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let method_name = node_text(&name_node, source);
+    let receiver = named_child_text(node, "object", source).map(|s| s.to_string());
+    let call_line = start_line(node);
+
+    match method_name {
+        // Method.invoke(target, args) — runtime reflection; target not statically knowable.
+        // Require a non-null receiver to avoid false positives on user-defined `invoke`
+        // methods (executor services, command/strategy objects, Mockito stubs, etc.).
+        "invoke" if receiver.is_some() => {
+            symbols.calls.push(Call {
+                name: "<dynamic:unresolved>".to_string(),
+                line: call_line,
+                dynamic: Some(true),
+                dynamic_kind: Some("unresolved-dynamic".to_string()),
+                receiver,
+                ..Default::default()
+            });
+        }
+        // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal.
+        // Require a non-null receiver to avoid false positives on gRPC ServiceDescriptor.getMethod(),
+        // Spring AnnotationUtils.getDeclaredMethod(), proto-generated descriptors, and any other
+        // API that exposes a method by this name unrelated to java.lang.Class reflection.
+        "getMethod" | "getDeclaredMethod" if receiver.is_some() => {
+            let literal = get_first_string_arg_java(node, source);
+            match literal {
+                Some(name) => {
+                    symbols.calls.push(Call {
+                        name: name.clone(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("reflection".to_string()),
+                        key_expr: Some(name),
+                        receiver,
+                        ..Default::default()
+                    });
+                }
+                None => {
+                    symbols.calls.push(Call {
+                        name: "<dynamic:computed-key>".to_string(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("computed-key".to_string()),
+                        receiver,
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+        // Class.forName("pkg.ClassName") — dynamic class loading; flag.
+        // Guard on receiver == "Class" to avoid false positives from user-defined
+        // forName() factory methods (e.g. Currency.forName("USD"), Enum.forName(...)).
+        "forName" if receiver.as_deref() == Some("Class") => {
+            let literal = get_first_string_arg_java(node, source);
+            symbols.calls.push(Call {
+                name: "<dynamic:unresolved>".to_string(),
+                line: call_line,
+                dynamic: Some(true),
+                dynamic_kind: Some("unresolved-dynamic".to_string()),
+                key_expr: literal,
+                receiver,
+                ..Default::default()
+            });
+        }
+        // Normal method invocation
+        _ => {
+            push_call(symbols, node, method_name.to_string(), receiver, None);
+        }
     }
 }
 

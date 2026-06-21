@@ -307,6 +307,34 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
             }
         }
 
+        "callable_reference" => {
+            // ::fn or Qualifier::fn — emit as reflection-kind call
+            let mut found_double_colon = false;
+            let mut qualifier: Option<String> = None;
+            for i in 0..node.child_count() {
+                let Some(child) = node.child(i) else { continue };
+                if child.kind() == "::" {
+                    found_double_colon = true;
+                    continue;
+                }
+                if !found_double_colon {
+                    if matches!(child.kind(), "simple_identifier" | "type_identifier") {
+                        qualifier = Some(node_text(&child, source).to_string());
+                    }
+                } else if child.kind() == "simple_identifier" {
+                    symbols.calls.push(Call {
+                        name: node_text(&child, source).to_string(),
+                        line: start_line(node),
+                        dynamic: Some(true),
+                        dynamic_kind: Some("reflection".to_string()),
+                        receiver: qualifier,
+                        ..Default::default()
+                    });
+                    break;
+                }
+            }
+        }
+
         "call_expression" => {
             // function child is the callee
             if let Some(fn_node) = node.child_by_field_name("function")
@@ -314,8 +342,12 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
             {
                 match fn_node.kind() {
                     "simple_identifier" => {
+                        let name = node_text(&fn_node, source);
+                        // Bare invoke() with no receiver is a resolvable operator fun invoke()
+                        // self-call — only flag as unresolved-dynamic when called on a receiver
+                        // (handled in the navigation_expression branch below).
                         symbols.calls.push(Call {
-                            name: node_text(&fn_node, source).to_string(),
+                            name: name.to_string(),
                             line: start_line(node),
                             dynamic: None,
                             receiver: None,
@@ -344,13 +376,25 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                             .unwrap_or_else(|| node_text(&fn_node, source).to_string());
                         let receiver = fn_node.child(0)
                             .map(|n| node_text(&n, source).to_string());
-                        symbols.calls.push(Call {
-                            name,
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver,
-                            ..Default::default()
-                        });
+                        // fn.invoke(args) — callable ref invocation; flag as unresolved
+                        if name == "invoke" {
+                            symbols.calls.push(Call {
+                                name: "<dynamic:unresolved>".to_string(),
+                                line: start_line(node),
+                                dynamic: Some(true),
+                                dynamic_kind: Some("unresolved-dynamic".to_string()),
+                                receiver,
+                                ..Default::default()
+                            });
+                        } else {
+                            symbols.calls.push(Call {
+                                name,
+                                line: start_line(node),
+                                dynamic: None,
+                                receiver,
+                                ..Default::default()
+                            });
+                        }
                     }
                     _ => {
                         symbols.calls.push(Call {

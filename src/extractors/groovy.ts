@@ -292,8 +292,26 @@ function handleGroovyImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 }
 
+/** Extract the first string literal argument from a Groovy call node. */
+function getFirstStringArgGroovy(node: TreeSitterNode): string | null {
+  const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
+  if (!args) return null;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',') continue;
+    if (t === 'string' || t === 'string_literal' || t === 'string_fragment') {
+      return child.text.replace(/^["']|["']$/g, '');
+    }
+    break;
+  }
+  return null;
+}
+
 function handleGroovyCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const call: Call = { name: '', line: node.startPosition.row + 1 };
+  let fieldNode: TreeSitterNode | null = null;
 
   // Try standard call_expression pattern
   const funcNode = node.childForFieldName('function') || node.childForFieldName('method');
@@ -301,7 +319,10 @@ function handleGroovyCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void 
     if (funcNode.type === 'field_expression' || funcNode.type === 'member_access') {
       const field = funcNode.childForFieldName('field') || funcNode.childForFieldName('property');
       const obj = funcNode.childForFieldName('argument') || funcNode.childForFieldName('object');
-      if (field) call.name = field.text;
+      if (field) {
+        fieldNode = field;
+        call.name = field.text;
+      }
       if (obj) call.receiver = obj.text;
     } else {
       call.name = funcNode.text;
@@ -311,12 +332,51 @@ function handleGroovyCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void 
     const nameNode = node.childForFieldName('name');
     const obj = node.childForFieldName('object');
     if (nameNode) {
+      fieldNode = nameNode;
       call.name = nameNode.text;
       if (obj) call.receiver = obj.text;
     }
   }
 
-  if (call.name) ctx.calls.push(call);
+  if (!call.name) return;
+
+  // obj."$dyn"() or obj."${var}"() — GString method name; cannot resolve statically
+  if (fieldNode && (fieldNode.type === 'gstring' || fieldNode.type === 'template_string')) {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: call.line,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      receiver: call.receiver,
+    });
+    return;
+  }
+
+  // obj.invokeMethod("name", args) — Groovy's explicit dynamic dispatch
+  if (call.name === 'invokeMethod') {
+    const literal = getFirstStringArgGroovy(node);
+    if (literal) {
+      ctx.calls.push({
+        name: literal,
+        line: call.line,
+        dynamic: true,
+        dynamicKind: 'reflection',
+        keyExpr: literal,
+        receiver: call.receiver,
+      });
+    } else {
+      ctx.calls.push({
+        name: '<dynamic:computed-key>',
+        line: call.line,
+        dynamic: true,
+        dynamicKind: 'computed-key',
+        receiver: call.receiver,
+      });
+    }
+    return;
+  }
+
+  ctx.calls.push(call);
 }
 
 function handleGroovyObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): void {
