@@ -20,7 +20,6 @@ export function dynamicCallsData(customDbPath: string): DynamicCallCount[] {
         `SELECT dynamic_kind, COUNT(*) AS count
          FROM edges
          WHERE dynamic_kind IS NOT NULL
-           AND confidence = 0
          GROUP BY dynamic_kind
          ORDER BY count DESC`,
       )

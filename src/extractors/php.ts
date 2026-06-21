@@ -301,86 +301,14 @@ function handlePhpNamespaceUse(node: TreeSitterNode, ctx: ExtractorOutput): void
   }
 }
 
-/** Extract first real argument from a PHP argument_list node.
- * Descends into 'argument' wrapper nodes used by some PHP grammar variants. */
-function getFirstPhpArg(node: TreeSitterNode): TreeSitterNode | null {
-  const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
-  if (!args) return null;
-  for (let i = 0; i < args.childCount; i++) {
-    const child = args.child(i);
-    if (!child) continue;
-    const t = child.type;
-    if (t === '(' || t === ')' || t === ',') continue;
-    // Descend into 'argument' wrapper if present
-    if (t === 'argument') return child.child(0) ?? child;
-    return child;
-  }
-  return null;
-}
-
 function handlePhpFuncCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function') || node.child(0);
   if (!fn) return;
-  const callLine = node.startPosition.row + 1;
-
-  // $fn() — variable function call; target cannot be resolved statically.
-  // Use keyExpr (not receiver) to capture the callable variable name for diagnostics.
-  if (fn.type === 'variable_name') {
-    ctx.calls.push({
-      name: '<dynamic:unresolved>',
-      line: callLine,
-      dynamic: true,
-      dynamicKind: 'unresolved-dynamic',
-      keyExpr: fn.text,
-    });
-    return;
-  }
-
   if (fn.type === 'name' || fn.type === 'identifier') {
-    const fnName = fn.text;
-
-    // call_user_func($callable, args) — extract first arg as actual target
-    if (fnName === 'call_user_func' || fnName === 'call_user_func_array') {
-      const firstArg = getFirstPhpArg(node);
-      if (firstArg) {
-        const t = firstArg.type;
-        if (t === 'variable_name') {
-          // Variable callable — unresolved
-          ctx.calls.push({
-            name: '<dynamic:unresolved>',
-            line: callLine,
-            dynamic: true,
-            dynamicKind: 'unresolved-dynamic',
-            keyExpr: firstArg.text,
-          });
-        } else if (t === 'string' || t === 'encapsed_string') {
-          const literal = firstArg.text.replace(/['"]/g, '');
-          ctx.calls.push({
-            name: literal,
-            line: callLine,
-            dynamic: true,
-            dynamicKind: 'reflection',
-            keyExpr: firstArg.text,
-          });
-        } else {
-          ctx.calls.push({
-            name: '<dynamic:unresolved>',
-            line: callLine,
-            dynamic: true,
-            dynamicKind: 'unresolved-dynamic',
-          });
-        }
-        return;
-      }
-    }
-
-    ctx.calls.push({ name: fnName, line: callLine });
-    return;
-  }
-
-  if (fn.type === 'qualified_name') {
+    ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
+  } else if (fn.type === 'qualified_name') {
     const parts = fn.text.split('\\');
-    ctx.calls.push({ name: parts[parts.length - 1] ?? fn.text, line: callLine });
+    ctx.calls.push({ name: parts[parts.length - 1] ?? fn.text, line: node.startPosition.row + 1 });
   }
 }
 
@@ -388,22 +316,7 @@ function handlePhpMemberCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const name = node.childForFieldName('name');
   if (!name) return;
   const obj = node.childForFieldName('object');
-  const callLine = node.startPosition.row + 1;
-
-  // $obj->$m() — variable method name; unresolvable statically
-  if (name.type === 'variable_name') {
-    ctx.calls.push({
-      name: '<dynamic:unresolved>',
-      line: callLine,
-      dynamic: true,
-      dynamicKind: 'unresolved-dynamic',
-      receiver: obj?.text,
-      keyExpr: name.text,
-    });
-    return;
-  }
-
-  const call: Call = { name: name.text, line: callLine };
+  const call: Call = { name: name.text, line: node.startPosition.row + 1 };
   if (obj) call.receiver = obj.text;
   ctx.calls.push(call);
 }

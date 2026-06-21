@@ -473,7 +473,7 @@ function buildDataflowVerticesAndEdges(
  *
  * All callers (buildDataflowVerticesFromMap, buildDataflowEdges,
  * buildDataflowP4ForNative) manage their own outer transaction and call this
- * directly to avoid nesting, which better-sqlite3 does not support.
+ * directly to avoid nested transactions, which better-sqlite3 does not support.
  */
 function runInterproceduralStitch(
   db: BetterSqlite3Database,

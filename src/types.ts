@@ -484,7 +484,7 @@ export interface LOCMetrics {
 export type DynamicKind =
   | 'computed-literal' // obj["foo"]()    — resolvable; already emitted as normal edge
   | 'computed-key' // obj[k]()        — potentially resolvable via pts; else flagged
-  | 'reflection' // .call/.apply/.bind / Reflect.* — resolved if target reachable; silently dropped if not (RES-3)
+  | 'reflection' // .call/.apply/.bind / Reflect.* — usually resolved; not flagged (drops silently if unresolved)
   | 'eval' // eval() / new Function() — undecidable; always flagged
   | 'unresolved-dynamic'; // any other detected dynamic pattern; flagged
 

@@ -323,57 +323,9 @@ fn handle_cpp_preproc_include(node: &Node, source: &[u8], symbols: &mut FileSymb
 
 fn handle_cpp_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(fn_node) = node.child_by_field_name("function") {
-        let call_line = start_line(node);
         match fn_node.kind() {
             "identifier" | "qualified_identifier" | "scoped_identifier" => {
-                let fn_name = node_text(&fn_node, source);
-                // dlsym(handle, "symbol") — dynamic symbol loading via C ABI.
-                // String-literal second arg: resolves as reflection (C symbols are unmangled, name-match works).
-                // Variable second arg: flagged as unresolved-dynamic.
-                if fn_name == "dlsym" || fn_name == "dlvsym" {
-                    let args = node.child_by_field_name("arguments")
-                        .or_else(|| find_child(node, "argument_list"));
-                    let mut arg_idx = 0usize;
-                    let mut second_arg: Option<String> = None;
-                    if let Some(args) = args {
-                        for i in 0..args.child_count() {
-                            if let Some(child) = args.child(i) {
-                                match child.kind() {
-                                    "(" | ")" | "," => continue,
-                                    "string_literal" | "string_content" if arg_idx == 1 => {
-                                        second_arg = Some(node_text(&child, source)
-                                            .replace(&['"', '\''][..], ""));
-                                        break;
-                                    }
-                                    _ => { arg_idx += 1; }
-                                }
-                            }
-                        }
-                    }
-                    match second_arg {
-                        Some(sym) if !sym.is_empty() => {
-                            symbols.calls.push(Call {
-                                name: sym.clone(),
-                                line: call_line,
-                                dynamic: Some(true),
-                                dynamic_kind: Some("reflection".to_string()),
-                                key_expr: Some(sym),
-                                ..Default::default()
-                            });
-                        }
-                        _ => {
-                            symbols.calls.push(Call {
-                                name: "<dynamic:unresolved>".to_string(),
-                                line: call_line,
-                                dynamic: Some(true),
-                                dynamic_kind: Some("unresolved-dynamic".to_string()),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                } else {
-                    push_simple_call(symbols, node, fn_name.to_string());
-                }
+                push_simple_call(symbols, node, node_text(&fn_node, source).to_string());
             }
             "field_expression" => {
                 let name = named_child_text(&fn_node, "field", source)
@@ -382,16 +334,6 @@ fn handle_cpp_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymb
                 let receiver = named_child_text(&fn_node, "argument", source)
                     .map(|s| s.to_string());
                 push_call(symbols, node, name, receiver, None);
-            }
-            // (*fp)(args) — function pointer call through dereference; unresolvable statically
-            "parenthesized_expression" | "pointer_expression" => {
-                symbols.calls.push(Call {
-                    name: "<dynamic:unresolved>".to_string(),
-                    line: call_line,
-                    dynamic: Some(true),
-                    dynamic_kind: Some("unresolved-dynamic".to_string()),
-                    ..Default::default()
-                });
             }
             _ => {
                 push_simple_call(symbols, node, node_text(&fn_node, source).to_string());

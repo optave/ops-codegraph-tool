@@ -142,19 +142,6 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // dynamic-typescript: Phase 1 fixture — Reflect.apply/construct/get + TS decorators.
   //   3 expected edges (Reflect.apply → greet, Reflect.construct → UserService, Reflect.get → greet).
   'dynamic-typescript': { precision: 1.0, recall: 0.75 },
-  // dynamic-python: Phase 3 fixture — getattr('name') resolved; eval/exec/variable-getattr flagged.
-  'dynamic-python': { precision: 1.0, recall: 0.75 },
-  // Phase 4 scripting fixtures: Ruby send/public_send + PHP call_user_func/variable calls.
-  'dynamic-ruby': { precision: 1.0, recall: 1.0 },
-  'dynamic-php': { precision: 1.0, recall: 1.0 },
-  // Phase 6: Long-tail languages — C#, Swift, Elixir, Lua.
-  'dynamic-csharp': { precision: 0.0, recall: 0.0 },
-  'dynamic-swift': { precision: 1.0, recall: 1.0 },
-  'dynamic-elixir': { precision: 0.0, recall: 0.0 },
-  'dynamic-lua': { precision: 1.0, recall: 1.0 },
-  // Phase 5: Go + C/C++ dynamic dispatch patterns.
-  'dynamic-go': { precision: 1.0, recall: 1.0 },
-  'dynamic-c': { precision: 1.0, recall: 1.0 },
   // Phase 2 JVM fixtures — reflection and dynamic dispatch patterns.
   // Java/Scala/Groovy: detection works but method names are class-qualified in the DB,
   //   so lookup-by-name fails for getMethod("foo") → 0% recall until RES-3 adds type-aware lookup.

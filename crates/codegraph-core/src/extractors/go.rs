@@ -195,34 +195,13 @@ fn handle_import_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
-/// Get the Nth non-punctuation argument from a Go call_expression.
-fn get_go_arg(node: &Node, index: usize, source: &[u8]) -> Option<(String, String)> {
-    let args = node.child_by_field_name("arguments")?;
-    let mut count = 0usize;
-    for i in 0..args.child_count() {
-        let child = args.child(i)?;
-        match child.kind() {
-            "(" | ")" | "," => continue,
-            kind => {
-                if count == index {
-                    return Some((node_text(&child, source).to_string(), kind.to_string()));
-                }
-                count += 1;
-            }
-        }
-    }
-    None
-}
-
 fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(fn_node) = node.child_by_field_name("function") else { return };
-    let call_line = start_line(node);
-
     match fn_node.kind() {
         "identifier" => {
             symbols.calls.push(Call {
                 name: node_text(&fn_node, source).to_string(),
-                line: call_line,
+                line: start_line(node),
                 dynamic: None,
                 receiver: None,
                 ..Default::default()
@@ -230,48 +209,11 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         }
         "selector_expression" => {
             if let Some(field) = fn_node.child_by_field_name("field") {
-                let field_name = node_text(&field, source);
                 let receiver = named_child_text(&fn_node, "operand", source)
                     .map(|s| s.to_string());
-
-                // v.MethodByName("name") — reflect-based dynamic dispatch
-                if field_name == "MethodByName" {
-                    if let Some((arg_text, arg_kind)) = get_go_arg(node, 0, source) {
-                        match arg_kind.as_str() {
-                            "interpreted_string_literal" | "raw_string_literal" => {
-                                let method = arg_text.replace(&['"', '`'][..], "");
-                                if !method.is_empty() {
-                                    symbols.calls.push(Call {
-                                        name: method,
-                                        line: call_line,
-                                        dynamic: Some(true),
-                                        dynamic_kind: Some("reflection".to_string()),
-                                        key_expr: Some(arg_text),
-                                        receiver,
-                                        ..Default::default()
-                                    });
-                                    return;
-                                }
-                            }
-                            _ => {
-                                symbols.calls.push(Call {
-                                    name: "<dynamic:computed-key>".to_string(),
-                                    line: call_line,
-                                    dynamic: Some(true),
-                                    dynamic_kind: Some("computed-key".to_string()),
-                                    key_expr: Some(arg_text),
-                                    receiver,
-                                    ..Default::default()
-                                });
-                                return;
-                            }
-                        }
-                    }
-                }
-
                 symbols.calls.push(Call {
-                    name: field_name.to_string(),
-                    line: call_line,
+                    name: node_text(&field, source).to_string(),
+                    line: start_line(node),
                     dynamic: None,
                     receiver,
                     ..Default::default()

@@ -6,6 +6,7 @@ interface PurgeStmts {
   cfgBlocks: SqliteStatement | null;
   dataflow: SqliteStatement | null;
   dataflowByVertex: SqliteStatement | null;
+  dataflowByCallEdge: SqliteStatement | null;
   dataflowSummary: SqliteStatement | null;
   dataflowVertices: SqliteStatement | null;
   complexity: SqliteStatement | null;
@@ -51,6 +52,16 @@ function preparePurgeStmts(db: BetterSqlite3Database): PurgeStmts {
       `DELETE FROM dataflow WHERE source_vertex IN (SELECT id FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?))
          OR target_vertex IN (SELECT id FROM dataflow_vertices WHERE func_id IN (SELECT id FROM nodes WHERE file = ?))`,
     ),
+    // Delete dataflow rows whose call_edge_id references a calls edge that
+    // touches the deleted file (source or target). These rows are not caught by
+    // the source_id/target_id or vertex-based deletions above when the dataflow
+    // row's own nodes live in other files. Must run before the edges delete to
+    // avoid SQLITE_CONSTRAINT_FOREIGNKEY: dataflow.call_edge_id REFERENCES edges(id).
+    dataflowByCallEdge: tryPrepare(
+      `DELETE FROM dataflow WHERE call_edge_id IN
+         (SELECT id FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f)
+          OR target_id IN (SELECT id FROM nodes WHERE file = @f))`,
+    ),
     dataflowSummary: tryPrepare(
       'DELETE FROM dataflow_summary WHERE func_id IN (SELECT id FROM nodes WHERE file = ?)',
     ),
@@ -94,6 +105,9 @@ function runPurge(stmts: PurgeStmts, file: string, opts: PurgeOpts = {}): void {
   stmts.cfgBlocks?.run(file);
   stmts.dataflow?.run(file, file);
   stmts.dataflowByVertex?.run(file, file);
+  // Clear dataflow rows keyed by call_edge_id before deleting edges so the FK
+  // (dataflow.call_edge_id REFERENCES edges(id)) does not block the edge purge.
+  stmts.dataflowByCallEdge?.run({ f: file });
   stmts.dataflowSummary?.run(file);
   stmts.dataflowVertices?.run(file);
   stmts.complexity?.run(file);

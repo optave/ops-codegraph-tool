@@ -1,4 +1,5 @@
 import type {
+  Call,
   ClassRelation,
   ExtractorOutput,
   SubDeclaration,
@@ -226,89 +227,22 @@ function handleCsUsingDirective(node: TreeSitterNode, ctx: ExtractorOutput): voi
   });
 }
 
-/** Get the first string-literal argument text from a C# invocation node. */
-function getCsFirstStringArg(node: TreeSitterNode): string | null {
-  const args = node.childForFieldName('argument_list') || findChild(node, 'argument_list');
-  if (!args) return null;
-  for (let i = 0; i < args.childCount; i++) {
-    const child = args.child(i);
-    if (!child) continue;
-    const t = child.type;
-    if (t === '(' || t === ')' || t === ',') continue;
-    // argument node may wrap the literal
-    const target = t === 'argument' ? (child.child(0) ?? child) : child;
-    if (target?.type === 'string_literal' || target?.type === 'verbatim_string_literal') {
-      return target.text.replace(/^["@]+|"$/g, '');
-    }
-    break;
-  }
-  return null;
-}
-
 function handleCsInvocationExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function') || node.child(0);
   if (!fn) return;
-  const callLine = node.startPosition.row + 1;
-
   if (fn.type === 'identifier') {
-    ctx.calls.push({ name: fn.text, line: callLine });
-    return;
-  }
-
-  if (fn.type === 'member_access_expression') {
+    ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
+  } else if (fn.type === 'member_access_expression') {
     const name = fn.childForFieldName('name');
-    if (!name) return;
-    const methodName = name.text;
-    const expr = fn.childForFieldName('expression');
-    const receiver = expr?.text;
-
-    // method.Invoke(target, args) — runtime reflection; target unknown
-    if (methodName === 'Invoke') {
-      ctx.calls.push({
-        name: '<dynamic:unresolved>',
-        line: callLine,
-        dynamic: true,
-        dynamicKind: 'unresolved-dynamic',
-        receiver,
-      });
-      return;
+    if (name) {
+      const expr = fn.childForFieldName('expression');
+      const call: Call = { name: name.text, line: node.startPosition.row + 1 };
+      if (expr) call.receiver = expr.text;
+      ctx.calls.push(call);
     }
-
-    // type.GetMethod("name") / GetRuntimeMethod("name") — resolvable if literal
-    if (
-      methodName === 'GetMethod' ||
-      methodName === 'GetRuntimeMethod' ||
-      methodName === 'GetDeclaredMethod'
-    ) {
-      const literal = getCsFirstStringArg(node);
-      if (literal) {
-        ctx.calls.push({
-          name: literal,
-          line: callLine,
-          dynamic: true,
-          dynamicKind: 'reflection',
-          keyExpr: literal,
-          receiver,
-        });
-      } else {
-        ctx.calls.push({
-          name: '<dynamic:computed-key>',
-          line: callLine,
-          dynamic: true,
-          dynamicKind: 'computed-key',
-          receiver,
-        });
-      }
-      return;
-    }
-
-    ctx.calls.push({ name: methodName, line: callLine, ...(receiver ? { receiver } : {}) });
-    return;
-  }
-
-  if (fn.type === 'generic_name' || fn.type === 'member_binding_expression') {
+  } else if (fn.type === 'generic_name' || fn.type === 'member_binding_expression') {
     const name = fn.childForFieldName('name') || fn.child(0);
-    if (name) ctx.calls.push({ name: name.text, line: callLine });
+    if (name) ctx.calls.push({ name: name.text, line: node.startPosition.row + 1 });
   }
 }
 

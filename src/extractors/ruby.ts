@@ -151,95 +151,23 @@ function handleRubyAssignment(node: TreeSitterNode, ctx: ExtractorOutput): void 
   }
 }
 
-/** Extract first real argument node from a Ruby call node's argument list. */
-function getFirstRubyArg(node: TreeSitterNode): TreeSitterNode | null {
-  const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
-  if (!args) return null;
-  for (let i = 0; i < args.childCount; i++) {
-    const child = args.child(i);
-    if (!child) continue;
-    const t = child.type;
-    if (t === '(' || t === ')' || t === ',' || t === 'splat_argument') continue;
-    return child;
-  }
-  return null;
-}
-
 function handleRubyCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const methodNode = node.childForFieldName('method');
   if (!methodNode) return;
-  const methodName = methodNode.text;
-  const callLine = node.startPosition.row + 1;
-
-  if (methodName === 'require' || methodName === 'require_relative') {
+  if (methodNode.text === 'require' || methodNode.text === 'require_relative') {
     handleRubyRequire(node, ctx);
-    return;
-  }
-  if (methodName === 'include' || methodName === 'extend' || methodName === 'prepend') {
+  } else if (
+    methodNode.text === 'include' ||
+    methodNode.text === 'extend' ||
+    methodNode.text === 'prepend'
+  ) {
     handleRubyModuleInclusion(node, methodNode, ctx);
-    return;
-  }
-
-  // send / public_send / __send__ — dynamic dispatch; first arg is the method name
-  if (methodName === 'send' || methodName === 'public_send' || methodName === '__send__') {
+  } else {
     const recv = node.childForFieldName('receiver');
-    const firstArg = getFirstRubyArg(node);
-    if (firstArg) {
-      const t = firstArg.type;
-      if (t === 'simple_symbol' || t === 'symbol') {
-        // :method_name — strip leading colon and optional quotes
-        const symName = firstArg.text.replace(/^:/, '').replace(/['"]/g, '');
-        if (symName) {
-          ctx.calls.push({
-            name: symName,
-            line: callLine,
-            dynamic: true,
-            dynamicKind: 'reflection',
-            keyExpr: firstArg.text,
-            receiver: recv?.text,
-          });
-          return;
-        }
-      }
-      if (t === 'string' || t === 'string_content') {
-        const strName = firstArg.text.replace(/['"]/g, '');
-        if (strName) {
-          ctx.calls.push({
-            name: strName,
-            line: callLine,
-            dynamic: true,
-            dynamicKind: 'reflection',
-            keyExpr: firstArg.text,
-            receiver: recv?.text,
-          });
-          return;
-        }
-      }
-      // Variable method name — computed-key
-      ctx.calls.push({
-        name: '<dynamic:computed-key>',
-        line: callLine,
-        dynamic: true,
-        dynamicKind: 'computed-key',
-        keyExpr: firstArg.text,
-        receiver: recv?.text,
-      });
-      return;
-    }
-    // No first arg — unresolved
-    ctx.calls.push({
-      name: '<dynamic:unresolved>',
-      line: callLine,
-      dynamic: true,
-      dynamicKind: 'unresolved-dynamic',
-    });
-    return;
+    const call: Call = { name: methodNode.text, line: node.startPosition.row + 1 };
+    if (recv) call.receiver = recv.text;
+    ctx.calls.push(call);
   }
-
-  const recv = node.childForFieldName('receiver');
-  const call: Call = { name: methodName, line: callLine };
-  if (recv) call.receiver = recv.text;
-  ctx.calls.push(call);
 }
 
 function handleRubyRequire(node: TreeSitterNode, ctx: ExtractorOutput): void {

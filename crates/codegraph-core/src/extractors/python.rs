@@ -112,137 +112,27 @@ fn handle_expr_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     });
 }
 
-/// Iterate non-punctuation arguments in a Python argument_list node.
-fn iter_py_args(node: &Node, source: &[u8]) -> Vec<(String, String)> {
-    // Returns vec of (text, kind) for each real argument
-    let args = node.child_by_field_name("arguments")
-        .or_else(|| find_child(node, "argument_list"));
-    let mut result = Vec::new();
-    if let Some(args) = args {
-        for i in 0..args.child_count() {
-            let Some(child) = args.child(i) else { continue };
-            match child.kind() {
-                "(" | ")" | "," | "*" | "**" => continue,
-                kind => {
-                    result.push((node_text(&child, source).to_string(), kind.to_string()));
-                }
-            }
-        }
-    }
-    result
-}
-
 fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(fn_node) = node.child_by_field_name("function") else { return };
-    let call_line = start_line(node);
-
-    match fn_node.kind() {
-        "identifier" => {
-            let name = node_text(&fn_node, source);
-            match name {
-                // eval(code) / exec(code) — dynamic code execution; flag
-                "eval" | "exec" => {
-                    symbols.calls.push(Call {
-                        name: "<dynamic:eval>".to_string(),
-                        line: call_line,
-                        dynamic: Some(true),
-                        dynamic_kind: Some("eval".to_string()),
-                        ..Default::default()
-                    });
-                }
-                // getattr(obj, 'method') — resolvable if literal string
-                "getattr" => {
-                    let args = iter_py_args(node, source);
-                    let receiver = args.first().map(|(t, _)| t.clone());
-                    match args.get(1) {
-                        Some((text, kind)) if kind == "string" || kind == "concatenated_string" => {
-                            let attr = text.replace(&['"', '\''][..], "");
-                            if !attr.is_empty() && !attr.contains('{') {
-                                symbols.calls.push(Call {
-                                    name: attr.clone(),
-                                    line: call_line,
-                                    dynamic: Some(true),
-                                    dynamic_kind: Some("reflection".to_string()),
-                                    key_expr: Some(text.clone()),
-                                    receiver,
-                                    ..Default::default()
-                                });
-                                return;
-                            }
-                        }
-                        Some((text, _)) => {
-                            // Variable key — computed-key
-                            symbols.calls.push(Call {
-                                name: "<dynamic:computed-key>".to_string(),
-                                line: call_line,
-                                dynamic: Some(true),
-                                dynamic_kind: Some("computed-key".to_string()),
-                                key_expr: Some(text.clone()),
-                                receiver,
-                                ..Default::default()
-                            });
-                            return;
-                        }
-                        None => {
-                            symbols.calls.push(Call {
-                                name: "<dynamic:unresolved>".to_string(),
-                                line: call_line,
-                                dynamic: Some(true),
-                                dynamic_kind: Some("unresolved-dynamic".to_string()),
-                                ..Default::default()
-                            });
-                            return;
-                        }
-                    }
-                }
-                _ => {
-                    symbols.calls.push(Call {
-                        name: name.to_string(),
-                        line: call_line,
-                        dynamic: None,
-                        receiver: None,
-                        ..Default::default()
-                    });
-                }
-            }
-        }
+    let (call_name, receiver) = match fn_node.kind() {
+        "identifier" => (Some(node_text(&fn_node, source).to_string()), None),
         "attribute" => {
-            let call_name = named_child_text(&fn_node, "attribute", source)
+            let name = named_child_text(&fn_node, "attribute", source)
                 .map(|s| s.to_string());
-            let receiver = named_child_text(&fn_node, "object", source)
+            let recv = named_child_text(&fn_node, "object", source)
                 .map(|s| s.to_string());
-
-            // functools.partial(fn, ...) — extract first arg as reflection target
-            if call_name.as_deref() == Some("partial")
-                && receiver.as_deref().map(|r| r == "functools" || r.ends_with("functools")).unwrap_or(false)
-            {
-                let args = iter_py_args(node, source);
-                if let Some((text, kind)) = args.first() {
-                    if kind == "identifier" {
-                        symbols.calls.push(Call {
-                            name: text.clone(),
-                            line: call_line,
-                            dynamic: Some(true),
-                            dynamic_kind: Some("reflection".to_string()),
-                            receiver: Some("functools.partial".to_string()),
-                            ..Default::default()
-                        });
-                        return;
-                    }
-                }
-            }
-
-            if let Some(name) = call_name {
-                symbols.calls.push(Call {
-                    name,
-                    line: call_line,
-                    dynamic: None,
-                    receiver,
-                    ..Default::default()
-                });
-            }
+            (name, recv)
         }
-        _ => {}
+        _ => (None, None),
+    };
+    if let Some(name) = call_name {
+        symbols.calls.push(Call {
+            name,
+            line: start_line(node),
+            dynamic: None,
+            receiver,
+            ..Default::default()
+        });
     }
 }
 

@@ -294,62 +294,15 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
 
         "call_expression" => {
             if let Some(fn_node) = node.child_by_field_name("function") {
-                let call_line = start_line(node);
                 match fn_node.kind() {
                     "identifier" => {
-                        let fn_name = node_text(&fn_node, source);
-                        // dlsym(handle, "symbol") — dynamic symbol loading
-                        if fn_name == "dlsym" || fn_name == "dlvsym" {
-                            // Get second arg (index 1) — the symbol name
-                            let args = node.child_by_field_name("arguments")
-                                .or_else(|| find_child(node, "argument_list"));
-                            let mut arg_idx = 0usize;
-                            let mut second_arg: Option<String> = None;
-                            if let Some(args) = args {
-                                for i in 0..args.child_count() {
-                                    if let Some(child) = args.child(i) {
-                                        match child.kind() {
-                                            "(" | ")" | "," => continue,
-                                            "string_literal" | "string_content" if arg_idx == 1 => {
-                                                second_arg = Some(node_text(&child, source)
-                                                    .replace(&['"', '\''][..], ""));
-                                                break;
-                                            }
-                                            _ => { arg_idx += 1; }
-                                        }
-                                    }
-                                }
-                            }
-                            match second_arg {
-                                Some(sym) if !sym.is_empty() => {
-                                    symbols.calls.push(Call {
-                                        name: sym.clone(),
-                                        line: call_line,
-                                        dynamic: Some(true),
-                                        dynamic_kind: Some("reflection".to_string()),
-                                        key_expr: Some(sym),
-                                        ..Default::default()
-                                    });
-                                }
-                                _ => {
-                                    symbols.calls.push(Call {
-                                        name: "<dynamic:unresolved>".to_string(),
-                                        line: call_line,
-                                        dynamic: Some(true),
-                                        dynamic_kind: Some("unresolved-dynamic".to_string()),
-                                        ..Default::default()
-                                    });
-                                }
-                            }
-                        } else {
-                            symbols.calls.push(Call {
-                                name: fn_name.to_string(),
-                                line: call_line,
-                                dynamic: None,
-                                receiver: None,
-                                ..Default::default()
-                            });
-                        }
+                        symbols.calls.push(Call {
+                            name: node_text(&fn_node, source).to_string(),
+                            line: start_line(node),
+                            dynamic: None,
+                            receiver: None,
+                            ..Default::default()
+                        });
                     }
                     "field_expression" => {
                         let name = named_child_text(&fn_node, "field", source)
@@ -359,33 +312,20 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                             .map(|s| s.to_string());
                         symbols.calls.push(Call {
                             name,
-                            line: call_line,
+                            line: start_line(node),
                             dynamic: None,
                             receiver,
                             ..Default::default()
                         });
                     }
-                    // (*fp)(args) — function pointer call; unresolvable
-                    "parenthesized_expression" | "pointer_expression" => {
+                    _ => {
                         symbols.calls.push(Call {
-                            name: "<dynamic:unresolved>".to_string(),
-                            line: call_line,
-                            dynamic: Some(true),
-                            dynamic_kind: Some("unresolved-dynamic".to_string()),
+                            name: node_text(&fn_node, source).to_string(),
+                            line: start_line(node),
+                            dynamic: None,
+                            receiver: None,
                             ..Default::default()
                         });
-                    }
-                    _ => {
-                        let name = node_text(&fn_node, source);
-                        if !name.is_empty() {
-                            symbols.calls.push(Call {
-                                name: name.to_string(),
-                                line: call_line,
-                                dynamic: None,
-                                receiver: None,
-                                ..Default::default()
-                            });
-                        }
                     }
                 }
             }
