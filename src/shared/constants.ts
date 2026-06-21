@@ -38,7 +38,7 @@ export const IGNORE_DIRS: ArrayCompatSet<string> = withArrayCompat(
  * Merge the global IGNORE_DIRS set with a per-repo additional list from config.
  * Returns a new Set — does not mutate IGNORE_DIRS.
  */
-export function buildIgnoreSet(additionalDirs?: string[]): Set<string> {
+export function buildIgnoreSet(additionalDirs?: string[]): ReadonlySet<string> {
   if (!additionalDirs || additionalDirs.length === 0) return IGNORE_DIRS;
   return new Set([...IGNORE_DIRS, ...additionalDirs]);
 }

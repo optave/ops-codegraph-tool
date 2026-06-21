@@ -56,7 +56,7 @@ export const CHA_DISPATCH_PENALTY = 0.1;
 export const CHA_TYPED_DISPATCH_CONFIDENCE = 0.8;
 
 /** Check if a directory entry should be skipped (ignored dirs, dotfiles). */
-function shouldSkipEntry(entry: fs.Dirent, ignoreSet: Set<string>): boolean {
+function shouldSkipEntry(entry: fs.Dirent, ignoreSet: ReadonlySet<string>): boolean {
   if (entry.name.startsWith('.') && entry.name !== '.') {
     if (ignoreSet.has(entry.name)) return true;
     if (entry.isDirectory()) return true;
@@ -140,7 +140,7 @@ interface CollectContext {
   readonly gitignoreRegexes: readonly RegExp[];
   readonly hasGlobFilters: boolean;
   /** Merged set of IGNORE_DIRS + config.ignoreDirs + config.ignoreAdditionalDirs. */
-  readonly ignoreSet: Set<string>;
+  readonly ignoreSet: ReadonlySet<string>;
   readonly visited: Set<string>;
 }
 
