@@ -221,15 +221,56 @@ function printQuality(data: StatsData): void {
   }
 }
 
+// Dead sub-role metadata: label and whether the category is actionable.
+const DEAD_SUB_ROLE_META: Record<string, { label: string; actionable: boolean }> = {
+  'dead-leaf': { label: 'dead-leaf (params/props/constants)', actionable: false },
+  'dead-unresolved': { label: 'dead-unresolved (resolution gaps)', actionable: false },
+  'dead-ffi': { label: 'dead-ffi (native/FFI boundary)', actionable: false },
+  'dead-entry': { label: 'dead-entry (CLI/MCP entry points)', actionable: false },
+  'dead-callable': { label: 'dead-callable (actionable)', actionable: true },
+};
+
 function printRoles(data: StatsData): void {
-  if (data.roles && Object.keys(data.roles).length > 0) {
-    const total = Object.values(data.roles).reduce((a, b) => a + b, 0);
-    console.log(`\nRoles:     ${total} classified symbols`);
-    const roleEntries = Object.entries(data.roles).sort((a, b) => b[1] - a[1]) as [
-      string,
-      number,
-    ][];
-    printCountGrid(roleEntries, 18);
+  if (!data.roles || Object.keys(data.roles).length === 0) return;
+
+  // The roles object may contain both a synthetic 'dead' aggregate key and
+  // individual 'dead-*' sub-role keys (on databases built after sub-roles were
+  // introduced). Exclude the aggregate only when sub-role keys are present to
+  // avoid double-counting; on older databases without any 'dead-*' keys, keep
+  // 'dead' so its count is not silently dropped.
+  const hasDeadSubRoles = Object.keys(data.roles).some((k) => k.startsWith('dead-'));
+  const nonAggregateEntries = Object.entries(data.roles).filter(([k]) =>
+    hasDeadSubRoles ? k !== 'dead' : true,
+  ) as [string, number][];
+  const total = nonAggregateEntries.reduce((a, [, v]) => a + v, 0);
+  console.log(`\nRoles:     ${total} classified symbols`);
+
+  // Split into dead sub-roles and all other roles.
+  const deadEntries = nonAggregateEntries.filter(([k]) => k.startsWith('dead-') || k === 'dead');
+  const otherEntries = nonAggregateEntries
+    .filter(([k]) => !k.startsWith('dead-') && k !== 'dead')
+    .sort((a, b) => b[1] - a[1]);
+
+  if (otherEntries.length > 0) {
+    printCountGrid(otherEntries, 18);
+  }
+
+  if (deadEntries.length > 0) {
+    const deadTotal = deadEntries.reduce((a, [, v]) => a + v, 0);
+    console.log(`\n  Dead symbols: ${deadTotal}`);
+    // Sort in-place: non-actionable first (largest first within group), actionable last.
+    deadEntries.sort((a, b) => {
+      const aActionable = DEAD_SUB_ROLE_META[a[0]]?.actionable ?? false;
+      const bActionable = DEAD_SUB_ROLE_META[b[0]]?.actionable ?? false;
+      if (aActionable !== bActionable) return aActionable ? 1 : -1;
+      return b[1] - a[1];
+    });
+    for (const [role, count] of deadEntries) {
+      const meta = DEAD_SUB_ROLE_META[role];
+      const label = meta ? meta.label : role;
+      const actionableTag = meta?.actionable ? '  ← actionable' : '';
+      console.log(`    ${label.padEnd(38)} ${String(count).padStart(6)}${actionableTag}`);
+    }
   }
 }
 
