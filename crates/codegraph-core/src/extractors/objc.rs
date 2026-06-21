@@ -325,6 +325,19 @@ fn handle_c_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         (node_text(&fn_node, source).to_string(), None)
     };
 
+    // objc_msgSend(obj, sel, ...) — raw ObjC runtime call; selector is a SEL value
+    if name == "objc_msgSend" {
+        symbols.calls.push(Call {
+            name: "<dynamic:unresolved>".to_string(),
+            line: start_line(node),
+            dynamic: Some(true),
+            dynamic_kind: Some("unresolved-dynamic".to_string()),
+            receiver,
+            ..Default::default()
+        });
+        return;
+    }
+
     push_call(symbols, node, name, receiver, None);
 }
 
@@ -336,6 +349,20 @@ fn handle_message_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         .map(|n| node_text(&n, source).to_string());
 
     let selector = build_message_selector(node, source);
+
+    // performSelector: / performSelector:withObject: — SEL dispatch; not statically resolvable
+    if selector == "performSelector:" || selector.starts_with("performSelector:withObject") {
+        symbols.calls.push(Call {
+            name: "<dynamic:unresolved>".to_string(),
+            line: start_line(node),
+            dynamic: Some(true),
+            dynamic_kind: Some("unresolved-dynamic".to_string()),
+            receiver,
+            ..Default::default()
+        });
+        return;
+    }
+
     push_call(symbols, node, selector, receiver, None);
 }
 
@@ -762,5 +789,42 @@ mod tests {
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, "callback");
         assert_eq!(params[0].kind, "parameter");
+    }
+
+    #[test]
+    fn flags_perform_selector_as_unresolved_dynamic() {
+        let code = "\
+@implementation Foo
+- (void)go {
+    [self performSelector:@selector(greet)];
+}
+@end";
+        let s = parse_objc(code);
+        let dyn_call = s.calls.iter().find(|c| c.name == "<dynamic:unresolved>").unwrap();
+        assert_eq!(dyn_call.dynamic, Some(true));
+        assert_eq!(dyn_call.dynamic_kind.as_deref(), Some("unresolved-dynamic"));
+    }
+
+    #[test]
+    fn flags_perform_selector_with_object_as_unresolved_dynamic() {
+        let code = "\
+@implementation Foo
+- (void)go {
+    [self performSelector:@selector(greet) withObject:arg];
+}
+@end";
+        let s = parse_objc(code);
+        let dyn_call = s.calls.iter().find(|c| c.name == "<dynamic:unresolved>").unwrap();
+        assert_eq!(dyn_call.dynamic, Some(true));
+        assert_eq!(dyn_call.dynamic_kind.as_deref(), Some("unresolved-dynamic"));
+    }
+
+    #[test]
+    fn flags_objc_msg_send_as_unresolved_dynamic() {
+        let code = "void run(id obj, SEL sel) { objc_msgSend(obj, sel); }";
+        let s = parse_objc(code);
+        let dyn_call = s.calls.iter().find(|c| c.name == "<dynamic:unresolved>").unwrap();
+        assert_eq!(dyn_call.dynamic, Some(true));
+        assert_eq!(dyn_call.dynamic_kind.as_deref(), Some("unresolved-dynamic"));
     }
 }
