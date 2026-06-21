@@ -11,6 +11,7 @@
  * The orchestrator-selection strategy lives here so `pipeline.ts` stays a thin
  * top-level controller: detect changes, try native, fall back to JS stages.
  */
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
@@ -1411,6 +1412,55 @@ function groupByExtension(relPaths: Iterable<string>): Map<string, string[]> {
 }
 
 /**
+ * Return the subset of relative paths that are gitignored in `rootDir`.
+ *
+ * Runs `git check-ignore --stdin` with all candidate paths piped in. Any
+ * path that git echoes back is gitignored. Fails silently (returns an empty
+ * set) when git is unavailable, the directory is not a git repo, or the
+ * check-ignore call throws — the gap-detection logic handles those cases
+ * gracefully without this filter.
+ *
+ * Uses relative paths (forward-slash separated) as both input and output so
+ * the result set can be matched directly against the `expected` set in
+ * `detectDroppedLanguageGap` without any further path manipulation.
+ */
+function queryGitIgnoredFiles(rootDir: string, relPaths: Iterable<string>): Set<string> {
+  const ignored = new Set<string>();
+  const paths = [...relPaths];
+  if (paths.length === 0) return ignored;
+  try {
+    const stdin = paths.join('\n');
+    const output = execFileSync('git', ['check-ignore', '--stdin'], {
+      cwd: rootDir,
+      input: stdin,
+      encoding: 'utf-8',
+      maxBuffer: 100 * 1024 * 1024,
+      // git check-ignore exits with 1 when none of the paths are ignored —
+      // that is not an error for our purposes. stdio: 'pipe' lets us capture
+      // stdout without swallowing stderr, and the try/catch handles the
+      // non-zero exit from execFileSync when ALL paths are non-ignored
+      // (exit code 1 from git check-ignore means "no matches").
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    for (const line of output.split('\n')) {
+      const trimmed = normalizePath(line.trim());
+      if (trimmed) ignored.add(trimmed);
+    }
+  } catch (e: unknown) {
+    // Exit code 1 means no paths were ignored — not an error. Any other
+    // failure (git unavailable, not a repo, etc.) is silently swallowed
+    // so the caller proceeds with the unfiltered set.
+    const exitCode = (e as { status?: number }).status;
+    if (exitCode !== 1) {
+      debug(`queryGitIgnoredFiles: git check-ignore failed: ${toErrorMessage(e)}`);
+    }
+    // On exit code 1, output is empty so ignored stays empty — correct.
+    // On other errors we also proceed with the empty set (safe degradation).
+  }
+  return ignored;
+}
+
+/**
  * Detect files the native orchestrator silently dropped.
  *
  * Walks the filesystem and compares against `nodes` + `file_hashes`. A file
@@ -1439,8 +1489,17 @@ function groupByExtension(relPaths: Iterable<string>): Map<string, string[]> {
  */
 function detectDroppedLanguageGap(ctx: PipelineContext): DroppedLanguageGap {
   const collected = collectFilesUtil(ctx.rootDir, [], ctx.config, new Set<string>());
+  const expectedRaw = collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f)));
+
+  // The native Rust engine uses the `ignore` crate with git_ignore(true), so it
+  // respects .gitignore and never processes gitignored files. The JS collectFiles
+  // walker has no gitignore awareness, so without this filter gitignored files
+  // (e.g. NAPI-RS generated crates/codegraph-core/index.js / index.d.ts) appear
+  // in `expected` but not in the DB, causing a spurious "native extractor bug"
+  // WARN and triggering an unnecessary WASM backfill (#1626).
+  const gitIgnored = queryGitIgnoredFiles(ctx.rootDir, expectedRaw);
   const expected = new Set(
-    collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f))),
+    gitIgnored.size > 0 ? expectedRaw.filter((r) => !gitIgnored.has(r)) : expectedRaw,
   );
 
   const existingNodeRows = ctx.db
@@ -2046,9 +2105,11 @@ export async function tryNativeOrchestrator(
   // nodes/edges during incremental builds, so FK enforcement causes the purge
   // statements to fail silently — leaving stale nodes and edges that then get
   // duplicated when the barrel-candidate re-parse re-inserts them (issue #1644).
-  // Disable FK only for the duration of the Rust-side buildGraph() call, then
-  // restore it immediately so subsequent writes on this connection retain FK
-  // protection.
+  // Disabling FK before buildGraph() lets the purge succeed. FK stays OFF for
+  // the entire connection lifetime (through backfillNativeDroppedFiles and
+  // buildDataflowP4ForNative) and is restored when the connection is closed.
+  // This is intentional: call_edge_id values written by P4 are always looked up
+  // live from the edges table, so no phantom FK reference is ever produced.
   try {
     ctx.nativeDb.exec('PRAGMA foreign_keys = OFF');
   } catch {

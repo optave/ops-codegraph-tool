@@ -471,10 +471,9 @@ function buildDataflowVerticesAndEdges(
 /**
  * Core stitch logic — must be called inside an already-open transaction.
  *
- * Separated from buildInterproceduralStitch so callers that manage their own
- * outer transaction (buildDataflowVerticesFromMap, buildDataflowEdges) can
- * call this directly without starting a nested transaction, which better-sqlite3
- * does not support.
+ * All callers (buildDataflowVerticesFromMap, buildDataflowEdges,
+ * buildDataflowP4ForNative) manage their own outer transaction and call this
+ * directly to avoid nested transactions, which better-sqlite3 does not support.
  */
 function runInterproceduralStitch(
   db: BetterSqlite3Database,
@@ -583,28 +582,6 @@ function runInterproceduralStitch(
   return count;
 }
 
-/**
- * Wrap runInterproceduralStitch in its own transaction.
- *
- * Used only by buildDataflowP4ForNative, which calls the stitch as a
- * standalone operation outside any other transaction boundary.  All other
- * call sites (buildDataflowVerticesFromMap, buildDataflowEdges) manage their
- * own outer transaction and call runInterproceduralStitch directly to avoid
- * nesting, which better-sqlite3 does not support.
- */
-function buildInterproceduralStitch(
-  db: BetterSqlite3Database,
-  candidates: StitchCandidate[],
-  captures: ReturnCapture[],
-): number {
-  if (candidates.length === 0) return 0;
-  let count = 0;
-  db.transaction(() => {
-    count = runInterproceduralStitch(db, candidates, captures);
-  })();
-  return count;
-}
-
 // ── buildDataflowEdges ──────────────────────────────────────────────────────
 
 // ── P4 helpers ───────────────────────────────────────────────────────────────
@@ -630,7 +607,7 @@ export function collectFuncIdsForFiles(
  * and recreated, but the callers' files are never re-parsed — so their
  * arg_in edges (pointing to the old param vertices) are deleted and never
  * replaced. This function reads those caller files from disk and rebuilds
- * the StitchCandidate list so buildInterproceduralStitch can reconnect them.
+ * the StitchCandidate list so runInterproceduralStitch can reconnect them.
  */
 export async function collectCallerStitchCandidates(
   db: BetterSqlite3Database,
@@ -920,19 +897,25 @@ export async function buildDataflowP4ForNative(
   );
 
   if (candidates.length > 0) {
-    // Purge any existing arg_in edges targeting the changed callees from unchanged
-    // caller files. These edges were inserted by a previous P4 pass. Without this
-    // guard, repeated calls to buildDataflowP4ForNative insert duplicates because
-    // the dataflow table has no UNIQUE constraint on (source_vertex, target_vertex).
-    const placeholders = changedFuncIds.map(() => '?').join(',');
-    db.prepare(
-      `DELETE FROM dataflow
-       WHERE kind = 'arg_in'
-         AND target_id IN (${placeholders})
-         AND source_id NOT IN (${placeholders})`,
-    ).run(...changedFuncIds, ...changedFuncIds);
+    let count = 0;
+    // Wrap the DELETE + stitch in a single transaction so that a crash between
+    // the purge and the re-insert cannot leave arg_in edges permanently removed
+    // but never replaced.
+    db.transaction(() => {
+      // Purge any existing arg_in edges targeting the changed callees from unchanged
+      // caller files. These edges were inserted by a previous P4 pass. Without this
+      // guard, repeated calls to buildDataflowP4ForNative insert duplicates because
+      // the dataflow table has no UNIQUE constraint on (source_vertex, target_vertex).
+      const placeholders = changedFuncIds.map(() => '?').join(',');
+      db.prepare(
+        `DELETE FROM dataflow
+         WHERE kind = 'arg_in'
+           AND target_id IN (${placeholders})
+           AND source_id NOT IN (${placeholders})`,
+      ).run(...changedFuncIds, ...changedFuncIds);
 
-    const count = buildInterproceduralStitch(db, candidates, captures);
+      count = runInterproceduralStitch(db, candidates, captures);
+    })();
     if (count > 0) {
       info(`Dataflow (native P4): ${count} inter-procedural edges re-stitched`);
     }
