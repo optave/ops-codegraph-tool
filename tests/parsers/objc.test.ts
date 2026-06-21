@@ -91,6 +91,33 @@ describe('Objective-C parser', () => {
     );
   });
 
+  it('flags performSelector: as unresolved-dynamic', () => {
+    const symbols = parseObjC(`void main() {
+    [obj performSelector:@selector(greet)];
+}`);
+    expect(symbols.calls).toContainEqual(
+      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+    );
+  });
+
+  it('flags performSelector:withObject: as unresolved-dynamic', () => {
+    const symbols = parseObjC(`void main() {
+    [obj performSelector:@selector(greet) withObject:arg];
+}`);
+    expect(symbols.calls).toContainEqual(
+      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+    );
+  });
+
+  it('flags objc_msgSend as unresolved-dynamic', () => {
+    const symbols = parseObjC(`void main() {
+    objc_msgSend(obj, sel, arg);
+}`);
+    expect(symbols.calls).toContainEqual(
+      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+    );
+  });
+
   it('extracts keyword-selector method definitions with parameter names', () => {
     // The v3 grammar emits flat `identifier`+`method_parameter` children under
     // `method_definition` rather than wrapping them in `keyword_selector`. The

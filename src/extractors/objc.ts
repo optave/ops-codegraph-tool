@@ -336,7 +336,19 @@ function handleCCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   } else {
     call.name = funcNode.text;
   }
-  if (call.name) ctx.calls.push(call);
+  if (!call.name) return;
+  // objc_msgSend(obj, sel, ...) — raw ObjC runtime call; selector is a SEL value
+  if (call.name === 'objc_msgSend') {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: call.line,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      receiver: call.receiver,
+    });
+    return;
+  }
+  ctx.calls.push(call);
 }
 
 function handleMessageExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -366,6 +378,18 @@ function handleMessageExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
     const selector = node.childForFieldName('selector');
     if (!selector) return;
     name = selector.text;
+  }
+
+  // performSelector: / performSelector:withObject: — SEL dispatch; not statically resolvable
+  if (name === 'performSelector:' || name.startsWith('performSelector:withObject')) {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: node.startPosition.row + 1,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      receiver: receiver?.text,
+    });
+    return;
   }
 
   const call: Call = { name, line: node.startPosition.row + 1 };

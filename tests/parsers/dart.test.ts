@@ -50,4 +50,13 @@ import 'package:flutter/material.dart';`);
     // This test verifies the parser doesn't crash on constructor syntax
     expect(symbols).toBeDefined();
   });
+
+  it('flags Function.apply as unresolved-dynamic', () => {
+    const symbols = parseDart(`void g() {
+  var r = Function.apply(callback, []);
+}`);
+    expect(symbols.calls).toContainEqual(
+      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+    );
+  });
 });
