@@ -295,8 +295,14 @@ function handleJavaMethodInvocation(node: TreeSitterNode, ctx: ExtractorOutput):
     return;
   }
 
-  // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal arg
-  if (methodName === 'getMethod' || methodName === 'getDeclaredMethod') {
+  // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal arg.
+  // Require a non-null receiver to avoid false positives on gRPC ServiceDescriptor.getMethod(),
+  // Spring AnnotationUtils.getDeclaredMethod(), proto-generated descriptors, and any other API
+  // that exposes a method by this name unrelated to java.lang.Class reflection.
+  if (
+    (methodName === 'getMethod' || methodName === 'getDeclaredMethod') &&
+    receiver !== undefined
+  ) {
     const literal = getFirstStringArgJava(node);
     if (literal) {
       pushCall(ctx, node, literal, {

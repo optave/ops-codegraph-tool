@@ -329,8 +329,12 @@ fn handle_scala_call_expression(node: &Node, source: &[u8], symbols: &mut FileSy
                             ..Default::default()
                         });
                     }
-                    // clazz.getMethod("name") — resolvable if literal
-                    "getMethod" | "getDeclaredMethod" => {
+                    // clazz.getMethod("name") — resolvable if literal.
+                    // Require a non-null receiver to avoid false positives on gRPC
+                    // ServiceDescriptor.getMethod(), Spring AnnotationUtils.getDeclaredMethod(),
+                    // proto-generated descriptors, and any other API that exposes a method by
+                    // this name unrelated to java.lang.Class reflection.
+                    "getMethod" | "getDeclaredMethod" if receiver.is_some() => {
                         // Extract first string arg from the call_expression (not fn_node)
                         let mut literal: Option<String> = None;
                         if let Some(args) = node.child_by_field_name("arguments")

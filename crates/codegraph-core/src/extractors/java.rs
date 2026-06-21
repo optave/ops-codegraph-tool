@@ -310,8 +310,11 @@ fn handle_method_invocation(node: &Node, source: &[u8], symbols: &mut FileSymbol
                 ..Default::default()
             });
         }
-        // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal
-        "getMethod" | "getDeclaredMethod" => {
+        // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal.
+        // Require a non-null receiver to avoid false positives on gRPC ServiceDescriptor.getMethod(),
+        // Spring AnnotationUtils.getDeclaredMethod(), proto-generated descriptors, and any other
+        // API that exposes a method by this name unrelated to java.lang.Class reflection.
+        "getMethod" | "getDeclaredMethod" if receiver.is_some() => {
             let literal = get_first_string_arg_java(node, source);
             match literal {
                 Some(name) => {

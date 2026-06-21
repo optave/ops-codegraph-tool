@@ -186,8 +186,14 @@ function handleScalaCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
     return;
   }
 
-  // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal
-  if (call.name === 'getMethod' || call.name === 'getDeclaredMethod') {
+  // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal.
+  // Require a non-null receiver to avoid false positives on gRPC ServiceDescriptor.getMethod(),
+  // Spring AnnotationUtils.getDeclaredMethod(), proto-generated descriptors, and any other API
+  // that exposes a method by this name unrelated to java.lang.Class reflection.
+  if (
+    (call.name === 'getMethod' || call.name === 'getDeclaredMethod') &&
+    call.receiver !== undefined
+  ) {
     const literal = getFirstStringArgScala(node);
     if (literal) {
       ctx.calls.push({
