@@ -2105,8 +2105,8 @@ export async function tryNativeOrchestrator(
   // nodes/edges during incremental builds, so FK enforcement causes the purge
   // statements to fail silently — leaving stale nodes and edges that then get
   // duplicated when the barrel-candidate re-parse re-inserts them (issue #1644).
-  // Disabling FK before buildGraph() lets the purge succeed. FK enforcement is
-  // restored automatically when this connection is closed after the build.
+  // Disabling FK before buildGraph() lets the purge succeed; re-enable afterwards
+  // so JS post-passes run with full FK enforcement.
   try {
     ctx.nativeDb.exec('PRAGMA foreign_keys = OFF');
   } catch {
@@ -2119,6 +2119,12 @@ export async function tryNativeOrchestrator(
     JSON.stringify(ctx.aliases),
     JSON.stringify(ctx.opts),
   );
+  // Restore FK enforcement for JS post-passes (CHA, dataflow, structure).
+  try {
+    ctx.nativeDb.exec('PRAGMA foreign_keys = ON');
+  } catch {
+    // exec may not exist on very old addon versions — safe to ignore
+  }
   const result = JSON.parse(resultJson) as NativeOrchestratorResult;
 
   if (result.earlyExit) {
