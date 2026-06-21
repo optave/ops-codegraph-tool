@@ -136,25 +136,104 @@ fn handle_singleton_method(node: &Node, source: &[u8], symbols: &mut FileSymbols
     });
 }
 
+/// Get the first non-punctuation argument from a Ruby call node's argument list.
+fn get_first_ruby_arg<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    let args = node.child_by_field_name("arguments")?;
+    for i in 0..args.child_count() {
+        let child = args.child(i)?;
+        match child.kind() {
+            "(" | ")" | "," => continue,
+            _ => return Some(child),
+        }
+    }
+    None
+}
+
 fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(method_node) = node.child_by_field_name("method") else { return };
     let method_text = node_text(&method_node, source);
+    let call_line = start_line(node);
 
     if method_text == "require" || method_text == "require_relative" {
         handle_require_call(node, source, symbols);
-    } else if method_text == "include" || method_text == "extend" || method_text == "prepend" {
+        return;
+    }
+    if method_text == "include" || method_text == "extend" || method_text == "prepend" {
         handle_mixin_call(node, source, symbols);
-    } else {
-        let receiver = named_child_text(node, "receiver", source)
-            .map(|s| s.to_string());
+        return;
+    }
+
+    // send / public_send / __send__ — dynamic dispatch; first arg is the method name
+    if method_text == "send" || method_text == "public_send" || method_text == "__send__" {
+        let receiver = named_child_text(node, "receiver", source).map(|s| s.to_string());
+        if let Some(first_arg) = get_first_ruby_arg(node) {
+            match first_arg.kind() {
+                "simple_symbol" | "symbol" => {
+                    let sym = node_text(&first_arg, source);
+                    let method_name = sym.trim_start_matches(':').replace(['\'', '"'], "");
+                    if !method_name.is_empty() {
+                        symbols.calls.push(Call {
+                            name: method_name,
+                            line: call_line,
+                            dynamic: Some(true),
+                            dynamic_kind: Some("reflection".to_string()),
+                            key_expr: Some(sym.to_string()),
+                            receiver,
+                            ..Default::default()
+                        });
+                        return;
+                    }
+                }
+                "string" | "string_content" => {
+                    let raw = node_text(&first_arg, source);
+                    let method_name = raw.replace(['\'', '"'], "");
+                    if !method_name.is_empty() {
+                        symbols.calls.push(Call {
+                            name: method_name,
+                            line: call_line,
+                            dynamic: Some(true),
+                            dynamic_kind: Some("reflection".to_string()),
+                            key_expr: Some(raw.to_string()),
+                            receiver,
+                            ..Default::default()
+                        });
+                        return;
+                    }
+                }
+                _ => {
+                    let key = node_text(&first_arg, source).to_string();
+                    symbols.calls.push(Call {
+                        name: "<dynamic:computed-key>".to_string(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("computed-key".to_string()),
+                        key_expr: Some(key),
+                        receiver,
+                        ..Default::default()
+                    });
+                    return;
+                }
+            }
+        }
+        // No first arg — unresolved
         symbols.calls.push(Call {
-            name: method_text.to_string(),
-            line: start_line(node),
-            dynamic: None,
-            receiver,
+            name: "<dynamic:unresolved>".to_string(),
+            line: call_line,
+            dynamic: Some(true),
+            dynamic_kind: Some("unresolved-dynamic".to_string()),
             ..Default::default()
         });
+        return;
     }
+
+    let receiver = named_child_text(node, "receiver", source).map(|s| s.to_string());
+    symbols.calls.push(Call {
+        name: method_text.to_string(),
+        line: call_line,
+        dynamic: None,
+        receiver,
+        ..Default::default()
+    });
 }
 
 fn handle_require_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
