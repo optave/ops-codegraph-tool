@@ -274,16 +274,8 @@ function handleKotlinCallExpression(node: TreeSitterNode, ctx: ExtractorOutput):
   if (!funcNode) return;
   if (funcNode.type === 'simple_identifier') {
     const name = funcNode.text;
-    // invoke() on a callable reference / functional type — dynamic dispatch
-    if (name === 'invoke') {
-      ctx.calls.push({
-        name: '<dynamic:unresolved>',
-        line: node.startPosition.row + 1,
-        dynamic: true,
-        dynamicKind: 'unresolved-dynamic',
-      });
-      return;
-    }
+    // Bare invoke() with no receiver is a resolvable operator fun invoke() self-call —
+    // only flag as unresolved-dynamic when called on a receiver (handled in handleKotlinNavExpression).
     ctx.calls.push({ name, line: node.startPosition.row + 1 });
   }
 }

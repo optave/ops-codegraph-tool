@@ -343,24 +343,16 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                 match fn_node.kind() {
                     "simple_identifier" => {
                         let name = node_text(&fn_node, source);
-                        // invoke() on a callable — flag as unresolved
-                        if name == "invoke" {
-                            symbols.calls.push(Call {
-                                name: "<dynamic:unresolved>".to_string(),
-                                line: start_line(node),
-                                dynamic: Some(true),
-                                dynamic_kind: Some("unresolved-dynamic".to_string()),
-                                ..Default::default()
-                            });
-                        } else {
-                            symbols.calls.push(Call {
-                                name: name.to_string(),
-                                line: start_line(node),
-                                dynamic: None,
-                                receiver: None,
-                                ..Default::default()
-                            });
-                        }
+                        // Bare invoke() with no receiver is a resolvable operator fun invoke()
+                        // self-call — only flag as unresolved-dynamic when called on a receiver
+                        // (handled in the navigation_expression branch below).
+                        symbols.calls.push(Call {
+                            name: name.to_string(),
+                            line: start_line(node),
+                            dynamic: None,
+                            receiver: None,
+                            ..Default::default()
+                        });
                     }
                     "navigation_expression" => {
                         // tree-sitter-kotlin-sg wraps the member in a
