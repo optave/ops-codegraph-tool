@@ -10,6 +10,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createParsers,
+  extractCSymbols,
+  extractGoSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
   extractRubySymbols,
@@ -372,5 +374,71 @@ function test($fn) {
     const c = out.calls.find((c) => c.name === '<dynamic:unresolved>');
     expect(c).toBeDefined();
     expect(c?.dynamicKind).toBe('unresolved-dynamic');
+  });
+});
+
+describe('Phase 5: Go MethodByName detection', () => {
+  let parsers: Awaited<ReturnType<typeof createParsers>>;
+  beforeAll(async () => {
+    parsers = await createParsers();
+  }, 30_000);
+
+  function parseGo(code: string) {
+    const parser = getParser(parsers, 'test.go');
+    if (!parser) throw new Error('Go parser not available');
+    return extractGoSymbols(parser.parse(code), 'test.go');
+  }
+
+  it('v.MethodByName("Greet") extracts Greet as reflection kind', () => {
+    const out = parseGo(`package main
+func test(v interface{}) { v.MethodByName("Greet") }
+`);
+    const c = out.calls.find((c) => c.name === 'Greet');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('v.MethodByName(name) with variable extracts as computed-key', () => {
+    const out = parseGo(`package main
+func test(v interface{}, name string) { v.MethodByName(name) }
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:computed-key>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('computed-key');
+  });
+});
+
+describe('Phase 5: C function pointer / dlsym detection', () => {
+  let parsers: Awaited<ReturnType<typeof createParsers>>;
+  beforeAll(async () => {
+    parsers = await createParsers();
+  }, 30_000);
+
+  function parseC(code: string) {
+    const parser = getParser(parsers, 'test.c');
+    if (!parser) throw new Error('C parser not available');
+    return extractCSymbols(parser.parse(code), 'test.c');
+  }
+
+  it('(*fp)(args) function pointer call tags as unresolved-dynamic', () => {
+    const out = parseC(`
+void test(void (*fp)(int)) { (*fp)(42); }
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:unresolved>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('unresolved-dynamic');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('dlsym(handle, "greet") extracts greet as reflection kind', () => {
+    const out = parseC(`
+#include <dlfcn.h>
+void test(void *handle) { dlsym(handle, "greet"); }
+`);
+    const c = out.calls.find((c) => c.name === 'greet');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.keyExpr).toContain('greet');
   });
 });

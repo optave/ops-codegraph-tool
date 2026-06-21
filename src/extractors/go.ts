@@ -226,19 +226,73 @@ function handleGoConstDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 }
 
+/** Get the Nth non-punctuation argument from a Go call_expression node. */
+function getGoArg(node: TreeSitterNode, index: number): TreeSitterNode | null {
+  const args = node.childForFieldName('arguments');
+  if (!args) return null;
+  let count = 0;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',') continue;
+    if (count === index) return child;
+    count++;
+  }
+  return null;
+}
+
 function handleGoCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
+  const callLine = node.startPosition.row + 1;
+
   if (fn.type === 'identifier') {
-    ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
-  } else if (fn.type === 'selector_expression') {
+    ctx.calls.push({ name: fn.text, line: callLine });
+    return;
+  }
+
+  if (fn.type === 'selector_expression') {
     const field = fn.childForFieldName('field');
-    if (field) {
-      const operand = fn.childForFieldName('operand');
-      const call: Call = { name: field.text, line: node.startPosition.row + 1 };
-      if (operand) call.receiver = operand.text;
-      ctx.calls.push(call);
+    if (!field) return;
+    const fieldName = field.text;
+    const operand = fn.childForFieldName('operand');
+
+    // v.MethodByName("name") — reflect-based dynamic dispatch
+    if (fieldName === 'MethodByName') {
+      const nameArg = getGoArg(node, 0);
+      if (
+        nameArg &&
+        (nameArg.type === 'interpreted_string_literal' || nameArg.type === 'raw_string_literal')
+      ) {
+        const methodName = nameArg.text.replace(/["`]/g, '');
+        if (methodName) {
+          ctx.calls.push({
+            name: methodName,
+            line: callLine,
+            dynamic: true,
+            dynamicKind: 'reflection',
+            keyExpr: nameArg.text,
+            receiver: operand?.text,
+          });
+          return;
+        }
+      }
+      // Variable name arg — computed-key
+      ctx.calls.push({
+        name: '<dynamic:computed-key>',
+        line: callLine,
+        dynamic: true,
+        dynamicKind: 'computed-key',
+        keyExpr: nameArg?.text,
+        receiver: operand?.text,
+      });
+      return;
     }
+
+    const call: Call = { name: fieldName, line: callLine };
+    if (operand) call.receiver = operand.text;
+    ctx.calls.push(call);
   }
 }
 
