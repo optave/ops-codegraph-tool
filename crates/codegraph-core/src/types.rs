@@ -152,6 +152,11 @@ pub struct Import {
     pub scala_import: Option<bool>,
     #[napi(js_name = "bashSource")]
     pub bash_source: Option<bool>,
+    /// Marks a CJS destructured require binding (`const { X } = require('./m')`).
+    /// When true, this entry feeds imported_names for receiver-edge resolution
+    /// but must NOT produce a DB import edge (mirrors WASM cjsRequireBindings, #1678).
+    #[napi(js_name = "cjsRequire")]
+    pub cjs_require: Option<bool>,
 }
 
 impl Import {
@@ -176,6 +181,7 @@ impl Import {
             swift_import: None,
             scala_import: None,
             bash_source: None,
+            cjs_require: None,
         }
     }
 }

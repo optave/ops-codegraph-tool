@@ -96,7 +96,11 @@ describe('Objective-C parser', () => {
     [obj performSelector:@selector(greet)];
 }`);
     expect(symbols.calls).toContainEqual(
-      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+      expect.objectContaining({
+        name: '<dynamic:unresolved>',
+        dynamic: true,
+        dynamicKind: 'unresolved-dynamic',
+      }),
     );
   });
 
@@ -105,7 +109,11 @@ describe('Objective-C parser', () => {
     [obj performSelector:@selector(greet) withObject:arg];
 }`);
     expect(symbols.calls).toContainEqual(
-      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+      expect.objectContaining({
+        name: '<dynamic:unresolved>',
+        dynamic: true,
+        dynamicKind: 'unresolved-dynamic',
+      }),
     );
   });
 
@@ -114,7 +122,11 @@ describe('Objective-C parser', () => {
     objc_msgSend(obj, sel, arg);
 }`);
     expect(symbols.calls).toContainEqual(
-      expect.objectContaining({ name: '<dynamic:unresolved>', dynamic: true, dynamicKind: 'unresolved-dynamic' }),
+      expect.objectContaining({
+        name: '<dynamic:unresolved>',
+        dynamic: true,
+        dynamicKind: 'unresolved-dynamic',
+      }),
     );
   });
 

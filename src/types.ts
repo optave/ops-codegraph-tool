@@ -484,6 +484,7 @@ export interface LOCMetrics {
 export type DynamicKind =
   | 'computed-literal' // obj["foo"]()    — resolvable; already emitted as normal edge
   | 'computed-key' // obj[k]()        — potentially resolvable via pts; else flagged
+  | 'dispatch-table' // {a:fnA,b:fnB}[k]() — inline object literal subscript; resolved via pts wildcard
   | 'reflection' // .call/.apply/.bind / Reflect.* / callable-ref — resolved when target is in codebase; sink edge emitted if unresolved
   | 'eval' // eval() / new Function() — undecidable; always flagged
   | 'unresolved-dynamic'; // any other detected dynamic pattern; flagged

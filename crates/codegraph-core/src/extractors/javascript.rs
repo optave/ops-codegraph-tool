@@ -1341,6 +1341,31 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             // skip destructured const bindings inside function scopes so the
             // Rust walk path matches FUNCTION_SCOPE_TYPES behaviour.
             extract_destructured_bindings(&name_n, source, start_line(node), end_line(node), &mut symbols.definitions);
+            // If the RHS is a CJS require() call, also add to imports so the
+            // receiver-edge resolver treats the names as import artifacts, not
+            // local definitions — mirroring the WASM cjsRequireBindings fix (#1678).
+            if value_n.kind() == "call_expression" {
+                if let Some(fn_node) = value_n.child_by_field_name("function") {
+                    if node_text(&fn_node, source) == "require" {
+                        let args = value_n.child_by_field_name("arguments")
+                            .or_else(|| find_child(&value_n, "arguments"));
+                        if let Some(args) = args {
+                            if let Some(str_arg) = find_child(&args, "string") {
+                                let mod_path = node_text(&str_arg, source)
+                                    .replace(&['\'', '"'][..], "");
+                                let names = collect_object_pattern_names(&name_n, source);
+                                if !names.is_empty() {
+                                    let mut imp = Import::new(
+                                        mod_path, names, start_line(node),
+                                    );
+                                    imp.cjs_require = Some(true);
+                                    symbols.imports.push(imp);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else if is_const && is_js_literal(&value_n)
             && find_parent_of_types(node, &[
                 "function_declaration", "arrow_function",
