@@ -258,11 +258,90 @@ function handleJavaImportDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
   }
 }
 
+/** Extract the first string literal argument from a method_invocation node. */
+function getFirstStringArgJava(node: TreeSitterNode): string | null {
+  const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
+  if (!args) return null;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',') continue;
+    if (t === 'string_literal' || t === 'string_fragment') {
+      return child.text.replace(/^["']|["']$/g, '');
+    }
+    break; // First real argument is not a string — stop
+  }
+  return null;
+}
+
 function handleJavaMethodInvocation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const obj = node.childForFieldName('object');
-  pushCall(ctx, node, nameNode.text, obj ? { receiver: obj.text } : {});
+  const methodName = nameNode.text;
+  const receiver = obj?.text;
+
+  // Method.invoke(target, args) — runtime reflection, target not statically knowable.
+  // Require a non-null receiver to avoid false positives on user-defined `invoke` methods
+  // (e.g. executor services, command/strategy objects, Kotlin lambdas). The Java Reflection
+  // API always calls this on a `java.lang.reflect.Method` object, never bare.
+  if (methodName === 'invoke' && receiver !== undefined) {
+    pushCall(ctx, node, '<dynamic:unresolved>', {
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      receiver,
+    });
+    return;
+  }
+
+  // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal arg.
+  // Require a non-null receiver to avoid false positives on gRPC ServiceDescriptor.getMethod(),
+  // Spring AnnotationUtils.getDeclaredMethod(), proto-generated descriptors, and any other API
+  // that exposes a method by this name unrelated to java.lang.Class reflection.
+  if (
+    (methodName === 'getMethod' || methodName === 'getDeclaredMethod') &&
+    receiver !== undefined
+  ) {
+    const literal = getFirstStringArgJava(node);
+    if (literal) {
+      pushCall(ctx, node, literal, {
+        dynamic: true,
+        dynamicKind: 'reflection',
+        keyExpr: literal,
+        receiver,
+      });
+    } else {
+      const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
+      const firstArg = args?.child(1); // skip '('
+      const keyExpr = firstArg?.text;
+      pushCall(ctx, node, '<dynamic:computed-key>', {
+        dynamic: true,
+        dynamicKind: 'computed-key',
+        keyExpr: keyExpr ?? undefined,
+        receiver,
+      });
+    }
+    return;
+  }
+
+  // Class.forName("pkg.ClassName") — dynamic class loading; flag as unresolved
+  // (loading a class is not the same as calling it — don't emit a call edge).
+  // Guard on receiver === 'Class' to avoid false positives from user-defined
+  // `forName()` factory methods (e.g. Currency.forName("USD"), Enum.forName(...)).
+  if (methodName === 'forName' && receiver === 'Class') {
+    const literal = getFirstStringArgJava(node);
+    pushCall(ctx, node, '<dynamic:unresolved>', {
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      keyExpr: literal ?? undefined,
+      receiver,
+    });
+    return;
+  }
+
+  // Normal method invocation
+  pushCall(ctx, node, methodName, receiver ? { receiver } : {});
 }
 
 function handleJavaLocalVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {

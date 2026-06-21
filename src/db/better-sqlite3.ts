@@ -17,5 +17,5 @@ export function getDatabase(): typeof Database {
   if (!_Database) {
     _Database = _require('better-sqlite3') as typeof Database;
   }
-  return _Database;
+  return _Database!;
 }

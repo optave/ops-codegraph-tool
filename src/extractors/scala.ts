@@ -142,6 +142,23 @@ function handleScalaImportDecl(node: TreeSitterNode, ctx: ExtractorOutput): void
   });
 }
 
+/** Extract the first string literal argument from a Scala call_expression. */
+function getFirstStringArgScala(node: TreeSitterNode): string | null {
+  const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+  if (!args) return null;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',') continue;
+    if (t === 'string' || t === 'string_literal') {
+      return child.text.replace(/^["']|["']$/g, '');
+    }
+    break;
+  }
+  return null;
+}
+
 function handleScalaCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const funcNode = node.childForFieldName('function');
   if (!funcNode) return;
@@ -154,7 +171,52 @@ function handleScalaCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
   } else {
     call.name = funcNode.text;
   }
-  if (call.name) ctx.calls.push(call);
+  if (!call.name) return;
+
+  // method.invoke(target, args) — Java/Scala reflection; target unknown statically.
+  // Require a non-null receiver to avoid false positives on user-defined `invoke` methods.
+  if (call.name === 'invoke' && call.receiver !== undefined) {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line: call.line,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+      receiver: call.receiver,
+    });
+    return;
+  }
+
+  // clazz.getMethod("name") / getDeclaredMethod("name") — resolvable if literal.
+  // Require a non-null receiver to avoid false positives on gRPC ServiceDescriptor.getMethod(),
+  // Spring AnnotationUtils.getDeclaredMethod(), proto-generated descriptors, and any other API
+  // that exposes a method by this name unrelated to java.lang.Class reflection.
+  if (
+    (call.name === 'getMethod' || call.name === 'getDeclaredMethod') &&
+    call.receiver !== undefined
+  ) {
+    const literal = getFirstStringArgScala(node);
+    if (literal) {
+      ctx.calls.push({
+        name: literal,
+        line: call.line,
+        dynamic: true,
+        dynamicKind: 'reflection',
+        keyExpr: literal,
+        receiver: call.receiver,
+      });
+    } else {
+      ctx.calls.push({
+        name: '<dynamic:computed-key>',
+        line: call.line,
+        dynamic: true,
+        dynamicKind: 'computed-key',
+        receiver: call.receiver,
+      });
+    }
+    return;
+  }
+
+  ctx.calls.push(call);
 }
 
 function handleScalaValVarDef(node: TreeSitterNode, ctx: ExtractorOutput): void {

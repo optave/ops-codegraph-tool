@@ -9,7 +9,7 @@ import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../../shared/constants.js';
-import { compileGlobs, matchesAny } from '../../../shared/globs.js';
+import { compileGlobs, globToRegex, matchesAny } from '../../../shared/globs.js';
 import type {
   BetterSqlite3Database,
   CodegraphConfig,
@@ -83,11 +83,62 @@ export function passesIncludeExclude(
   return true;
 }
 
+/**
+ * Parse the `.gitignore` file at the project root and return compiled regexes
+ * for each non-negated, non-comment pattern.
+ *
+ * Only the root-level `.gitignore` is read — nested `.gitignore` files and
+ * global gitignore are not consulted. This gives the WASM file-collection
+ * walker the same coarse gitignore respect that the Rust engine gets from the
+ * `ignore` crate's `git_ignore(true)` option, without requiring an additional
+ * npm dependency.
+ *
+ * Negation patterns (`!pattern`) are intentionally skipped — honoring them
+ * correctly requires ordered evaluation which is outside scope here. The Rust
+ * engine's `ignore` crate handles negation natively.
+ */
+export function readGitignorePatterns(rootDir: string): readonly RegExp[] {
+  const gitignorePath = path.join(rootDir, '.gitignore');
+  let contents: string;
+  try {
+    contents = fs.readFileSync(gitignorePath, 'utf-8');
+  } catch {
+    return [];
+  }
+
+  const regexes: RegExp[] = [];
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    // Skip empty lines, comments, and negation patterns
+    if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+    // Strip trailing slash (directory indicator) — we match files by path regardless
+    const pattern = line.endsWith('/') ? line.slice(0, -1) : line;
+    try {
+      // If pattern contains no '/', it should match at any depth — prefix with `**/`.
+      // If pattern starts with '/', it is anchored to root — strip the leading slash.
+      // Otherwise use as-is (e.g. `crates/codegraph-core/index.js`).
+      let normalized: string;
+      if (pattern.startsWith('/')) {
+        normalized = pattern.slice(1);
+      } else if (!pattern.includes('/')) {
+        normalized = `**/${pattern}`;
+      } else {
+        normalized = pattern;
+      }
+      regexes.push(globToRegex(normalized));
+    } catch {
+      // Ignore patterns that don't compile (e.g. those with unsupported syntax)
+    }
+  }
+  return Object.freeze(regexes);
+}
+
 /** Per-walk state computed once at the top-level invocation. */
 interface CollectContext {
   readonly rootDir: string;
   readonly includeRegexes: readonly RegExp[];
   readonly excludeRegexes: readonly RegExp[];
+  readonly gitignoreRegexes: readonly RegExp[];
   readonly hasGlobFilters: boolean;
   readonly extraIgnore: Set<string> | null;
   readonly visited: Set<string>;
@@ -122,8 +173,10 @@ function readDirSafe(dir: string): fs.Dirent[] | null {
 /** True if `entry` is a source file we should collect under `ctx`. */
 function isCollectableSourceFile(full: string, entry: fs.Dirent, ctx: CollectContext): boolean {
   if (!EXTENSIONS.has(path.extname(entry.name))) return false;
-  if (!ctx.hasGlobFilters) return true;
   const rel = normalizePath(path.relative(ctx.rootDir, full));
+  // Respect .gitignore patterns before applying include/exclude globs
+  if (ctx.gitignoreRegexes.length > 0 && matchesAny(ctx.gitignoreRegexes, rel)) return false;
+  if (!ctx.hasGlobFilters) return true;
   return passesIncludeExclude(rel, ctx.includeRegexes, ctx.excludeRegexes);
 }
 
@@ -183,10 +236,12 @@ export function collectFiles(
   const trackDirs = directories instanceof Set;
   const includeRegexes = compileGlobs(config.include);
   const excludeRegexes = compileGlobs(config.exclude);
+  const gitignoreRegexes = readGitignorePatterns(dir);
   const ctx: CollectContext = {
     rootDir: dir,
     includeRegexes,
     excludeRegexes,
+    gitignoreRegexes,
     hasGlobFilters: includeRegexes.length > 0 || excludeRegexes.length > 0,
     extraIgnore: config.ignoreDirs ? new Set(config.ignoreDirs) : null,
     visited: new Set(),

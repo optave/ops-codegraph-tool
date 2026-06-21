@@ -103,4 +103,85 @@ describe('dynamic call classification — dynamicKind and keyExpr fields', () =>
     expect(c?.dynamicKind).toBeUndefined();
     expect(c?.dynamic).toBeUndefined();
   });
+
+  // ── Phase 1: Reflect.* and decorator patterns ──────────────────────────
+
+  it('Reflect.apply(fn, ctx, args) extracts fn as reflection kind', () => {
+    const out = parseJS(`
+      function test(fn, ctx) { Reflect.apply(fn, ctx, []); }
+    `);
+    const c = out.calls.find((c) => c.name === 'fn');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('Reflect.construct(Cls, args) extracts Cls as reflection kind', () => {
+    const out = parseJS(`
+      function test(Cls) { Reflect.construct(Cls, []); }
+    `);
+    const c = out.calls.find((c) => c.name === 'Cls');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it("Reflect.get(target, 'prop') extracts as computed-literal with keyExpr", () => {
+    const out = parseJS(`
+      function test(target) { Reflect.get(target, 'greet'); }
+    `);
+    const c = out.calls.find((c) => c.name === 'greet');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('computed-literal');
+    expect(c?.keyExpr).toContain('greet');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('Reflect.get(target, key) with variable key extracts as computed-key', () => {
+    const out = parseJS(`
+      function test(target, key) { Reflect.get(target, key); }
+    `);
+    const c = out.calls.find((c) => c.name === '<dynamic:computed-key>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('computed-key');
+    expect(c?.keyExpr).toBe('key');
+  });
+});
+
+describe('Phase 1: TypeScript decorator detection', () => {
+  let parsers: Awaited<ReturnType<typeof createParsers>>;
+
+  beforeAll(async () => {
+    parsers = await createParsers();
+  }, 30_000);
+
+  function parseTS(code: string) {
+    const parser = getParser(parsers, 'test.ts');
+    if (!parser) throw new Error('TS parser not available');
+    const tree = parser.parse(code);
+    return extractSymbols(tree, 'test.ts');
+  }
+
+  it('@Foo decorator extracts Foo as reflection kind', () => {
+    const out = parseTS(`
+      function Foo(target: any) {}
+      @Foo
+      class MyClass {}
+    `);
+    const c = out.calls.find((c) => c.name === 'Foo');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('@Foo.bar decorator extracts bar with reflection kind', () => {
+    const out = parseTS(`
+      const decorators = { log: (t: any) => {} };
+      @decorators.log
+      class MyClass {}
+    `);
+    const c = out.calls.find((c) => c.name === 'log');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+  });
 });

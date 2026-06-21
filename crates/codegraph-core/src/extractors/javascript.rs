@@ -1075,6 +1075,7 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "lexical_declaration" | "variable_declaration" => handle_var_decl(node, source, symbols),
         "call_expression" => handle_call_expr(node, source, symbols),
         "new_expression" => handle_new_expr(node, source, symbols),
+        "decorator" => handle_decorator(node, source, symbols),
         "import_statement" => handle_import_stmt(node, source, symbols),
         "export_statement" => handle_export_stmt(node, source, symbols),
         "expression_statement" => handle_expr_stmt(node, source, symbols),
@@ -1466,7 +1467,19 @@ fn handle_new_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(ctor) = ctor else { return };
     match ctor.kind() {
         "identifier" => {
-            push_simple_call(symbols, node, node_text(&ctor, source).to_string());
+            let name = node_text(&ctor, source);
+            if name == "Function" {
+                // new Function(body) — dynamic code execution; always flagged
+                symbols.calls.push(Call {
+                    name: "<dynamic:eval>".to_string(),
+                    line: start_line(node),
+                    dynamic: Some(true),
+                    dynamic_kind: Some("eval".to_string()),
+                    ..Default::default()
+                });
+            } else {
+                push_simple_call(symbols, node, name.to_string());
+            }
         }
         "member_expression" => {
             if let Some(call_info) = extract_call_info(&ctor, node, source) {
@@ -1474,6 +1487,41 @@ fn handle_new_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             }
         }
         _ => {}
+    }
+}
+
+/// Handle a TypeScript/JS decorator node.
+///
+/// Only handles bare-identifier and bare-member-expression decorators
+/// (`@Foo`, `@Foo.bar`) — call expression decorators (`@Foo()`) are
+/// handled automatically when the recursive walker visits the inner
+/// call_expression child.
+fn handle_decorator(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        match child.kind() {
+            "@" => continue,
+            "identifier" => {
+                symbols.calls.push(Call {
+                    name: node_text(&child, source).to_string(),
+                    line: start_line(node),
+                    dynamic: Some(true),
+                    dynamic_kind: Some("reflection".to_string()),
+                    ..Default::default()
+                });
+                break;
+            }
+            "member_expression" => {
+                if let Some(mut call_info) = extract_call_info(&child, node, source) {
+                    call_info.dynamic = Some(true);
+                    call_info.dynamic_kind = Some("reflection".to_string());
+                    symbols.calls.push(call_info);
+                }
+                break;
+            }
+            // call_expression and other types handled by recursive walk
+            _ => break,
+        }
     }
 }
 
@@ -2210,28 +2258,177 @@ fn extract_receiver_name(obj: &Node, source: &[u8]) -> String {
     node_text(obj, source).to_string()
 }
 
+/// Return the first non-punctuation argument node from a call_expression.
+fn get_first_call_arg<'a>(call_node: &'a Node, source: &[u8]) -> Option<Node<'a>> {
+    let args = call_node.child_by_field_name("arguments")
+        .or_else(|| find_child(call_node, "arguments"))?;
+    for i in 0..args.child_count() {
+        let child = args.child(i)?;
+        match child.kind() {
+            "(" | ")" | "," => continue,
+            _ => return Some(child),
+        }
+    }
+    None
+}
+
+/// Extract the logical callee from a Reflect.apply/call/construct first argument.
+fn extract_reflect_callee_from_arg(first_arg: Option<Node>, call_line: u32, source: &[u8]) -> Call {
+    if let Some(arg) = first_arg {
+        match arg.kind() {
+            "identifier" => return Call {
+                name: node_text(&arg, source).to_string(),
+                line: call_line,
+                dynamic: Some(true),
+                dynamic_kind: Some("reflection".to_string()),
+                ..Default::default()
+            },
+            "member_expression" => {
+                if let Some(inner_prop) = arg.child_by_field_name("property") {
+                    let receiver = arg.child_by_field_name("object")
+                        .map(|o| extract_receiver_name(&o, source));
+                    return Call {
+                        name: node_text(&inner_prop, source).to_string(),
+                        line: call_line,
+                        dynamic: Some(true),
+                        dynamic_kind: Some("reflection".to_string()),
+                        receiver,
+                        ..Default::default()
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+    Call {
+        name: "<dynamic:unresolved>".to_string(),
+        line: call_line,
+        dynamic: Some(true),
+        dynamic_kind: Some("unresolved-dynamic".to_string()),
+        ..Default::default()
+    }
+}
+
 fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<Call> {
     match fn_node.kind() {
-        "identifier" => Some(Call {
-            name: node_text(fn_node, source).to_string(),
-            line: start_line(call_node),
-            dynamic: None,
-            receiver: None,
-            ..Default::default()
-        }),
+        "identifier" => {
+            let name = node_text(fn_node, source);
+            if name == "eval" {
+                // eval(code) — dynamic code execution; capture first arg if string literal
+                let key_expr = get_first_call_arg(call_node, source)
+                    .filter(|a| a.kind() == "string" || a.kind() == "template_string")
+                    .map(|a| node_text(&a, source).to_string());
+                return Some(Call {
+                    name: "<dynamic:eval>".to_string(),
+                    line: start_line(call_node),
+                    dynamic: Some(true),
+                    dynamic_kind: Some("eval".to_string()),
+                    key_expr,
+                    ..Default::default()
+                });
+            }
+            Some(Call {
+                name: name.to_string(),
+                line: start_line(call_node),
+                dynamic: None,
+                receiver: None,
+                ..Default::default()
+            })
+        }
         "member_expression" => {
             let obj = fn_node.child_by_field_name("object");
             let prop = fn_node.child_by_field_name("property");
             let prop = prop?;
             let prop_text = node_text(&prop, source);
+            let call_line = start_line(call_node);
+            let is_reflect = obj.as_ref()
+                .map(|o| o.kind() == "identifier" && node_text(o, source) == "Reflect")
+                .unwrap_or(false);
+
+            // Reflect.apply(fn, thisArg, args) — extract the first argument as the actual callee.
+            // Note: Reflect.call does not exist in the ECMAScript spec; only Reflect.apply, construct, get, etc.
+            if is_reflect && prop_text == "apply" {
+                return Some(extract_reflect_callee_from_arg(
+                    get_first_call_arg(call_node, source),
+                    call_line,
+                    source,
+                ));
+            }
+
+            // Reflect.construct(Target, args) — extract constructor as callee
+            if is_reflect && prop_text == "construct" {
+                return Some(extract_reflect_callee_from_arg(
+                    get_first_call_arg(call_node, source),
+                    call_line,
+                    source,
+                ));
+            }
+
+            // Reflect.get(target, prop) — property access via reflection
+            if is_reflect && prop_text == "get" {
+                let args = call_node.child_by_field_name("arguments")
+                    .or_else(|| find_child(call_node, "arguments"));
+                if let Some(args) = args {
+                    let mut first_arg: Option<Node> = None;
+                    let mut second_arg: Option<Node> = None;
+                    let mut arg_idx = 0usize;
+                    for i in 0..args.child_count() {
+                        let Some(child) = args.child(i) else { continue };
+                        if matches!(child.kind(), "(" | ")" | ",") { continue }
+                        if arg_idx == 0 { first_arg = Some(child); }
+                        else if arg_idx == 1 { second_arg = Some(child); break; }
+                        arg_idx += 1;
+                    }
+                    let receiver = first_arg.as_ref().map(|a| extract_receiver_name(a, source));
+                    if let Some(prop_arg) = second_arg {
+                        match prop_arg.kind() {
+                            "string" | "string_fragment" => {
+                                let prop_name = node_text(&prop_arg, source)
+                                    .replace(&['\'', '"'][..], "");
+                                if !prop_name.is_empty() {
+                                    return Some(Call {
+                                        name: prop_name,
+                                        line: call_line,
+                                        dynamic: Some(true),
+                                        dynamic_kind: Some("computed-literal".to_string()),
+                                        key_expr: Some(node_text(&prop_arg, source).to_string()),
+                                        receiver,
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                            "identifier" => {
+                                return Some(Call {
+                                    name: "<dynamic:computed-key>".to_string(),
+                                    line: call_line,
+                                    dynamic: Some(true),
+                                    dynamic_kind: Some("computed-key".to_string()),
+                                    key_expr: Some(node_text(&prop_arg, source).to_string()),
+                                    receiver,
+                                    ..Default::default()
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                return Some(Call {
+                    name: "<dynamic:unresolved>".to_string(),
+                    line: call_line,
+                    dynamic: Some(true),
+                    dynamic_kind: Some("unresolved-dynamic".to_string()),
+                    ..Default::default()
+                });
+            }
 
             if prop_text == "call" || prop_text == "apply" || prop_text == "bind" {
                 if let Some(obj) = &obj {
                     if obj.kind() == "identifier" {
                         return Some(Call {
                             name: node_text(obj, source).to_string(),
-                            line: start_line(call_node),
+                            line: call_line,
                             dynamic: Some(true),
+                            dynamic_kind: Some("reflection".to_string()),
                             receiver: None,
                             ..Default::default()
                         });
@@ -2240,8 +2437,9 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                         if let Some(inner_prop) = obj.child_by_field_name("property") {
                             return Some(Call {
                                 name: node_text(&inner_prop, source).to_string(),
-                                line: start_line(call_node),
+                                line: call_line,
                                 dynamic: Some(true),
+                                dynamic_kind: Some("reflection".to_string()),
                                 receiver: None,
                                 ..Default::default()
                             });
@@ -2256,8 +2454,9 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                     let receiver = obj.as_ref().map(|o| extract_receiver_name(o, source));
                     return Some(Call {
                         name: method_name,
-                        line: start_line(call_node),
+                        line: call_line,
                         dynamic: Some(true),
+                        dynamic_kind: Some("computed-literal".to_string()),
                         receiver,
                         ..Default::default()
                     });
@@ -2276,17 +2475,40 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
         "subscript_expression" => {
             let index = fn_node.child_by_field_name("index");
             if let Some(index) = index {
-                if index.kind() == "string" || index.kind() == "template_string" {
-                    let method_name = node_text(&index, source)
-                        .replace(&['\'', '"', '`'][..], "");
-                    if !method_name.is_empty() && !method_name.contains('$') {
-                        let receiver = fn_node.child_by_field_name("object")
-                            .map(|o| extract_receiver_name(&o, source));
+                let receiver = fn_node.child_by_field_name("object")
+                    .map(|o| extract_receiver_name(&o, source));
+                match index.kind() {
+                    "string" | "template_string" => {
+                        let method_name = node_text(&index, source)
+                            .replace(&['\'', '"', '`'][..], "");
+                        if !method_name.is_empty() && !method_name.contains('$') {
+                            return Some(Call {
+                                name: method_name,
+                                line: start_line(call_node),
+                                dynamic: Some(true),
+                                dynamic_kind: Some("computed-literal".to_string()),
+                                receiver,
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    "identifier" => {
                         return Some(Call {
-                            name: method_name,
+                            name: "<dynamic:computed-key>".to_string(),
                             line: start_line(call_node),
                             dynamic: Some(true),
+                            dynamic_kind: Some("computed-key".to_string()),
+                            key_expr: Some(node_text(&index, source).to_string()),
                             receiver,
+                            ..Default::default()
+                        });
+                    }
+                    _ => {
+                        return Some(Call {
+                            name: "<dynamic:unresolved>".to_string(),
+                            line: start_line(call_node),
+                            dynamic: Some(true),
+                            dynamic_kind: Some("unresolved-dynamic".to_string()),
                             ..Default::default()
                         });
                     }

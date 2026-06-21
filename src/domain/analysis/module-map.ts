@@ -459,9 +459,10 @@ function buildStatsFromNative(
     s.quality.callEdges > 0 ? s.quality.highConfCallEdges / s.quality.callEdges : 0;
 
   // False-positive analysis still uses JS (needs FALSE_POSITIVE_NAMES set).
-  // FP ratio uses the *total* calls count (including sinks) as denominator so
-  // it reflects the full edge set rather than just the resolved subset.
-  const totalCallEdgesForFp = edgesByKind['calls'] ?? s.quality.callEdges;
+  // FP ratio uses the total calls count as denominator. When edgesByKind['calls']
+  // is undefined there are no call edges at all, so fpEdgeCount is 0 and the
+  // > 0 guard below returns 0 regardless — use 0 as the safe fallback.
+  const totalCallEdgesForFp = edgesByKind.calls ?? 0;
   const fpThreshold = config.analysis?.falsePositiveCallers ?? FALSE_POSITIVE_CALLER_THRESHOLD;
   const falsePositiveWarnings = buildFalsePositiveWarnings(queryFalsePositiveRows(db, fpThreshold));
   let fpEdgeCount = 0;
