@@ -729,6 +729,14 @@ export interface ExtractorOutput {
    * `definePropertyReceivers.set("getter", "obj")`.
    */
   definePropertyReceivers?: Map<string, string>;
+  /**
+   * CJS require bindings from `const { X, Y } = require('./path')` patterns.
+   * Used by buildImportedNamesMap to classify X and Y as import artifacts so
+   * receiver-edge resolution falls back to the global class lookup rather than
+   * treating the destructured-binding function node as a local definition (#1661).
+   * Does NOT cause DB import edges — use `imports` for that.
+   */
+  cjsRequireBindings?: Array<{ names: string[]; source: string }>;
   /** WASM tree retained for downstream analysis (complexity, CFG, dataflow). */
   _tree?: TreeSitterTree;
   /** Language identifier. */

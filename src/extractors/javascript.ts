@@ -399,8 +399,11 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     arrayCallbackBindings,
   });
 
-  // Extract definitions from destructured bindings (query patterns don't match object_pattern)
-  extractDestructuredBindingsWalk(tree.rootNode, definitions);
+  // Extract definitions from destructured bindings (query patterns don't match object_pattern).
+  // Also collects CJS require bindings (const { X } = require('…')) into a separate list so
+  // importedNames can classify them as import artifacts without creating DB edges (#1661).
+  const cjsRequireBindings: Array<{ names: string[]; source: string }> = [];
+  extractDestructuredBindingsWalk(tree.rootNode, definitions, cjsRequireBindings);
 
   // Everything without bespoke traversal semantics is collected in ONE pass:
   // dynamic import() calls, prototype-method definitions, param bindings,
@@ -443,6 +446,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     thisCallBindings,
     newExpressions,
     ...(definePropertyReceivers.size > 0 ? { definePropertyReceivers } : {}),
+    ...(cjsRequireBindings.length > 0 ? { cjsRequireBindings } : {}),
   };
 }
 
@@ -508,8 +512,15 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
 /**
  * Walk the AST to find destructured const bindings (query patterns don't match object_pattern).
  * e.g. `const { handleToken, checkPermissions } = initAuth(config)`
+ *
+ * When `cjsRequireBindings` is provided, also records `const { X } = require('./path')` patterns
+ * so the edge builder can classify X as an import artifact rather than a local definition (#1661).
  */
-function extractDestructuredBindingsWalk(node: TreeSitterNode, definitions: Definition[]): void {
+function extractDestructuredBindingsWalk(
+  node: TreeSitterNode,
+  definitions: Definition[],
+  cjsRequireBindings?: Array<{ names: string[]; source: string }>,
+): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -537,6 +548,43 @@ function extractDestructuredBindingsWalk(node: TreeSitterNode, definitions: Defi
             nodeEndLine(declNode),
             definitions,
           );
+          // Record CJS require bindings so importedNames can classify these names
+          // as import artifacts, preventing false local-definition blocking (#1661).
+          if (cjsRequireBindings) {
+            const valueN = declarator.childForFieldName('value');
+            if (valueN?.type === 'call_expression') {
+              const fn = valueN.childForFieldName('function');
+              if (fn?.text === 'require') {
+                const args = valueN.childForFieldName('arguments');
+                const strArg = args && findChild(args, 'string');
+                if (strArg) {
+                  const modPath = strArg.text.replace(/['"]/g, '');
+                  const names: string[] = [];
+                  for (let k = 0; k < nameN.childCount; k++) {
+                    const prop = nameN.child(k);
+                    if (!prop) continue;
+                    if (
+                      prop.type === 'shorthand_property_identifier_pattern' ||
+                      prop.type === 'shorthand_property_identifier'
+                    ) {
+                      names.push(prop.text);
+                    } else if (prop.type === 'pair_pattern' || prop.type === 'pair') {
+                      const val = prop.childForFieldName('value');
+                      if (
+                        val?.type === 'identifier' ||
+                        val?.type === 'shorthand_property_identifier_pattern'
+                      ) {
+                        names.push(val.text);
+                      }
+                    }
+                  }
+                  if (names.length > 0) {
+                    cjsRequireBindings.push({ names, source: modPath });
+                  }
+                }
+              }
+            }
+          }
         } else if (nameN && nameN.type === 'array_pattern') {
           // `const [x, y] = ...` — emit a single constant node whose name is the
           // full array pattern text (e.g. `[x, y]`), matching native engine behaviour.
@@ -551,7 +599,7 @@ function extractDestructuredBindingsWalk(node: TreeSitterNode, definitions: Defi
     }
 
     if (child.type !== 'export_statement') {
-      extractDestructuredBindingsWalk(child, definitions);
+      extractDestructuredBindingsWalk(child, definitions, cjsRequireBindings);
     }
   }
 }
@@ -1111,6 +1159,40 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             nodeEndLine(node),
             ctx.definitions,
           );
+          // Record CJS require bindings for import-artifact classification (#1661).
+          if (valueN?.type === 'call_expression') {
+            const fn = valueN.childForFieldName('function');
+            if (fn?.text === 'require') {
+              const args = valueN.childForFieldName('arguments');
+              const strArg = args && findChild(args, 'string');
+              if (strArg) {
+                const modPath = strArg.text.replace(/['"]/g, '');
+                const names: string[] = [];
+                for (let k = 0; k < nameN.childCount; k++) {
+                  const prop = nameN.child(k);
+                  if (!prop) continue;
+                  if (
+                    prop.type === 'shorthand_property_identifier_pattern' ||
+                    prop.type === 'shorthand_property_identifier'
+                  ) {
+                    names.push(prop.text);
+                  } else if (prop.type === 'pair_pattern' || prop.type === 'pair') {
+                    const val = prop.childForFieldName('value');
+                    if (
+                      val?.type === 'identifier' ||
+                      val?.type === 'shorthand_property_identifier_pattern'
+                    ) {
+                      names.push(val.text);
+                    }
+                  }
+                }
+                if (names.length > 0) {
+                  if (!ctx.cjsRequireBindings) ctx.cjsRequireBindings = [];
+                  ctx.cjsRequireBindings.push({ names, source: modPath });
+                }
+              }
+            }
+          }
         } else if (isConst && nameN.type === 'array_pattern' && !hasFunctionScopeAncestor(node)) {
           // Array destructuring: `const [x, y] = ...` — emit a single constant node
           // whose name is the full array pattern text (e.g. `[x, y]`), matching

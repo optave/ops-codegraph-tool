@@ -834,6 +834,7 @@ function serializeExtractorOutput(
       ? { returnTypeMap: Array.from(symbols.returnTypeMap.entries()) }
       : {}),
     ...(symbols.callAssignments?.length ? { callAssignments: symbols.callAssignments } : {}),
+    ...(symbols.cjsRequireBindings?.length ? { cjsRequireBindings: symbols.cjsRequireBindings } : {}),
   };
 }
 

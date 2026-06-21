@@ -844,6 +844,16 @@ function buildCallEdgesJS(
 
     const seenCallEdges = new Set<string>();
     const ptsMap = buildPointsToMapForFile(symbols, importedNames);
+    // Build the import-artifact name set: importedNames plus CJS require bindings.
+    // Used only by resolveReceiverEdge to distinguish local definitions from CJS
+    // import shadows — does NOT affect call-target resolution or DB edges (#1661).
+    const importArtifactNames = buildImportArtifactNames(
+      importedNames,
+      symbols,
+      ctx,
+      relPath,
+      rootDir,
+    );
 
     buildFileCallEdges(
       relPath,
@@ -856,6 +866,7 @@ function buildCallEdgesJS(
       typeMap,
       ptsMap,
       chaCtx,
+      importArtifactNames,
     );
     buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows);
   }
@@ -898,6 +909,38 @@ function buildImportedNamesMap(
     }
   }
   return importedNames;
+}
+
+/**
+ * Build a map of all names that are import artifacts in this file — includes
+ * both ES module imports (already in importedNames) and CJS require destructuring
+ * bindings (`const { X } = require('./path')`). Used exclusively by resolveReceiverEdge
+ * to classify same-file function-kind nodes as import artifacts vs. local definitions.
+ * Does NOT affect call resolution or DB edge creation (#1661).
+ */
+function buildImportArtifactNames(
+  importedNames: Map<string, string>,
+  symbols: ExtractorOutput,
+  ctx: PipelineContext,
+  relPath: string,
+  rootDir: string,
+): ReadonlyMap<string, string> {
+  if (!symbols.cjsRequireBindings?.length) return importedNames;
+  const combined = new Map(importedNames);
+  const traceBarrel = (resolvedPath: string, cleanName: string): string => {
+    if (!isBarrelFile(ctx, resolvedPath)) return resolvedPath;
+    const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
+    return actual ?? resolvedPath;
+  };
+  for (const binding of symbols.cjsRequireBindings) {
+    const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), binding.source);
+    for (const name of binding.names) {
+      if (!combined.has(name)) {
+        combined.set(name, traceBarrel(resolvedPath, name));
+      }
+    }
+  }
+  return combined;
 }
 
 function makeContextLookup(ctx: PipelineContext, getNodeIdStmt: NodeIdStmt): CallNodeLookup {
@@ -1483,6 +1526,7 @@ function buildFileCallEdges(
   typeMap: Map<string, TypeMapEntry | string>,
   ptsMap?: PointsToMap | null,
   chaCtx?: ChaContext,
+  importArtifactNames?: ReadonlyMap<string, string>,
 ): void {
   // Tracks edges that were inserted by the pts fallback (edgeKey → allEdgeRows index).
   // Kept separate from seenCallEdges so that a subsequent direct-call edge for the same
@@ -1584,7 +1628,7 @@ function buildFileCallEdges(
         relPath,
         typeMap as Map<string, unknown>,
         seenCallEdges,
-        importedNames,
+        importArtifactNames ?? importedNames,
       );
       if (recv) {
         allEdgeRows.push([
