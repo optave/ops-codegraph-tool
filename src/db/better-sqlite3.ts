@@ -7,14 +7,15 @@
  * rusqlite) never touches this module.
  */
 import { createRequire } from 'node:module';
+import type Database from 'better-sqlite3';
 
 const _require = createRequire(import.meta.url);
-let _Database: any;
+let _Database: typeof Database | undefined;
 
 /** Return the `better-sqlite3` Database constructor, loading it on first call. */
-export function getDatabase(): new (...args: any[]) => any {
+export function getDatabase(): typeof Database {
   if (!_Database) {
-    _Database = _require('better-sqlite3');
+    _Database = _require('better-sqlite3') as typeof Database;
   }
-  return _Database;
+  return _Database!;
 }

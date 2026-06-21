@@ -2975,8 +2975,9 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
   const propText = prop.text;
   const isReflect = obj?.type === 'identifier' && obj.text === 'Reflect';
 
-  // Reflect.apply(fn, thisArg, args) / Reflect.call(fn, ...) — extract the first arg as callee
-  if (isReflect && (propText === 'apply' || propText === 'call')) {
+  // Reflect.apply(fn, thisArg, args) — extract the first arg as callee
+  // Note: Reflect.call does not exist in the ECMAScript spec (only Reflect.apply, construct, get, etc.)
+  if (isReflect && propText === 'apply') {
     return extractReflectCalleeFromArg(getFirstCallArg(callNode), callLine);
   }
 

@@ -24,7 +24,7 @@ import {
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import { semverCompare } from '../../../../infrastructure/update-check.js';
-import { normalizePath } from '../../../../shared/constants.js';
+import { normalizePath, TS_NATIVE_CONFIDENCE_FLOOR } from '../../../../shared/constants.js';
 import { toErrorMessage } from '../../../../shared/errors.js';
 import { CODEGRAPH_VERSION } from '../../../../shared/version.js';
 import type {
@@ -1760,7 +1760,10 @@ async function backfillNativeDroppedFiles(
 
 /**
  * Backfill the `technique` column on `calls` edges written by the native Rust
- * orchestrator, which does not write the column itself.
+ * orchestrator, which does not write the column itself.  Also lifts any
+ * resolved ts-native edge whose confidence is below TS_NATIVE_CONFIDENCE_FLOOR
+ * to that floor value so that the name-lookup quality of the native resolver is
+ * reflected in the call-confidence metric.
  *
  * For full builds, all `calls` edges in the DB are new so a global UPDATE is
  * correct.  For incremental builds, only changed-file source nodes are updated
@@ -1781,6 +1784,12 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
     db.prepare(
       "UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL",
     ).run();
+    // Lift resolved ts-native edges below the confidence floor.
+    db.prepare(
+      `UPDATE edges SET confidence = ?
+       WHERE kind = 'calls' AND technique = 'ts-native'
+         AND confidence > 0 AND confidence < ?`,
+    ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR);
     return;
   }
   // Incremental: scope to source nodes whose file is one of the changed files.
@@ -1797,6 +1806,15 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
            SELECT id FROM nodes WHERE file IN (${placeholders})
          )`,
       ).run(...chunk);
+      // Lift resolved ts-native edges below the confidence floor for this chunk.
+      db.prepare(
+        `UPDATE edges SET confidence = ?
+         WHERE kind = 'calls' AND technique = 'ts-native'
+           AND confidence > 0 AND confidence < ?
+           AND source_id IN (
+             SELECT id FROM nodes WHERE file IN (${placeholders})
+           )`,
+      ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR, ...chunk);
     }
   });
   tx();

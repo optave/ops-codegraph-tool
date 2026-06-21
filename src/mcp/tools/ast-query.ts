@@ -1,6 +1,6 @@
 import type { ASTNodeKind } from '../../types.js';
 import { effectiveLimit, effectiveOffset } from '../middleware.js';
-import type { McpToolContext } from '../server.js';
+import type { McpToolContext } from '../types.js';
 
 export const name = 'ast_query';
 

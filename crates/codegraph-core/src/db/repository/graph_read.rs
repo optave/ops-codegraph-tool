@@ -551,8 +551,11 @@ fn fetch_quality_metrics(
                 ))
             })?
     };
+    // Exclude sink edges (confidence=0.0) from the confidence ratio: they flag
+    // unresolvable dynamic calls (eval/computed-key) and are not resolution
+    // attempts — including them in the denominator unfairly penalises the metric.
     let call_edges: i32 = conn
-        .prepare_cached("SELECT COUNT(*) FROM edges WHERE kind = 'calls'")
+        .prepare_cached("SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND confidence > 0")
         .map_err(|e| napi::Error::from_reason(format!("get_graph_stats call_edges: {e}")))?
         .query_row([], |row| row.get(0))
         .map_err(|e| {

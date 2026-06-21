@@ -20,6 +20,7 @@ import type { CodegraphConfig, MCPServerOptions } from '../types.js';
 import { initMcpDefaults } from './middleware.js';
 import { buildToolList } from './tool-registry.js';
 import { TOOL_HANDLERS } from './tools/index.js';
+import type { McpToolContext } from './types.js';
 
 /**
  * Module-level guard to register shutdown handlers only once per process.
@@ -28,14 +29,7 @@ import { TOOL_HANDLERS } from './tools/index.js';
  */
 let _activeServer: any = null;
 
-export interface McpToolContext {
-  dbPath: string | undefined;
-  getQueries(): Promise<any>;
-  getDatabase(): any;
-  findDbPath: typeof findDbPath;
-  allowedRepos: string[] | undefined;
-  MCP_MAX_LIMIT: number;
-}
+export type { McpToolContext };
 
 interface MCPServerOptionsInternal extends MCPServerOptions {
   config?: CodegraphConfig;

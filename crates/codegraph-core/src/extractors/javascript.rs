@@ -2345,8 +2345,9 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                 .map(|o| o.kind() == "identifier" && node_text(o, source) == "Reflect")
                 .unwrap_or(false);
 
-            // Reflect.apply/call — extract the first argument as the actual callee
-            if is_reflect && (prop_text == "apply" || prop_text == "call") {
+            // Reflect.apply(fn, thisArg, args) — extract the first argument as the actual callee.
+            // Note: Reflect.call does not exist in the ECMAScript spec; only Reflect.apply, construct, get, etc.
+            if is_reflect && prop_text == "apply" {
                 return Some(extract_reflect_callee_from_arg(
                     get_first_call_arg(call_node, source),
                     call_line,

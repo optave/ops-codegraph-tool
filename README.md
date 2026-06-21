@@ -85,7 +85,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 | MCP server | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
 | Dataflow + CFG + AST querying | **Yes** | AST only | **Yes**² | — | — | — |
 | Hybrid search (BM25 + semantic) | **Yes** | **Yes** | — | Keyword only | **Yes** | **Yes** |
-| Git-aware (diff impact, co-change, branch diff) | **All 3** | Diff only | — | — | **All 3** | — |
+| Git-aware (diff impact, co-change, branch diff) | **All 3** | **All 3** | — | — | **All 3** | — |
 | Dead code / role classification | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
 | Incremental rebuilds | **O(changed)** | **O(changed)** | O(n) | O(n)³ | **Yes**⁴ | O(n)⁵ |
 | Architecture rules + CI gate | **Yes** | — | — | — | — | — |
@@ -937,7 +937,7 @@ const { results: fused } = await multiSearchData(
 - **TypeScript compiler integration is auto-enabled** — when `typescript` is installed and a `tsconfig.json` is found, the TypeScript compiler API pass runs automatically; disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` if you want faster builds without it; heuristic type inference (annotations, `new` expressions, assignment chains) is always active as a baseline
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
-- **Dataflow analysis** — interprocedural edges (`arg_in`, `return_out`) require a full build after adding new callee files; incremental re-stitch fires on both the JS and native engine paths (P4 re-stitch closes issue #1614)
+- **Dataflow analysis** — interprocedural edges (`arg_in`, `return_out`) require a full build after adding new callee files; incremental re-stitch fires automatically on both the JS and native engine paths
 
 ## 🗺️ Roadmap
 

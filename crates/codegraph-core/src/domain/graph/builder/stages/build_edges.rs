@@ -722,9 +722,8 @@ fn process_file<'a>(
     let mut seen_edges: HashSet<u64> = HashSet::new();
     let mut pts_edge_map: HashMap<u64, usize> = HashMap::new();
     // Separate dedup set for sink edges: (caller_id, file_node_id, dynamic_kind).
-    // Using the full kind string avoids aliasing between any two kinds that share a
-    // leading byte (e.g. a future "eval-strict" would have collided with "eval" under
-    // the old first-byte discriminator).
+    // Uses the full kind string rather than the first byte to avoid collisions between
+    // kinds that share a prefix (e.g. "computed-key" and "computed-literal" both start with b'c').
     let mut seen_sink_edges: HashSet<(u32, u32, String)> = HashSet::new();
 
     for call in &file_input.calls {
