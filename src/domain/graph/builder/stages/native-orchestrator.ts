@@ -1988,23 +1988,45 @@ async function runPostNativePasses(
   );
   const chaMs = performance.now() - chaStart;
 
-  // Role re-classification after JS edge-writing post-passes.
-  // The Rust orchestrator classifies roles before these post-passes (CHA,
-  // this-dispatch) add edges, so roles for the edge endpoints are stale.
-  // Scoped to the files containing those endpoints: a new edge only changes
-  // fan-in/out for its own source and target nodes, so re-classifying their
-  // files restores correctness without re-running the classifier over the
-  // whole graph (which cost ~130ms per build on codegraph itself and was a
-  // major part of the v3.12.0 native full-build benchmark regression).
+  // Role re-classification after the Rust orchestrator build.
+  //
+  // Two reasons to re-classify:
+  //
+  // 1. Post-pass edges (CHA, this-dispatch): the Rust orchestrator classifies
+  //    roles before these passes add edges, so fan-in/out for their endpoints
+  //    is stale. On incremental builds, scope to the affected files for speed.
+  //
+  // 2. hasActiveFileSiblings parity: the Rust classifier does not implement the
+  //    JS hasActiveFileSiblings heuristic. That heuristic promotes functions with
+  //    fan_in=0 but fan_out>0 to 'leaf' when their file has other connected
+  //    callables — preventing false dead-unresolved classifications for functions
+  //    like `main` or `square` that call others but are never called themselves.
+  //    On full builds, always run a full JS re-classification so the Rust roles
+  //    are replaced by the canonical JS classifier output (#1659).
+  //
+  // Strategy:
+  //   - Full build: always run full JS classifyNodeRoles(db, null).
+  //   - Incremental build with post-pass edges: run scoped re-classification
+  //     for the affected files (same as before). The full-build pass already
+  //     produced correct JS roles for all unchanged files on the previous build.
+  //   - Incremental build with no post-pass edges: skip re-classification
+  //     (Rust roles on unchanged files are not stale, and the heuristic gap
+  //     was corrected on the last full build).
   let reclassifyMs = 0;
-  if (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0) {
-    const affectedFiles = [...new Set([...chaAffectedFiles, ...thisDispatchAffectedFiles])];
-    // When edges were inserted but all their endpoint nodes have null `file`
-    // columns (rare but possible), affectedFiles stays empty even though
-    // fan-in/out changed. Fall back to full-graph re-classification in that
-    // case — scoped classification with an empty set would be a no-op, leaving
-    // roles stale for those nodes.
-    const scopedFiles = affectedFiles.length > 0 ? affectedFiles : null;
+  const needsFullReclassify = !!result.isFullBuild;
+  const needsScopedReclassify =
+    !needsFullReclassify && (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0);
+  if (needsFullReclassify || needsScopedReclassify) {
+    let scopedFiles: string[] | null = null;
+    if (needsScopedReclassify) {
+      const affectedFiles = [...new Set([...chaAffectedFiles, ...thisDispatchAffectedFiles])];
+      // When edges were inserted but all their endpoint nodes have null `file`
+      // columns (rare but possible), affectedFiles stays empty even though
+      // fan-in/out changed. Fall back to full-graph re-classification in that
+      // case — scoped classification with an empty set would be a no-op, leaving
+      // roles stale for those nodes.
+      scopedFiles = affectedFiles.length > 0 ? affectedFiles : null;
+    }
     const reclassifyStart = performance.now();
     try {
       const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
@@ -2017,7 +2039,7 @@ async function runPostNativePasses(
       debug(
         scopedFiles
           ? `Post-pass role re-classification complete (${scopedFiles.length} file(s))`
-          : 'Post-pass role re-classification complete (full graph — null-file endpoints)',
+          : 'Post-pass role re-classification complete (full graph)',
       );
     } catch (err) {
       debug(`Post-pass role re-classification failed: ${toErrorMessage(err)}`);
