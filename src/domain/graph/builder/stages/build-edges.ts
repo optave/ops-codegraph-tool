@@ -1227,6 +1227,9 @@ function resolveFallbackTargets(
  *   - Skips self-edges and already-seen edges.
  *   - If a pts edge already exists for this pair, upgrades it in-place to
  *     direct-call confidence and promotes to seenCallEdges.
+ *   - If a dyn=0 edge already exists and the incoming call has an explicit
+ *     dynamicKind (e.g. 'reflection' for bare decorators), upgrades the
+ *     existing row to dyn=1 in-place so the semantic classification wins.
  *   - Otherwise records a new `calls` edge with `ts-native` technique.
  */
 function emitDirectCallEdgesForCall(
@@ -1234,10 +1237,12 @@ function emitDirectCallEdgesForCall(
   targets: ReadonlyArray<{ id: number; file: string }>,
   importedFrom: string | null | undefined,
   isDynamic: number,
+  hasDynamicKind: boolean,
   relPath: string,
   seenCallEdges: Set<string>,
   ptsEdgeRows: Map<string, number>,
   allEdgeRows: EdgeRowTuple[],
+  dynZeroEdgeRows?: Map<string, number>,
 ): void {
   // Sort targets by confidence descending before emitting edges.
   // For multi-target calls with duplicate (source_id, target_id) pairs the
@@ -1257,7 +1262,23 @@ function emitDirectCallEdgesForCall(
     const edgeKey = `${caller.id}|${t.id}`;
     if (t.id === caller.id) continue;
     const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
-    if (seenCallEdges.has(edgeKey)) continue;
+    if (seenCallEdges.has(edgeKey)) {
+      // Edge already emitted. If the incoming call carries an explicit semantic
+      // dynamic classification (dynamicKind set — e.g. 'reflection' for bare
+      // decorators) and the existing edge was recorded with dyn=0, upgrade it
+      // in-place so the more specific classification wins.
+      // Generic dynamic=true without dynamicKind (alias/callback calls) does
+      // NOT override dyn=0 to avoid false positives on f.call/f.bind patterns.
+      if (isDynamic === 1 && hasDynamicKind && dynZeroEdgeRows) {
+        const dynZeroIdx = dynZeroEdgeRows.get(edgeKey);
+        if (dynZeroIdx !== undefined) {
+          const row = allEdgeRows[dynZeroIdx];
+          if (row) row[4] = 1;
+          dynZeroEdgeRows.delete(edgeKey);
+        }
+      }
+      continue;
+    }
     const ptsIdx = ptsEdgeRows.get(edgeKey);
     if (ptsIdx !== undefined) {
       // A pts-resolved edge already exists for this caller→target pair with a
@@ -1273,7 +1294,13 @@ function emitDirectCallEdgesForCall(
       seenCallEdges.add(edgeKey);
     } else {
       seenCallEdges.add(edgeKey);
+      const newIdx = allEdgeRows.length;
       allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native', null]);
+      // Track dyn=0 edges so a later dyn=1+dynamicKind call for the same pair
+      // can upgrade them (e.g. bare decorator after call-expression decorator).
+      if (isDynamic === 0 && dynZeroEdgeRows) {
+        dynZeroEdgeRows.set(edgeKey, newIdx);
+      }
     }
   }
 }
@@ -1535,6 +1562,12 @@ function buildFileCallEdges(
   // no longer tracked here.
   const ptsEdgeRows = new Map<string, number>();
 
+  // Tracks direct-call edges emitted with dyn=0 (edgeKey → allEdgeRows index).
+  // When a later call to the same target has dyn=1 (e.g. a bare decorator `@Log`
+  // processed after the call-expression `@Log()` in the query path), the existing
+  // dyn=0 row is upgraded in-place so the more specific dynamic classification wins.
+  const dynZeroEdgeRows = new Map<string, number>();
+
   // Pre-compute the set of names that appear as lhs in fnRefBindings so that
   // case (c) of the pts gate below only fires for names that are genuine
   // bind/alias entries, not for every locally-defined function or import that
@@ -1564,10 +1597,12 @@ function buildFileCallEdges(
       targets,
       importedFrom,
       isDynamic,
+      !!call.dynamicKind,
       relPath,
       seenCallEdges,
       ptsEdgeRows,
       allEdgeRows,
+      dynZeroEdgeRows,
     );
 
     // Step 3: Phase 8.3/8.3c pts fallback for unresolved no-receiver calls.
