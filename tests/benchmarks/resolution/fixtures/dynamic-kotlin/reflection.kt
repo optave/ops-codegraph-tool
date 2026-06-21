@@ -20,3 +20,13 @@ fun runFarewellRef(): (String) -> String {
 fun runInvoke(fn: (String) -> String): String {
     return fn.invoke("world")
 }
+
+// Member callable reference: Greeter::greet must resolve to Greeter.greet,
+// not the top-level greet() above, even though both share the same name.
+class Greeter {
+    fun greet(name: String): String = "Hi, $name"
+}
+
+fun runMemberCallableRef(): (Greeter, String) -> String {
+    return Greeter::greet
+}

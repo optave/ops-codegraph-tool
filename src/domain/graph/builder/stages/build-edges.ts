@@ -1021,14 +1021,39 @@ function resolveFallbackTargets(
   targets: ReadonlyArray<{ id: number; file: string; kind?: string }>;
   importedFrom: string | null | undefined;
 } {
-  let { targets, importedFrom } = resolveCallTargets(
-    lookup,
-    call,
-    relPath,
-    importedNames,
-    typeMap as Map<string, unknown>,
-    caller.callerName,
-  );
+  // RES-4: Kotlin member callable reference — `Greeter::greet` emits
+  // { name: 'greet', receiver: 'Greeter', dynamicKind: 'reflection' }.
+  // The receiver is the class qualifier (not a typeMap variable), so
+  // resolveCallTargets would find a same-named top-level function via
+  // byNameAndFile('greet', relPath) before the qualified form is tried.
+  // Prefer `Greeter.greet` in the same file first; fall through to the
+  // normal path only when no qualified match exists.
+  let preQualifiedTargets: ReadonlyArray<{ id: number; file: string; kind?: string }> = [];
+  if (
+    call.dynamicKind === 'reflection' &&
+    call.receiver &&
+    !call.keyExpr &&
+    !isModuleScopedLanguage(relPath)
+  ) {
+    preQualifiedTargets = lookup
+      .byNameAndFile(`${call.receiver}.${call.name}`, relPath)
+      .filter((n) => n.kind === 'method' || n.kind === 'function');
+  }
+
+  let { targets, importedFrom } =
+    preQualifiedTargets.length > 0
+      ? {
+          targets: preQualifiedTargets as Array<{ id: number; file: string; kind?: string }>,
+          importedFrom: undefined as string | undefined,
+        }
+      : resolveCallTargets(
+          lookup,
+          call,
+          relPath,
+          importedNames,
+          typeMap as Map<string, unknown>,
+          caller.callerName,
+        );
 
   // Same-class `this.method()` fallback: when the call receiver is `this` and
   // resolveCallTargets found nothing, derive the enclosing class name from the

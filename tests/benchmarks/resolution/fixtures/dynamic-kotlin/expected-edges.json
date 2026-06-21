@@ -16,6 +16,13 @@
       "kind": "calls",
       "mode": "dynamic",
       "notes": "::farewell callable reference — reflection kind, resolves to top-level farewell()"
+    },
+    {
+      "source": { "name": "runMemberCallableRef", "file": "reflection.kt" },
+      "target": { "name": "Greeter.greet", "file": "reflection.kt" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "Greeter::greet member callable ref must resolve to Greeter.greet, not top-level greet()"
     }
   ]
 }
