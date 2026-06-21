@@ -1,10 +1,4 @@
-import type {
-  Call,
-  ExtractorOutput,
-  SubDeclaration,
-  TreeSitterNode,
-  TreeSitterTree,
-} from '../types.js';
+import type { ExtractorOutput, SubDeclaration, TreeSitterNode, TreeSitterTree } from '../types.js';
 import {
   findChild,
   findParentNode,
@@ -160,22 +154,113 @@ function handlePyClassDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 }
 
+/** Iterate non-punctuation arguments in a Python argument_list node. */
+function* iterPyArgs(node: TreeSitterNode): Generator<TreeSitterNode> {
+  const args = node.childForFieldName('arguments') || findChild(node, 'argument_list');
+  if (!args) return;
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',' || t === '*' || t === '**') continue;
+    yield child;
+  }
+}
+
 function handlePyCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
-  let callName: string | null = null;
-  let receiver: string | undefined;
-  if (fn.type === 'identifier') callName = fn.text;
-  else if (fn.type === 'attribute') {
-    const attr = fn.childForFieldName('attribute');
-    if (attr) callName = attr.text;
-    const obj = fn.childForFieldName('object');
-    if (obj) receiver = obj.text;
+  const callLine = node.startPosition.row + 1;
+
+  // ── Identifier calls (e.g. getattr, eval, exec) ─────────────────────────
+  if (fn.type === 'identifier') {
+    const name = fn.text;
+
+    // eval(code) / exec(code) — dynamic code execution; always undecidable
+    if (name === 'eval' || name === 'exec') {
+      ctx.calls.push({
+        name: '<dynamic:eval>',
+        line: callLine,
+        dynamic: true,
+        dynamicKind: 'eval',
+      });
+      return;
+    }
+
+    // getattr(obj, 'method') — resolvable if literal; computed-key if variable
+    if (name === 'getattr') {
+      const argIter = iterPyArgs(node);
+      const firstArg = argIter.next().value as TreeSitterNode | undefined;
+      const secondArg = argIter.next().value as TreeSitterNode | undefined;
+      const receiver = firstArg?.text;
+      if (secondArg) {
+        const st = secondArg.type;
+        if (st === 'string' || st === 'concatenated_string') {
+          const attrName = secondArg.text.replace(/^['"]{1,3}|['"]{1,3}$/g, '');
+          if (attrName && !attrName.includes('{')) {
+            ctx.calls.push({
+              name: attrName,
+              line: callLine,
+              dynamic: true,
+              dynamicKind: 'reflection',
+              keyExpr: secondArg.text,
+              receiver,
+            });
+            return;
+          }
+        }
+        // Variable or f-string key — computed-key
+        ctx.calls.push({
+          name: '<dynamic:computed-key>',
+          line: callLine,
+          dynamic: true,
+          dynamicKind: 'computed-key',
+          keyExpr: secondArg.text,
+          receiver,
+        });
+        return;
+      }
+      // getattr with no second arg — unresolved
+      ctx.calls.push({
+        name: '<dynamic:unresolved>',
+        line: callLine,
+        dynamic: true,
+        dynamicKind: 'unresolved-dynamic',
+      });
+      return;
+    }
+
+    // Normal identifier call
+    ctx.calls.push({ name, line: callLine });
+    return;
   }
-  if (callName) {
-    const call: Call = { name: callName, line: node.startPosition.row + 1 };
-    if (receiver) call.receiver = receiver;
-    ctx.calls.push(call);
+
+  // ── Attribute calls (e.g. obj.method(), functools.partial(fn)) ──────────
+  if (fn.type === 'attribute') {
+    const attr = fn.childForFieldName('attribute');
+    const obj = fn.childForFieldName('object');
+    if (!attr) return;
+    const callName = attr.text;
+    const receiver = obj?.text;
+
+    // functools.partial(fn, *args) — extract fn as reflection target
+    if (callName === 'partial' && (receiver === 'functools' || receiver?.endsWith('functools'))) {
+      const argIter = iterPyArgs(node);
+      const firstArg = argIter.next().value as TreeSitterNode | undefined;
+      if (firstArg?.type === 'identifier') {
+        ctx.calls.push({
+          name: firstArg.text,
+          line: callLine,
+          dynamic: true,
+          dynamicKind: 'reflection',
+          receiver: 'functools.partial',
+        });
+        return;
+      }
+    }
+
+    ctx.calls.push({ name: callName, line: callLine, ...(receiver ? { receiver } : {}) });
+    return;
   }
 }
 
