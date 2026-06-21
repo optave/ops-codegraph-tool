@@ -1655,11 +1655,16 @@ function applyEdgeTechniquesAfterNativeInsert(
       ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR, ...chunk);
     }
     // Back-fill dynamic_kind for flagged sink edges emitted by the native engine.
-    // Include dynamic_kind in the WHERE clause so two sink edges from the same caller
-    // to the same file node with different kinds don't clobber each other.
+    // Native bulkInsertEdges uses INSERT OR IGNORE and does not write dynamic_kind, so
+    // this UPDATE is the only way to set it for natively-inserted sink edges.
+    //
+    // Scope to confidence=0.0 AND dynamic=1 so we only touch sink edges (never normal
+    // call edges that happen to share the same (source_id, target_id) pair).
+    // Include dynamic_kind in the WHERE so two sink edges from the same caller to the
+    // same file with different kinds don't clobber each other across incremental runs.
     if (dynamicKindRows.length > 0) {
       const stmt = db.prepare(
-        "UPDATE edges SET dynamic_kind = ? WHERE kind = 'calls' AND source_id = ? AND target_id = ? AND (dynamic_kind IS NULL OR dynamic_kind = ?)",
+        "UPDATE edges SET dynamic_kind = ? WHERE kind = 'calls' AND source_id = ? AND target_id = ? AND confidence = 0.0 AND dynamic = 1 AND (dynamic_kind IS NULL OR dynamic_kind = ?)",
       );
       for (const r of dynamicKindRows) stmt.run(r[6], r[0], r[1], r[6]);
     }
