@@ -477,7 +477,15 @@ function buildDataflowVerticesAndEdges(
  *  - If B's summary shows B.param[j] reaches B's return: emits 'return_out'
  *    inter edge: B.return → A's capture local (if any)
  */
-function buildInterproceduralStitch(
+/**
+ * Core stitch logic — must be called inside an already-open transaction.
+ *
+ * Separated from buildInterproceduralStitch so callers that manage their own
+ * outer transaction (buildDataflowVerticesFromMap, buildDataflowEdges) can
+ * call this directly without starting a nested transaction, which better-sqlite3
+ * does not support.
+ */
+function runInterproceduralStitch(
   db: BetterSqlite3Database,
   candidates: StitchCandidate[],
   captures: ReturnCapture[],
@@ -513,77 +521,96 @@ function buildInterproceduralStitch(
   }
 
   let count = 0;
-  const tx = db.transaction(() => {
-    for (const cand of candidates) {
-      // Resolve call edge for this site
-      const callEdge = getCallEdge.get(cand.callerFuncId, cand.calleeFuncId) as {
-        id: number;
-      } | null;
-      const callEdgeId = callEdge?.id ?? null;
+  for (const cand of candidates) {
+    // Resolve call edge for this site
+    const callEdge = getCallEdge.get(cand.callerFuncId, cand.calleeFuncId) as {
+      id: number;
+    } | null;
+    const callEdgeId = callEdge?.id ?? null;
 
-      // Find source vertex x in caller
-      let srcVertexId: number | null = null;
-      if (cand.bindingType === 'param' && cand.bindingIndex != null) {
-        const v = getParamVertex.get(cand.callerFuncId, cand.bindingIndex) as { id: number } | null;
-        srcVertexId = v?.id ?? null;
-      } else if (cand.bindingType === 'local') {
-        const v = getLocalVertex.get(cand.callerFuncId, cand.argName) as { id: number } | null;
-        srcVertexId = v?.id ?? null;
-      }
+    // Find source vertex x in caller
+    let srcVertexId: number | null = null;
+    if (cand.bindingType === 'param' && cand.bindingIndex != null) {
+      const v = getParamVertex.get(cand.callerFuncId, cand.bindingIndex) as { id: number } | null;
+      srcVertexId = v?.id ?? null;
+    } else if (cand.bindingType === 'local') {
+      const v = getLocalVertex.get(cand.callerFuncId, cand.argName) as { id: number } | null;
+      srcVertexId = v?.id ?? null;
+    }
 
-      if (!srcVertexId) continue;
+    if (!srcVertexId) continue;
 
-      // Find callee's param[argIndex] vertex
-      const calleeParam = getParamVertex.get(cand.calleeFuncId, cand.argIndex) as {
-        id: number;
-      } | null;
-      if (!calleeParam) continue;
+    // Find callee's param[argIndex] vertex
+    const calleeParam = getParamVertex.get(cand.calleeFuncId, cand.argIndex) as {
+      id: number;
+    } | null;
+    if (!calleeParam) continue;
 
-      // arg_in: A's source → B.param[j]
-      insertInterEdge.run(
-        cand.callerFuncId,
-        cand.calleeFuncId,
-        'arg_in',
-        srcVertexId,
-        calleeParam.id,
-        callEdgeId,
-        cand.expression,
-        cand.line,
-        cand.confidence,
-      );
-      count++;
+    // arg_in: A's source → B.param[j]
+    insertInterEdge.run(
+      cand.callerFuncId,
+      cand.calleeFuncId,
+      'arg_in',
+      srcVertexId,
+      calleeParam.id,
+      callEdgeId,
+      cand.expression,
+      cand.line,
+      cand.confidence,
+    );
+    count++;
 
-      // return_out: if B.param[j] reaches B's return, emit B.return → A's capture
-      const summary = getSummary.get(cand.calleeFuncId, cand.argIndex) as {
-        flows_to_return: number;
-      } | null;
-      if (summary?.flows_to_return) {
-        const calleeReturn = getReturnVertex.get(cand.calleeFuncId) as { id: number } | null;
-        if (calleeReturn) {
-          const captureVarName = captureMap.get(`${cand.callerFuncId}:${cand.calleeFuncId}`);
-          const captureVertex = captureVarName
-            ? (getLocalVertex.get(cand.callerFuncId, captureVarName) as { id: number } | null)
-            : null;
-          if (captureVertex) {
-            insertInterEdge.run(
-              cand.calleeFuncId,
-              cand.callerFuncId,
-              'return_out',
-              calleeReturn.id,
-              captureVertex.id,
-              callEdgeId,
-              cand.expression,
-              cand.line,
-              cand.confidence,
-            );
-            count++;
-          }
+    // return_out: if B.param[j] reaches B's return, emit B.return → A's capture
+    const summary = getSummary.get(cand.calleeFuncId, cand.argIndex) as {
+      flows_to_return: number;
+    } | null;
+    if (summary?.flows_to_return) {
+      const calleeReturn = getReturnVertex.get(cand.calleeFuncId) as { id: number } | null;
+      if (calleeReturn) {
+        const captureVarName = captureMap.get(`${cand.callerFuncId}:${cand.calleeFuncId}`);
+        const captureVertex = captureVarName
+          ? (getLocalVertex.get(cand.callerFuncId, captureVarName) as { id: number } | null)
+          : null;
+        if (captureVertex) {
+          insertInterEdge.run(
+            cand.calleeFuncId,
+            cand.callerFuncId,
+            'return_out',
+            calleeReturn.id,
+            captureVertex.id,
+            callEdgeId,
+            cand.expression,
+            cand.line,
+            cand.confidence,
+          );
+          count++;
         }
       }
     }
-  });
+  }
 
-  tx();
+  return count;
+}
+
+/**
+ * Wrap runInterproceduralStitch in its own transaction.
+ *
+ * Used only by buildDataflowP4ForNative, which calls the stitch as a
+ * standalone operation outside any other transaction boundary.  All other
+ * call sites (buildDataflowVerticesFromMap, buildDataflowEdges) manage their
+ * own outer transaction and call runInterproceduralStitch directly to avoid
+ * nesting, which better-sqlite3 does not support.
+ */
+function buildInterproceduralStitch(
+  db: BetterSqlite3Database,
+  candidates: StitchCandidate[],
+  captures: ReturnCapture[],
+): number {
+  if (candidates.length === 0) return 0;
+  let count = 0;
+  db.transaction(() => {
+    count = runInterproceduralStitch(db, candidates, captures);
+  })();
   return count;
 }
 
@@ -825,24 +852,32 @@ export function buildDataflowVerticesFromMap(
   if (!vstmts.available || dataflowMap.size === 0) return 0;
 
   const stmts = prepareNodeResolvers(db);
-  const allCandidates: StitchCandidate[] = [];
-  const allCaptures: ReturnCapture[] = [];
 
+  // Vertex writes and inter-procedural stitch are a single atomic unit: if the
+  // stitch throws or the process is killed between the two, the DB would be left
+  // with dataflow_vertices rows but no arg_in/return_out edges.  Wrapping both
+  // under one transaction boundary prevents that half-written state.
+  let stitchCount = 0;
   const tx = db.transaction(() => {
+    const allCandidates: StitchCandidate[] = [];
+    const allCaptures: ReturnCapture[] = [];
+
     for (const [relPath, data] of dataflowMap) {
       const resolver = makeNodeResolver(stmts, relPath);
       const { candidates, captures } = buildDataflowVerticesAndEdges(db, vstmts, data, resolver);
       allCandidates.push(...candidates);
       allCaptures.push(...captures);
     }
+
+    // P4: merge in stitch candidates from unchanged caller files if provided.
+    if (extraCandidates && extraCandidates.length > 0) allCandidates.push(...extraCandidates);
+    if (extraCaptures && extraCaptures.length > 0) allCaptures.push(...extraCaptures);
+
+    stitchCount = runInterproceduralStitch(db, allCandidates, allCaptures);
   });
   tx();
 
-  // P4: merge in stitch candidates from unchanged caller files if provided.
-  if (extraCandidates && extraCandidates.length > 0) allCandidates.push(...extraCandidates);
-  if (extraCaptures && extraCaptures.length > 0) allCaptures.push(...extraCaptures);
-
-  return buildInterproceduralStitch(db, allCandidates, allCaptures);
+  return stitchCount;
 }
 
 /**
@@ -959,10 +994,50 @@ export async function buildDataflowEdges(
       // Rust DataflowResult already contains parameters/returns — no re-parse needed.
       const vstmts = prepareVertexStmts(db);
       if (vstmts.available) {
-        const allCandidates: StitchCandidate[] = [];
-        const allCaptures: ReturnCapture[] = [];
+        // P4: Incremental re-stitch — unchanged caller files are not in
+        // fileSymbols so their arg_in edges to the old param vertices were
+        // deleted by the purge and never recreated. Re-collect stitch
+        // candidates from those caller files by parsing them from disk.
+        //
+        // Skip on full builds: fileSymbols covers every file in the DB, so
+        // there are no unchanged callers to re-stitch.
+        //
+        // This async disk-read step must happen BEFORE the transaction opens
+        // (SQLite transactions are synchronous; async work inside them is not
+        // supported by better-sqlite3).
+        const totalFilesInDb = (
+          db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
+        ).n;
+        let p4CallerCount = 0;
+        const p4Candidates: StitchCandidate[] = [];
+        const p4Captures: ReturnCapture[] = [];
+        if (fileSymbols.size < totalFilesInDb) {
+          const changedRelPaths = new Set<string>(fileSymbols.keys());
+          const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
+          const extra = await collectCallerStitchCandidates(
+            db,
+            changedFuncIds,
+            changedRelPaths,
+            rootDir,
+            extToLang,
+            null,
+            null,
+          );
+          p4Candidates.push(...extra.candidates);
+          p4Captures.push(...extra.captures);
+          p4CallerCount = extra.candidates.length;
+        }
 
+        // Vertex writes and inter-procedural stitch are a single atomic unit:
+        // if the stitch throws or the process is killed between the two, the DB
+        // would be left with dataflow_vertices rows but no arg_in/return_out
+        // edges.  Wrapping both under one transaction boundary prevents that
+        // half-written state.
+        let interCount = 0;
         const txVertex = db.transaction(() => {
+          const allCandidates: StitchCandidate[] = [];
+          const allCaptures: ReturnCapture[] = [];
+
           for (const [relPath, symbols] of fileSymbols) {
             if (!symbols.dataflow) continue;
             const ext = path.extname(relPath).toLowerCase();
@@ -977,38 +1052,15 @@ export async function buildDataflowEdges(
             allCandidates.push(...candidates);
             allCaptures.push(...captures);
           }
+
+          // Merge in the P4 candidates collected above before opening the tx.
+          allCandidates.push(...p4Candidates);
+          allCaptures.push(...p4Captures);
+
+          interCount = runInterproceduralStitch(db, allCandidates, allCaptures);
         });
         txVertex();
 
-        // P4: Incremental re-stitch — unchanged caller files are not in
-        // fileSymbols so their arg_in edges to the old param vertices were
-        // deleted by the purge and never recreated. Re-collect stitch
-        // candidates from those caller files by parsing them from disk.
-        //
-        // Skip on full builds: fileSymbols covers every file in the DB, so
-        // there are no unchanged callers to re-stitch.
-        const totalFilesInDb = (
-          db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
-        ).n;
-        let p4CallerCount = 0;
-        if (fileSymbols.size < totalFilesInDb) {
-          const changedRelPaths = new Set<string>(fileSymbols.keys());
-          const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
-          const extra = await collectCallerStitchCandidates(
-            db,
-            changedFuncIds,
-            changedRelPaths,
-            rootDir,
-            extToLang,
-            null,
-            null,
-          );
-          allCandidates.push(...extra.candidates);
-          allCaptures.push(...extra.captures);
-          p4CallerCount = extra.candidates.length;
-        }
-
-        const interCount = buildInterproceduralStitch(db, allCandidates, allCaptures);
         info(
           `Dataflow (native): ${interCount} inter-procedural edges inserted${p4CallerCount > 0 ? ` (P4: ${p4CallerCount} re-stitch candidate(s) from unchanged callers)` : ''}`,
         );
@@ -1029,12 +1081,51 @@ export async function buildDataflowEdges(
 
   const stmts = prepareNodeResolvers(db);
   const vstmts = prepareVertexStmts(db);
+
+  // P4: Incremental re-stitch — if only a subset of files changed, callers of
+  // the changed functions were not in fileSymbols, so their arg_in edges were
+  // deleted by the purge but never reconstructed. Re-collect stitch candidates
+  // from those caller files now (read from disk, no DB writes).
+  //
+  // Skip P4 on full builds: when fileSymbols covers every file in the DB there
+  // are no unchanged callers, and collectFuncIdsForFiles would issue one SELECT
+  // per file for nothing.  A single COUNT query is cheaper than N per-file SELECTs.
+  //
+  // This async disk-read step must happen BEFORE the transaction opens
+  // (SQLite transactions are synchronous; async work inside them is not
+  // supported by better-sqlite3).
+  const totalFilesInDb = (
+    db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
+  ).n;
+  const p4Candidates: StitchCandidate[] = [];
+  const p4Captures: ReturnCapture[] = [];
+  if (vstmts.available && fileSymbols.size < totalFilesInDb) {
+    const changedRelPaths = new Set<string>(fileSymbols.keys());
+    const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
+    const extra = await collectCallerStitchCandidates(
+      db,
+      changedFuncIds,
+      changedRelPaths,
+      rootDir,
+      extToLang,
+      parsers,
+      getParserFn,
+    );
+    p4Candidates.push(...extra.candidates);
+    p4Captures.push(...extra.captures);
+  }
+
+  // Edge writes, vertex writes, and inter-procedural stitch are a single
+  // atomic unit: if the stitch throws or the process is killed between vertex
+  // writes and the stitch, the DB would be left with dataflow_vertices rows
+  // but no arg_in/return_out edges.  Wrapping all three under one transaction
+  // boundary prevents that half-written state.
   let totalEdges = 0;
-
-  const allCandidates: StitchCandidate[] = [];
-  const allCaptures: ReturnCapture[] = [];
-
+  let interCount = 0;
   const tx = db.transaction(() => {
+    const allCandidates: StitchCandidate[] = [];
+    const allCaptures: ReturnCapture[] = [];
+
     for (const [relPath, symbols] of fileSymbols) {
       const ext = path.extname(relPath).toLowerCase();
       if (!DATAFLOW_EXTENSIONS.has(ext)) continue;
@@ -1048,41 +1139,16 @@ export async function buildDataflowEdges(
       allCandidates.push(...candidates);
       allCaptures.push(...captures);
     }
+
+    // Merge in the P4 candidates collected above before opening the tx.
+    allCandidates.push(...p4Candidates);
+    allCaptures.push(...p4Captures);
+
+    // P2: inter-procedural stitch — runs after all per-file vertices + summaries written
+    interCount = vstmts.available ? runInterproceduralStitch(db, allCandidates, allCaptures) : 0;
   });
 
   tx();
-
-  // P4: Incremental re-stitch — if only a subset of files changed, callers of
-  // the changed functions were not in fileSymbols, so their arg_in edges were
-  // deleted by the purge but never reconstructed. Re-collect stitch candidates
-  // from those caller files now (read from disk, no DB writes).
-  //
-  // Skip P4 on full builds: when fileSymbols covers every file in the DB there
-  // are no unchanged callers, and collectFuncIdsForFiles would issue one SELECT
-  // per file for nothing.  A single COUNT query is cheaper than N per-file SELECTs.
-  const totalFilesInDb = (
-    db.prepare(`SELECT COUNT(DISTINCT file) AS n FROM nodes`).get() as { n: number }
-  ).n;
-  if (vstmts.available && fileSymbols.size < totalFilesInDb) {
-    const changedRelPaths = new Set<string>(fileSymbols.keys());
-    const changedFuncIds = collectFuncIdsForFiles(db, changedRelPaths);
-    const extra = await collectCallerStitchCandidates(
-      db,
-      changedFuncIds,
-      changedRelPaths,
-      rootDir,
-      extToLang,
-      parsers,
-      getParserFn,
-    );
-    allCandidates.push(...extra.candidates);
-    allCaptures.push(...extra.captures);
-  }
-
-  // P2: inter-procedural stitch — runs after all per-file vertices + summaries committed
-  const interCount = vstmts.available
-    ? buildInterproceduralStitch(db, allCandidates, allCaptures)
-    : 0;
 
   info(`Dataflow: ${totalEdges} fn-level edges, ${interCount} inter-procedural edges inserted`);
 }
