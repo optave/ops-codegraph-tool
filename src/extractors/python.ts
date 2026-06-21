@@ -187,7 +187,7 @@ function handlePyCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
       return;
     }
 
-    // getattr(obj, 'method') — resolvable if literal; computed-key if variable
+    // getattr(obj, 'method') — resolvable if name is a literal; computed-key or sink if variable
     if (name === 'getattr') {
       const argIter = iterPyArgs(node);
       const firstArg = argIter.next().value as TreeSitterNode | undefined;

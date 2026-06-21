@@ -221,7 +221,7 @@ function printQuality(data: StatsData): void {
   }
 }
 
-// Dead sub-role metadata: label and whether the category is actionable.
+// Dead sub-role display metadata: human-readable label and whether the category is actionable.
 const DEAD_SUB_ROLE_META: Record<string, { label: string; actionable: boolean }> = {
   'dead-leaf': { label: 'dead-leaf (params/props/constants)', actionable: false },
   'dead-unresolved': { label: 'dead-unresolved (resolution gaps)', actionable: false },

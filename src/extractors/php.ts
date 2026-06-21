@@ -323,14 +323,15 @@ function handlePhpFuncCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!fn) return;
   const callLine = node.startPosition.row + 1;
 
-  // $fn() — variable function call; cannot resolve statically
+  // $fn() — variable function call; cannot resolve statically.
+  // Use keyExpr (not receiver) to capture the callable variable name for diagnostics.
   if (fn.type === 'variable_name') {
     ctx.calls.push({
       name: '<dynamic:unresolved>',
       line: callLine,
       dynamic: true,
       dynamicKind: 'unresolved-dynamic',
-      receiver: fn.text,
+      keyExpr: fn.text,
     });
     return;
   }
