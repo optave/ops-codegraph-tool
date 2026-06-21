@@ -1,7 +1,7 @@
 {
   "$schema": "../../expected-edges.schema.json",
   "language": "typescript",
-  "description": "Phase 1 dynamic call fixture: Reflect.apply/construct/get and TypeScript decorators. Flagged kinds (computed-key) emit sink edges excluded from expected-edges.",
+  "description": "Phase 1 dynamic call fixture: Reflect.apply/construct/get and TypeScript decorators. Flagged kinds (computed-key, unresolved reflection) emit sink edges excluded from expected-edges.",
   "edges": [
     {
       "source": { "name": "runReflectApply", "file": "reflect.ts" },

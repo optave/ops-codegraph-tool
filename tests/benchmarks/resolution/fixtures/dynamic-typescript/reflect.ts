@@ -37,3 +37,8 @@ export function runReflectGetVariable(obj: Record<string, unknown>, key: string)
   // Reflect.get(obj, key) — computed-key, flagged as sink edge
   return Reflect.get(obj, key);
 }
+
+export function runReflectApplyExternal(fn: Function, ctx: unknown, args: unknown[]): unknown {
+  // Reflect.apply(fn, ctx, args) — reflection kind, fn not in codebase → sink edge
+  return Reflect.apply(fn as Parameters<typeof Reflect.apply>[0], ctx, args);
+}

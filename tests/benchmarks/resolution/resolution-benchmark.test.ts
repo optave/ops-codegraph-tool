@@ -137,10 +137,11 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   //   Currently resolves all 13 expected edges (100% recall, 100% precision).
   'pts-javascript': { precision: 1.0, recall: 0.9 },
   // dynamic-javascript: Phase 0 dynamic-call fixture — reflection (.call/.apply) + computed-literal.
-  //   Flagged kinds (eval, computed-key) emit sink edges (confidence=0.0) excluded from metrics.
+  //   Flagged kinds (eval, computed-key, unresolved reflection) emit sink edges (confidence=0.0) excluded from metrics.
   'dynamic-javascript': { precision: 1.0, recall: 0.75 },
   // dynamic-typescript: Phase 1 fixture — Reflect.apply/construct/get + TS decorators.
   //   3 expected edges (Reflect.apply → greet, Reflect.construct → UserService, Reflect.get → greet).
+  //   Unresolved Reflect.apply(fn, ...) where fn is external emits a reflection sink edge (excluded from metrics).
   'dynamic-typescript': { precision: 1.0, recall: 0.75 },
   // Phase 2 JVM fixtures — reflection and dynamic dispatch patterns.
   // RES-3: type-aware qualified lookup resolves getMethod("foo") → ClassName.foo.
