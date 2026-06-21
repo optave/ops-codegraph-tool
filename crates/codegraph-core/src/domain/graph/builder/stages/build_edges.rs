@@ -996,6 +996,54 @@ fn resolve_call_targets<'a>(
         }
     }
 
+    // RES-3: reflection with literal method name — JVM getMethod("name") / invokeMethod("name").
+    // Java/Scala/Groovy methods are stored as class-qualified names (e.g. Reflection.greet),
+    // so a plain lookup of `keyExpr` finds nothing. When dynamicKind='reflection' and keyExpr
+    // is set (a string-literal method name was captured), try two qualified forms:
+    //   1. typeMap[receiver] → resolvedType → `resolvedType.keyExpr` (type-annotated local)
+    //   2. callerName class prefix → `CallerClass.keyExpr` (same-class sibling — covers Groovy
+    //      obj.invokeMethod and Java/Scala clazz.getMethod where the class is the caller's own)
+    // Scoped to non-JS/TS files to avoid interfering with the JS reflection path.
+    // Mirrors `resolveFallbackTargets` RES-3 block in `src/domain/graph/builder/stages/build-edges.ts`.
+    if call.dynamic_kind.as_deref() == Some("reflection")
+        && call.key_expr.is_some()
+        && call.receiver.is_some()
+        && !is_module_scoped_language(rel_path)
+    {
+        let key_expr = call.key_expr.as_deref().unwrap();
+        let receiver = call.receiver.as_deref().unwrap();
+
+        // RES-3.1: typeMap[receiver] → resolvedType.keyExpr
+        if let Some(&(resolved_type, _)) = type_map.get(receiver) {
+            let qualified = format!("{}.{}", resolved_type, key_expr);
+            let typed: Vec<&NodeInfo> = ctx.nodes_by_name
+                .get(qualified.as_str())
+                .map(|v| v.iter()
+                    .filter(|n| (n.kind == "method" || n.kind == "function")
+                        && resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                    .copied().collect())
+                .unwrap_or_default();
+            if !typed.is_empty() { return typed; }
+        }
+
+        // RES-3.2: callerName class prefix → CallerClass.keyExpr
+        if !caller_name.is_empty() {
+            if let Some(last_dot) = caller_name.rfind('.') {
+                let seg_start = caller_name[..last_dot].rfind('.').map(|p| p + 1).unwrap_or(0);
+                let caller_class = &caller_name[seg_start..last_dot];
+                let qualified = format!("{}.{}", caller_class, key_expr);
+                let class_scoped: Vec<&NodeInfo> = ctx.nodes_by_name
+                    .get(qualified.as_str())
+                    .map(|v| v.iter()
+                        .filter(|n| (n.kind == "method" || n.kind == "function")
+                            && resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
+                        .copied().collect())
+                    .unwrap_or_default();
+                if !class_scoped.is_empty() { return class_scoped; }
+            }
+        }
+    }
+
     // 4. Scoped fallback (this/self/super or no receiver)
     if call.receiver.is_none()
         || call.receiver.as_deref() == Some("this")
