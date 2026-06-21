@@ -1,4 +1,5 @@
 {
   "embeddings": { "model": "bge-large" },
-  "exclude": ["crates/**"]
+  "exclude": ["crates/**"],
+  "ignoreAdditionalDirs": ["crates"]
 }

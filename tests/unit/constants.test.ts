@@ -5,6 +5,7 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  buildIgnoreSet,
   EXTENSIONS,
   IGNORE_DIRS,
   isSupportedFile,
@@ -48,6 +49,36 @@ describe('IGNORE_DIRS', () => {
     for (const dir of expected) {
       expect(IGNORE_DIRS.has(dir)).toBe(true);
     }
+  });
+
+  it('does not contain crates (repo-specific dirs belong in ignoreAdditionalDirs config)', () => {
+    expect(IGNORE_DIRS.has('crates')).toBe(false);
+  });
+});
+
+describe('buildIgnoreSet', () => {
+  it('returns IGNORE_DIRS when no additional dirs provided', () => {
+    const result = buildIgnoreSet();
+    expect(result).toBe(IGNORE_DIRS);
+  });
+
+  it('returns IGNORE_DIRS when empty array provided', () => {
+    const result = buildIgnoreSet([]);
+    expect(result).toBe(IGNORE_DIRS);
+  });
+
+  it('merges additional dirs on top of IGNORE_DIRS', () => {
+    const result = buildIgnoreSet(['crates', 'generated']);
+    expect(result.has('node_modules')).toBe(true); // from IGNORE_DIRS
+    expect(result.has('crates')).toBe(true); // additional
+    expect(result.has('generated')).toBe(true); // additional
+  });
+
+  it('does not mutate IGNORE_DIRS', () => {
+    const before = new Set(IGNORE_DIRS);
+    buildIgnoreSet(['crates']);
+    expect(IGNORE_DIRS.size).toBe(before.size);
+    expect(IGNORE_DIRS.has('crates')).toBe(false);
   });
 });
 

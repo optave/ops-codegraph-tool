@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
-import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../../shared/constants.js';
+import { buildIgnoreSet, EXTENSIONS, normalizePath } from '../../../shared/constants.js';
 import { compileGlobs, globToRegex, matchesAny } from '../../../shared/globs.js';
 import type {
   BetterSqlite3Database,
@@ -56,13 +56,12 @@ export const CHA_DISPATCH_PENALTY = 0.1;
 export const CHA_TYPED_DISPATCH_CONFIDENCE = 0.8;
 
 /** Check if a directory entry should be skipped (ignored dirs, dotfiles). */
-function shouldSkipEntry(entry: fs.Dirent, extraIgnore: Set<string> | null): boolean {
+function shouldSkipEntry(entry: fs.Dirent, ignoreSet: Set<string>): boolean {
   if (entry.name.startsWith('.') && entry.name !== '.') {
-    if (IGNORE_DIRS.has(entry.name)) return true;
+    if (ignoreSet.has(entry.name)) return true;
     if (entry.isDirectory()) return true;
   }
-  if (IGNORE_DIRS.has(entry.name)) return true;
-  if (extraIgnore?.has(entry.name)) return true;
+  if (ignoreSet.has(entry.name)) return true;
   return false;
 }
 
@@ -140,7 +139,8 @@ interface CollectContext {
   readonly excludeRegexes: readonly RegExp[];
   readonly gitignoreRegexes: readonly RegExp[];
   readonly hasGlobFilters: boolean;
-  readonly extraIgnore: Set<string> | null;
+  /** Merged set of IGNORE_DIRS + config.ignoreDirs + config.ignoreAdditionalDirs. */
+  readonly ignoreSet: Set<string>;
   readonly visited: Set<string>;
 }
 
@@ -193,7 +193,7 @@ function walkCollect(
 
   let hasFiles = false;
   for (const entry of entries) {
-    if (shouldSkipEntry(entry, ctx.extraIgnore)) continue;
+    if (shouldSkipEntry(entry, ctx.ignoreSet)) continue;
 
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -237,13 +237,18 @@ export function collectFiles(
   const includeRegexes = compileGlobs(config.include);
   const excludeRegexes = compileGlobs(config.exclude);
   const gitignoreRegexes = readGitignorePatterns(dir);
+  // Build the merged ignore set:
+  //   - config.ignoreDirs are appended to IGNORE_DIRS (existing behaviour: per-repo overrides)
+  //   - config.ignoreAdditionalDirs are also merged in on top of IGNORE_DIRS (new feature)
+  const extraDirs = [...(config.ignoreDirs ?? []), ...(config.ignoreAdditionalDirs ?? [])];
+  const ignoreSet = buildIgnoreSet(extraDirs.length ? extraDirs : undefined);
   const ctx: CollectContext = {
     rootDir: dir,
     includeRegexes,
     excludeRegexes,
     gitignoreRegexes,
     hasGlobFilters: includeRegexes.length > 0 || excludeRegexes.length > 0,
-    extraIgnore: config.ignoreDirs ? new Set(config.ignoreDirs) : null,
+    ignoreSet,
     visited: new Set(),
   };
 

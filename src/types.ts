@@ -1351,6 +1351,8 @@ export interface CodegraphConfig {
   include: string[];
   exclude: string[];
   ignoreDirs: string[];
+  /** Additional directory names to ignore on top of the built-in IGNORE_DIRS set. */
+  ignoreAdditionalDirs: string[];
   extensions: string[];
   aliases: Record<string, unknown>;
 

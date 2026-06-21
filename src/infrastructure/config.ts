@@ -21,6 +21,7 @@ export const DEFAULTS = {
   include: [] as string[],
   exclude: [] as string[],
   ignoreDirs: [] as string[],
+  ignoreAdditionalDirs: [] as string[],
   extensions: [] as string[],
   aliases: {} as Record<string, string>,
   build: {
@@ -452,6 +453,7 @@ const BUILD_HASH_KEYS: ReadonlyArray<keyof CodegraphConfig> = [
   'include',
   'exclude',
   'ignoreDirs',
+  'ignoreAdditionalDirs',
   'extensions',
   'aliases',
   'build',

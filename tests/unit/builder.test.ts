@@ -105,6 +105,22 @@ describe('collectFiles', () => {
     expect(basenames).toContain('app.js');
   });
 
+  it('respects config.ignoreAdditionalDirs', () => {
+    const files = collectFiles(tmpDir, [], { ignoreAdditionalDirs: ['lib'] });
+    const basenames = files.map((f) => path.basename(f));
+    expect(basenames).not.toContain('helper.py');
+    // src files still present
+    expect(basenames).toContain('app.js');
+  });
+
+  it('merges ignoreAdditionalDirs with ignoreDirs when both are set', () => {
+    // ignoreDirs excludes 'lib', ignoreAdditionalDirs excludes 'src'
+    const files = collectFiles(tmpDir, [], { ignoreDirs: ['lib'], ignoreAdditionalDirs: ['src'] });
+    const basenames = files.map((f) => path.basename(f));
+    expect(basenames).not.toContain('helper.py'); // lib excluded
+    expect(basenames).not.toContain('app.js'); // src excluded
+  });
+
   it('returns empty array for non-existent directory (graceful)', () => {
     const files = collectFiles(path.join(tmpDir, 'does-not-exist'));
     expect(files).toEqual([]);
