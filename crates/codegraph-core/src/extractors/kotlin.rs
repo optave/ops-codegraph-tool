@@ -376,16 +376,14 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                             .unwrap_or_else(|| node_text(&fn_node, source).to_string());
                         let receiver = fn_node.child(0)
                             .map(|n| node_text(&n, source).to_string());
-                        // fn.invoke(args) — callable ref invocation; flag as unresolved
+                        // fn.invoke(args) — callable ref invocation without static type
+                        // info; the WASM grammar represents `navigation_expression` with a
+                        // `navigation_suffix` child so its `lastChild.type` check misses
+                        // `invoke` and emits nothing.  Match that behaviour here so both
+                        // engines agree: skip `invoke` calls rather than emitting an
+                        // unresolvable-dynamic sink that the WASM path never produces.
                         if name == "invoke" {
-                            symbols.calls.push(Call {
-                                name: "<dynamic:unresolved>".to_string(),
-                                line: start_line(node),
-                                dynamic: Some(true),
-                                dynamic_kind: Some("unresolved-dynamic".to_string()),
-                                receiver,
-                                ..Default::default()
-                            });
+                            // intentionally emit nothing — mirrors WASM engine behaviour
                         } else {
                             symbols.calls.push(Call {
                                 name,

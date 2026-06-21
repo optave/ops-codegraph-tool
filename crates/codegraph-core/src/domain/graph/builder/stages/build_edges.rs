@@ -897,6 +897,29 @@ fn resolve_call_targets<'a>(
         if !targets.is_empty() { return targets; }
     }
 
+    // RES-4: Kotlin member callable reference — `Greeter::greet` emits
+    // { name: 'greet', receiver: 'Greeter', dynamicKind: 'reflection' }.
+    // A plain same-file lookup of 'greet' finds the top-level free function
+    // before the qualified form is tried.  Match the WASM pre-qualified pass:
+    // when dynamicKind='reflection', receiver is set, and no keyExpr, try the
+    // qualified `{Receiver}.{name}` form first (mirrors the RES-4 pre-pass in
+    // `resolveFallbackTargets` in build-edges.ts).
+    if call.dynamic_kind.as_deref() == Some("reflection")
+        && call.receiver.is_some()
+        && call.key_expr.is_none()
+        && !is_module_scoped_language(rel_path)
+    {
+        let receiver = call.receiver.as_deref().unwrap();
+        let qualified = format!("{}.{}", receiver, call.name);
+        let pre_qualified: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
+            .get(&(qualified.as_str(), rel_path))
+            .map(|v| v.iter()
+                .filter(|n| n.kind == "method" || n.kind == "function")
+                .copied().collect())
+            .unwrap_or_default();
+        if !pre_qualified.is_empty() { return pre_qualified; }
+    }
+
     // 2. Same-file resolution
     let targets = ctx.nodes_by_name_and_file
         .get(&(call.name.as_str(), rel_path))
