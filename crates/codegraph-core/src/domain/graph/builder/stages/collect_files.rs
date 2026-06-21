@@ -557,4 +557,28 @@ mod tests {
             "fast path must filter out excluded files so incremental builds honor config changes"
         );
     }
+
+    /// Regression test for issue #1674 — files under a `crates/` directory must
+    /// NOT be silently dropped by the native engine. A `crates/` entry was
+    /// mistakenly present in DEFAULT_IGNORE_DIRS; this verifies it is absent.
+    #[test]
+    fn collect_does_not_skip_crates_dir() {
+        let tmp = std::env::temp_dir().join("codegraph_collect_crates_test");
+        let _ = fs::remove_dir_all(&tmp);
+        let crate_src = tmp.join("crates").join("my-crate").join("src");
+        fs::create_dir_all(&crate_src).unwrap();
+        fs::write(crate_src.join("lib.rs"), "").unwrap();
+
+        let result = collect_files(tmp.to_str().unwrap(), &[], &[], &[]);
+        assert!(
+            !result.files.is_empty(),
+            "files inside crates/ must not be silently ignored by DEFAULT_IGNORE_DIRS"
+        );
+        assert!(
+            result.files.iter().any(|f| f.contains("lib.rs")),
+            "crates/my-crate/src/lib.rs must appear in collected files"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }
