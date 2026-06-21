@@ -1072,6 +1072,45 @@ function resolveFallbackTargets(
     }
   }
 
+  // RES-3: reflection with literal method name — JVM getMethod("name") / invokeMethod("name").
+  // Java/Scala/Groovy methods are stored as class-qualified names (e.g. Reflection.greet),
+  // so lookup.byNameAndFile('greet', relPath) finds nothing. When dynamicKind='reflection'
+  // and keyExpr is set (a string-literal method name was captured), try the qualified form:
+  //   1. typeMap[receiver] → resolvedType → lookup `resolvedType.keyExpr` (type-annotated local)
+  //   2. callerName class prefix → `CallerClass.keyExpr` (same-class sibling, e.g. Groovy obj)
+  // Scoped to non-JS/TS files to avoid interfering with the JS reflection path.
+  if (
+    targets.length === 0 &&
+    call.dynamicKind === 'reflection' &&
+    call.keyExpr &&
+    call.receiver &&
+    !isModuleScopedLanguage(relPath)
+  ) {
+    const typeEntry = typeMap.get(call.receiver);
+    const resolvedType = typeEntry
+      ? typeof typeEntry === 'string'
+        ? typeEntry
+        : (typeEntry as { type?: string }).type
+      : null;
+    if (resolvedType) {
+      const qualified = lookup
+        .byNameAndFile(`${resolvedType}.${call.keyExpr}`, relPath)
+        .filter((n) => n.kind === 'method' || n.kind === 'function');
+      if (qualified.length > 0) targets = qualified;
+    }
+    if (targets.length === 0 && caller.callerName != null) {
+      const lastDot = caller.callerName.lastIndexOf('.');
+      if (lastDot > 0) {
+        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
+        const callerClass = caller.callerName.slice(prevDot + 1, lastDot);
+        const qualified = lookup
+          .byNameAndFile(`${callerClass}.${call.keyExpr}`, relPath)
+          .filter((n) => n.kind === 'method' || n.kind === 'function');
+        if (qualified.length > 0) targets = qualified;
+      }
+    }
+  }
+
   // Object.defineProperty accessor fallback: when a function is registered as
   // a getter/setter via `Object.defineProperty(obj, "bar", { get: getter })`,
   // calls to `this.X()` inside `getter` resolve against `obj` (this === obj
