@@ -432,8 +432,8 @@ pub fn build_import_edges(conn: &Connection, ctx: &ImportEdgeContext) -> Vec<Edg
         let abs_str = abs_file.to_str().unwrap_or("");
 
         for imp in &symbols.imports {
-            // Skip CJS require bindings — they feed imported_names for receiver-edge
-            // resolution but must not produce DB import edges (#1678).
+            // CJS require bindings feed imported_names for receiver-edge resolution
+            // but must not produce DB import edges (#1678).
             if imp.cjs_require.unwrap_or(false) { continue; }
             emit_edges_for_import(
                 &mut edges,
