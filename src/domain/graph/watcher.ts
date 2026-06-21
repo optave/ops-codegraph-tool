@@ -1,17 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { closeDb, getNodeId as getNodeIdQuery, initSchema, openDb } from '../../db/index.js';
+import { loadConfig } from '../../infrastructure/config.js';
 import { debug, info, warn } from '../../infrastructure/logger.js';
-import { isSupportedFile, normalizePath, shouldIgnore } from '../../shared/constants.js';
+import { buildIgnoreSet, isSupportedFile, normalizePath } from '../../shared/constants.js';
 import { DbError } from '../../shared/errors.js';
 import { createParseTreeCache, getActiveEngine } from '../parser.js';
 import { type IncrementalStmts, rebuildFile } from './builder/incremental.js';
 import { appendChangeEvents, buildChangeEvent, diffSymbols } from './change-journal.js';
 import { appendJournalEntriesAndStampHeader } from './journal.js';
 
-function shouldIgnorePath(filePath: string): boolean {
+function shouldIgnorePath(filePath: string, ignoreSet: ReadonlySet<string>): boolean {
   const parts = filePath.split(path.sep);
-  return parts.some((p) => shouldIgnore(p));
+  return parts.some((p) => ignoreSet.has(p) || p.startsWith('.'));
 }
 
 /** Prepare all SQL statements needed by the watcher's incremental rebuild. */
@@ -139,7 +140,7 @@ function logRebuildResults(updates: RebuildResult[]): void {
 }
 
 /** Recursively collect tracked source files for stat-based polling. */
-function collectTrackedFiles(dir: string, result: string[]): void {
+function collectTrackedFiles(dir: string, result: string[], ignoreSet: ReadonlySet<string>): void {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -148,10 +149,10 @@ function collectTrackedFiles(dir: string, result: string[]): void {
     return;
   }
   for (const entry of entries) {
-    if (shouldIgnore(entry.name)) continue;
+    if (ignoreSet.has(entry.name) || entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectTrackedFiles(full, result);
+      collectTrackedFiles(full, result, ignoreSet);
     } else if (isSupportedFile(entry.name)) {
       result.push(full);
     }
@@ -168,6 +169,8 @@ interface WatcherContext {
   pending: Set<string>;
   timer: ReturnType<typeof setTimeout> | null;
   debounceMs: number;
+  /** Merged ignore set from IGNORE_DIRS + config.ignoreDirs + config.ignoreAdditionalDirs. */
+  ignoreSet: ReadonlySet<string>;
 }
 
 /** Initialize DB, engine, cache, and statements for watch mode. */
@@ -176,6 +179,12 @@ function setupWatcher(rootDir: string, opts: { engine?: string; dbPath?: string 
   if (!fs.existsSync(dbPath)) {
     throw new DbError('No graph.db found. Run `codegraph build` first.', { file: dbPath });
   }
+
+  // Load repo config so ignoreDirs and ignoreAdditionalDirs are respected by
+  // the watcher the same way they are by collectFiles in the batch build path.
+  const config = loadConfig(rootDir);
+  const extraDirs = [...(config.ignoreDirs ?? []), ...(config.ignoreAdditionalDirs ?? [])];
+  const ignoreSet = buildIgnoreSet(extraDirs.length ? extraDirs : undefined);
 
   const db = openDb(dbPath);
   initSchema(db);
@@ -205,6 +214,7 @@ function setupWatcher(rootDir: string, opts: { engine?: string; dbPath?: string 
     pending: new Set<string>(),
     timer: null,
     debounceMs: 300,
+    ignoreSet,
   };
 }
 
@@ -223,7 +233,7 @@ function startPollingWatcher(ctx: WatcherContext, pollIntervalMs: number): () =>
   const mtimeMap = new Map<string, number>();
 
   const initial: string[] = [];
-  collectTrackedFiles(ctx.rootDir, initial);
+  collectTrackedFiles(ctx.rootDir, initial, ctx.ignoreSet);
   for (const f of initial) {
     try {
       mtimeMap.set(f, fs.statSync(f).mtimeMs);
@@ -235,7 +245,7 @@ function startPollingWatcher(ctx: WatcherContext, pollIntervalMs: number): () =>
 
   const pollTimer = setInterval(() => {
     const current: string[] = [];
-    collectTrackedFiles(ctx.rootDir, current);
+    collectTrackedFiles(ctx.rootDir, current, ctx.ignoreSet);
     const currentSet = new Set(current);
 
     for (const f of current) {
@@ -270,7 +280,7 @@ function startPollingWatcher(ctx: WatcherContext, pollIntervalMs: number): () =>
 function startNativeWatcher(ctx: WatcherContext): () => void {
   const watcher = fs.watch(ctx.rootDir, { recursive: true }, (_eventType, filename) => {
     if (!filename) return;
-    if (shouldIgnorePath(filename)) return;
+    if (shouldIgnorePath(filename, ctx.ignoreSet)) return;
     if (!isSupportedFile(filename)) return;
 
     ctx.pending.add(path.join(ctx.rootDir, filename));
