@@ -1,5 +1,4 @@
 import type {
-  Call,
   ClassRelation,
   ExtractorOutput,
   SubDeclaration,

@@ -1,10 +1,4 @@
-import type {
-  Call,
-  ExtractorOutput,
-  SubDeclaration,
-  TreeSitterNode,
-  TreeSitterTree,
-} from '../types.js';
+import type { ExtractorOutput, SubDeclaration, TreeSitterNode, TreeSitterTree } from '../types.js';
 import { findChild, nodeEndLine } from './helpers.js';
 
 /**

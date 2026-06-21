@@ -294,49 +294,48 @@ function handleSwiftCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
   }
 
   // NSSelectorFromString("name") — selector from literal string.
-  // Only inspect the direct argument to the call (not the whole subtree) to avoid
+  // Only inspect the direct first argument to the call (not the whole subtree) to avoid
   // false positives from nested calls like NSSelectorFromString(generateSelector("greet")).
+  //
+  // Swift AST: call_expression → [simple_identifier, call_suffix]
+  //   call_suffix → [value_arguments]
+  //     value_arguments → ['(', value_argument, ')']
+  //       value_argument → [line_string_literal]
+  //         line_string_literal → ['"', line_str_text, '"']
   if (call.name === 'NSSelectorFromString') {
     let literal: string | null = null;
-    // Find the argument_list child of the call_expression
-    const argList =
+    // Resolve value_arguments: call_expression has a call_suffix child that wraps value_arguments.
+    const callSuffix = findChild(node, 'call_suffix');
+    const valueArgs =
       node.childForFieldName('arguments') ??
-      findChild(node, 'call_suffix') ??
+      (callSuffix ? (findChild(callSuffix, 'value_arguments') ?? callSuffix) : null) ??
       findChild(node, 'value_arguments');
-    if (argList) {
-      for (let i = 0; i < argList.childCount; i++) {
-        const arg = argList.child(i);
+    if (valueArgs) {
+      for (let i = 0; i < valueArgs.childCount; i++) {
+        const arg = valueArgs.child(i);
         if (!arg) continue;
         const t = arg.type;
-        if (t === '(' || t === ')' || t === ',' || t === '_:' || t === 'labeled_argument') {
-          // For labeled_argument, inspect its value child
-          if (t === 'labeled_argument') {
-            const val = arg.childForFieldName('value') ?? arg.child(arg.childCount - 1);
-            if (val && (val.type === 'line_string_literal' || val.type === 'string_literal')) {
-              for (let j = 0; j < val.childCount; j++) {
-                const ch = val.child(j);
-                if (ch?.type === 'string_content') {
-                  literal = ch.text;
-                  break;
-                }
-              }
-              if (!literal) literal = val.text.replace(/^["']|["']$/g, '');
-            }
-          }
-          continue;
-        }
-        if (t === 'line_string_literal' || t === 'string_literal') {
-          for (let j = 0; j < arg.childCount; j++) {
-            const ch = arg.child(j);
-            if (ch?.type === 'string_content') {
+        if (t === '(' || t === ')' || t === ',') continue;
+        // value_argument wraps the actual value expression
+        const valueNode =
+          t === 'value_argument'
+            ? (arg.childForFieldName('value') ?? arg.child(arg.childCount - 1))
+            : arg;
+        if (!valueNode) break;
+        const vt = valueNode.type;
+        if (vt === 'line_string_literal' || vt === 'string_literal') {
+          // Look for line_str_text (Swift) or string_content (other languages)
+          for (let j = 0; j < valueNode.childCount; j++) {
+            const ch = valueNode.child(j);
+            if (ch?.type === 'line_str_text' || ch?.type === 'string_content') {
               literal = ch.text;
               break;
             }
           }
-          if (!literal) literal = arg.text.replace(/^["']|["']$/g, '');
+          if (!literal) literal = valueNode.text.replace(/^["']|["']$/g, '');
           break;
         }
-        // First real non-string argument — not a literal selector
+        // First non-string non-punctuation argument — computed, not a literal selector
         break;
       }
     }
