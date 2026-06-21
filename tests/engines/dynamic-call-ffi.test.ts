@@ -10,7 +10,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createParsers,
+  extractPHPSymbols,
   extractPythonSymbols,
+  extractRubySymbols,
   extractSymbols,
   getParser,
 } from '../../src/domain/parser.js';
@@ -269,5 +271,106 @@ def test():
     expect(c).toBeDefined();
     expect(c?.dynamicKind).toBeUndefined();
     expect(c?.dynamic).toBeUndefined();
+  });
+});
+
+describe('Phase 4: Ruby dynamic dispatch detection', () => {
+  let parsers: Awaited<ReturnType<typeof createParsers>>;
+
+  beforeAll(async () => {
+    parsers = await createParsers();
+  }, 30_000);
+
+  function parseRb(code: string) {
+    const parser = getParser(parsers, 'test.rb');
+    if (!parser) throw new Error('Ruby parser not available');
+    const tree = parser.parse(code);
+    return extractRubySymbols(tree, 'test.rb');
+  }
+
+  it('obj.send(:greet) with symbol literal tags as reflection kind', () => {
+    const out = parseRb(`
+def test(obj)
+  obj.send(:greet, 'world')
+end
+`);
+    const c = out.calls.find((c) => c.name === 'greet');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBe(true);
+    expect(c?.keyExpr).toContain('greet');
+  });
+
+  it('public_send(:farewell) tags as reflection kind', () => {
+    const out = parseRb(`
+def test(obj)
+  obj.public_send(:farewell, 'world')
+end
+`);
+    const c = out.calls.find((c) => c.name === 'farewell');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('reflection');
+  });
+
+  it('send(variable) with identifier key tags as computed-key', () => {
+    const out = parseRb(`
+def test(obj, method_name)
+  obj.send(method_name, 'world')
+end
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:computed-key>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('computed-key');
+    expect(c?.keyExpr).toBe('method_name');
+  });
+});
+
+describe('Phase 4: PHP dynamic dispatch detection', () => {
+  let parsers: Awaited<ReturnType<typeof createParsers>>;
+
+  beforeAll(async () => {
+    parsers = await createParsers();
+  }, 30_000);
+
+  function parsePHP(code: string) {
+    const parser = getParser(parsers, 'test.php');
+    if (!parser) throw new Error('PHP parser not available');
+    const tree = parser.parse(code);
+    return extractPHPSymbols(tree, 'test.php');
+  }
+
+  it('$obj->$m() variable method name tags as unresolved-dynamic', () => {
+    const out = parsePHP(`<?php
+function test($obj, $m) {
+  $obj->$m('arg');
+}
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:unresolved>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('unresolved-dynamic');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('call_user_func($fn, ...) extracts fn as unresolved-dynamic', () => {
+    const out = parsePHP(`<?php
+function test($fn) {
+  call_user_func($fn, 'arg');
+}
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:unresolved>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('unresolved-dynamic');
+    expect(c?.dynamic).toBe(true);
+  });
+
+  it('$fn() variable function call tags as unresolved-dynamic', () => {
+    const out = parsePHP(`<?php
+function test($fn) {
+  $fn('arg');
+}
+`);
+    const c = out.calls.find((c) => c.name === '<dynamic:unresolved>');
+    expect(c).toBeDefined();
+    expect(c?.dynamicKind).toBe('unresolved-dynamic');
   });
 });

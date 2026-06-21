@@ -228,14 +228,88 @@ fn handle_namespace_use(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+/// Get the first argument expression from a PHP argument_list.
+fn get_first_php_arg_text(node: &Node, source: &[u8]) -> Option<(String, String)> {
+    // Returns (text, kind) of the first non-punctuation argument
+    let args = node.child_by_field_name("arguments")
+        .or_else(|| find_child(node, "argument_list"))?;
+    for i in 0..args.child_count() {
+        let child = args.child(i)?;
+        match child.kind() {
+            "(" | ")" | "," => continue,
+            kind => {
+                // Descend into 'argument' wrapper if present
+                let actual = if kind == "argument" {
+                    child.child(0).unwrap_or(child)
+                } else {
+                    child
+                };
+                return Some((node_text(&actual, source).to_string(), actual.kind().to_string()));
+            }
+        }
+    }
+    None
+}
+
 fn handle_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let fn_node = node.child_by_field_name("function").or_else(|| node.child(0));
     let Some(fn_node) = fn_node else { return };
+    let call_line = start_line(node);
+
     match fn_node.kind() {
-        "name" | "identifier" => {
+        // $fn() — variable callable; unresolvable
+        "variable_name" => {
             symbols.calls.push(Call {
-                name: node_text(&fn_node, source).to_string(),
-                line: start_line(node),
+                name: "<dynamic:unresolved>".to_string(),
+                line: call_line,
+                dynamic: Some(true),
+                dynamic_kind: Some("unresolved-dynamic".to_string()),
+                ..Default::default()
+            });
+        }
+        "name" | "identifier" => {
+            let fn_name = node_text(&fn_node, source);
+            // call_user_func($callable, args) — extract first arg as actual target
+            if fn_name == "call_user_func" || fn_name == "call_user_func_array" {
+                if let Some((arg_text, arg_kind)) = get_first_php_arg_text(node, source) {
+                    match arg_kind.as_str() {
+                        "variable_name" => {
+                            symbols.calls.push(Call {
+                                name: "<dynamic:unresolved>".to_string(),
+                                line: call_line,
+                                dynamic: Some(true),
+                                dynamic_kind: Some("unresolved-dynamic".to_string()),
+                                key_expr: Some(arg_text),
+                                ..Default::default()
+                            });
+                        }
+                        "string" | "encapsed_string" => {
+                            let literal = arg_text.replace(['\'', '"'], "");
+                            symbols.calls.push(Call {
+                                name: literal,
+                                line: call_line,
+                                dynamic: Some(true),
+                                dynamic_kind: Some("reflection".to_string()),
+                                key_expr: Some(arg_text),
+                                ..Default::default()
+                            });
+                        }
+                        _ => {
+                            symbols.calls.push(Call {
+                                name: "<dynamic:unresolved>".to_string(),
+                                line: call_line,
+                                dynamic: Some(true),
+                                dynamic_kind: Some("unresolved-dynamic".to_string()),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    return;
+                }
+            }
+            symbols.calls.push(Call {
+                name: fn_name.to_string(),
+                line: call_line,
                 dynamic: None,
                 receiver: None,
                 ..Default::default()
@@ -246,7 +320,7 @@ fn handle_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             let last = text.split('\\').last().unwrap_or("");
             symbols.calls.push(Call {
                 name: last.to_string(),
-                line: start_line(node),
+                line: call_line,
                 dynamic: None,
                 receiver: None,
                 ..Default::default()
@@ -258,11 +332,26 @@ fn handle_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_member_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name) = node.child_by_field_name("name") {
-        let receiver = named_child_text(node, "object", source)
-            .map(|s| s.to_string());
+        let receiver = named_child_text(node, "object", source).map(|s| s.to_string());
+        let call_line = start_line(node);
+
+        // $obj->$m() — variable method name; unresolvable statically
+        if name.kind() == "variable_name" {
+            symbols.calls.push(Call {
+                name: "<dynamic:unresolved>".to_string(),
+                line: call_line,
+                dynamic: Some(true),
+                dynamic_kind: Some("unresolved-dynamic".to_string()),
+                key_expr: Some(node_text(&name, source).to_string()),
+                receiver,
+                ..Default::default()
+            });
+            return;
+        }
+
         symbols.calls.push(Call {
             name: node_text(&name, source).to_string(),
-            line: start_line(node),
+            line: call_line,
             dynamic: None,
             receiver,
             ..Default::default()
