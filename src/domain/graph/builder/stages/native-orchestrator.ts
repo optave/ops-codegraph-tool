@@ -2105,26 +2105,34 @@ export async function tryNativeOrchestrator(
   // nodes/edges during incremental builds, so FK enforcement causes the purge
   // statements to fail silently — leaving stale nodes and edges that then get
   // duplicated when the barrel-candidate re-parse re-inserts them (issue #1644).
-  // Disabling FK before buildGraph() lets the purge succeed; re-enable afterwards
-  // so JS post-passes run with full FK enforcement.
+  // Disabling FK before buildGraph() lets the purge succeed; FK is restored in
+  // a finally block so post-passes (gap-repair, structure patch) retain FK protection
+  // even if buildGraph() throws.
   try {
     ctx.nativeDb.exec('PRAGMA foreign_keys = OFF');
   } catch {
     // exec may not exist on very old addon versions — safe to ignore
   }
 
-  const resultJson = ctx.nativeDb.buildGraph(
-    ctx.rootDir,
-    JSON.stringify(ctx.config),
-    JSON.stringify(ctx.aliases),
-    JSON.stringify(ctx.opts),
-  );
-  // Restore FK enforcement for JS post-passes (CHA, dataflow, structure).
+  let resultJson: string;
   try {
-    ctx.nativeDb.exec('PRAGMA foreign_keys = ON');
-  } catch {
-    // exec may not exist on very old addon versions — safe to ignore
+    resultJson = ctx.nativeDb.buildGraph(
+      ctx.rootDir,
+      JSON.stringify(ctx.config),
+      JSON.stringify(ctx.aliases),
+      JSON.stringify(ctx.opts),
+    );
+  } finally {
+    // Restore FK enforcement so any subsequent writes to this connection
+    // (gap-repair, structure patch) retain FK protection — even if buildGraph()
+    // throws.
+    try {
+      ctx.nativeDb.exec('PRAGMA foreign_keys = ON');
+    } catch {
+      // safe to ignore on very old addon versions
+    }
   }
+
   const result = JSON.parse(resultJson) as NativeOrchestratorResult;
 
   if (result.earlyExit) {
