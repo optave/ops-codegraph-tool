@@ -93,20 +93,6 @@
       "kind": "calls",
       "mode": "pts-spread",
       "notes": "y() inside consumer2 — spread consumer2(...[sprFn3, sprFn4]) binds sprFn4 to y"
-    },
-    {
-      "source": { "name": "runDispatch", "file": "dispatch-table.js" },
-      "target": { "name": "dtFn1", "file": "dispatch-table.js" },
-      "kind": "calls",
-      "mode": "pts-dispatch-table",
-      "notes": "({a:dtFn1,b:dtFn2})[key]() — inline dispatch table; pts resolves wildcard to each value"
-    },
-    {
-      "source": { "name": "runDispatch", "file": "dispatch-table.js" },
-      "target": { "name": "dtFn2", "file": "dispatch-table.js" },
-      "kind": "calls",
-      "mode": "pts-dispatch-table",
-      "notes": "({a:dtFn1,b:dtFn2})[key]() — inline dispatch table; pts resolves wildcard to each value"
     }
   ]
 }

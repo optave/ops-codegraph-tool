@@ -242,6 +242,9 @@ fn resolve_pipeline_imports(
         let abs_file = Path::new(root_dir).join(rel_path);
         let abs_str = abs_file.to_str().unwrap_or("").replace('\\', "/");
         for imp in &symbols.imports {
+            // Skip CJS require bindings — they feed imported_names for receiver-edge
+            // resolution but must not produce DB import edges (#1678).
+            if imp.cjs_require.unwrap_or(false) { continue; }
             batch_inputs.push(ImportResolutionInput {
                 from_file: abs_str.clone(),
                 import_source: imp.source.clone(),

@@ -2039,9 +2039,7 @@ async function runPostNativePasses(
       debug(
         scopedFiles
           ? `Post-pass role re-classification complete (${scopedFiles.length} file(s))`
-          : needsFullReclassify
-            ? 'Post-pass role re-classification complete (full graph — full build)'
-            : 'Post-pass role re-classification complete (full graph — null-file endpoints)',
+          : 'Post-pass role re-classification complete (full graph)',
       );
     } catch (err) {
       debug(`Post-pass role re-classification failed: ${toErrorMessage(err)}`);
