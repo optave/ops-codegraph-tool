@@ -43,13 +43,13 @@ jobs:
           exit 1
 
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       - name: Run Automated AI Review
         id: automated-review
-        uses: anthropics/claude-code-action@d5726de019ec4498aa667642bc3a80fca83aa102
+        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           model: claude-sonnet-4-6
@@ -202,13 +202,13 @@ jobs:
           exit 1
 
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       - name: Run Interactive AI Assistant
         id: interactive-claude
-        uses: anthropics/claude-code-action@d5726de019ec4498aa667642bc3a80fca83aa102
+        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           model: claude-sonnet-4-6

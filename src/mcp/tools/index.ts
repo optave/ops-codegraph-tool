@@ -2,12 +2,9 @@
  * Barrel module — registers all MCP tool handlers.
  */
 
-import type { McpToolContext } from '../server.js';
+import type { McpToolHandler } from '../types.js';
 
-export interface McpToolHandler {
-  name: string;
-  handler(args: any, ctx: McpToolContext): Promise<unknown>;
-}
+export type { McpToolContext, McpToolHandler } from '../types.js';
 
 import * as astQuery from './ast-query.js';
 import * as audit from './audit.js';

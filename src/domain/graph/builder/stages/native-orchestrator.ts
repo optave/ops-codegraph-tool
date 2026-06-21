@@ -11,6 +11,7 @@
  * The orchestrator-selection strategy lives here so `pipeline.ts` stays a thin
  * top-level controller: detect changes, try native, fall back to JS stages.
  */
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
@@ -24,7 +25,7 @@ import {
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import { semverCompare } from '../../../../infrastructure/update-check.js';
-import { normalizePath } from '../../../../shared/constants.js';
+import { normalizePath, TS_NATIVE_CONFIDENCE_FLOOR } from '../../../../shared/constants.js';
 import { toErrorMessage } from '../../../../shared/errors.js';
 import { CODEGRAPH_VERSION } from '../../../../shared/version.js';
 import type {
@@ -1411,6 +1412,55 @@ function groupByExtension(relPaths: Iterable<string>): Map<string, string[]> {
 }
 
 /**
+ * Return the subset of relative paths that are gitignored in `rootDir`.
+ *
+ * Runs `git check-ignore --stdin` with all candidate paths piped in. Any
+ * path that git echoes back is gitignored. Fails silently (returns an empty
+ * set) when git is unavailable, the directory is not a git repo, or the
+ * check-ignore call throws — the gap-detection logic handles those cases
+ * gracefully without this filter.
+ *
+ * Uses relative paths (forward-slash separated) as both input and output so
+ * the result set can be matched directly against the `expected` set in
+ * `detectDroppedLanguageGap` without any further path manipulation.
+ */
+function queryGitIgnoredFiles(rootDir: string, relPaths: Iterable<string>): Set<string> {
+  const ignored = new Set<string>();
+  const paths = [...relPaths];
+  if (paths.length === 0) return ignored;
+  try {
+    const stdin = paths.join('\n');
+    const output = execFileSync('git', ['check-ignore', '--stdin'], {
+      cwd: rootDir,
+      input: stdin,
+      encoding: 'utf-8',
+      maxBuffer: 100 * 1024 * 1024,
+      // git check-ignore exits with 1 when none of the paths are ignored —
+      // that is not an error for our purposes. stdio: 'pipe' lets us capture
+      // stdout without swallowing stderr, and the try/catch handles the
+      // non-zero exit from execFileSync when ALL paths are non-ignored
+      // (exit code 1 from git check-ignore means "no matches").
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    for (const line of output.split('\n')) {
+      const trimmed = normalizePath(line.trim());
+      if (trimmed) ignored.add(trimmed);
+    }
+  } catch (e: unknown) {
+    // Exit code 1 means no paths were ignored — not an error. Any other
+    // failure (git unavailable, not a repo, etc.) is silently swallowed
+    // so the caller proceeds with the unfiltered set.
+    const exitCode = (e as { status?: number }).status;
+    if (exitCode !== 1) {
+      debug(`queryGitIgnoredFiles: git check-ignore failed: ${toErrorMessage(e)}`);
+    }
+    // On exit code 1, output is empty so ignored stays empty — correct.
+    // On other errors we also proceed with the empty set (safe degradation).
+  }
+  return ignored;
+}
+
+/**
  * Detect files the native orchestrator silently dropped.
  *
  * Walks the filesystem and compares against `nodes` + `file_hashes`. A file
@@ -1439,8 +1489,17 @@ function groupByExtension(relPaths: Iterable<string>): Map<string, string[]> {
  */
 function detectDroppedLanguageGap(ctx: PipelineContext): DroppedLanguageGap {
   const collected = collectFilesUtil(ctx.rootDir, [], ctx.config, new Set<string>());
+  const expectedRaw = collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f)));
+
+  // The native Rust engine uses the `ignore` crate with git_ignore(true), so it
+  // respects .gitignore and never processes gitignored files. The JS collectFiles
+  // walker has no gitignore awareness, so without this filter gitignored files
+  // (e.g. NAPI-RS generated crates/codegraph-core/index.js / index.d.ts) appear
+  // in `expected` but not in the DB, causing a spurious "native extractor bug"
+  // WARN and triggering an unnecessary WASM backfill (#1626).
+  const gitIgnored = queryGitIgnoredFiles(ctx.rootDir, expectedRaw);
   const expected = new Set(
-    collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f))),
+    gitIgnored.size > 0 ? expectedRaw.filter((r) => !gitIgnored.has(r)) : expectedRaw,
   );
 
   const existingNodeRows = ctx.db
@@ -1760,7 +1819,10 @@ async function backfillNativeDroppedFiles(
 
 /**
  * Backfill the `technique` column on `calls` edges written by the native Rust
- * orchestrator, which does not write the column itself.
+ * orchestrator, which does not write the column itself.  Also lifts any
+ * resolved ts-native edge whose confidence is below TS_NATIVE_CONFIDENCE_FLOOR
+ * to that floor value so that the name-lookup quality of the native resolver is
+ * reflected in the call-confidence metric.
  *
  * For full builds, all `calls` edges in the DB are new so a global UPDATE is
  * correct.  For incremental builds, only changed-file source nodes are updated
@@ -1781,6 +1843,12 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
     db.prepare(
       "UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL",
     ).run();
+    // Lift resolved ts-native edges below the confidence floor.
+    db.prepare(
+      `UPDATE edges SET confidence = ?
+       WHERE kind = 'calls' AND technique = 'ts-native'
+         AND confidence > 0 AND confidence < ?`,
+    ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR);
     return;
   }
   // Incremental: scope to source nodes whose file is one of the changed files.
@@ -1797,6 +1865,15 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
            SELECT id FROM nodes WHERE file IN (${placeholders})
          )`,
       ).run(...chunk);
+      // Lift resolved ts-native edges below the confidence floor for this chunk.
+      db.prepare(
+        `UPDATE edges SET confidence = ?
+         WHERE kind = 'calls' AND technique = 'ts-native'
+           AND confidence > 0 AND confidence < ?
+           AND source_id IN (
+             SELECT id FROM nodes WHERE file IN (${placeholders})
+           )`,
+      ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR, ...chunk);
     }
   });
   tx();

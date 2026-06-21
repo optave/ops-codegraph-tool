@@ -42,7 +42,7 @@ jobs:
       CODEGRAPH_FAST_SKIP_DIAG: "1"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:

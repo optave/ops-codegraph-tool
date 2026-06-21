@@ -211,12 +211,20 @@ function computeQualityMetrics(
   const totalCallEdges = (
     db.prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls'").get() as { c: number }
   ).c;
+  // Exclude sink edges (confidence=0.0) from the confidence ratio: they flag
+  // unresolvable dynamic calls (eval/computed-key) and are not resolution
+  // attempts — including them in the denominator unfairly penalises the metric.
+  const resolvedCallEdges = (
+    db.prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls' AND confidence > 0").get() as {
+      c: number;
+    }
+  ).c;
   const highConfCallEdges = (
     db
       .prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls' AND confidence >= 0.7")
       .get() as { c: number }
   ).c;
-  const callConfidence = totalCallEdges > 0 ? highConfCallEdges / totalCallEdges : 0;
+  const callConfidence = resolvedCallEdges > 0 ? highConfCallEdges / resolvedCallEdges : 0;
 
   const falsePositiveWarnings = buildFalsePositiveWarnings(queryFalsePositiveRows(db, fpThreshold));
 
@@ -239,7 +247,7 @@ function computeQualityMetrics(
     callConfidence: {
       ratio: callConfidence,
       highConf: highConfCallEdges,
-      total: totalCallEdges,
+      total: resolvedCallEdges,
     },
     falsePositiveWarnings,
   };
@@ -373,11 +381,29 @@ function queryFalsePositiveRows(
     .all(fpThreshold) as FalsePositiveRow[];
 }
 
+/**
+ * Returns true when a high-caller-count row is a known structural false positive
+ * that should be silently excluded from warnings.
+ *
+ * Rust `::new()` methods (kind = method, local name = "new", file ends in ".rs")
+ * are conventional constructors — their high call counts are expected and carry
+ * no architectural signal.  Any pattern-based exclusion should be added here
+ * rather than hardcoding specific symbol names.
+ */
+function isStructuralFalsePositive(r: FalsePositiveRow): boolean {
+  const localName = r.name.includes('.') ? r.name.split('.').pop()! : r.name;
+  // Rust ::new() constructors are always high-caller by design.
+  if (localName === 'new' && r.file.endsWith('.rs')) return true;
+  return false;
+}
+
 /** Filter false-positive rows by the configured name set and shape them for the report. */
 function buildFalsePositiveWarnings(rows: FalsePositiveRow[]) {
   return rows
-    .filter((r) =>
-      FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop()! : r.name),
+    .filter(
+      (r) =>
+        !isStructuralFalsePositive(r) &&
+        FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop()! : r.name),
     )
     .map((r) => ({ name: r.name, file: r.file, line: r.line, callerCount: r.caller_count }));
 }
@@ -427,15 +453,21 @@ function buildStatsFromNative(
 
   const callerCoverage =
     s.quality.callableTotal > 0 ? s.quality.callableWithCallers / s.quality.callableTotal : 0;
+  // s.quality.callEdges is now the resolved (confidence>0) edge count — sink
+  // edges (confidence=0.0) are excluded so they don't dilute the ratio.
   const callConfidence =
     s.quality.callEdges > 0 ? s.quality.highConfCallEdges / s.quality.callEdges : 0;
 
-  // False-positive analysis still uses JS (needs FALSE_POSITIVE_NAMES set)
+  // False-positive analysis still uses JS (needs FALSE_POSITIVE_NAMES set).
+  // FP ratio uses the total calls count as denominator. When edgesByKind['calls']
+  // is undefined there are no call edges at all, so fpEdgeCount is 0 and the
+  // > 0 guard below returns 0 regardless — use 0 as the safe fallback.
+  const totalCallEdgesForFp = edgesByKind.calls ?? 0;
   const fpThreshold = config.analysis?.falsePositiveCallers ?? FALSE_POSITIVE_CALLER_THRESHOLD;
   const falsePositiveWarnings = buildFalsePositiveWarnings(queryFalsePositiveRows(db, fpThreshold));
   let fpEdgeCount = 0;
   for (const fp of falsePositiveWarnings) fpEdgeCount += fp.callerCount;
-  const falsePositiveRatio = s.quality.callEdges > 0 ? fpEdgeCount / s.quality.callEdges : 0;
+  const falsePositiveRatio = totalCallEdgesForFp > 0 ? fpEdgeCount / totalCallEdgesForFp : 0;
   const score = computeQualityScore(callerCoverage, callConfidence, falsePositiveRatio);
   const testFilter = testFilterSQL('n.file', noTests);
   const byTechnique = countCallEdgesByTechnique(db, testFilter);
