@@ -262,6 +262,11 @@ function extractResolvedEdges(fixtureDir: string) {
       JOIN nodes tgt ON e.target_id = tgt.id
       WHERE e.kind = 'calls'
         AND src.kind IN ('function', 'method')
+        -- Exclude sink edges: they target file nodes (the only 'calls' edges that do so).
+        -- The compound confidence/dynamic_kind clause below is belt-and-suspenders for
+        -- databases built before the Rust fix in #1698 where dynamic_kind was NULL for
+        -- sink edges, making tgt.kind != 'file' the authoritative semantic guard.
+        AND tgt.kind != 'file'
         AND (e.confidence IS NULL OR e.confidence > 0 OR e.dynamic_kind IS NULL)
     `)
       .all();

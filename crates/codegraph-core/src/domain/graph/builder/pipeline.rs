@@ -1461,6 +1461,7 @@ fn insert_call_edge_rows(conn: &Connection, edges: &[crate::domain::graph::build
             kind: e.kind.clone(),
             confidence: e.confidence,
             dynamic: e.dynamic,
+            dynamic_kind: e.dynamic_kind.clone(),
         })
         .collect();
     let _ = crate::db::repository::edges::do_insert_edges(conn, &edge_rows);
