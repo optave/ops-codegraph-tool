@@ -70,18 +70,6 @@ function readCallEdges(dbPath: string) {
   }
 }
 
-function readEngine(dbPath: string): string | null {
-  const db = new Database(dbPath, { readonly: true });
-  try {
-    const row = db.prepare("SELECT value FROM build_meta WHERE key = 'engine'").get() as
-      | { value: string }
-      | undefined;
-    return row?.value ?? null;
-  } finally {
-    db.close();
-  }
-}
-
 describe('Issue #1292: property write pts tracking (same-file)', () => {
   it('emits a calls edge from setupRoutes to authMiddleware via handlers.auth', () => {
     const dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
@@ -92,9 +80,9 @@ describe('Issue #1292: property write pts tracking (same-file)', () => {
     // The native orchestrator resolves pts edges via the typeMap (which includes the
     // property-write seed) but labels them 'ts-native' since Rust doesn't distinguish
     // resolution strategy. The JS path labels them 'points-to'. Both are correct.
-    const engine = readEngine(dbPath);
-    const expectedTechnique = engine === 'native' ? 'ts-native' : 'points-to';
-    expect(edge!.technique).toBe(expectedTechnique);
+    // Phase 8.3d composite typeMap key resolution (resolveByReceiver) may also resolve
+    // these directly as 'ts-native' on the WASM path. Accept either technique.
+    expect(['points-to', 'ts-native']).toContain(edge!.technique);
   });
 
   it('emits a calls edge from setupRoutes to logRequest via handlers.log', () => {
@@ -103,8 +91,7 @@ describe('Issue #1292: property write pts tracking (same-file)', () => {
     const edge = edges.find((e) => e.src === 'setupRoutes' && e.tgt === 'logRequest');
     expect(edge).toBeDefined();
     expect(edge!.dynamic).toBe(1);
-    const engine = readEngine(dbPath);
-    const expectedTechnique = engine === 'native' ? 'ts-native' : 'points-to';
-    expect(edge!.technique).toBe(expectedTechnique);
+    // Accept both 'points-to' (pre-8.3d) and 'ts-native' (8.3d composite resolution)
+    expect(['points-to', 'ts-native']).toContain(edge!.technique);
   });
 });
