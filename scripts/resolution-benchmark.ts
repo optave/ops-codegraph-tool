@@ -299,6 +299,12 @@ try {
 						JOIN nodes tgt ON e.target_id = tgt.id
 						WHERE e.kind = 'calls'
 							AND src.kind IN ('function', 'method')
+							-- Exclude sink edges (confidence=0, target=file node).
+							-- tgt.kind != 'file' is the authoritative guard; the
+							-- confidence/dynamic_kind clause is belt-and-suspenders
+							-- for DBs built before dynamic_kind was written for sinks.
+							AND tgt.kind != 'file'
+							AND (e.confidence IS NULL OR e.confidence > 0 OR e.dynamic_kind IS NULL)
 					`)
 					.all() as ResolvedEdge[];
 			} finally {
