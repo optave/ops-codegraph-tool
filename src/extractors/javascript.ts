@@ -317,6 +317,9 @@ function dispatchQueryMatch(
     if (callfnInfo) calls.push(callfnInfo);
     calls.push(...extractCallbackReferenceCalls(c.callfn_node));
   } else if (c.callmem_node) {
+    // extractCallInfo → extractMemberExprCallInfo applies the plain-identifier guard for
+    // .call/.apply/.bind: when the object is a bare identifier (e.g. `fn.call(ctx)`),
+    // the call is emitted as static (no dynamic flag), matching the walk path and native engine.
     const callInfo = extractCallInfo(c.callmem_fn!, c.callmem_node);
     if (callInfo) calls.push(callInfo);
     const cbDef = extractCallbackDefinition(c.callmem_node, c.callmem_fn);
