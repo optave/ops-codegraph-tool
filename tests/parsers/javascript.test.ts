@@ -155,10 +155,17 @@ describe('JavaScript parser', () => {
     expect(symbols.imports[0].reexport).toBe(true);
   });
 
-  it('detects dynamic call patterns', () => {
+  it('resolves .call()/.apply() on plain identifiers as static calls', () => {
+    // `fn.call(null, arg)` — plain-identifier receiver; target is statically known,
+    // so we emit a static call (dyn=0).  This keeps parity with the native Rust engine
+    // and prevents the dynZeroEdgeRows upgrade from wrongly promoting dyn=0 → dyn=1.
     const symbols = parseJS(`fn.call(null, arg); obj.apply(undefined, args);`);
-    const dynamicCalls = symbols.calls.filter((c) => c.dynamic);
-    expect(dynamicCalls.length).toBeGreaterThanOrEqual(1);
+    const fnCall = symbols.calls.find((c) => c.name === 'fn');
+    expect(fnCall).toBeDefined();
+    expect(fnCall.dynamic).toBeFalsy();
+    const objCall = symbols.calls.find((c) => c.name === 'obj');
+    expect(objCall).toBeDefined();
+    expect(objCall.dynamic).toBeFalsy();
   });
 
   it('captures receiver for method calls', () => {
@@ -633,6 +640,26 @@ describe('JavaScript parser', () => {
     const fnCall = symbols.calls.find((c) => c.name === 'fn');
     expect(fnCall).toBeDefined();
     expect(fnCall.receiver).toBeUndefined();
+  });
+
+  it('emits static call for .call/.apply/.bind on plain identifier (#1687)', () => {
+    // `f.call({})` where f is a plain identifier — target is statically known;
+    // must emit dyn=0 (no dynamic flag) to match native Rust engine parity.
+    const symbols = parseJS(`const f = function () {}.bind({}); f(); f.call({});`);
+    const fCallCalls = symbols.calls.filter((c) => c.name === 'f');
+    expect(fCallCalls.length).toBeGreaterThanOrEqual(1);
+    for (const c of fCallCalls) {
+      expect(c.dynamic).toBeFalsy(); // all f() / f.call({}) calls must be dyn=0
+    }
+  });
+
+  it('still emits dynamic/reflection for .call on member-expression object', () => {
+    // `obj.method.call({})` — inner callee requires a resolution hop; stays dynamic.
+    const symbols = parseJS(`obj.method.call({});`);
+    const methodCall = symbols.calls.find((c) => c.name === 'method');
+    expect(methodCall).toBeDefined();
+    expect(methodCall.dynamic).toBe(true);
+    expect(methodCall.dynamicKind).toBe('reflection');
   });
 
   describe('callback pattern extraction', () => {

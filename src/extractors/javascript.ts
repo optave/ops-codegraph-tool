@@ -3120,10 +3120,16 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
     };
   }
 
-  // .call()/.apply()/.bind() — this-rebinding; target is statically known
+  // .call()/.apply()/.bind() — this-rebinding; the wrapped function is the real callee.
+  // When the object is a plain identifier (e.g. `f.call({})`), the target is statically
+  // known so we emit a static call (no dynamic flag).  This keeps parity with the native
+  // Rust engine, which also resolves these as dyn=0, and prevents the dynZeroEdgeRows
+  // upgrade path in emitDirectCallEdgesForCall from wrongly converting a dyn=0 edge
+  // (emitted by a prior direct `f()` call) to dyn=1.
+  // When the object is a member_expression (e.g. `obj.method.call({})`), we still mark
+  // it dynamic/reflection because the inner callee requires a second resolution hop.
   if (propText === 'call' || propText === 'apply' || propText === 'bind') {
-    if (obj && obj.type === 'identifier')
-      return { name: obj.text, line: callLine, dynamic: true, dynamicKind: 'reflection' };
+    if (obj && obj.type === 'identifier') return { name: obj.text, line: callLine };
     if (obj && obj.type === 'member_expression') {
       const innerProp = obj.childForFieldName('property');
       if (innerProp)

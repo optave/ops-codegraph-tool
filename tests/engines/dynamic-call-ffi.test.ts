@@ -65,23 +65,28 @@ describe('dynamic call classification — dynamicKind and keyExpr fields', () =>
     expect(c?.dynamic).toBe(true);
   });
 
-  it('tags fn.call(ctx) as reflection kind', () => {
+  it('resolves fn.call(ctx) as a static call — no dynamic flag (#1687)', () => {
+    // `greet.call(ctx, 'world')` — plain-identifier receiver; target is statically known.
+    // We emit a static call (no dynamic, no dynamicKind) to match native Rust parity and
+    // prevent the dynZeroEdgeRows upgrade from promoting a prior dyn=0 edge to dyn=1.
     const out = parseJS(`
       function test(ctx) { greet.call(ctx, 'world'); }
     `);
     const c = out.calls.find((c) => c.name === 'greet');
     expect(c).toBeDefined();
-    expect(c?.dynamicKind).toBe('reflection');
-    expect(c?.dynamic).toBe(true);
+    expect(c?.dynamic).toBeFalsy();
+    expect(c?.dynamicKind).toBeUndefined();
   });
 
-  it('tags fn.apply(ctx, args) as reflection kind', () => {
+  it('resolves fn.apply(ctx, args) as a static call — no dynamic flag (#1687)', () => {
+    // Same as .call(): plain-identifier receiver → static call.
     const out = parseJS(`
       function test(ctx) { greet.apply(ctx, ['world']); }
     `);
     const c = out.calls.find((c) => c.name === 'greet');
     expect(c).toBeDefined();
-    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBeFalsy();
+    expect(c?.dynamicKind).toBeUndefined();
   });
 
   it('tags obj[a + b]() as unresolved-dynamic kind', () => {
