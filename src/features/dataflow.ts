@@ -741,11 +741,24 @@ function makeNodeResolver(
   stmts: ReturnType<typeof prepareNodeResolvers>,
   relPath: string,
 ): (funcName: string) => { id: number } | null {
+  // Memoise per (relPath, funcName). buildDataflowVerticesAndEdges resolves the
+  // same handful of function names many times per file — once per param, return,
+  // assignment, argFlow, summary row, and capture — and each miss costs one or
+  // two `nodes` table queries. The nodes table is never mutated during the P6
+  // vertex pass (only dataflow* tables are written), so the lookup is stable for
+  // the lifetime of the resolver; caching collapses tens of thousands of
+  // redundant queries on a full build into one per distinct name (#perf).
+  const cache = new Map<string, { id: number } | null>();
   return (funcName: string): { id: number } | null => {
+    const cached = cache.get(funcName);
+    if (cached !== undefined) return cached;
     const local = stmts.getNodeByNameAndFile.all(funcName, relPath) as { id: number }[];
-    if (local.length > 0) return local[0]!;
-    const global = stmts.getNodeByName.all(funcName) as { id: number }[];
-    return global.length > 0 ? global[0]! : null;
+    const resolved =
+      local.length > 0
+        ? local[0]!
+        : ((stmts.getNodeByName.all(funcName) as { id: number }[])[0] ?? null);
+    cache.set(funcName, resolved);
+    return resolved;
   };
 }
 
