@@ -391,8 +391,19 @@ async function runDataflowVertexPass(
     if (batchResults) {
       result = batchResults[i] ?? null;
     } else {
-      const source = readFileSafe(absPaths[i]!);
-      if (!source) continue;
+      let source: string;
+      try {
+        source = readFileSafe(absPaths[i]!);
+      } catch {
+        // Unreadable file — mirror batch-path behaviour and route to WASM.
+        wasmStubs.set(relPath, { definitions: [], _langId: null, _tree: null });
+        continue;
+      }
+      if (!source) {
+        // Empty file — same treatment as batch returning null.
+        wasmStubs.set(relPath, { definitions: [], _langId: null, _tree: null });
+        continue;
+      }
       try {
         result = native.extractDataflowAnalysis(source, absPaths[i]!);
       } catch {
