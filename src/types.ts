@@ -2286,6 +2286,14 @@ export interface NativeAddon {
     filePath: string,
     langId?: string | null,
   ): DataflowResult | null;
+  /**
+   * Batch counterpart to {@link extractDataflowAnalysis}: read and analyse many
+   * files in parallel (rayon) in a single NAPI call. Results are positional —
+   * `null` where the file could not be read or has no dataflow rules. Optional:
+   * older published addons predate this export, so callers must feature-detect
+   * and fall back to per-file `extractDataflowAnalysis`.
+   */
+  extractDataflowAnalysisBatch?(filePaths: string[]): (DataflowResult | null)[];
   ParseTreeCache: new () => NativeParseTreeCache;
   NativeDatabase: {
     openReadWrite(dbPath: string): NativeDatabase;

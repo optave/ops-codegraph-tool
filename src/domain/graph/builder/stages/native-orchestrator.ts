@@ -370,22 +370,41 @@ async function runDataflowVertexPass(
   const nativeDataflow = new Map<string, DataflowResult>();
   const wasmStubs = new Map<string, { definitions: []; _langId: null; _tree: null }>();
 
-  for (const relPath of filesToProcess) {
-    const absPath = path.join(ctx.rootDir, relPath);
-    const source = readFileSafe(absPath);
-    if (!source) continue;
-    let result: DataflowResult | null = null;
+  const absPaths = filesToProcess.map((relPath) => path.join(ctx.rootDir, relPath));
+
+  // Batch the per-file dataflow extraction into one NAPI call so the parses run
+  // across the rayon thread pool instead of serially on the event loop — this is
+  // the dominant cost of a native full build (#perf). Older addons predate the
+  // batch export, so fall back to the per-file path when it is unavailable.
+  let batchResults: (DataflowResult | null)[] | null = null;
+  if (typeof native.extractDataflowAnalysisBatch === 'function') {
     try {
-      result = native.extractDataflowAnalysis(source, absPath);
+      batchResults = native.extractDataflowAnalysisBatch(absPaths);
     } catch {
-      // Language-specific parse failure — fall through to WASM.
+      batchResults = null; // fall through to per-file extraction below
+    }
+  }
+
+  for (let i = 0; i < filesToProcess.length; i++) {
+    const relPath = filesToProcess[i]!;
+    let result: DataflowResult | null = null;
+    if (batchResults) {
+      result = batchResults[i] ?? null;
+    } else {
+      const source = readFileSafe(absPaths[i]!);
+      if (!source) continue;
+      try {
+        result = native.extractDataflowAnalysis(source, absPaths[i]!);
+      } catch {
+        // Language-specific parse failure — fall through to WASM.
+      }
     }
     if (result) {
       // Normalise the native DataflowResult: Rust emits `bindingType: string | null`
       // (flat) while the TS dataflow layer expects `binding: { type, index? }` (object).
       // patchNativeResult handles this via patchDataflow for the full parse path;
-      // extractDataflowAnalysis is a vertex-only fast path that bypasses patchNativeResult,
-      // so we apply the same normalisation here.
+      // extractDataflowAnalysis(Batch) is a vertex-only fast path that bypasses
+      // patchNativeResult, so we apply the same normalisation here.
       patchDataflowResult(result);
       nativeDataflow.set(relPath, result);
     } else {

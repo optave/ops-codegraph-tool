@@ -187,3 +187,28 @@ pub fn extract_dataflow_analysis(
 ) -> Option<types::DataflowResult> {
     ast_analysis::engine::extract_dataflow_standalone(&source, &file_path, lang_id.as_deref())
 }
+
+/// Batch counterpart to `extract_dataflow_analysis`: read and analyse many files
+/// in parallel in a single NAPI call.
+///
+/// The native orchestrator's P6 vertex pass needs a `DataflowResult` for every
+/// dataflow-bearing file on a full build. Calling `extract_dataflow_analysis`
+/// once per file serialised hundreds of parses on the JS event loop and dominated
+/// the native full-build benchmark. This reads each path from disk and runs the
+/// dataflow extractor across the rayon thread pool, returning results positionally
+/// (`None` where the file could not be read or the language has no dataflow rules),
+/// so the caller maps them straight back onto its input list. Each `parse_source`
+/// builds its own tree-sitter `Parser`, so the work is embarrassingly parallel.
+#[napi]
+pub fn extract_dataflow_analysis_batch(
+    file_paths: Vec<String>,
+) -> Vec<Option<types::DataflowResult>> {
+    use rayon::prelude::*;
+    file_paths
+        .par_iter()
+        .map(|file_path| {
+            let source = std::fs::read_to_string(file_path).ok()?;
+            ast_analysis::engine::extract_dataflow_standalone(&source, file_path, None)
+        })
+        .collect()
+}
