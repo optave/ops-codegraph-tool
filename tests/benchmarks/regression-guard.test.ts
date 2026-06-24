@@ -227,126 +227,23 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * latest, when `previous.version` matches via the baseline fallback). Once
  * a version is no longer the latest in committed history and no longer the
  * baseline used for `dev` comparisons, its entries become dead weight and
- * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0/3.11.0/3.11.1/3.11.2).
- *
- * - 3.12.0:No-op rebuild — CI runner variance on a sub-50ms native metric.
- *   The 3.12.0 baseline captures noopRebuildMs=30 (build benchmark) and
- *   noopRebuildMs=23 (incremental benchmark); the per-PR gate re-measures
- *   dev on a fresh runner and lands at 48ms (+60%) and 48ms (+109%) on run
- *   27457266151 — both exceed the NOISY_METRIC_THRESHOLD of 50% due to
- *   sub-50ms variance on shared runners. This PR (#1487) adds warmup runs to
- *   benchmark.ts on the no-op and 1-file rebuild tiers; on a true no-op
- *   rebuild no files are re-parsed and build-edges.ts is never reached, so
- *   none of the code changes in this branch execute on the hot path. The
- *   delta is entirely shared-runner scheduling noise. Same shape and root
- *   cause as 3.11.2:No-op rebuild. Exempt this release; remove once
- *   3.13.0+ data confirms the steady-state.
- *
- * - 3.12.0:Full build — root-caused residual feature cost of the Phase 8.x
- *   resolution work on the native engine. The v3.12.0 publish gate first
- *   measured 2231 → 3333 (+49%). Local A/B against a v3.11.2 baseline worktree
- *   (same machine, release-built addons for each side) attributed the delta to
- *   three post-pass regressions, all fixed: (a) the func-prop WASM re-parse
- *   post-pass booted the WASM worker pool on every native full build and
- *   inserted zero nodes on this corpus (~430ms — removed; the Rust extractor
- *   now emits func-prop method definitions, #1432); (b) an unscoped full-graph
- *   role re-classification after the CHA/this-dispatch post-passes (~130ms —
- *   now scoped to files containing the new edges' endpoints); (c) the
- *   this-dispatch pass booted the in-process WASM runtime to re-parse hierarchy
- *   files (~40ms — now re-parsed through the already-loaded native engine).
- *   The remaining delta (local: 1378ms → ~1745ms, +26% including 630 → 672
- *   corpus growth) is in-phase Rust extraction cost of the Phase 8.x features
- *   themselves — parse +28%/file (points-to, return-type, prototype and
- *   func-prop extraction), insert/edges +10–20% — which lands at the 25%
- *   threshold boundary under CI runner variance. This is measured feature
- *   cost, not an undiagnosed regression. Tracking: #1433 (per-PR perf canary),
- *   #1434 (post-pass phase timings). Remove once 3.13+ data establishes the
- *   new steady-state baseline.
- *
- * - 3.12.0:1-file rebuild — CI methodology noise on the ~100ms native metric:
- *   the build-benchmark suite measures this tier with no warmup runs (#1440),
- *   unlike the incremental suite, whose identical metric PASSED in the same
- *   publish run that flagged this one (86 → 131, +52%, noisy threshold 50%).
- *   Local A/B on the same machine shows parity: v3.11.2 baseline 84–102ms vs
- *   dev 97–108ms (overlapping ranges). The only systematic additions on this
- *   path are the CHA scan (~12ms, scoping tracked in #1441) and the native
- *   this-dispatch re-parse of the changed file (~2ms). Same shape as the
- *   3.11.2:1-file rebuild entry above. Remove once #1440 lands warmups and
- *   3.13+ data confirms the steady state.
- *
- * - 3.12.0:No-op rebuild — CI runner variance on a sub-30ms native metric.
- *   The 3.12.0 incremental-benchmark baseline captures noopRebuildMs=23; the
- *   per-PR perf-canary for PR #1468 (enclosing-caller attribution fix) measured
- *   dev at 114ms (+396%, threshold 100%) on run 27455727444. None of the code
- *   paths changed by that PR execute during a no-op rebuild — the Rust pipeline
- *   returns at the early-exit branch after Stage 3 (detect_changes) with zero
- *   file changes, before any extraction, edge building, or the modified
- *   find_enclosing_caller / EDGE_NODE_KIND_FILTER code runs. Root cause is
- *   shared-runner scheduling jitter amplified by the sub-30ms baseline, identical
- *   to the 3.11.2:No-op rebuild pattern. Remove once 3.13+ data confirms the
- *   steady-state.
- *
- * - 3.13.0:1-file rebuild — CI runner variance on a sub-100ms native metric.
- *   PR #1608 (dataflow vertex schema, migration v18) measured 73ms → 139ms
- *   (+90%, NOISY_METRIC_THRESHOLD 75%). Migration v18 runs only once — the
- *   applyMigrations path for an already-migrated DB is a single SELECT on
- *   schema_version (O(1)) before the loop short-circuits, so no DDL executes
- *   on incremental rebuilds. The spike is shared-runner scheduling noise
- *   amplified by the sub-100ms baseline: 73ms sits inside the documented
- *   64–115ms spread for this metric, and a +66ms absolute jitter is within the
- *   range seen in prior exemptions (3.11.2: +129ms, 3.12.0: +45ms). Same shape
- *   and root cause as 3.12.0:1-file rebuild. Remove once 3.14+ data confirms
- *   the steady-state.
+ * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0/3.11.0/3.11.1/
+ * 3.11.2; the 3.12.0 and 3.13.0 entries — dataflow/no-op/full-build timing noise
+ * and the erlang 0% drop — were pruned at the 3.15.0 release once the 3.15.0
+ * benchmark baseline landed in PR #1702, which folds those deltas into the
+ * baseline so dev-vs-3.15.0 comparisons no longer flag them).
  *
  * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
- * handled structurally by WASM_TIMING_THRESHOLD (see above). The 3.11.x
- * entries that remain are kept because they trip the *native* engine too
- * (fnDeps depth 3/5: native 24.3→34.7, 24.7→34.7) or are size metrics
- * (DB bytes/file), neither of which the WASM widening covers.
+ * handled structurally by WASM_TIMING_THRESHOLD (see above); native keeps the
+ * strict thresholds and is the canary for real algorithmic regressions.
  */
-const KNOWN_REGRESSIONS = new Set([
-  '3.12.0:No-op rebuild',
-  '3.12.0:Full build',
-  '3.12.0:1-file rebuild',
-  // PR #1608 dataflow vertex schema: CI runner variance on a sub-100ms metric.
-  // Migration v18 is a one-time operation; subsequent incremental rebuilds only
-  // pay an O(1) SELECT on schema_version. Remove once 3.14+ data confirms
-  // the steady-state (see KNOWN_REGRESSIONS comment above for full analysis).
-  '3.13.0:1-file rebuild',
-  // PR #1615 dataflow P4+P6 on native path: the P6 vertex extraction pass
-  // re-runs extractDataflowAnalysis() per file to get vertex data that the Rust
-  // orchestrator writes edges for but does not persist as vertices. Even with the
-  // full-build optimisation (scoping to files with dataflow edges only), the pass
-  // costs real time proportional to the number of functions with tracked flows.
-  // The incremental Full build benchmark measures the first full build from a
-  // clean DB — the worst case where ALL files with dataflow data are re-analysed.
-  // Remove once 3.14+ data establishes the new steady-state baseline.
-  '3.13.0:Full build',
-  // PR #1615 dataflow P4+P6: CI runner variance on a sub-100ms native query metric.
-  // The fnDeps Rust implementation, fnDepsData JS wrapper, and DB schema/indexes are
-  // unchanged by this PR. The 41 → 68 ms (+66%) jump is shared-runner scheduling
-  // noise amplified by the sub-50ms baseline (same pattern as 3.12.0:No-op rebuild
-  // and 3.13.0:1-file rebuild). The dataflow table additions do not appear in the
-  // fnDeps query path (which reads nodes/edges only). Remove once 3.14+ data confirms
-  // the steady-state.
-  '3.13.0:fnDeps depth 1',
-  // tree-sitter-erlang devDependency removed (GHSA-rphw-c8qj-jv84 — malware).
-  // The erlang WASM is no longer built, so erlang resolution drops to 0%.
-  // These entries exempt the expected precision/recall drop on every build
-  // that follows the 3.12.0 baseline until a clean replacement grammar is
-  // integrated and a new baseline is captured.
-  '3.12.0:resolution erlang precision',
-  '3.12.0:resolution erlang recall',
-  // 3.13.0 comparison against 3.12.0 baseline: same root cause — erlang WASM
-  // grammar still absent. Remove once a clean replacement grammar lands.
-  '3.13.0:resolution erlang precision',
-  '3.13.0:resolution erlang recall',
-  // CI runner variance on a sub-30ms native metric: 3.13.0 baselines 25–26ms
-  // (incremental + build suites). The PR that triggered this (+88%/+92%) removed a
-  // readGitignorePatterns() call from the fast-collect path — no-op rebuilds can only
-  // be faster, not slower. Delta is shared-runner scheduling noise identical to
-  // 3.12.0:No-op rebuild. Remove once 3.14+ data confirms the steady-state.
-  '3.13.0:No-op rebuild',
+const KNOWN_REGRESSIONS = new Set<string>([
+  // (empty) — all 3.12.0/3.13.0 entries pruned at the 3.15.0 release once the
+  // 3.15.0 benchmark baseline landed (PR #1702). The erlang 0% drop and the
+  // dataflow/no-op timing deltas are now baked into the 3.15.0 baseline, so
+  // dev-vs-3.15.0 comparisons no longer flag them. Add a new
+  // "version:metric-label" entry here (with root-cause analysis above) only
+  // when a fresh regression needs exempting against the current baseline.
 ]);
 
 /**
