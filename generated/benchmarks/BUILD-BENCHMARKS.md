@@ -5,6 +5,8 @@ Metrics are normalized per file for cross-version comparability.
 
 | Version | Engine | Date | Files | Build (ms/file) | Query (ms) | Nodes/file | Edges/file | DB (bytes/file) |
 |---------|--------|------|------:|----------------:|-----------:|-----------:|-----------:|----------------:|
+| 3.15.0 | native | 2026-06-23 | 629 | 5.8 ↑29% | 33 ↓21% | 25.4 ↓15% | 51.8 ↓16% | 50845 ↓8% |
+| 3.15.0 | wasm | 2026-06-23 | 629 | 26.2 ↓4% | 47.4 ↓18% | 25.4 ↓15% | 52.7 ↓16% | 52017 ↓6% |
 | 3.13.0 | native | 2026-06-17 | 695 | 4.5 ↑2% | 42 ↑11% | 29.9 ~ | 61.7 ↓4% | 55564 ~ |
 | 3.13.0 | wasm | 2026-06-17 | 695 | 27.4 ↑29% | 57.7 ↑20% | 29.9 ~ | 62.4 ~ | 55216 ~ |
 | 3.12.0 | native | 2026-06-11 | 670 | 4.4 ↑22% | 37.7 ↑10% | 30.3 ~ | 64 ~ | 55394 ↑3% |
@@ -77,38 +79,38 @@ Metrics are normalized per file for cross-version comparability.
 
 | Metric | Value |
 |--------|-------|
-| Build time | 3.1s |
-| Query time | 42ms |
-| Nodes | 20,777 |
-| Edges | 42,883 |
-| DB size | 36.8 MB |
-| Files | 695 |
+| Build time | 3.7s |
+| Query time | 33ms |
+| Nodes | 15,946 |
+| Edges | 32,596 |
+| DB size | 30.5 MB |
+| Files | 629 |
 
 #### WASM
 
 | Metric | Value |
 |--------|-------|
-| Build time | 19.1s |
-| Query time | 58ms |
-| Nodes | 20,781 |
-| Edges | 43,381 |
-| DB size | 36.6 MB |
-| Files | 695 |
+| Build time | 16.5s |
+| Query time | 47ms |
+| Nodes | 15,950 |
+| Edges | 33,117 |
+| DB size | 31.2 MB |
+| Files | 629 |
 
 ### Build Phase Breakdown (latest)
 
 | Phase | Native (build) | WASM (build) | Native (1-file) | WASM (1-file) |
 |-------|---------------:|-------------:|----------------:|--------------:|
-| Parse | 1083.1 ms | 10513.9 ms | 0.4 ms | 3.3 ms |
-| Insert nodes | 497.2 ms | 511.9 ms | 0.3 ms | 0.6 ms |
-| Resolve imports | 4.5 ms | 19.1 ms | 0.4 ms | 0.6 ms |
-| Build edges | 273.6 ms | 4685.9 ms | 5.6 ms | 9.3 ms |
-| Structure | 39.2 ms | 64.7 ms | 4.8 ms | 3.6 ms |
-| Roles | 108.2 ms | 129.6 ms | 27.7 ms | 25.7 ms |
-| AST nodes | 316.7 ms | 397.8 ms | 0.2 ms | 0.8 ms |
-| Complexity | 24.5 ms | 1340 ms | 0 ms | 0.7 ms |
-| CFG | 245.8 ms | 451.3 ms | 0 ms | 0.3 ms |
-| Dataflow | 224.6 ms | 292.9 ms | 0 ms | 0.4 ms |
+| Parse | 866.8 ms | 8721.5 ms | 0.4 ms | 1.8 ms |
+| Insert nodes | 348.1 ms | 366.2 ms | 0.2 ms | 0.3 ms |
+| Resolve imports | 4.3 ms | 18 ms | 0.4 ms | 0.5 ms |
+| Build edges | 198.4 ms | 4294.6 ms | 4.5 ms | 6.7 ms |
+| Structure | 42.9 ms | 56.3 ms | 4.4 ms | 3.1 ms |
+| Roles | 69.8 ms | 91.5 ms | 17.9 ms | 16.1 ms |
+| AST nodes | 259.2 ms | 325.2 ms | 0.2 ms | 0.5 ms |
+| Complexity | 16.8 ms | 1279.6 ms | 0 ms | 0.5 ms |
+| CFG | 174.5 ms | 338.1 ms | 0 ms | 0.3 ms |
+| Dataflow | 163.1 ms | 362.7 ms | 0 ms | 1.4 ms |
 
 ### Estimated performance at 50,000 files
 
@@ -116,15 +118,17 @@ Extrapolated linearly from per-file metrics above.
 
 | Metric | Native (Rust) | WASM |
 |--------|---:|---:|
-| Build time | 225.0s | 1370.0s |
-| DB size | 2649.5 MB | 2632.9 MB |
-| Nodes | 1,495,000 | 1,495,000 |
-| Edges | 3,085,000 | 3,120,000 |
+| Build time | 290.0s | 1310.0s |
+| DB size | 2424.5 MB | 2480.4 MB |
+| Nodes | 1,270,000 | 1,270,000 |
+| Edges | 2,590,000 | 2,635,000 |
 
 ### Incremental Rebuilds
 
 | Version | Engine | No-op (ms) | 1-file (ms) |
 |---------|--------|----------:|-----------:|
+| 3.15.0 | native | 24 ↓8% | 117 ↑8% |
+| 3.15.0 | wasm | 24 ↓4% | 112 ↑44% |
 | 3.13.0 | native | 26 ↓13% | 108 ↓11% |
 | 3.13.0 | wasm | 25 ↓7% | 78 ↑3% |
 | 3.12.0 | native | 30 ↑20% | 121 ↑41% |
@@ -189,6 +193,8 @@ Extrapolated linearly from per-file metrics above.
 
 | Version | Engine | fn-deps (ms) | fn-impact (ms) | path (ms) | roles (ms) |
 |---------|--------|------------:|--------------:|----------:|----------:|
+| 3.15.0 | native | 2.4 ↓14% | 2.4 ↓20% | 2.4 ↓17% | 25.5 ↓42% |
+| 3.15.0 | wasm | 2.2 ↓21% | 2.3 ↓15% | 2.1 ↓16% | 24.3 ↓42% |
 | 3.13.0 | native | 2.8 ↑4% | 3 ↑11% | 2.9 ↑4% | 44 ↓8% |
 | 3.13.0 | wasm | 2.8 ↑8% | 2.7 ↑4% | 2.5 ~ | 42 ↑3% |
 | 3.12.0 | native | 2.7 ~ | 2.7 ~ | 2.8 ↑4% | 47.8 ↑8% |
@@ -318,6 +324,2142 @@ pre-parse that previously added ~388ms on native builds.
 
 <!-- BENCHMARK_DATA
 [
+  {
+    "version": "3.15.0",
+    "date": "2026-06-23",
+    "files": 629,
+    "wasm": {
+      "files": 629,
+      "buildTimeMs": 16486,
+      "queryTimeMs": 47.4,
+      "nodes": 15950,
+      "edges": 33117,
+      "dbSizeBytes": 32718848,
+      "perFile": {
+        "buildTimeMs": 26.2,
+        "nodes": 25.4,
+        "edges": 52.7,
+        "dbSizeBytes": 52017
+      },
+      "noopRebuildMs": 24,
+      "oneFileRebuildMs": 112,
+      "oneFilePhases": {
+        "setupMs": 5.2,
+        "collectMs": 14.4,
+        "detectMs": 56.4,
+        "parseMs": 1.8,
+        "insertMs": 0.3,
+        "resolveMs": 0.5,
+        "edgesMs": 6.7,
+        "structureMs": 3.1,
+        "rolesMs": 16.1,
+        "astMs": 0.5,
+        "complexityMs": 0.5,
+        "cfgMs": 0.3,
+        "dataflowMs": 1.4,
+        "finalizeMs": 0.3
+      },
+      "queries": {
+        "fnDepsMs": 2.2,
+        "fnImpactMs": 2.3,
+        "pathMs": 2.1,
+        "rolesMs": 24.3
+      },
+      "phases": {
+        "setupMs": 19,
+        "collectMs": 25.9,
+        "detectMs": 0.7,
+        "parseMs": 8721.5,
+        "insertMs": 366.2,
+        "resolveMs": 18,
+        "edgesMs": 4294.6,
+        "structureMs": 56.3,
+        "rolesMs": 91.5,
+        "astMs": 325.2,
+        "complexityMs": 1279.6,
+        "cfgMs": 338.1,
+        "dataflowMs": 362.7,
+        "finalizeMs": 5.2
+      }
+    },
+    "native": {
+      "files": 629,
+      "buildTimeMs": 3666,
+      "queryTimeMs": 33,
+      "nodes": 15946,
+      "edges": 32596,
+      "dbSizeBytes": 31981568,
+      "perFile": {
+        "buildTimeMs": 5.8,
+        "nodes": 25.4,
+        "edges": 51.8,
+        "dbSizeBytes": 50845
+      },
+      "noopRebuildMs": 24,
+      "oneFileRebuildMs": 117,
+      "oneFilePhases": {
+        "setupMs": 5.3,
+        "collectMs": 7.4,
+        "detectMs": 2.5,
+        "parseMs": 0.4,
+        "insertMs": 0.2,
+        "resolveMs": 0.4,
+        "edgesMs": 4.5,
+        "structureMs": 4.4,
+        "rolesMs": 17.9,
+        "gapDetectMs": 38,
+        "chaMs": 4.2,
+        "thisDispatchMs": 1.9,
+        "reclassifyMs": 0,
+        "techniqueBackfillMs": 1,
+        "astMs": 0.2,
+        "complexityMs": 0,
+        "cfgMs": 0,
+        "dataflowMs": 0,
+        "finalizeMs": 0.4
+      },
+      "queries": {
+        "fnDepsMs": 2.4,
+        "fnImpactMs": 2.4,
+        "pathMs": 2.4,
+        "rolesMs": 25.5
+      },
+      "phases": {
+        "setupMs": 17.6,
+        "collectMs": 9.4,
+        "detectMs": 0.2,
+        "parseMs": 866.8,
+        "insertMs": 348.1,
+        "resolveMs": 4.3,
+        "edgesMs": 198.4,
+        "structureMs": 42.9,
+        "rolesMs": 69.8,
+        "gapDetectMs": 52.8,
+        "chaMs": 5.9,
+        "thisDispatchMs": 39.9,
+        "reclassifyMs": 143.7,
+        "techniqueBackfillMs": 18.7,
+        "astMs": 259.2,
+        "complexityMs": 16.8,
+        "cfgMs": 174.5,
+        "dataflowMs": 163.1,
+        "finalizeMs": 0.5
+      }
+    },
+    "resolution": {
+      "bash": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 12,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 12,
+        "totalExpected": 12,
+        "byMode": {
+          "same-file": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "static": {
+            "expected": 9,
+            "resolved": 9,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "ok",
+          "edges": [
+            {
+              "source_name": "source",
+              "source_file": "main.sh",
+              "target_name": "run",
+              "target_file": "main.sh"
+            }
+          ]
+        },
+        "dynamicEdges": 1,
+        "dynamicConfirmed": 0
+      },
+      "c": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 9,
+        "totalExpected": 9,
+        "byMode": {
+          "same-file": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "static": {
+            "expected": 6,
+            "resolved": 6,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "clojure": {
+        "precision": 0.8,
+        "recall": 0.26666666666666666,
+        "truePositives": 4,
+        "falsePositives": 1,
+        "falseNegatives": 11,
+        "totalResolved": 5,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [
+          "-main@main.clj -> run@main.clj"
+        ],
+        "falseNegativeEdges": [
+          "run@main.clj -> new-repo@repository.clj",
+          "run@main.clj -> create-user@service.clj",
+          "run@main.clj -> get-user@service.clj",
+          "run@main.clj -> remove-user@service.clj",
+          "run@main.clj -> summary@service.clj",
+          "create-user@service.clj -> validate-name@validators.clj",
+          "create-user@service.clj -> validate-email@validators.clj",
+          "create-user@service.clj -> save@repository.clj",
+          "get-user@service.clj -> find-by-id@repository.clj",
+          "remove-user@service.clj -> delete@repository.clj",
+          "summary@service.clj -> count@repository.clj"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "cpp": {
+        "precision": 1,
+        "recall": 0.5714285714285714,
+        "truePositives": 8,
+        "falsePositives": 0,
+        "falseNegatives": 6,
+        "totalResolved": 8,
+        "totalExpected": 14,
+        "byMode": {
+          "same-file": {
+            "expected": 8,
+            "resolved": 4,
+            "recall": 0.5
+          },
+          "static": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "UserService::UserService@service.cpp -> UserService::log_action@service.cpp",
+          "UserService::process@service.cpp -> UserService::create_user@service.cpp",
+          "UserService::create_user@service.cpp -> UserService::log_action@service.cpp",
+          "UserService::delete_user@service.cpp -> UserService::log_action@service.cpp",
+          "run_service@main.cpp -> UserService::create_user@service.cpp",
+          "run_service@main.cpp -> UserService::delete_user@service.cpp"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "csharp": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 23,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 23,
+        "totalExpected": 23,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "interface-dispatched": {
+            "expected": 8,
+            "resolved": 8,
+            "recall": 1
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "cuda": {
+        "precision": 0.5,
+        "recall": 0.3333333333333333,
+        "truePositives": 4,
+        "falsePositives": 4,
+        "falseNegatives": 8,
+        "totalResolved": 8,
+        "totalExpected": 12,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 6,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 4,
+            "resolved": 2,
+            "recall": 0.5
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [
+          "main@main.cu -> runService@main.cu",
+          "main@main.cu -> runValidation@main.cu",
+          "UserService::createUser@service.cu -> validateEmail@validators.cu",
+          "UserService::createUser@service.cu -> validateName@validators.cu"
+        ],
+        "falseNegativeEdges": [
+          "runService@main.cu -> UserService.createUser@service.cu",
+          "runService@main.cu -> UserService.getUser@service.cu",
+          "runService@main.cu -> UserService.removeUser@service.cu",
+          "UserService.createUser@service.cu -> validateEmail@validators.cu",
+          "UserService.createUser@service.cu -> validateName@validators.cu",
+          "UserService.createUser@service.cu -> UserRepository.save@service.cu",
+          "UserService.getUser@service.cu -> UserRepository.findById@service.cu",
+          "UserService.removeUser@service.cu -> UserRepository.deleteById@service.cu"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "dart": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 18,
+        "totalResolved": 0,
+        "totalExpected": 18,
+        "byMode": {
+          "static": {
+            "expected": 4,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "main@main.dart -> UserRepository@repository.dart",
+          "main@main.dart -> UserService@service.dart",
+          "main@main.dart -> validateEmail@validators.dart",
+          "main@main.dart -> UserService.createUser@service.dart",
+          "main@main.dart -> UserService.getUser@service.dart",
+          "main@main.dart -> UserService.removeUser@service.dart",
+          "main@main.dart -> UserService.summary@service.dart",
+          "main@main.dart -> Order@models.dart",
+          "main@main.dart -> validateAmount@validators.dart",
+          "UserService.createUser@service.dart -> validateName@validators.dart",
+          "UserService.createUser@service.dart -> validateEmail@validators.dart",
+          "UserService.createUser@service.dart -> User@models.dart",
+          "UserService.createUser@service.dart -> UserRepository.save@repository.dart",
+          "UserService.getUser@service.dart -> UserRepository.findById@repository.dart",
+          "UserService.removeUser@service.dart -> UserRepository.delete@repository.dart",
+          "UserService.summary@service.dart -> UserRepository.count@repository.dart",
+          "validateName@validators.dart -> isNotEmpty@validators.dart",
+          "validateEmail@validators.dart -> isNotEmpty@validators.dart"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "dynamic-groovy": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 1,
+        "totalExpected": 1,
+        "byMode": {
+          "dynamic": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "dynamic-java": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 1,
+        "totalExpected": 1,
+        "byMode": {
+          "dynamic": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "dynamic-javascript": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 4,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 4,
+        "totalExpected": 4,
+        "byMode": {
+          "dynamic": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "dynamic-kotlin": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 3,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 3,
+        "totalExpected": 3,
+        "byMode": {
+          "dynamic": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "dynamic-scala": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 1,
+        "totalExpected": 1,
+        "byMode": {
+          "dynamic": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "dynamic-typescript": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 3,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 3,
+        "totalExpected": 3,
+        "byMode": {
+          "dynamic": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "elixir": {
+        "precision": 1,
+        "recall": 0.8095238095238095,
+        "truePositives": 17,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "totalResolved": 17,
+        "totalExpected": 21,
+        "byMode": {
+          "same-file": {
+            "expected": 4,
+            "resolved": 0,
+            "recall": 0
+          },
+          "module-function": {
+            "expected": 17,
+            "resolved": 17,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "Validators.validate_user@validators.ex -> Validators.valid_name?@validators.ex",
+          "Validators.validate_user@validators.ex -> Validators.valid_email?@validators.ex",
+          "UserService.display_user@service.ex -> UserService.get_user@service.ex",
+          "UserService.display_user@service.ex -> UserService.format_user@service.ex"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "erlang": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 12,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 12,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 10,
+            "resolved": 10,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "fsharp": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 11,
+        "falseNegatives": 12,
+        "totalResolved": 11,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [
+          "Main.main@Main.fs -> Service.createUser@Service.fs",
+          "Main.main@Main.fs -> Service.getUser@Service.fs",
+          "Main.main@Main.fs -> Service.summary@Service.fs",
+          "Main.main@Main.fs -> Service.removeUser@Service.fs",
+          "Service.validateUser@Service.fs -> Validators.validateName@Validators.fs",
+          "Service.validateUser@Service.fs -> Validators.validateEmail@Validators.fs",
+          "Service.validateUser@Service.fs -> Validators.validateAge@Validators.fs",
+          "Service.createUser@Service.fs -> Repository.save@Repository.fs",
+          "Service.getUser@Service.fs -> Repository.findById@Repository.fs",
+          "Service.removeUser@Service.fs -> Repository.delete@Repository.fs",
+          "Service.summary@Service.fs -> Repository.count@Repository.fs"
+        ],
+        "falseNegativeEdges": [
+          "main@Main.fs -> createUser@Service.fs",
+          "main@Main.fs -> getUser@Service.fs",
+          "main@Main.fs -> removeUser@Service.fs",
+          "main@Main.fs -> summary@Service.fs",
+          "validateUser@Service.fs -> validateName@Validators.fs",
+          "validateUser@Service.fs -> validateEmail@Validators.fs",
+          "validateUser@Service.fs -> validateAge@Validators.fs",
+          "createUser@Service.fs -> validateUser@Service.fs",
+          "createUser@Service.fs -> save@Repository.fs",
+          "getUser@Service.fs -> findById@Repository.fs",
+          "removeUser@Service.fs -> delete@Repository.fs",
+          "summary@Service.fs -> count@Repository.fs"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "gleam": {
+        "precision": 1,
+        "recall": 0.26666666666666666,
+        "truePositives": 4,
+        "falsePositives": 0,
+        "falseNegatives": 11,
+        "totalResolved": 4,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "main@main.gleam -> new_repo@repository.gleam",
+          "main@main.gleam -> create_user@service.gleam",
+          "main@main.gleam -> get_user@service.gleam",
+          "main@main.gleam -> remove_user@service.gleam",
+          "main@main.gleam -> summary@service.gleam",
+          "create_user@service.gleam -> validate_name@validators.gleam",
+          "create_user@service.gleam -> validate_email@validators.gleam",
+          "create_user@service.gleam -> save@repository.gleam",
+          "get_user@service.gleam -> find_by_id@repository.gleam",
+          "remove_user@service.gleam -> delete@repository.gleam",
+          "summary@service.gleam -> count@repository.gleam"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "go": {
+        "precision": 1,
+        "recall": 0.6923076923076923,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "totalResolved": 9,
+        "totalExpected": 13,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 4,
+            "recall": 0.5
+          },
+          "package-function": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "UserService.CreateUser@service.go -> UserRepository.Save@repository.go",
+          "UserService.GetUser@service.go -> UserRepository.FindByID@repository.go",
+          "UserService.RemoveUser@service.go -> UserRepository.Delete@repository.go",
+          "UserService.Summary@service.go -> UserRepository.Count@repository.go"
+        ],
+        "tracer": {
+          "status": "ok",
+          "edges": [
+            {
+              "source_name": "main",
+              "source_file": "proc.go",
+              "target_name": "main",
+              "target_file": "main.go"
+            },
+            {
+              "source_name": "main",
+              "source_file": "main.go",
+              "target_name": "NewUserRepository",
+              "target_file": "repository.go"
+            },
+            {
+              "source_name": "main",
+              "source_file": "main.go",
+              "target_name": "NewUserService",
+              "target_file": "service.go"
+            },
+            {
+              "source_name": "main",
+              "source_file": "main.go",
+              "target_name": "UserService.CreateUser",
+              "target_file": "service.go"
+            },
+            {
+              "source_name": "UserService.CreateUser",
+              "source_file": "service.go",
+              "target_name": "ValidateUser",
+              "target_file": "validator.go"
+            },
+            {
+              "source_name": "ValidateUser",
+              "source_file": "validator.go",
+              "target_name": "validateName",
+              "target_file": "validator.go"
+            },
+            {
+              "source_name": "ValidateUser",
+              "source_file": "validator.go",
+              "target_name": "validateEmail",
+              "target_file": "validator.go"
+            },
+            {
+              "source_name": "UserService.CreateUser",
+              "source_file": "service.go",
+              "target_name": "UserRepository.Save",
+              "target_file": "repository.go"
+            },
+            {
+              "source_name": "main",
+              "source_file": "main.go",
+              "target_name": "UserService.GetUser",
+              "target_file": "service.go"
+            },
+            {
+              "source_name": "UserService.GetUser",
+              "source_file": "service.go",
+              "target_name": "UserRepository.FindByID",
+              "target_file": "repository.go"
+            },
+            {
+              "source_name": "main",
+              "source_file": "main.go",
+              "target_name": "UserService.RemoveUser",
+              "target_file": "service.go"
+            },
+            {
+              "source_name": "UserService.RemoveUser",
+              "source_file": "service.go",
+              "target_name": "UserRepository.Delete",
+              "target_file": "repository.go"
+            },
+            {
+              "source_name": "main",
+              "source_file": "main.go",
+              "target_name": "UserService.Summary",
+              "target_file": "service.go"
+            },
+            {
+              "source_name": "UserService.Summary",
+              "source_file": "service.go",
+              "target_name": "UserRepository.Count",
+              "target_file": "repository.go"
+            }
+          ]
+        },
+        "dynamicEdges": 14,
+        "dynamicConfirmed": 13
+      },
+      "groovy": {
+        "precision": 1,
+        "recall": 0.07692307692307693,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "falseNegatives": 12,
+        "totalResolved": 1,
+        "totalExpected": 13,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 7,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "Main.main@Main.groovy -> UserService.createUser@Service.groovy",
+          "Main.main@Main.groovy -> UserService.getUser@Service.groovy",
+          "Main.main@Main.groovy -> UserService.removeUser@Service.groovy",
+          "Main.main@Main.groovy -> Validators.validateUser@Validators.groovy",
+          "UserService.createUser@Service.groovy -> Validators.isValidEmail@Validators.groovy",
+          "UserService.createUser@Service.groovy -> Validators.isValidName@Validators.groovy",
+          "UserService.createUser@Service.groovy -> UserRepository.save@Repository.groovy",
+          "UserService.getUser@Service.groovy -> UserRepository.findById@Repository.groovy",
+          "UserService.removeUser@Service.groovy -> UserRepository.delete@Repository.groovy",
+          "UserService.summary@Service.groovy -> UserRepository.count@Repository.groovy",
+          "Validators.validateUser@Validators.groovy -> Validators.isValidName@Validators.groovy",
+          "Validators.validateUser@Validators.groovy -> Validators.isValidEmail@Validators.groovy"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "haskell": {
+        "precision": 1,
+        "recall": 0.3333333333333333,
+        "truePositives": 4,
+        "falsePositives": 0,
+        "falseNegatives": 8,
+        "totalResolved": 4,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 3,
+            "recall": 0.2727272727272727
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "main@Main.hs -> createUser@Service.hs",
+          "main@Main.hs -> getUser@Service.hs",
+          "main@Main.hs -> summary@Service.hs",
+          "main@Main.hs -> removeUser@Service.hs",
+          "createUser@Service.hs -> save@Repository.hs",
+          "getUser@Service.hs -> findById@Repository.hs",
+          "removeUser@Service.hs -> delete@Repository.hs",
+          "summary@Service.hs -> count@Repository.hs"
+        ],
+        "tracer": {
+          "status": "ok",
+          "edges": []
+        }
+      },
+      "hcl": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 2,
+        "totalResolved": 0,
+        "totalExpected": 2,
+        "byMode": {
+          "static": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "module.user_service@main.tf -> module.repository@main.tf",
+          "module.user_service@main.tf -> module.validators@main.tf"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "java": {
+        "precision": 1,
+        "recall": 0.8,
+        "truePositives": 16,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "totalResolved": 16,
+        "totalExpected": 20,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "class-inheritance": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "interface-dispatched": {
+            "expected": 6,
+            "resolved": 6,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 4,
+            "resolved": 3,
+            "recall": 0.75
+          },
+          "static": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "UserService.getUser@UserService.java -> BaseService.log@BaseService.java",
+          "UserService.createUser@UserService.java -> Validator.validateUser@Validator.java",
+          "UserService.createUser@UserService.java -> BaseService.log@BaseService.java",
+          "UserService.removeUser@UserService.java -> BaseService.log@BaseService.java"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "javascript": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 42,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 42,
+        "totalExpected": 42,
+        "byMode": {
+          "static": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 9,
+            "resolved": 9,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 6,
+            "resolved": 6,
+            "recall": 1
+          },
+          "pts-define-property": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "pts-create-prototype": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "define-property": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "points-to": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "dynamic": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "class-inheritance": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "defineProperty-accessor": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "ok",
+          "edges": [
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "main",
+              "target_file": "index.js"
+            },
+            {
+              "source_name": "main",
+              "source_file": "index.js",
+              "target_name": "buildService",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "buildService",
+              "source_file": "service.js",
+              "target_name": "UserService.constructor",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "UserService.constructor",
+              "source_file": "service.js",
+              "target_name": "Logger.constructor",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "main",
+              "source_file": "index.js",
+              "target_name": "UserService.createUser",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "UserService.createUser",
+              "source_file": "service.js",
+              "target_name": "normalize",
+              "target_file": "validators.js"
+            },
+            {
+              "source_name": "normalize",
+              "source_file": "validators.js",
+              "target_name": "trimWhitespace",
+              "target_file": "validators.js"
+            },
+            {
+              "source_name": "UserService.createUser",
+              "source_file": "service.js",
+              "target_name": "validate",
+              "target_file": "validators.js"
+            },
+            {
+              "source_name": "validate",
+              "source_file": "validators.js",
+              "target_name": "checkLength",
+              "target_file": "validators.js"
+            },
+            {
+              "source_name": "UserService.createUser",
+              "source_file": "service.js",
+              "target_name": "Logger.info",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "Logger.info",
+              "source_file": "logger.js",
+              "target_name": "Logger._write",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "main",
+              "source_file": "index.js",
+              "target_name": "validate",
+              "target_file": "validators.js"
+            },
+            {
+              "source_name": "main",
+              "source_file": "index.js",
+              "target_name": "UserService.deleteUser",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "UserService.deleteUser",
+              "source_file": "service.js",
+              "target_name": "Logger.warn",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "Logger.warn",
+              "source_file": "logger.js",
+              "target_name": "Logger._write",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "directInstantiation",
+              "target_file": "index.js"
+            },
+            {
+              "source_name": "directInstantiation",
+              "source_file": "index.js",
+              "target_name": "UserService.constructor",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "directInstantiation",
+              "source_file": "index.js",
+              "target_name": "UserService.createUser",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "validate",
+              "target_file": "validators.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "normalize",
+              "target_file": "validators.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "Logger.constructor",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "Logger.info",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "Logger.warn",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "Logger.error",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "Logger.error",
+              "source_file": "logger.js",
+              "target_name": "Logger._write",
+              "target_file": "logger.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "buildService",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "UserService.createUser",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "UserService.deleteUser",
+              "target_file": "service.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "ClassA.constructor",
+              "target_file": "multi-class.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "ClassA.runA",
+              "target_file": "multi-class.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "ClassB.constructor",
+              "target_file": "multi-class.js"
+            },
+            {
+              "source_name": "__driver__",
+              "source_file": "driver.mjs",
+              "target_name": "ClassB.runB",
+              "target_file": "multi-class.js"
+            }
+          ]
+        },
+        "dynamicEdges": 32,
+        "dynamicConfirmed": 14
+      },
+      "julia": {
+        "precision": 1,
+        "recall": 0.7333333333333333,
+        "truePositives": 11,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "totalResolved": 11,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 11,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 4,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "Service.summary@service.jl -> Service.format_summary@service.jl",
+          "Validators.validate_name@validators.jl -> Validators.check_length@validators.jl",
+          "Validators.validate_email@validators.jl -> Validators.contains_at@validators.jl",
+          "Repository.count@repository.jl -> Repository.count_entries@repository.jl"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "kotlin": {
+        "precision": 0.9230769230769231,
+        "recall": 0.631578947368421,
+        "truePositives": 12,
+        "falsePositives": 1,
+        "falseNegatives": 7,
+        "totalResolved": 13,
+        "totalExpected": 19,
+        "byMode": {
+          "same-file": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "static": {
+            "expected": 7,
+            "resolved": 7,
+            "recall": 1
+          },
+          "class-inheritance": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 6,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [
+          "UserService.createUser@Service.kt -> User@Repository.kt"
+        ],
+        "falseNegativeEdges": [
+          "UserRepository.saveIfValid@Repository.kt -> Repository.save@Repository.kt",
+          "UserService.createUser@Service.kt -> UserRepository.saveIfValid@Repository.kt",
+          "UserService.getUser@Service.kt -> Repository.findByName@Repository.kt",
+          "UserService.removeUser@Service.kt -> Repository.delete@Repository.kt",
+          "main@Main.kt -> UserService.createUser@Service.kt",
+          "main@Main.kt -> UserService.getUser@Service.kt",
+          "main@Main.kt -> UserService.removeUser@Service.kt"
+        ],
+        "tracer": {
+          "status": "ok",
+          "edges": []
+        }
+      },
+      "lua": {
+        "precision": 1,
+        "recall": 0.15384615384615385,
+        "truePositives": 2,
+        "falsePositives": 0,
+        "falseNegatives": 11,
+        "totalResolved": 2,
+        "totalExpected": 13,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "main@main.lua -> M.validate_email@validators.lua",
+          "main@main.lua -> M.create_user@service.lua",
+          "main@main.lua -> M.get_user@service.lua",
+          "main@main.lua -> M.remove_user@service.lua",
+          "main@main.lua -> M.summary@service.lua",
+          "M.create_user@service.lua -> M.validate_name@validators.lua",
+          "M.create_user@service.lua -> M.validate_email@validators.lua",
+          "M.create_user@service.lua -> M.save@repository.lua",
+          "M.get_user@service.lua -> M.find_by_id@repository.lua",
+          "M.remove_user@service.lua -> M.delete@repository.lua",
+          "M.summary@service.lua -> M.count@repository.lua"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "objc": {
+        "precision": 1,
+        "recall": 0.46153846153846156,
+        "truePositives": 6,
+        "falsePositives": 0,
+        "falseNegatives": 7,
+        "totalResolved": 6,
+        "totalExpected": 13,
+        "byMode": {
+          "static": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 6,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "run@main.m -> UserService.initWithRepository:@Service.m",
+          "run@main.m -> UserService.createUserWithId:name:email:@Service.m",
+          "run@main.m -> UserService.getUserWithId:@Service.m",
+          "run@main.m -> UserService.removeUserWithId:@Service.m",
+          "UserService.createUserWithId:name:email:@Service.m -> UserRepository.saveWithId:name:@Repository.m",
+          "UserService.getUserWithId:@Service.m -> UserRepository.findById:@Repository.m",
+          "UserService.removeUserWithId:@Service.m -> UserRepository.deleteWithId:@Repository.m"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "ocaml": {
+        "precision": 1,
+        "recall": 0.08333333333333333,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "falseNegatives": 11,
+        "totalResolved": 1,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "validate_user@service.ml -> validate_name@validators.ml",
+          "validate_user@service.ml -> validate_email@validators.ml",
+          "validate_user@service.ml -> validate_age@validators.ml",
+          "create_user@service.ml -> save@repository.ml",
+          "get_user@service.ml -> find_by_id@repository.ml",
+          "remove_user@service.ml -> delete@repository.ml",
+          "summary@service.ml -> count@repository.ml",
+          "main@main.ml -> create_user@service.ml",
+          "main@main.ml -> get_user@service.ml",
+          "main@main.ml -> remove_user@service.ml",
+          "main@main.ml -> summary@service.ml"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "php": {
+        "precision": 1,
+        "recall": 0.5789473684210527,
+        "truePositives": 11,
+        "falsePositives": 0,
+        "falseNegatives": 8,
+        "totalResolved": 11,
+        "totalExpected": 19,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "UserService.getUser@Service.php -> UserRepository.findById@Repository.php",
+          "UserService.addUser@Service.php -> UserRepository.save@Repository.php",
+          "UserService.removeUser@Service.php -> UserRepository.findById@Repository.php",
+          "UserService.removeUser@Service.php -> UserRepository.delete@Repository.php",
+          "main@index.php -> UserService.addUser@Service.php",
+          "main@index.php -> UserService.getUser@Service.php",
+          "main@index.php -> UserService.removeUser@Service.php",
+          "runWithValidation@index.php -> UserService.addUser@Service.php"
+        ],
+        "tracer": {
+          "status": "ok",
+          "edges": []
+        }
+      },
+      "pts-javascript": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 13,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 13,
+        "totalExpected": 13,
+        "byMode": {
+          "pts-for-of": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "pts-set": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "pts-array-from": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "pts-spread": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "python": {
+        "precision": 1,
+        "recall": 0.6,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 6,
+        "totalResolved": 9,
+        "totalExpected": 15,
+        "byMode": {
+          "static": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 2,
+            "recall": 0.25
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "run@main.py -> UserService.create_user@service.py",
+          "run@main.py -> UserService.get_user@service.py",
+          "run@main.py -> UserService.remove_user@service.py",
+          "UserService.create_user@service.py -> UserRepository.save@repository.py",
+          "UserService.get_user@service.py -> UserRepository.find_by_id@repository.py",
+          "UserService.remove_user@service.py -> UserRepository.delete@repository.py"
+        ],
+        "tracer": {
+          "status": "ok",
+          "edges": [
+            {
+              "source_name": "run",
+              "source_file": "main.py",
+              "target_name": "build_service",
+              "target_file": "service.py"
+            },
+            {
+              "source_name": "build_service",
+              "source_file": "service.py",
+              "target_name": "create_repository",
+              "target_file": "repository.py"
+            },
+            {
+              "source_name": "create_repository",
+              "source_file": "repository.py",
+              "target_name": "UserRepository",
+              "target_file": "repository.py"
+            },
+            {
+              "source_name": "build_service",
+              "source_file": "service.py",
+              "target_name": "UserService",
+              "target_file": "service.py"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.py",
+              "target_name": "UserService.create_user",
+              "target_file": "service.py"
+            },
+            {
+              "source_name": "UserService.create_user",
+              "source_file": "service.py",
+              "target_name": "validate_email",
+              "target_file": "service.py"
+            },
+            {
+              "source_name": "UserService.create_user",
+              "source_file": "service.py",
+              "target_name": "User",
+              "target_file": "models.py"
+            },
+            {
+              "source_name": "UserService.create_user",
+              "source_file": "service.py",
+              "target_name": "User.validate",
+              "target_file": "models.py"
+            },
+            {
+              "source_name": "UserService.create_user",
+              "source_file": "service.py",
+              "target_name": "UserRepository.save",
+              "target_file": "repository.py"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.py",
+              "target_name": "UserService.get_user",
+              "target_file": "service.py"
+            },
+            {
+              "source_name": "UserService.get_user",
+              "source_file": "service.py",
+              "target_name": "UserRepository.find_by_id",
+              "target_file": "repository.py"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.py",
+              "target_name": "Order",
+              "target_file": "models.py"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.py",
+              "target_name": "Order.validate",
+              "target_file": "models.py"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.py",
+              "target_name": "UserService.remove_user",
+              "target_file": "service.py"
+            },
+            {
+              "source_name": "UserService.remove_user",
+              "source_file": "service.py",
+              "target_name": "UserRepository.delete",
+              "target_file": "repository.py"
+            }
+          ]
+        },
+        "dynamicEdges": 15,
+        "dynamicConfirmed": 15
+      },
+      "r": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 11,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 11,
+        "totalExpected": 11,
+        "byMode": {
+          "static": {
+            "expected": 9,
+            "resolved": 9,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "ruby": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 11,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 11,
+        "totalExpected": 11,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "static": {
+            "expected": 9,
+            "resolved": 9,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "ok",
+          "edges": [
+            {
+              "source_name": "run",
+              "source_file": "main.rb",
+              "target_name": "create_user",
+              "target_file": "service.rb"
+            },
+            {
+              "source_name": "create_user",
+              "source_file": "service.rb",
+              "target_name": "validate_user",
+              "target_file": "validators.rb"
+            },
+            {
+              "source_name": "validate_user",
+              "source_file": "validators.rb",
+              "target_name": "valid_name?",
+              "target_file": "validators.rb"
+            },
+            {
+              "source_name": "validate_user",
+              "source_file": "validators.rb",
+              "target_name": "valid_email?",
+              "target_file": "validators.rb"
+            },
+            {
+              "source_name": "create_user",
+              "source_file": "service.rb",
+              "target_name": "repo_save",
+              "target_file": "repository.rb"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.rb",
+              "target_name": "find_user",
+              "target_file": "service.rb"
+            },
+            {
+              "source_name": "find_user",
+              "source_file": "service.rb",
+              "target_name": "repo_find_by_id",
+              "target_file": "repository.rb"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.rb",
+              "target_name": "find_user_by_email",
+              "target_file": "service.rb"
+            },
+            {
+              "source_name": "find_user_by_email",
+              "source_file": "service.rb",
+              "target_name": "repo_find_by_email",
+              "target_file": "repository.rb"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.rb",
+              "target_name": "remove_user",
+              "target_file": "service.rb"
+            },
+            {
+              "source_name": "remove_user",
+              "source_file": "service.rb",
+              "target_name": "repo_delete",
+              "target_file": "repository.rb"
+            }
+          ]
+        },
+        "dynamicEdges": 11,
+        "dynamicConfirmed": 11
+      },
+      "rust": {
+        "precision": 1,
+        "recall": 0.6428571428571429,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 5,
+        "totalResolved": 9,
+        "totalExpected": 14,
+        "byMode": {
+          "same-file": {
+            "expected": 6,
+            "resolved": 6,
+            "recall": 1
+          },
+          "trait-dispatch": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "module-function": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "validate_all@validator.rs -> EmailValidator.validate@validator.rs",
+          "validate_all@validator.rs -> NameValidator.validate@validator.rs",
+          "UserService.get_user@service.rs -> UserRepository.find_by_id@repository.rs",
+          "UserService.add_user@service.rs -> UserRepository.save@repository.rs",
+          "UserService.remove_user@service.rs -> UserRepository.delete@repository.rs"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "scala": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 7,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 7,
+        "totalExpected": 7,
+        "byMode": {
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "static": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "solidity": {
+        "precision": 0.3333333333333333,
+        "recall": 0.07692307692307693,
+        "truePositives": 1,
+        "falsePositives": 2,
+        "falseNegatives": 12,
+        "totalResolved": 3,
+        "totalExpected": 13,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [
+          "Validators.validateUserInput@Validators.sol -> validateName@Validators.sol",
+          "Validators.validateUserInput@Validators.sol -> validateEmail@Validators.sol"
+        ],
+        "falseNegativeEdges": [
+          "Main.constructor@Main.sol -> UserRepository@Repository.sol",
+          "Main.constructor@Main.sol -> UserService@Service.sol",
+          "Main.run@Main.sol -> UserService.createUser@Service.sol",
+          "Main.run@Main.sol -> UserService.getUser@Service.sol",
+          "Main.run@Main.sol -> UserService.removeUser@Service.sol",
+          "Main.run@Main.sol -> UserRepository.count@Repository.sol",
+          "UserService.createUser@Service.sol -> UserRepository.save@Repository.sol",
+          "UserService.getUser@Service.sol -> UserRepository.findById@Repository.sol",
+          "UserService.removeUser@Service.sol -> UserRepository.findById@Repository.sol",
+          "UserService.removeUser@Service.sol -> UserRepository.remove@Repository.sol",
+          "Validators.validateUserInput@Validators.sol -> Validators.validateName@Validators.sol",
+          "Validators.validateUserInput@Validators.sol -> Validators.validateEmail@Validators.sol"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "swift": {
+        "precision": 0.8181818181818182,
+        "recall": 0.6428571428571429,
+        "truePositives": 9,
+        "falsePositives": 2,
+        "falseNegatives": 5,
+        "totalResolved": 11,
+        "totalExpected": 14,
+        "byMode": {
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 2,
+            "recall": 0.6666666666666666
+          },
+          "receiver-typed": {
+            "expected": 7,
+            "resolved": 3,
+            "recall": 0.42857142857142855
+          }
+        },
+        "falsePositiveEdges": [
+          "UserService.createUser@Service.swift -> User@Repository.swift",
+          "directRepoAccess@main.swift -> User@Repository.swift"
+        ],
+        "falseNegativeEdges": [
+          "UserService.createUser@Service.swift -> validateUser@Validators.swift",
+          "run@main.swift -> UserService.createUser@Service.swift",
+          "run@main.swift -> UserService.getUser@Service.swift",
+          "run@main.swift -> UserService.removeUser@Service.swift",
+          "directRepoAccess@main.swift -> UserRepository.save@Repository.swift"
+        ],
+        "tracer": {
+          "status": "ok",
+          "edges": [
+            {
+              "source_name": "run",
+              "source_file": "main.swift",
+              "target_name": "createService",
+              "target_file": "Service.swift"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.swift",
+              "target_name": "UserService.createUser",
+              "target_file": "Service.swift"
+            },
+            {
+              "source_name": "UserService.createUser",
+              "source_file": "Service.swift",
+              "target_name": "validateUser",
+              "target_file": "Validators.swift"
+            },
+            {
+              "source_name": "validateUser",
+              "source_file": "Validators.swift",
+              "target_name": "validateEmail",
+              "target_file": "Validators.swift"
+            },
+            {
+              "source_name": "UserService.createUser",
+              "source_file": "Service.swift",
+              "target_name": "UserRepository.save",
+              "target_file": "Repository.swift"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.swift",
+              "target_name": "UserService.getUser",
+              "target_file": "Service.swift"
+            },
+            {
+              "source_name": "UserService.getUser",
+              "source_file": "Service.swift",
+              "target_name": "UserRepository.findById",
+              "target_file": "Repository.swift"
+            },
+            {
+              "source_name": "run",
+              "source_file": "main.swift",
+              "target_name": "UserService.removeUser",
+              "target_file": "Service.swift"
+            },
+            {
+              "source_name": "UserService.removeUser",
+              "source_file": "Service.swift",
+              "target_name": "UserRepository.delete",
+              "target_file": "Repository.swift"
+            }
+          ]
+        },
+        "dynamicEdges": 9,
+        "dynamicConfirmed": 9
+      },
+      "tsx": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 13,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 13,
+        "totalExpected": 13,
+        "byMode": {
+          "same-file": {
+            "expected": 5,
+            "resolved": 5,
+            "recall": 1
+          },
+          "static": {
+            "expected": 8,
+            "resolved": 8,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "typescript": {
+        "precision": 0.9591836734693877,
+        "recall": 1,
+        "truePositives": 47,
+        "falsePositives": 2,
+        "falseNegatives": 0,
+        "totalResolved": 49,
+        "totalExpected": 47,
+        "byMode": {
+          "same-file": {
+            "expected": 5,
+            "resolved": 5,
+            "recall": 1
+          },
+          "interface-dispatched": {
+            "expected": 8,
+            "resolved": 8,
+            "recall": 1
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 10,
+            "resolved": 10,
+            "recall": 1
+          },
+          "class-inheritance": {
+            "expected": 5,
+            "resolved": 5,
+            "recall": 1
+          },
+          "callback": {
+            "expected": 7,
+            "resolved": 7,
+            "recall": 1
+          },
+          "re-export": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "falsePositiveEdges": [
+          "UserService.getUser@service.ts -> Serializer.serialize@types.ts",
+          "UserService.addUser@service.ts -> Serializer.deserialize@types.ts"
+        ],
+        "falseNegativeEdges": [],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "verilog": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "totalResolved": 0,
+        "totalExpected": 4,
+        "byMode": {
+          "static": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [],
+        "falseNegativeEdges": [
+          "main@main.v -> validators@validators.v",
+          "main@main.v -> service@service.v",
+          "service@service.v -> repository@repository.v",
+          "validators@validators.v -> validators.check_range@validators.v"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      },
+      "zig": {
+        "precision": 0.6666666666666666,
+        "recall": 0.13333333333333333,
+        "truePositives": 2,
+        "falsePositives": 1,
+        "falseNegatives": 13,
+        "totalResolved": 3,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 5,
+            "resolved": 2,
+            "recall": 0.4
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "falsePositiveEdges": [
+          "main@main.zig -> allocator@main.zig"
+        ],
+        "falseNegativeEdges": [
+          "main@main.zig -> validateEmail@validators.zig",
+          "main@main.zig -> UserService.createUser@service.zig",
+          "main@main.zig -> UserService.getUser@service.zig",
+          "main@main.zig -> UserService.removeUser@service.zig",
+          "main@main.zig -> UserService.summary@service.zig",
+          "UserService.createUser@service.zig -> validateName@validators.zig",
+          "UserService.createUser@service.zig -> validateEmail@validators.zig",
+          "UserService.createUser@service.zig -> UserRepository.save@repository.zig",
+          "UserService.getUser@service.zig -> UserRepository.findById@repository.zig",
+          "UserService.removeUser@service.zig -> UserRepository.delete@repository.zig",
+          "UserService.summary@service.zig -> UserRepository.count@repository.zig",
+          "validateName@validators.zig -> isNotEmpty@validators.zig",
+          "validateEmail@validators.zig -> isNotEmpty@validators.zig"
+        ],
+        "tracer": {
+          "status": "skipped",
+          "edges": []
+        }
+      }
+    }
+  },
   {
     "version": "3.13.0",
     "date": "2026-06-17",
