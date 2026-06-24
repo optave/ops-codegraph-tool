@@ -344,6 +344,61 @@ function effectiveGap(a: string, b: string): number {
 }
 
 /**
+ * Highest non-dev release version present in the committed benchmark history.
+ *
+ * KNOWN_REGRESSIONS staleness is measured against this — NOT against
+ * package.json. An exemption only becomes dead weight once a *newer recorded
+ * baseline* supersedes it. During the release window package.json is bumped
+ * immediately, but the post-publish benchmark-recording PR lands later, so the
+ * package version races ahead of the recorded baseline; anchoring staleness to
+ * package.json then flags still-live exemptions as stale (issue #1703).
+ *
+ * `dev` entries (per-PR gate output) and SKIP_VERSIONS are ignored. Returns
+ * null when no parseable release version is recorded in any history.
+ */
+function latestRecordedVersion(
+  histories: ReadonlyArray<ReadonlyArray<{ version: string }>>,
+): string | null {
+  let bestVal = -1;
+  let bestStr: string | null = null;
+  for (const history of histories) {
+    for (const entry of history) {
+      if (!entry || entry.version === 'dev' || SKIP_VERSIONS.has(entry.version)) continue;
+      const sv = parseSemver(entry.version);
+      if (!sv) continue;
+      const val = sv[0] * 1_000_000 + sv[1] * 1_000 + sv[2];
+      if (val > bestVal) {
+        bestVal = val;
+        bestStr = entry.version;
+      }
+    }
+  }
+  return bestStr;
+}
+
+/**
+ * KNOWN_REGRESSIONS entries whose pinned version is more than one minor
+ * release behind `anchorVersion` (the latest recorded baseline). Returns a
+ * human-readable description per stale entry; entries without a `version:`
+ * prefix are ignored.
+ */
+function findStaleEntries(entries: Iterable<string>, anchorVersion: string): string[] {
+  const stale: string[] = [];
+  for (const entry of entries) {
+    const colonIdx = entry.indexOf(':');
+    if (colonIdx === -1) continue;
+    const entryVersion = entry.slice(0, colonIdx);
+    const gap = minorGap(entryVersion, anchorVersion);
+    if (gap > 1) {
+      stale.push(
+        `${entry} (version ${entryVersion} is ${gap} minor versions behind baseline ${anchorVersion})`,
+      );
+    }
+  }
+  return stale;
+}
+
+/**
  * Find the latest entry for a given engine, then the next non-dev
  * entry with data for that engine (the "previous release").
  */
@@ -555,27 +610,22 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
   );
 
   // Warn when KNOWN_REGRESSIONS entries are stale (more than 1 minor version
-  // behind the current package version).  This makes the stale-exemption
-  // problem self-detecting rather than requiring manual bookkeeping.
-  // Skipped in canary mode — this check is maintenance-only and irrelevant
-  // for a lightweight build-time regression gate.
+  // behind the latest *recorded benchmark baseline*). Anchoring to the recorded
+  // baseline rather than package.json keeps still-live exemptions from being
+  // flagged during the release window, when package.json is bumped before the
+  // post-publish benchmark-recording PR lands (issue #1703). This makes the
+  // stale-exemption problem self-detecting rather than requiring manual
+  // bookkeeping. Skipped in canary mode — this check is maintenance-only and
+  // irrelevant for a lightweight build-time regression gate.
   test.skipIf(BENCH_CANARY)('KNOWN_REGRESSIONS entries are not stale', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pkgVersion: string = JSON.parse(
-      fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'),
-    ).version;
-    const stale: string[] = [];
-    for (const entry of KNOWN_REGRESSIONS) {
-      const colonIdx = entry.indexOf(':');
-      if (colonIdx === -1) continue;
-      const entryVersion = entry.slice(0, colonIdx);
-      const gap = minorGap(entryVersion, pkgVersion);
-      if (gap > 1) {
-        stale.push(
-          `${entry} (version ${entryVersion} is ${gap} minor versions behind ${pkgVersion})`,
-        );
-      }
+    const baselineVersion = latestRecordedVersion([buildHistory, queryHistory, incrementalHistory]);
+    if (!baselineVersion) {
+      // No recorded benchmark history (missing/malformed report files). The
+      // 'has at least one engine to compare' tests cover that failure mode;
+      // staleness is undefined without a baseline, so there is nothing to prune.
+      return;
     }
+    const stale = findStaleEntries(KNOWN_REGRESSIONS, baselineVersion);
     if (stale.length > 0) {
       console.warn(
         `[regression-guard] Stale KNOWN_REGRESSIONS entries — remove after verifying corrected data:\n  ${stale.join('\n  ')}`,
@@ -583,7 +633,8 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
     }
     expect(
       stale.length,
-      `KNOWN_REGRESSIONS has ${stale.length} stale entries (>1 minor version behind ${pkgVersion}). ` +
+      `KNOWN_REGRESSIONS has ${stale.length} stale entries (>1 minor version behind the ` +
+        `latest recorded benchmark baseline ${baselineVersion}). ` +
         `Remove them after verifying the corrected benchmark data has landed:\n  ${stale.join('\n  ')}`,
     ).toBe(0);
   });
@@ -831,6 +882,63 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
         resolutionPair != null,
         'No resolution benchmark data with ≥2 non-dev entries to compare',
       ).toBe(true);
+    });
+  });
+});
+
+// Pure-logic unit tests for the KNOWN_REGRESSIONS staleness anchor (issue
+// #1703). These run unconditionally (not gated behind RUN_REGRESSION_GUARD)
+// because they exercise the anchoring functions with synthetic data and do not
+// depend on the committed benchmark history.
+describe('KNOWN_REGRESSIONS staleness anchor (#1703)', () => {
+  describe('latestRecordedVersion', () => {
+    test('returns the highest release across all histories', () => {
+      expect(
+        latestRecordedVersion([
+          [{ version: '3.13.0' }, { version: '3.12.0' }],
+          [{ version: '3.15.0' }, { version: '3.14.0' }],
+        ]),
+      ).toBe('3.15.0');
+    });
+
+    test('ignores the rolling `dev` entry', () => {
+      expect(latestRecordedVersion([[{ version: 'dev' }, { version: '3.15.0' }]])).toBe('3.15.0');
+    });
+
+    test('ignores SKIP_VERSIONS entries', () => {
+      // 3.8.0 is in SKIP_VERSIONS, so 3.7.0 wins even though 3.8.0 sorts higher.
+      expect(latestRecordedVersion([[{ version: '3.8.0' }, { version: '3.7.0' }]])).toBe('3.7.0');
+    });
+
+    test('compares by full semver, not lexical order', () => {
+      expect(latestRecordedVersion([[{ version: '3.9.0' }, { version: '3.10.0' }]])).toBe('3.10.0');
+    });
+
+    test('returns null when no parseable release version exists', () => {
+      expect(latestRecordedVersion([[], [{ version: 'dev' }]])).toBeNull();
+    });
+  });
+
+  describe('findStaleEntries', () => {
+    test('flags entries more than one minor behind the baseline', () => {
+      const stale = findStaleEntries(
+        ['3.15.0:Full build', '3.14.0:Full build', '3.13.0:Full build', '3.12.0:Full build'],
+        '3.15.0',
+      );
+      // gap 0 and gap 1 are kept; gap 2 and gap 3 are stale.
+      expect(stale.map((s) => s.split(':')[0])).toEqual(['3.13.0', '3.12.0']);
+    });
+
+    test('ignores entries without a version prefix', () => {
+      expect(findStaleEntries(['no-colon-entry'], '3.15.0')).toEqual([]);
+    });
+
+    test('keeps an entry pinned to the current baseline live (the #1703 case)', () => {
+      // The exact failure shape: a 3.13.0 exemption is the live baseline. While
+      // package.json had jumped to 3.15.0, anchoring to the recorded baseline
+      // (3.13.0) keeps it live; anchoring to package.json wrongly flagged it.
+      expect(findStaleEntries(['3.13.0:No-op rebuild'], '3.13.0')).toEqual([]);
+      expect(findStaleEntries(['3.13.0:No-op rebuild'], '3.15.0')).toHaveLength(1);
     });
   });
 });
