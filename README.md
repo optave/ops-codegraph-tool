@@ -644,19 +644,19 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.14.0 (2026-06-19)*
+*Last updated: v3.15.0 (2026-06-23)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **4.5 ms/file** | **27.4 ms/file** |
-| Query time | **42ms** | **58ms** |
-| No-op rebuild | **26ms** | **25ms** |
-| 1-file rebuild | **108ms** | **78ms** |
-| Query: fn-deps | **2.8ms** | **2.8ms** |
-| Query: path | **2.9ms** | **2.5ms** |
-| ~50,000 files (est.) | **~225.0s build** | **~1370.0s build** |
-| Resolution precision | **93.1%** | — |
-| Resolution recall | **61.0%** | — |
+| Build speed | **5.8 ms/file** | **26.2 ms/file** |
+| Query time | **33ms** | **47ms** |
+| No-op rebuild | **24ms** | **24ms** |
+| 1-file rebuild | **117ms** | **112ms** |
+| Query: fn-deps | **2.4ms** | **2.2ms** |
+| Query: path | **2.4ms** | **2.1ms** |
+| ~50,000 files (est.) | **~290.0s build** | **~1310.0s build** |
+| Resolution precision | **93.6%** | — |
+| Resolution recall | **64.7%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -673,8 +673,14 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | csharp | 100.0% | 100.0% | 23 | 0 | 0 | 23 | — |
 | cuda | 50.0% | 33.3% | 4 | 4 | 8 | 12 | — |
 | dart | 0.0% | 0.0% | 0 | 0 | 18 | 18 | — |
+| dynamic-groovy | 100.0% | 100.0% | 1 | 0 | 0 | 1 | — |
+| dynamic-java | 100.0% | 100.0% | 1 | 0 | 0 | 1 | — |
+| dynamic-javascript | 100.0% | 100.0% | 4 | 0 | 0 | 4 | — |
+| dynamic-kotlin | 100.0% | 100.0% | 3 | 0 | 0 | 3 | — |
+| dynamic-scala | 100.0% | 100.0% | 1 | 0 | 0 | 1 | — |
+| dynamic-typescript | 100.0% | 100.0% | 3 | 0 | 0 | 3 | — |
 | elixir | 100.0% | 81.0% | 17 | 0 | 4 | 21 | — |
-| erlang | 0.0% | 0.0% | 0 | 0 | 12 | 12 | — |
+| erlang | 100.0% | 100.0% | 12 | 0 | 0 | 12 | — |
 | fsharp | 0.0% | 0.0% | 0 | 11 | 12 | 12 | — |
 | gleam | 100.0% | 26.7% | 4 | 0 | 11 | 15 | — |
 | go | 100.0% | 69.2% | 9 | 0 | 4 | 13 | 13/14 |
@@ -695,7 +701,7 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | rust | 100.0% | 64.3% | 9 | 0 | 5 | 14 | — |
 | scala | 100.0% | 100.0% | 7 | 0 | 0 | 7 | — |
 | solidity | 33.3% | 7.7% | 1 | 2 | 12 | 13 | — |
-| swift | 75.0% | 42.9% | 6 | 2 | 8 | 14 | 9/9 |
+| swift | 81.8% | 64.3% | 9 | 2 | 5 | 14 | 9/9 |
 | tsx | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
 | verilog | 0.0% | 0.0% | 0 | 0 | 4 | 4 | — |
 | zig | 66.7% | 13.3% | 2 | 1 | 13 | 15 | — |
@@ -704,16 +710,16 @@ Metrics are normalized per file for cross-version comparability. Times above are
 
 | Mode | Resolved | Expected | Recall |
 |------|--------:|---------:|-------:|
-| receiver-typed | 32 | 112 | 28.6% |
-| module-function | 36 | 112 | 32.1% |
+| receiver-typed | 35 | 112 | 31.3% |
+| module-function | 46 | 112 | 41.1% |
 | static | 82 | 97 | 84.5% |
-| same-file | 66 | 90 | 73.3% |
+| same-file | 68 | 90 | 75.6% |
 | interface-dispatched | 22 | 22 | 100.0% |
+| dynamic | 16 | 16 | 100.0% |
 | class-inheritance | 8 | 12 | 66.7% |
 | callback | 7 | 7 | 100.0% |
 | pts-spread | 4 | 4 | 100.0% |
 | pts-define-property | 3 | 3 | 100.0% |
-| dynamic | 3 | 3 | 100.0% |
 | pts-create-prototype | 2 | 2 | 100.0% |
 | points-to | 2 | 2 | 100.0% |
 | re-export | 2 | 2 | 100.0% |
