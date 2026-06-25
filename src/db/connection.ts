@@ -261,7 +261,24 @@ export function closeDbPairDeferred(pair: LockedDatabasePair): void {
 }
 
 export function findDbPath(customPath?: string): string {
-  if (customPath) return path.resolve(customPath);
+  if (customPath) {
+    const resolved = path.resolve(customPath);
+    // When a directory is passed (e.g. --db /path/to/repo), locate the DB
+    // inside it — matching the layout that `build` creates.
+    try {
+      if (fs.statSync(resolved).isDirectory()) {
+        // If the caller passed the .codegraph directory itself (e.g. --db /repo/.codegraph),
+        // use it directly to avoid double-appending .codegraph/.codegraph/graph.db.
+        if (path.basename(resolved) === '.codegraph') {
+          return path.join(resolved, 'graph.db');
+        }
+        return path.join(resolved, '.codegraph', 'graph.db');
+      }
+    } catch {
+      // Path doesn't exist yet — return as-is (e.g. a future custom DB path).
+    }
+    return resolved;
+  }
   const rawCeiling = findRepoRoot();
   // Normalize ceiling with realpathSync to resolve 8.3 short names (Windows
   // RUNNER~1 → runneradmin) and symlinks (macOS /var → /private/var).
@@ -380,9 +397,12 @@ export function openRepo(
     return { repo: opts.repo, close() {} };
   }
 
-  // Derive rootDir from customDbPath so loadConfig reads the right project config.
-  // Convention: customDbPath = <rootDir>/.codegraph/graph.db
-  const rootDir = customDbPath ? path.dirname(path.dirname(path.resolve(customDbPath))) : undefined;
+  // Derive rootDir from the resolved DB path so loadConfig reads the right project config.
+  // Using findDbPath (not path.resolve(customDbPath)) ensures directory inputs like
+  // --db /path/to/repo are normalised to .codegraph/graph.db before we strip two levels.
+  // Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
+  const resolvedDbPath = customDbPath ? findDbPath(customDbPath) : undefined;
+  const rootDir = resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
   // Respect explicit engine selection: opts.engine > config.build.engine > auto.
   // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
   // so this covers both the env-var path and the .codegraphrc.json config-file path.
@@ -437,9 +457,12 @@ export function openReadonlyWithNative(
 } {
   const db = openReadonlyOrFail(customPath);
 
-  // Derive rootDir from customPath so loadConfig reads the right project config,
-  // consistent with openRepo(). Convention: customPath = <rootDir>/.codegraph/graph.db
-  const rootDir = customPath ? path.dirname(path.dirname(path.resolve(customPath))) : undefined;
+  // Derive rootDir from the resolved DB path so loadConfig reads the right project config,
+  // consistent with openRepo(). Using findDbPath (not path.resolve(customPath)) ensures
+  // directory inputs like --db /path/to/repo are normalised before stripping two levels.
+  // Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
+  const resolvedDbPath = customPath ? findDbPath(customPath) : undefined;
+  const rootDir = resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
   // Respect explicit engine selection: opts.engine > config.build.engine > auto.
   // config.build.engine covers both CODEGRAPH_ENGINE env (via applyEnvOverrides)
   // and the .codegraphrc.json config-file path. Mirrors openRepo() priority chain.
