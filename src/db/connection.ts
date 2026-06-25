@@ -261,7 +261,19 @@ export function closeDbPairDeferred(pair: LockedDatabasePair): void {
 }
 
 export function findDbPath(customPath?: string): string {
-  if (customPath) return path.resolve(customPath);
+  if (customPath) {
+    const resolved = path.resolve(customPath);
+    // When a directory is passed (e.g. --db /path/to/repo), locate the DB
+    // inside it — matching the layout that `build` creates.
+    try {
+      if (fs.statSync(resolved).isDirectory()) {
+        return path.join(resolved, '.codegraph', 'graph.db');
+      }
+    } catch {
+      // Path doesn't exist yet — return as-is (e.g. a future custom DB path).
+    }
+    return resolved;
+  }
   const rawCeiling = findRepoRoot();
   // Normalize ceiling with realpathSync to resolve 8.3 short names (Windows
   // RUNNER~1 → runneradmin) and symlinks (macOS /var → /private/var).
