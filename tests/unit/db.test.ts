@@ -171,6 +171,25 @@ describe('findDbPath', () => {
       _resetRepoRootCache();
     }
   });
+
+  it('resolves repo directory to .codegraph/graph.db without double-appending', () => {
+    // When the caller passes the repo root directory (e.g. --db /path/to/repo),
+    // findDbPath must append .codegraph/graph.db exactly once.
+    const repoDir = fs.mkdtempSync(path.join(tmpDir, 'repo-dir-'));
+    const result = findDbPath(repoDir);
+    expect(result).toBe(path.join(repoDir, '.codegraph', 'graph.db'));
+  });
+
+  it('handles .codegraph directory passed directly without double-appending', () => {
+    // When the caller passes the .codegraph directory itself (e.g. --db /repo/.codegraph),
+    // findDbPath must resolve to /repo/.codegraph/graph.db, not /repo/.codegraph/.codegraph/graph.db.
+    const repoDir = fs.mkdtempSync(path.join(tmpDir, 'repo-cg-'));
+    const cgDir = path.join(repoDir, '.codegraph');
+    fs.mkdirSync(cgDir);
+    const result = findDbPath(cgDir);
+    expect(result).toBe(path.join(cgDir, 'graph.db'));
+    expect(result).not.toContain(`.codegraph${path.sep}.codegraph`);
+  });
 });
 
 describe('build_meta', () => {
