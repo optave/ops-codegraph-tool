@@ -127,6 +127,29 @@ gh api repos/optave/codegraph/issues/<number>/comments --paginate --jq '.[] | {i
 
 **Important:** Go through the results from ALL three endpoints. Build a complete list of actionable items from every reviewer before starting fixes. Do not skip any reviewer's comments.
 
+### 2d.1 Mine the Greptile **summary** body — findings often have no inline comment
+
+Greptile posts a top-level **summary** (a `### Greptile Summary` issue comment carrying a **`Confidence Score: N/5`** and a prose review; occasionally posted as a review body instead). That summary routinely raises **actionable findings that are NOT mirrored as inline review comments** — e.g. a "Safe to merge after addressing two gaps: First… Second…" paragraph, a per-row concern in the **Important Files Changed** table ("Two logic gaps: …"), or a "Note on …" caveat. A sweep that only iterates the inline comments from the gather step **silently misses these** — it is the single most common way a Greptile concern survives a sweep unaddressed.
+
+So treat the summary as a **source of findings, not a single comment to reply to**. Pull it in full (never truncate — findings hide in the prose):
+
+```bash
+# Greptile summary as an issue comment (the usual location):
+gh api repos/optave/codegraph/issues/<number>/comments --paginate \
+  --jq '.[] | select(.user.login|test("greptile";"i")) | .body'
+# …and as a review body (Greptile sometimes posts the summary here instead):
+gh api repos/optave/codegraph/pulls/<number>/reviews --paginate \
+  --jq '.[] | select(.user.login|test("greptile";"i")) | .body'
+```
+
+From that body, extract **every distinct finding** as its own actionable item:
+- the **Confidence Score** and the sentence(s) that justify it — a score `< 5` always names at least one gap;
+- every numbered / "First… Second…" gap in a "Safe to merge after…" paragraph;
+- every concern in the **Important Files Changed** table;
+- every "Note on…" / "Caveat…" / "mismatch" line (e.g. a PR-description-vs-implementation discrepancy).
+
+For each finding, **check whether a matching inline comment exists**. If it does, you'll handle it in the address-comments step. **If it does NOT, it is still a real finding — add it to your actionable list and fix it** (or, if genuinely out of scope, file a tracked `follow-up` issue and reply). **Never assume the inline comments are the complete set** — reconcile your fixes against the summary before declaring the PR ready.
+
 ### 2e. Address every comment from EVERY reviewer
 
 You must address comments from **all** reviewers — Claude (claude-code-review bot), Greptile, and any humans. Do not only address one reviewer's comments and skip another's. Process each reviewer's feedback systematically.
@@ -317,6 +340,7 @@ If any subagent failed or returned an error, note it in the Status column as `ag
 - **Never force-push** unless fixing a commit message that fails commitlint. Amend + force-push is the only way to fix a pushed commit title (messages are part of the SHA). This is safe on feature branches. For all other problems, fix with a new commit. **If a push or commit is denied by a hook**, read the denial reason — don't blindly retry or escalate to force-push. Common causes: (1) commitlint rejects the message format → amend + force-push (`git push --force-with-lease`), (2) guard-git blocks staged files not in session edit log → use `git commit <file1> <file2> -m "msg"` with explicit paths, (3) branch name validation fails → you're on the wrong branch.
 - **Address ALL comments from ALL reviewers** (Claude, Greptile, and humans), even minor/nit/optional ones. Leave zero unaddressed. Do not only respond to one reviewer and skip another.
 - **Always reply to comments** explaining what was done. Don't just fix silently. Every reviewer must see a reply on their feedback.
+- **Mine the Greptile *summary* body, not just inline comments** (Step 2d.1). A `Confidence Score: N/5` with `N < 5` always names at least one gap in prose, and those gaps frequently have **no** inline comment. Extract every finding from the summary and fix it (or file a tracked `follow-up`). Missing a summary-only finding is the #1 way a Greptile concern survives a sweep — reconcile your fixes against the summary before declaring the PR ready.
 - **Never trigger `@greptileai` without replying to every Greptile comment first.** Before posting the re-trigger, run the Step 2g verification script to confirm zero unanswered Greptile comments. Triggering a new review while old comments are unanswered is a blocking violation — it creates review noise and signals that feedback was ignored. Reply first, verify, then trigger.
 - **Only re-trigger Claude** if you addressed Claude's feedback specifically.
 - **No co-author lines** in commit messages.
