@@ -113,7 +113,14 @@ Flag any worktree whose combined build artifact size exceeds **500MB** (512000 k
 Before offering removal, run `git -C <path> status --short` to check for uncommitted changes:
 
 ```bash
-for dir in $ORPHANED_DIRS; do
+# NOTE: iterate with `while IFS= read -r dir`, never `for dir in $ORPHANED_DIRS` —
+# the Bash tool in Claude Code runs under zsh, which does NOT word-split an
+# unquoted multi-line variable the way bash does. `for dir in $ORPHANED_DIRS`
+# would silently collapse every orphaned directory into a single iteration
+# whose $dir is the whole newline-joined blob, breaking `git -C "$dir"` the
+# moment more than one orphaned directory exists.
+printf '%s\n' "$ORPHANED_DIRS" | while IFS= read -r dir; do
+  [ -z "$dir" ] && continue
   if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
     changes=$(git -C "$dir" status --short 2>/dev/null)
     if [ -n "$changes" ]; then
