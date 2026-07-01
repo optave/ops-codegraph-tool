@@ -27,6 +27,8 @@ Clean up the local repo: remove stale worktrees, delete dirt/temp files, sync wi
 4. Record current git status: `git status --short`
 5. Warn the user if there are uncommitted changes — housekeeping works best from a clean state
 
+**Exit condition:** repo identity confirmed (`@optave/codegraph`); `DRY_RUN`/`SKIP_UPDATE` are known; current branch and status recorded.
+
 ## Phase 1 — Audit & Clean Worktrees
 
 > **Always report disk usage first.** Worktree bloat (per-worktree `node_modules/`, `target/`, `dist/`) is the single largest source of disk waste in this repo — a fresh worktree with `npm install` + a Rust build is ~3GB. Even when no worktree is technically "stale" by branch criteria, the disk footprint must be surfaced so the user can decide what to keep.
@@ -36,6 +38,7 @@ Clean up the local repo: remove stale worktrees, delete dirt/temp files, sync wi
 Always print this, even on `--dry-run`. Use `du -sk` (kilobytes) so the pipeline is portable across BSD (macOS) and GNU (Linux) — `sort -h` is a GNU coreutils extension and is rejected by stock macOS `sort`.
 
 ```bash
+# 2>/dev/null suppress: .claude/worktrees/ may not exist yet on a fresh repo — zero worktrees, not an error
 du -sh .claude/worktrees 2>/dev/null
 # Portable per-worktree sort: kilobytes through sort -n, then format back to human-readable.
 du -sk .claude/worktrees/*/ 2>/dev/null | sort -n | awk '{
@@ -82,6 +85,7 @@ for wt in .claude/worktrees/*/; do
   breakdown=""
   for sub in node_modules target dist; do
     if [ -d "$wt$sub" ]; then
+      # 2>/dev/null suppress: the dir can vanish between the glob and this du (e.g. concurrent cleanup) — skip it, don't fail the scan
       sz=$(du -sk "$wt$sub" 2>/dev/null | awk '{print $1}')
       [ -n "$sz" ] && total_kb=$((total_kb + sz)) && breakdown="$breakdown  $sub=${sz}K"
     fi
@@ -89,6 +93,7 @@ for wt in .claude/worktrees/*/; do
   # .codegraph: only measure the two files we will actually remove
   for f in "$wt.codegraph/graph.db" "$wt.codegraph/graph.db-journal"; do
     if [ -f "$f" ]; then
+      # 2>/dev/null suppress: same rationale as the node_modules/target/dist loop above — a vanished file mid-scan is skipped, not fatal
       sz=$(du -sk "$f" 2>/dev/null | awk '{print $1}')
       [ -n "$sz" ] && total_kb=$((total_kb + sz)) && breakdown="$breakdown  $(basename "$f")=${sz}K"
     fi
@@ -113,8 +118,16 @@ Flag any worktree whose combined build artifact size exceeds **500MB** (512000 k
 Before offering removal, run `git -C <path> status --short` to check for uncommitted changes:
 
 ```bash
-for dir in $ORPHANED_DIRS; do
+# NOTE: iterate with `while IFS= read -r dir`, never `for dir in $ORPHANED_DIRS` —
+# the Bash tool in Claude Code runs under zsh, which does NOT word-split an
+# unquoted multi-line variable the way bash does. `for dir in $ORPHANED_DIRS`
+# would silently collapse every orphaned directory into a single iteration
+# whose $dir is the whole newline-joined blob, breaking `git -C "$dir"` the
+# moment more than one orphaned directory exists.
+printf '%s\n' "$ORPHANED_DIRS" | while IFS= read -r dir; do
+  [ -z "$dir" ] && continue
   if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+    # 2>/dev/null suppress: best-effort only — a failed git check on a non-worktree directory is expected and harmless here
     changes=$(git -C "$dir" status --short 2>/dev/null)
     if [ -n "$changes" ]; then
       echo "SKIP $dir — has uncommitted changes:"
@@ -138,8 +151,8 @@ git worktree prune
 - List them with their disk size and **always ask the user for confirmation before removing**, regardless of `--full`
 - If confirmed:
   ```bash
-  git worktree remove <path>
-  git branch -d <branch>  # only if fully merged
+  git worktree remove "<path>"
+  git branch -d "<branch>"  # only if fully merged
   ```
 
 **For bloated (non-stale) worktrees:**
@@ -147,10 +160,10 @@ git worktree prune
 - Ask the user whether to **clean build artifacts only** (keep the source) — these regenerate on the next `npm install` / `cargo build` / `codegraph build`
 - If confirmed, for each selected worktree:
   ```bash
-  rm -rf <worktree>/node_modules
-  rm -rf <worktree>/target
-  rm -rf <worktree>/dist
-  rm -f  <worktree>/.codegraph/graph.db <worktree>/.codegraph/graph.db-journal
+  rm -rf "<worktree>/node_modules"
+  rm -rf "<worktree>/target"
+  rm -rf "<worktree>/dist"
+  rm -f  "<worktree>/.codegraph/graph.db" "<worktree>/.codegraph/graph.db-journal"
   ```
 - **Never run `npm install` / `cargo clean` inside the target worktree** — it may be in use by another Claude Code session
 
@@ -158,6 +171,8 @@ git worktree prune
 
 > **Never force-remove** a worktree with uncommitted changes. List it as "has uncommitted work" and skip — but still report its disk size so the user knows what it's costing.
 > **Never delete source files** in a bloated worktree — only delete the four regeneratable artifact paths above.
+
+**Exit condition:** worktree disk usage has been reported; every worktree is classified (orphaned / stale / bloated / active) with confirmed removals and artifact cleanups completed outside `DRY_RUN`.
 
 ## Phase 2 — Delete Dirt Files
 
@@ -181,13 +196,16 @@ Search for and remove files found by the two discovery commands above (never tou
 **Stale lock files** (`.codegraph/*.lock` older than 1 hour): Before removing, first check if `lsof` is available (`command -v lsof`). If `lsof` is **not installed** (common in Docker/CI minimal containers where it exits 127), **skip lock file removal entirely** and print a warning: `"lsof not available — skipping lock file cleanup (cannot verify no process holds the file)"`. When `lsof` IS available, use `lsof "$f"` to verify no process holds the file. If the file is held, **skip it** and warn — concurrent Claude Code sessions may hold legitimate long-lived locks.
 
 ```bash
+# > /dev/null 2>&1: suppress command path on success and shell's "not found" on failure — the else branch reports the skip explicitly
 if ! command -v lsof > /dev/null 2>&1; then
   echo "lsof not available — skipping lock file cleanup (cannot verify no process holds the file)"
 else
   for f in .codegraph/*.lock; do
     [ -f "$f" ] || continue
+    # 2>/dev/null suppress: BSD vs GNU stat take different flags — try GNU syntax first, fall back to BSD
     age=$(( $(date +%s) - $(stat --format='%Y' "$f" 2>/dev/null || stat -f '%m' "$f" 2>/dev/null) ))
     [ -z "$age" ] && continue
+    # > /dev/null 2>&1: suppress lsof's own output — only its exit code (held vs free) matters here
     if [ "$age" -gt 3600 ] && ! lsof "$f" > /dev/null 2>&1; then
       if [ "$DRY_RUN" = "true" ]; then
         echo "[DRY RUN] Would remove stale lock: $f"
@@ -208,6 +226,7 @@ Find untracked files (both gitignored and non-ignored) larger than 1MB. Use both
 ```bash
 # Non-ignored untracked files
 git ls-files --others --exclude-standard | while read f; do
+  # 2>/dev/null suppress: BSD vs GNU stat take different flags — try GNU syntax first, fall back to BSD; a genuine failure just yields empty $size and is skipped below
   size=$(stat --format='%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null)
   [ -z "$size" ] && continue
   if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes)"; fi
@@ -216,6 +235,7 @@ done
 git clean -fdX --dry-run | sed 's/^Would remove //' | while read f; do
   # Skip directory entries — stat returns inode size, not content size
   [ -d "$f" ] && continue
+  # 2>/dev/null suppress: BSD vs GNU stat fallback, same rationale as above
   size=$(stat --format='%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null)
   [ -z "$size" ] && continue
   if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes) [gitignored]"; fi
@@ -233,6 +253,8 @@ Flag these for user review — they might be accidentally untracked binaries.
 - For large untracked files: list and ask the user
 
 > **Never delete** files that are tracked by git. Only clean untracked/ignored files.
+
+**Exit condition:** known dirt patterns have been removed (or listed, under `DRY_RUN`); large untracked files have been flagged for the user, never deleted automatically.
 
 ## Phase 3 — Sync with Main
 
@@ -261,6 +283,8 @@ git for-each-ref --format='%(refname:short) %(upstream:track)' refs/heads/
 ```
 
 Flag any branches marked `[ahead N, behind M]` — these may need attention.
+
+**Exit condition:** the local branch's relationship to `origin/main` has been reported; `main` has been pulled only if it was already checked out and new commits exist; diverged branches have been flagged, not acted on.
 
 ## Phase 4 — Prune Merged Branches
 
@@ -296,11 +320,13 @@ Delete merged branch '<branch>'? (y/n)
 ```
 If confirmed, delete the branch:
 ```bash
-git branch -d <branch>  # safe delete, only if fully merged
+git branch -d "<branch>"  # safe delete, only if fully merged
 ```
 
 > **Never use `git branch -D`** (force delete). If `-d` fails, the branch has unmerged work — skip it.
 > **Always confirm before deleting** — consistent with worktree removal in Phase 1c.
+
+**Exit condition:** every fully-merged, non-protected branch has had a confirmed delete decision (or been listed under `DRY_RUN`); stale remote-tracking refs have been pruned.
 
 ## Phase 5 — Update Codegraph
 
@@ -308,6 +334,8 @@ git branch -d <branch>  # safe delete, only if fully merged
 
 > **Source-repo guard:** This phase is only meaningful when codegraph is installed as a *dependency* of a consumer project. Because the pre-flight confirms we are inside the codegraph *source* repo (`"name": "@optave/codegraph"`), comparing the dev version to the published release and running `npm install` would be a no-op — codegraph is not one of its own dependencies. **Skip this entire phase** when running inside the source repo and print:
 > `Codegraph: skipped (running inside source repo — update via git pull / branch sync instead)`
+
+**Exit condition:** either the phase was skipped (source-repo guard or `SKIP_UPDATE`) and that is printed, or codegraph's version status has been reported.
 
 ## Phase 6 — Verify Repo Health
 
@@ -340,6 +368,8 @@ git fsck --no-dangling 2>&1 | head -20
 
 Flag any errors (rare but important).
 
+**Exit condition:** graph integrity, node-modules integrity, and git integrity have each produced a pass/fail result.
+
 ## Phase 7 — Report
 
 Print a summary to the console (no file needed — this is a local maintenance task):
@@ -364,6 +394,14 @@ Status: CLEAN ✓
 > **Always include the worktree total** at the top of the Worktrees line, even when no worktrees were removed. This is the metric that surfaces hidden disk bloat — without it, multi-GB worktree accumulations go invisible to the user.
 
 **If `DRY_RUN`:** prefix with `[DRY RUN]` and show what would happen without doing it.
+
+**Exit condition:** the report above has been printed; nothing further runs after it.
+
+## Examples
+
+- `/housekeep` — full local cleanup: prune stale/bloated worktrees, remove regeneratable dirt, sync with main, prune merged branches, verify health.
+- `/housekeep --dry-run` — preview everything above with zero changes.
+- `/housekeep --skip-update` — run the cleanup phases but skip the codegraph-version-check phase.
 
 ## Rules
 
