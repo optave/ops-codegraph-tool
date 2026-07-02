@@ -335,19 +335,36 @@ describe('Registry CLI commands', () => {
 
 describe('Config CLI commands', () => {
   let tmpHome: string;
+  let userConfigPath: string;
 
-  /** Run CLI with isolated HOME so --init doesn't touch the real global config */
+  /**
+   * Run CLI with isolated HOME *and* an explicit CODEGRAPH_USER_CONFIG so
+   * --init doesn't touch the real global config. HOME/USERPROFILE alone
+   * aren't sufficient: getDefaultUserConfigPath() prefers XDG_CONFIG_HOME
+   * (ambiently set on GitHub Actions ubuntu-latest runners) and, on Windows,
+   * APPDATA (always set) ahead of the HOME-derived fallback — so on CI the
+   * scaffolded file can land outside tmpHome unless the path is pinned
+   * explicitly, same as tests/unit/config-user.test.ts does.
+   */
   function runCfg(...args) {
     return execFileSync('node', [...NODE_TS_FLAGS, CLI, ...args], {
       cwd: tmpDir,
       encoding: 'utf-8',
       timeout: 30_000,
-      env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome },
+      env: {
+        ...process.env,
+        HOME: tmpHome,
+        USERPROFILE: tmpHome,
+        CODEGRAPH_USER_CONFIG: userConfigPath,
+        XDG_CONFIG_HOME: undefined,
+        APPDATA: undefined,
+      },
     });
   }
 
   beforeAll(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cfghome-'));
+    userConfigPath = path.join(tmpHome, '.config', 'codegraph', 'config.json');
   });
 
   afterAll(() => {
@@ -356,8 +373,7 @@ describe('Config CLI commands', () => {
 
   test('config --init scaffolds an embeddings section alongside llm', () => {
     runCfg('config', '--init');
-    const configPath = path.join(tmpHome, '.config', 'codegraph', 'config.json');
-    const scaffolded = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const scaffolded = JSON.parse(fs.readFileSync(userConfigPath, 'utf-8'));
 
     expect(scaffolded.embeddings).toEqual({ model: null, llmProvider: null, provider: null });
     expect(scaffolded.llm).toHaveProperty('baseUrl');
