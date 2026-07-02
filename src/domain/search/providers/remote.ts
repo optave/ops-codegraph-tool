@@ -136,6 +136,12 @@ export async function embedRemote(
     // OpenAI-compatible servers aren't guaranteed to preserve input order — sort by index.
     const sorted = [...json.data].sort((a, b) => a.index - b.index);
     for (const item of sorted) {
+      if (!Array.isArray(item.embedding)) {
+        throw new EngineError(
+          `Remote embedding endpoint ${url} returned an item with a missing or non-array ` +
+            `"embedding" field (index ${item.index})`,
+        );
+      }
       const vec = Float32Array.from(item.embedding);
       if (dim === 0) {
         dim = vec.length;

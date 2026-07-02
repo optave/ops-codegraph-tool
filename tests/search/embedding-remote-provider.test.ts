@@ -201,4 +201,14 @@ describe('embedRemote', () => {
       /inconsistent vector dimensions/,
     );
   });
+
+  it('throws EngineError instead of a raw TypeError when an item is missing the embedding field', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [{ index: 0 }] }), { status: 200 }),
+    );
+    await expect(embedRemote(['a'], { baseUrl: 'http://x', model: 'm' })).rejects.toMatchObject({
+      name: 'EngineError',
+      message: expect.stringContaining('missing or non-array "embedding" field'),
+    });
+  });
 });
