@@ -1109,68 +1109,6 @@ export interface DataflowMutation {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// §9  Graph Model (CodeGraph)
-// ════════════════════════════════════════════════════════════════════════
-
-/** Node attributes stored in the in-memory graph. */
-export interface GraphNodeAttrs {
-  label?: string;
-  kind?: string;
-  file?: string;
-  name?: string;
-  line?: number;
-  dbId?: number;
-  [key: string]: unknown;
-}
-
-/** Edge attributes stored in the in-memory graph. */
-export interface GraphEdgeAttrs {
-  kind?: string;
-  confidence?: number;
-  weight?: number;
-  [key: string]: unknown;
-}
-
-/** The unified in-memory graph model. */
-export interface CodeGraph {
-  readonly directed: boolean;
-  readonly nodeCount: number;
-  readonly edgeCount: number;
-
-  // Node operations
-  addNode(id: string, attrs?: GraphNodeAttrs): CodeGraph;
-  hasNode(id: string): boolean;
-  getNodeAttrs(id: string): GraphNodeAttrs | undefined;
-  nodes(): IterableIterator<[string, GraphNodeAttrs]>;
-  nodeIds(): string[];
-
-  // Edge operations
-  addEdge(source: string, target: string, attrs?: GraphEdgeAttrs): CodeGraph;
-  hasEdge(source: string, target: string): boolean;
-  getEdgeAttrs(source: string, target: string): GraphEdgeAttrs | undefined;
-  edges(): Generator<[string, string, GraphEdgeAttrs]>;
-
-  // Adjacency
-  successors(id: string): string[];
-  predecessors(id: string): string[];
-  neighbors(id: string): string[];
-  outDegree(id: string): number;
-  inDegree(id: string): number;
-
-  // Filtering
-  subgraph(predicate: (id: string, attrs: GraphNodeAttrs) => boolean): CodeGraph;
-  filterEdges(predicate: (src: string, tgt: string, attrs: GraphEdgeAttrs) => boolean): CodeGraph;
-
-  // Conversion
-  toEdgeArray(): Array<{ source: string; target: string }>;
-  toGraphology(opts?: { type?: string }): unknown;
-
-  // Utilities
-  clone(): CodeGraph;
-  merge(other: CodeGraph): CodeGraph;
-}
-
-// ════════════════════════════════════════════════════════════════════════
 // §10  Build Pipeline
 // ════════════════════════════════════════════════════════════════════════
 
@@ -1627,26 +1565,6 @@ export interface PaginatedItems<T> {
 
 /** A result object with optional _pagination metadata. */
 export type Paginated<T> = T & { _pagination?: PaginationMeta };
-
-// ════════════════════════════════════════════════════════════════════════
-// §13  Error Hierarchy
-// ════════════════════════════════════════════════════════════════════════
-
-export type ErrorCode =
-  | 'CODEGRAPH_ERROR'
-  | 'PARSE_FAILED'
-  | 'DB_ERROR'
-  | 'CONFIG_INVALID'
-  | 'RESOLUTION_FAILED'
-  | 'ENGINE_UNAVAILABLE'
-  | 'ANALYSIS_FAILED'
-  | 'BOUNDARY_VIOLATION';
-
-export interface CodegraphErrorOpts {
-  code?: ErrorCode;
-  file?: string;
-  cause?: Error;
-}
 
 // ════════════════════════════════════════════════════════════════════════
 // §14  Feature Module Result Shapes
