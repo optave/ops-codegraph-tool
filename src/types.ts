@@ -1310,8 +1310,7 @@ export interface CodegraphConfig {
     /**
      * Minimum existing file-node count for a repo to be treated as a "large
      * codebase" when deciding whether to scope node loading to changed files.
-     * @reserved — currently not wired; see `largeCodebaseFileThreshold` in
-     * `src/infrastructure/config.ts` for wiring status.
+     * Used by loadNodes() in `src/domain/graph/builder/stages/build-edges.ts`.
      */
     largeCodebaseFileThreshold: number;
     /**
