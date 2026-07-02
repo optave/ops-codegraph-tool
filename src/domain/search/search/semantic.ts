@@ -2,9 +2,32 @@ import { loadConfig } from '../../../infrastructure/config.js';
 import { warn } from '../../../infrastructure/logger.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../../../types.js';
 import { normalizeSymbol } from '../../queries.js';
-import { embed } from '../models.js';
+import { embed, MODELS } from '../models.js';
+import { embedRemote, resolveRemoteEmbeddingOptions } from '../providers/remote.js';
 import { cosineSim } from '../stores/sqlite-blob.js';
 import { type PreparedSearch, prepareSearch } from './prepare.js';
+
+/**
+ * Embed query text with whichever backend produced the stored embeddings.
+ * `modelKey` is a resolved local registry key (from `--model` or matched
+ * against `MODELS`), or an arbitrary identifier (an explicit `--model`
+ * override, or unmatched) when embeddings were built via a remote provider.
+ */
+async function embedQuery(
+  texts: string[],
+  config: CodegraphConfig,
+  modelKey: string | null,
+  storedModel: string | null,
+): Promise<{ vectors: Float32Array[]; dim: number }> {
+  const isKnownLocalModel = modelKey != null && modelKey in MODELS;
+  if (!isKnownLocalModel && config.embeddings?.provider === 'openai') {
+    const remoteModel = modelKey || storedModel;
+    if (remoteModel) {
+      return embedRemote(texts, resolveRemoteEmbeddingOptions(config, remoteModel));
+    }
+  }
+  return embed(texts, modelKey ?? undefined);
+}
 
 export interface SemanticSearchOpts {
   config?: CodegraphConfig;
@@ -61,13 +84,13 @@ export async function searchData(
 
   const prepared = prepareSearch(customDbPath, opts);
   if (!prepared) return null;
-  const { db, rows, modelKey, storedDim } = prepared;
+  const { db, rows, modelKey, storedDim, storedModel } = prepared;
 
   try {
     const {
       vectors: [queryVec],
       dim,
-    } = await embed([query], modelKey ?? undefined);
+    } = await embedQuery([query], config, modelKey, storedModel);
 
     if (checkDimensionMismatch(storedDim, dim)) return null;
 
@@ -192,10 +215,10 @@ export async function multiSearchData(
 
   const prepared = prepareSearch(customDbPath, opts);
   if (!prepared) return null;
-  const { db, rows, modelKey, storedDim } = prepared;
+  const { db, rows, modelKey, storedDim, storedModel } = prepared;
 
   try {
-    const { vectors: queryVecs, dim } = await embed(queries, modelKey ?? undefined);
+    const { vectors: queryVecs, dim } = await embedQuery(queries, config, modelKey, storedModel);
 
     warnOnSimilarQueries(queries, queryVecs as Float32Array[], similarityWarnThreshold);
 

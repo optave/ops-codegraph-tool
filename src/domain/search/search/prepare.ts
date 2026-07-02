@@ -20,6 +20,9 @@ export interface PreparedSearch {
   }>;
   modelKey: string | null;
   storedDim: number | null;
+  /** Raw model identifier recorded at embed time — set even when it isn't a
+   * local registry key (e.g. a remote provider's model name). */
+  storedModel: string | null;
 }
 
 export interface PrepareSearchOpts {
@@ -87,7 +90,7 @@ export function prepareSearch(
     let rows = db.prepare(sql).all(...params) as PreparedSearch['rows'];
     rows = applyFilters(rows, opts);
 
-    return { db, rows, modelKey, storedDim };
+    return { db, rows, modelKey, storedDim, storedModel };
   } catch (err) {
     db.close();
     throw err;
