@@ -9,9 +9,10 @@ export const command: CommandDefinition = {
     const defaultModel = (embeddingsConfig?.model as string) || DEFAULT_MODEL;
 
     if (embeddingsConfig?.provider) {
+      const remoteModel = embeddingsConfig.model || '(not configured — set embeddings.model)';
       console.log(
         `\nembeddings.provider is set to "${embeddingsConfig.provider}" — codegraph embed will call ` +
-          `model "${embeddingsConfig.model}" at llm.baseUrl instead of a local model below.`,
+          `model "${remoteModel}" at llm.baseUrl instead of a local model below.`,
       );
     }
     console.log('\nAvailable embedding models:\n');
