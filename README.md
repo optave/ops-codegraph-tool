@@ -398,7 +398,7 @@ codegraph cycles --functions   # Function-level cycles
 
 ### Semantic Search
 
-Local embeddings for every function, method, and class — search by natural language. Everything runs locally using [@huggingface/transformers](https://huggingface.co/docs/transformers.js) — no API keys needed.
+Local embeddings for every function, method, and class — search by natural language. Everything runs locally using [@huggingface/transformers](https://huggingface.co/docs/transformers.js) — no API keys needed. Prefer a remote or self-hosted model instead? Set `embeddings.provider: "openai"` and `llm.baseUrl` in your config to call any OpenAI-compatible `/embeddings` endpoint — see [configuration.md](docs/guides/configuration.md#embeddings-embeddings).
 
 ```bash
 codegraph embed                # Build embeddings (default: nomic)

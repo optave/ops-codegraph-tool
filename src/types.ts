@@ -1408,6 +1408,16 @@ export interface CodegraphConfig {
   embeddings: {
     model: string | null;
     llmProvider: string | null;
+    /**
+     * Embedding backend for `codegraph embed`. `null` (default) uses the
+     * local bundled model via `@huggingface/transformers`. `"openai"` calls
+     * a remote OpenAI-compatible `/embeddings` endpoint configured via
+     * `llm.baseUrl` — this covers self-hosted servers (text-embeddings-inference,
+     * Ollama, LM Studio, vLLM, etc.) that implement the same request/response
+     * shape, not just OpenAI itself. When set, `embeddings.model` must be the
+     * model identifier the endpoint expects.
+     */
+    provider: string | null;
   };
 
   llm: {
@@ -1423,6 +1433,12 @@ export interface CodegraphConfig {
      * values are rejected with a `ConfigError` at load time.
      */
     apiKeyCommand: string | null;
+    /**
+     * Per-request timeout (ms) for remote HTTP calls made against `llm.baseUrl`
+     * (currently the remote embedding provider). Prevents an unresponsive
+     * self-hosted server from hanging the process indefinitely. Default: 120000.
+     */
+    requestTimeoutMs: number;
   };
 
   search: {

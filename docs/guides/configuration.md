@@ -173,18 +173,40 @@ Defaults applied to graph queries when the CLI flag is omitted.
 
 ## Embeddings (`embeddings`)
 
-Controls the local embedding model used by `codegraph embed` and `codegraph search`.
+Controls the embedding backend used by `codegraph embed` and `codegraph search`.
 
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
-| `model` | `string \| null` | `null` | Model registry key (see `src/domain/search/models.ts`). When `null`, `codegraph embed` reuses the model already stored in the database, or falls back to the built-in default (`"nomic"`) for fresh graphs. Common options: `"nomic"`, `"nomic-v1.5"`, `"bge-large"`. |
+| `model` | `string \| null` | `null` | When `provider` is `null` (local, default): a model registry key (see `src/domain/search/models.ts`). When `null`, `codegraph embed` reuses the model already stored in the database, or falls back to the built-in default (`"nomic"`) for fresh graphs. Common options: `"nomic"`, `"nomic-v1.5"`, `"bge-large"`. When `provider` is `"openai"`: the model identifier your endpoint expects (e.g. `"text-embedding-3-small"`, or whatever name your self-hosted server registers) — required in that case. |
 | `llmProvider` | `string \| null` | `null` | Optional LLM provider for query expansion. `null` disables it. |
+| `provider` | `string \| null` | `null` | Embedding backend. `null` (default) uses the local bundled model via `@huggingface/transformers`. `"openai"` calls a remote OpenAI-compatible `/embeddings` endpoint configured via `llm.baseUrl` — this covers self-hosted servers (text-embeddings-inference, Ollama, LM Studio, vLLM, etc.), not just OpenAI itself. |
+
+### Remote embedding provider
+
+Point `codegraph embed` at a self-hosted or third-party embedding endpoint instead of downloading a local model:
+
+```json
+{
+  "embeddings": {
+    "provider": "openai",
+    "model": "my-embedding-model"
+  },
+  "llm": {
+    "baseUrl": "http://my-tailnet-host:8080/v1",
+    "apiKeyCommand": "op read op://vault/embeddings/api-key"
+  }
+}
+```
+
+The endpoint must accept `POST <baseUrl>/embeddings` with `{ "model": "...", "input": ["text", ...] }` and return `{ "data": [{ "embedding": [...], "index": 0 }, ...] }` — the same shape OpenAI's API uses. `llm.apiKey`/`llm.apiKeyCommand` are optional; omit them for endpoints that don't require auth. Vector dimensionality is read from the response, so there's no model registry to keep in sync.
+
+`codegraph search` (semantic and hybrid modes) and the `semantic_search` MCP tool automatically embed the query through the same remote endpoint when the stored embeddings were built with `embeddings.provider: "openai"` — no extra configuration needed.
 
 ---
 
 ## LLM credentials (`llm`)
 
-Used by features that call out to a chat-completion API (e.g. query expansion). Codegraph never hardcodes a provider — you pick one.
+Used by features that call out to a chat-completion API (e.g. query expansion), and reused by the [remote embedding provider](#embeddings-embeddings) (`baseUrl`, `apiKey`, `apiKeyCommand`) so credentials aren't duplicated across features. Codegraph never hardcodes a provider — you pick one.
 
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
@@ -193,6 +215,7 @@ Used by features that call out to a chat-completion API (e.g. query expansion). 
 | `baseUrl` | `string \| null` | `null` | Override the provider's base URL (for compatible proxies, local servers, etc.). |
 | `apiKey` | `string \| null` | `null` | Plaintext API key. Prefer `apiKeyCommand` or env vars over this. |
 | `apiKeyCommand` | `string \| null` | `null` | Shell-out command that prints the key to stdout. Split on whitespace and run via `execFileSync` (no shell — `$(...)`, pipes, globs, and variable expansion are not supported). 10s timeout, 64 KB max output. |
+| `requestTimeoutMs` | `number` | `120000` | Per-request timeout for remote HTTP calls made against `baseUrl` (currently the [remote embedding provider](#embeddings-embeddings)). Aborts and throws if a self-hosted server hangs mid-request instead of blocking indefinitely. |
 
 Resolution order (first non-empty wins): `apiKeyCommand` output → `CODEGRAPH_LLM_API_KEY` env var → `apiKey` field.
 
@@ -215,6 +238,7 @@ These env vars override the corresponding `llm.*` fields when set:
 - `CODEGRAPH_LLM_PROVIDER` → `llm.provider`
 - `CODEGRAPH_LLM_MODEL` → `llm.model`
 - `CODEGRAPH_LLM_API_KEY` → `llm.apiKey`
+- `CODEGRAPH_LLM_BASE_URL` → `llm.baseUrl`
 
 ---
 
