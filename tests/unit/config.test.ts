@@ -68,6 +68,7 @@ describe('DEFAULTS', () => {
       baseUrl: null,
       apiKey: null,
       apiKeyCommand: null,
+      requestTimeoutMs: 120_000,
     });
   });
 

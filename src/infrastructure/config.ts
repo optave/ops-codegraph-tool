@@ -49,6 +49,7 @@ export const DEFAULTS = {
     baseUrl: null as string | null,
     apiKey: null as string | null,
     apiKeyCommand: null as string | null,
+    requestTimeoutMs: 120_000,
   },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15, similarityWarnThreshold: 0.85 },
   ci: { failOnCycles: false, impactThreshold: null as number | null },

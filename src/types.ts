@@ -1433,6 +1433,12 @@ export interface CodegraphConfig {
      * values are rejected with a `ConfigError` at load time.
      */
     apiKeyCommand: string | null;
+    /**
+     * Per-request timeout (ms) for remote HTTP calls made against `llm.baseUrl`
+     * (currently the remote embedding provider). Prevents an unresponsive
+     * self-hosted server from hanging the process indefinitely. Default: 120000.
+     */
+    requestTimeoutMs: number;
   };
 
   search: {

@@ -18,7 +18,16 @@ export interface RemoteEmbeddingOptions {
   baseUrl: string;
   model: string;
   apiKey?: string | null;
+  /** Per-request timeout in ms. Defaults to `DEFAULT_REQUEST_TIMEOUT_MS` when omitted. */
+  timeoutMs?: number;
 }
+
+/**
+ * Fallback per-request timeout when `RemoteEmbeddingOptions.timeoutMs` isn't
+ * supplied (e.g. direct `embedRemote` calls that bypass config resolution).
+ * Mirrors `DEFAULTS.llm.requestTimeoutMs` in `infrastructure/config.ts`.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 
 interface OpenAIEmbeddingItem {
   embedding: number[];
@@ -52,7 +61,12 @@ export function resolveRemoteEmbeddingOptions(
         '(config key "llm.baseUrl" or env var CODEGRAPH_LLM_BASE_URL).',
     );
   }
-  return { baseUrl, model, apiKey: config.llm.apiKey };
+  return {
+    baseUrl,
+    model,
+    apiKey: config.llm.apiKey,
+    timeoutMs: config.llm.requestTimeoutMs,
+  };
 }
 
 /**
@@ -71,10 +85,14 @@ export async function embedRemote(
   if (options.apiKey) headers.Authorization = `Bearer ${options.apiKey}`;
 
   const results: Float32Array[] = [];
+  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   let dim = 0;
 
   for (let i = 0; i < texts.length; i += REMOTE_BATCH_SIZE) {
     const batch = texts.slice(i, i + REMOTE_BATCH_SIZE);
+
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
     let response: Response;
     try {
@@ -82,12 +100,21 @@ export async function embedRemote(
         method: 'POST',
         headers,
         body: JSON.stringify({ model: options.model, input: batch }),
+        signal: controller.signal,
       });
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new EngineError(
+          `Remote embedding endpoint ${url} did not respond within ${timeoutMs}ms ` +
+            `(batch ${Math.floor(i / REMOTE_BATCH_SIZE) + 1})`,
+        );
+      }
       throw new EngineError(
         `Failed to reach remote embedding endpoint at ${url}: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err instanceof Error ? err : undefined },
       );
+    } finally {
+      clearTimeout(timeoutHandle);
     }
 
     if (!response.ok) {
@@ -110,7 +137,14 @@ export async function embedRemote(
     const sorted = [...json.data].sort((a, b) => a.index - b.index);
     for (const item of sorted) {
       const vec = Float32Array.from(item.embedding);
-      if (dim === 0) dim = vec.length;
+      if (dim === 0) {
+        dim = vec.length;
+      } else if (vec.length !== dim) {
+        throw new EngineError(
+          `Remote embedding endpoint ${url} returned inconsistent vector dimensions ` +
+            `(expected ${dim}, got ${vec.length} for response item index ${item.index})`,
+        );
+      }
       results.push(vec);
     }
 

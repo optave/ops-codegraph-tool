@@ -15,6 +15,7 @@ describe('resolveRemoteEmbeddingOptions', () => {
           baseUrl: 'http://localhost:8080/v1',
           apiKey: 'sk-test',
           apiKeyCommand: null,
+          requestTimeoutMs: 120_000,
         },
       },
       'my-embed-model',
@@ -23,6 +24,7 @@ describe('resolveRemoteEmbeddingOptions', () => {
       baseUrl: 'http://localhost:8080/v1',
       model: 'my-embed-model',
       apiKey: 'sk-test',
+      timeoutMs: 120_000,
     });
   });
 
@@ -36,6 +38,7 @@ describe('resolveRemoteEmbeddingOptions', () => {
             baseUrl: null,
             apiKey: null,
             apiKeyCommand: null,
+            requestTimeoutMs: 120_000,
           },
         },
         'my-embed-model',
@@ -164,6 +167,38 @@ describe('embedRemote', () => {
     fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
     await expect(embedRemote(['a'], { baseUrl: 'http://x', model: 'm' })).rejects.toThrow(
       EngineError,
+    );
+  });
+
+  it('aborts and throws EngineError when a request exceeds timeoutMs', async () => {
+    fetchMock.mockImplementation((_url, init: { signal: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const err = new Error('This operation was aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    });
+    await expect(
+      embedRemote(['a'], { baseUrl: 'http://x', model: 'm', timeoutMs: 10 }),
+    ).rejects.toThrow(/did not respond within 10ms/);
+  });
+
+  it('throws EngineError when a later item has a different vector dimension than earlier items', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            { embedding: [1, 2, 3], index: 0 },
+            { embedding: [1, 2], index: 1 },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    await expect(embedRemote(['a', 'b'], { baseUrl: 'http://x', model: 'm' })).rejects.toThrow(
+      /inconsistent vector dimensions/,
     );
   });
 });

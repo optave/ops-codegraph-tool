@@ -215,6 +215,7 @@ Used by features that call out to a chat-completion API (e.g. query expansion), 
 | `baseUrl` | `string \| null` | `null` | Override the provider's base URL (for compatible proxies, local servers, etc.). |
 | `apiKey` | `string \| null` | `null` | Plaintext API key. Prefer `apiKeyCommand` or env vars over this. |
 | `apiKeyCommand` | `string \| null` | `null` | Shell-out command that prints the key to stdout. Split on whitespace and run via `execFileSync` (no shell — `$(...)`, pipes, globs, and variable expansion are not supported). 10s timeout, 64 KB max output. |
+| `requestTimeoutMs` | `number` | `120000` | Per-request timeout for remote HTTP calls made against `baseUrl` (currently the [remote embedding provider](#embeddings-embeddings)). Aborts and throws if a self-hosted server hangs mid-request instead of blocking indefinitely. |
 
 Resolution order (first non-empty wins): `apiKeyCommand` output → `CODEGRAPH_LLM_API_KEY` env var → `apiKey` field.
 
