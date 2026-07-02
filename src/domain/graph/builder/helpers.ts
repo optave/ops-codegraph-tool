@@ -9,6 +9,7 @@ import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
 import { buildIgnoreSet, EXTENSIONS, normalizePath } from '../../../shared/constants.js';
+import { toErrorMessage } from '../../../shared/errors.js';
 import { compileGlobs, globToRegex, matchesAny } from '../../../shared/globs.js';
 import { sleepSync } from '../../../shared/sleep.js';
 import type {
@@ -126,8 +127,9 @@ export function readGitignorePatterns(rootDir: string): readonly RegExp[] {
         normalized = pattern;
       }
       regexes.push(globToRegex(normalized));
-    } catch {
+    } catch (e) {
       // Ignore patterns that don't compile (e.g. those with unsupported syntax)
+      debug(`.gitignore pattern "${pattern}" failed to compile, skipping: ${toErrorMessage(e)}`);
     }
   }
   return Object.freeze(regexes);
@@ -150,7 +152,8 @@ function isSymlinkLoop(dir: string, visited: Set<string>): boolean {
   let realDir: string;
   try {
     realDir = fs.realpathSync(dir);
-  } catch {
+  } catch (e) {
+    debug(`realpathSync failed for ${dir}, treating as symlink loop: ${toErrorMessage(e)}`);
     return true;
   }
   if (visited.has(realDir)) {

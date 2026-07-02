@@ -11,6 +11,7 @@ import { performance } from 'node:perf_hooks';
 import { closeDb } from '../../../../db/index.js';
 import { debug, info } from '../../../../infrastructure/logger.js';
 import { normalizePath } from '../../../../shared/constants.js';
+import { toErrorMessage } from '../../../../shared/errors.js';
 import type { BetterSqlite3Database, ExtractorOutput, NativeDatabase } from '../../../../types.js';
 import { parseFilesAuto } from '../../../parser.js';
 import { readJournal, writeJournalHeader } from '../../journal.js';
@@ -66,8 +67,8 @@ function getChangedFiles(
   try {
     db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
     hasTable = true;
-  } catch {
-    /* table doesn't exist */
+  } catch (e) {
+    debug(`file_hashes table probe failed, assuming table doesn't exist: ${toErrorMessage(e)}`);
   }
 
   if (!hasTable) {
@@ -331,8 +332,8 @@ function healMetadata(ctx: PipelineContext): void {
       healTx();
     }
     debug(`Self-healed mtime/size for ${metadataUpdates.length} files`);
-  } catch {
-    /* ignore heal errors */
+  } catch (e) {
+    debug(`Self-heal of mtime/size metadata failed: ${toErrorMessage(e)}`);
   }
 }
 

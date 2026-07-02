@@ -354,8 +354,8 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
       if (tree && typeof tree.delete === 'function') {
         try {
           tree.delete();
-        } catch {
-          /* ignore cleanup errors */
+        } catch (e) {
+          debug(`WASM tree cleanup failed: ${toErrorMessage(e)}`);
         }
       }
       symbols._tree = undefined;
@@ -497,8 +497,8 @@ export async function buildGraph(
           if (tree && typeof tree.delete === 'function') {
             try {
               tree.delete();
-            } catch {
-              /* ignore cleanup errors */
+            } catch (e) {
+              debug(`WASM tree cleanup failed: ${toErrorMessage(e)}`);
             }
           }
           symbols._tree = undefined;
