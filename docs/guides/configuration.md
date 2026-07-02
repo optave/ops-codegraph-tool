@@ -206,7 +206,7 @@ The endpoint must accept `POST <baseUrl>/embeddings` with `{ "model": "...", "in
 
 ## LLM credentials (`llm`)
 
-Used by features that call out to a chat-completion API (e.g. query expansion). Codegraph never hardcodes a provider — you pick one.
+Used by features that call out to a chat-completion API (e.g. query expansion), and reused by the [remote embedding provider](#embeddings-embeddings) (`baseUrl`, `apiKey`, `apiKeyCommand`) so credentials aren't duplicated across features. Codegraph never hardcodes a provider — you pick one.
 
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
