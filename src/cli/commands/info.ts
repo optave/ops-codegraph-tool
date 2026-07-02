@@ -1,6 +1,96 @@
 import { debug } from '../../infrastructure/logger.js';
 import { toErrorMessage } from '../../shared/errors.js';
-import type { CommandDefinition } from '../types.js';
+import type { NativeAddon } from '../../types.js';
+import type { CliContext, CommandDefinition, CommandOpts } from '../types.js';
+
+/** Print the "Native version" diagnostic line (reconciles npm package vs. loaded binary version). */
+function printNativeVersionInfo(
+  loadNative: () => NativeAddon | null,
+  getNativePackageVersion: () => string | null,
+): void {
+  const native = loadNative()!;
+  const binaryVersion =
+    typeof native.engineVersion === 'function' ? native.engineVersion() : 'unknown';
+  const pkgVersion = getNativePackageVersion();
+  const knownBinaryVersion = binaryVersion !== 'unknown' ? binaryVersion : null;
+  if (pkgVersion && knownBinaryVersion && pkgVersion !== knownBinaryVersion) {
+    console.log(
+      `  Native version: ${pkgVersion} (binary built as ${knownBinaryVersion}, engine loaded OK)`,
+    );
+  } else {
+    console.log(`  Native version: ${pkgVersion ?? binaryVersion}`);
+  }
+}
+
+/** Print the top "Codegraph Diagnostics" block: version, platform, native/active engine info. */
+function printEngineInfo(
+  ctx: CliContext,
+  engine: string,
+  activeName: string,
+  activeVersion: string | null,
+  nativeAvailable: boolean,
+  loadNative: () => NativeAddon | null,
+  getNativePackageVersion: () => string | null,
+): void {
+  console.log('\nCodegraph Diagnostics');
+  console.log('====================');
+  console.log(`  Version       : ${ctx.program.version()}`);
+  console.log(`  Node.js       : ${process.version}`);
+  console.log(`  Platform      : ${process.platform}-${process.arch}`);
+  console.log(`  Native engine : ${nativeAvailable ? 'available' : 'unavailable'}`);
+  if (nativeAvailable) {
+    printNativeVersionInfo(loadNative, getNativePackageVersion);
+  }
+  console.log(`  Engine flag   : --engine ${engine}`);
+  console.log(`  Active engine : ${activeName}${activeVersion ? ` (v${activeVersion})` : ''}`);
+  console.log();
+}
+
+/** Print the "Build metadata" block read from the graph DB, if one exists. Never throws. */
+async function printBuildMetadata(
+  ctx: CliContext,
+  opts: CommandOpts,
+  activeName: string,
+): Promise<void> {
+  try {
+    const { findDbPath, getBuildMeta } = await import('../../db/index.js');
+    const Database = (await import('better-sqlite3')).default;
+    const dbPath = findDbPath(opts.db as string | undefined);
+    const fs = await import('node:fs');
+    if (fs.existsSync(dbPath)) {
+      const db = new Database(dbPath, { readonly: true });
+      const buildEngine = getBuildMeta(db, 'engine');
+      const buildVersion = getBuildMeta(db, 'codegraph_version');
+      const builtAt = getBuildMeta(db, 'built_at');
+      db.close();
+
+      if (buildEngine || buildVersion || builtAt) {
+        console.log('Build metadata');
+        console.log(
+          '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+        );
+        if (buildEngine) console.log(`  Engine        : ${buildEngine}`);
+        if (buildVersion) console.log(`  Version       : ${buildVersion}`);
+        if (builtAt) console.log(`  Built at      : ${builtAt}`);
+
+        if (buildVersion && buildVersion !== ctx.program.version()) {
+          console.log(
+            `  \u26A0 DB was built with v${buildVersion}, current is v${ctx.program.version()}. Consider: codegraph build --no-incremental`,
+          );
+        }
+        if (buildEngine && buildEngine !== activeName) {
+          console.log(
+            `  \u26A0 DB was built with ${buildEngine} engine, active is ${activeName}. Consider: codegraph build --no-incremental`,
+          );
+        }
+        console.log();
+      }
+    }
+  } catch (e) {
+    /* diagnostics must never crash */
+    debug(`DB build-metadata diagnostics failed: ${toErrorMessage(e)}`);
+  }
+}
 
 export const command: CommandDefinition = {
   name: 'info',
@@ -16,67 +106,16 @@ export const command: CommandDefinition = {
     const { name: activeName, version: activeVersion } = getActiveEngine({ engine });
     const nativeAvailable = isNativeAvailable();
 
-    console.log('\nCodegraph Diagnostics');
-    console.log('====================');
-    console.log(`  Version       : ${ctx.program.version()}`);
-    console.log(`  Node.js       : ${process.version}`);
-    console.log(`  Platform      : ${process.platform}-${process.arch}`);
-    console.log(`  Native engine : ${nativeAvailable ? 'available' : 'unavailable'}`);
-    if (nativeAvailable) {
-      const native = loadNative()!;
-      const binaryVersion =
-        typeof native.engineVersion === 'function' ? native.engineVersion() : 'unknown';
-      const pkgVersion = getNativePackageVersion();
-      const knownBinaryVersion = binaryVersion !== 'unknown' ? binaryVersion : null;
-      if (pkgVersion && knownBinaryVersion && pkgVersion !== knownBinaryVersion) {
-        console.log(
-          `  Native version: ${pkgVersion} (binary built as ${knownBinaryVersion}, engine loaded OK)`,
-        );
-      } else {
-        console.log(`  Native version: ${pkgVersion ?? binaryVersion}`);
-      }
-    }
-    console.log(`  Engine flag   : --engine ${engine}`);
-    console.log(`  Active engine : ${activeName}${activeVersion ? ` (v${activeVersion})` : ''}`);
-    console.log();
+    printEngineInfo(
+      ctx,
+      engine,
+      activeName,
+      activeVersion,
+      nativeAvailable,
+      loadNative,
+      getNativePackageVersion,
+    );
 
-    try {
-      const { findDbPath, getBuildMeta } = await import('../../db/index.js');
-      const Database = (await import('better-sqlite3')).default;
-      const dbPath = findDbPath(opts.db as string | undefined);
-      const fs = await import('node:fs');
-      if (fs.existsSync(dbPath)) {
-        const db = new Database(dbPath, { readonly: true });
-        const buildEngine = getBuildMeta(db, 'engine');
-        const buildVersion = getBuildMeta(db, 'codegraph_version');
-        const builtAt = getBuildMeta(db, 'built_at');
-        db.close();
-
-        if (buildEngine || buildVersion || builtAt) {
-          console.log('Build metadata');
-          console.log(
-            '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
-          );
-          if (buildEngine) console.log(`  Engine        : ${buildEngine}`);
-          if (buildVersion) console.log(`  Version       : ${buildVersion}`);
-          if (builtAt) console.log(`  Built at      : ${builtAt}`);
-
-          if (buildVersion && buildVersion !== ctx.program.version()) {
-            console.log(
-              `  \u26A0 DB was built with v${buildVersion}, current is v${ctx.program.version()}. Consider: codegraph build --no-incremental`,
-            );
-          }
-          if (buildEngine && buildEngine !== activeName) {
-            console.log(
-              `  \u26A0 DB was built with ${buildEngine} engine, active is ${activeName}. Consider: codegraph build --no-incremental`,
-            );
-          }
-          console.log();
-        }
-      }
-    } catch (e) {
-      /* diagnostics must never crash */
-      debug(`DB build-metadata diagnostics failed: ${toErrorMessage(e)}`);
-    }
+    await printBuildMetadata(ctx, opts, activeName);
   },
 };
