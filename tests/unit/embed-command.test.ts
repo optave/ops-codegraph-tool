@@ -90,7 +90,7 @@ describe('embed command execute()', () => {
   it('passes a resolved remote config through to buildEmbeddings when provider is "openai"', async () => {
     const ctx = fakeCtx(
       { provider: 'openai', model: 'text-embedding-3-small' },
-      { baseUrl: 'http://localhost:8080/v1', apiKey: 'sk-test' },
+      { baseUrl: 'http://localhost:8080/v1', apiKey: 'sk-test', requestTimeoutMs: 5000 },
     );
 
     await command.execute!([undefined], { strategy: 'structured' } as never, ctx);
@@ -102,6 +102,7 @@ describe('embed command execute()', () => {
       baseUrl: 'http://localhost:8080/v1',
       model: 'text-embedding-3-small',
       apiKey: 'sk-test',
+      timeoutMs: 5000,
     });
   });
 
