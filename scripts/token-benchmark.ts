@@ -266,6 +266,20 @@ function round1(n) {
 }
 
 /**
+ * Run `fn` `runs` times (default `PERF_RUNS`), recording the elapsed
+ * milliseconds per run, and return the median duration.
+ */
+async function timeMedian(fn, runs = PERF_RUNS) {
+	const timings = [];
+	for (let i = 0; i < runs; i++) {
+		const start = performance.now();
+		await fn();
+		timings.push(performance.now() - start);
+	}
+	return median(timings);
+}
+
+/**
  * Run build/query/stats benchmarks against the Next.js graph.
  * Reuses the same codegraph APIs as the existing benchmark scripts.
  */
@@ -306,24 +320,18 @@ async function runPerfBenchmarks(nextjsDir) {
 	const buildResults = {};
 	for (const engine of engines) {
 		console.error(`  Full build (${engine})...`);
-		const timings = [];
-		for (let i = 0; i < PERF_RUNS; i++) {
-			if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-			const start = performance.now();
-			await buildGraph(nextjsDir, { engine, incremental: false });
-			timings.push(performance.now() - start);
-		}
-		const fullBuildMs = Math.round(median(timings));
+		const fullBuildMs = Math.round(
+			await timeMedian(async () => {
+				if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+				await buildGraph(nextjsDir, { engine, incremental: false });
+			}),
+		);
 
 		// No-op rebuild
 		console.error(`  No-op rebuild (${engine})...`);
-		const noopTimings = [];
-		for (let i = 0; i < PERF_RUNS; i++) {
-			const start = performance.now();
-			await buildGraph(nextjsDir, { engine, incremental: true });
-			noopTimings.push(performance.now() - start);
-		}
-		const noopRebuildMs = Math.round(median(noopTimings));
+		const noopRebuildMs = Math.round(
+			await timeMedian(() => buildGraph(nextjsDir, { engine, incremental: true })),
+		);
 
 		buildResults[engine] = { fullBuildMs, noopRebuildMs };
 		console.error(`    full=${fullBuildMs}ms noop=${noopRebuildMs}ms`);
@@ -370,23 +378,14 @@ async function runPerfBenchmarks(nextjsDir) {
 
 		for (const depth of [1, 3, 5]) {
 			// fnDeps
-			const depsTimings = [];
-			for (let i = 0; i < PERF_RUNS; i++) {
-				const start = performance.now();
-				fnDepsData(hubName, dbPath, { depth, noTests: true });
-				depsTimings.push(performance.now() - start);
-			}
+			queryResults[`fnDeps_depth${depth}Ms`] = round1(
+				await timeMedian(() => fnDepsData(hubName, dbPath, { depth, noTests: true })),
+			);
 
 			// fnImpact
-			const impactTimings = [];
-			for (let i = 0; i < PERF_RUNS; i++) {
-				const start = performance.now();
-				fnImpactData(hubName, dbPath, { depth, noTests: true });
-				impactTimings.push(performance.now() - start);
-			}
-
-			queryResults[`fnDeps_depth${depth}Ms`] = round1(median(depsTimings));
-			queryResults[`fnImpact_depth${depth}Ms`] = round1(median(impactTimings));
+			queryResults[`fnImpact_depth${depth}Ms`] = round1(
+				await timeMedian(() => fnImpactData(hubName, dbPath, { depth, noTests: true })),
+			);
 		}
 
 		console.error(
