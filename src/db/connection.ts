@@ -349,6 +349,29 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
   return db;
 }
 
+/**
+ * Resolve the effective engine for DB access: explicit opts.engine > config.build.engine > 'auto'.
+ * Derives rootDir from the resolved DB path so loadConfig reads the right project config.
+ * Shared by openRepo() and openReadonlyWithNative() so the two call sites can't drift.
+ *
+ * MUST be called before opening any DB handle: loadConfig can throw (e.g. ConfigError
+ * via resolveSecrets on a malformed llm.apiKeyCommand config), and an already-open
+ * handle at that point would never be closed.
+ */
+function resolveDbEngine(
+  customDbPath: string | undefined,
+  engineOpt: 'native' | 'wasm' | 'auto' | undefined,
+): 'native' | 'wasm' | 'auto' {
+  // Using findDbPath (not path.resolve(customDbPath)) ensures directory inputs like
+  // --db /path/to/repo are normalised to .codegraph/graph.db before we strip two levels.
+  // Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
+  const resolvedDbPath = customDbPath ? findDbPath(customDbPath) : undefined;
+  const rootDir = resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
+  // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
+  // so this covers both the env-var path and the .codegraphrc.json config-file path.
+  return engineOpt ?? loadConfig(rootDir).build.engine ?? 'auto';
+}
+
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */
 function openRepoNative(customDbPath?: string): { repo: Repository; close(): void } {
   const dbPath = findDbPath(customDbPath);
@@ -397,17 +420,9 @@ export function openRepo(
     return { repo: opts.repo, close() {} };
   }
 
-  // Derive rootDir from the resolved DB path so loadConfig reads the right project config.
-  // Using findDbPath (not path.resolve(customDbPath)) ensures directory inputs like
-  // --db /path/to/repo are normalised to .codegraph/graph.db before we strip two levels.
-  // Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
-  const resolvedDbPath = customDbPath ? findDbPath(customDbPath) : undefined;
-  const rootDir = resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
   // Respect explicit engine selection: opts.engine > config.build.engine > auto.
-  // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
-  // so this covers both the env-var path and the .codegraphrc.json config-file path.
   // This ensures --engine wasm and benchmark workers bypass the native path.
-  const engine = opts.engine ?? loadConfig(rootDir).build.engine ?? 'auto';
+  const engine = resolveDbEngine(customDbPath, opts.engine);
 
   // Try native rusqlite path first (Phase 6.14)
   if (engine !== 'wasm' && isNativeAvailable()) {
@@ -455,18 +470,15 @@ export function openReadonlyWithNative(
   nativeDb: NativeDatabase | undefined;
   close(): void;
 } {
-  const db = openReadonlyOrFail(customPath);
+  // Resolve engine (which may call loadConfig — and loadConfig can throw, e.g.
+  // ConfigError via resolveSecrets on a malformed llm.apiKeyCommand config) BEFORE
+  // opening the DB handle, mirroring openRepo()'s ordering. If this throws, no DB
+  // handle has been opened yet, so nothing is left leaked. (Previously this ran
+  // AFTER openReadonlyOrFail(), so a config error here leaked the already-open
+  // better-sqlite3 handle — see the phase-15 gauntlet finding.)
+  const engine = resolveDbEngine(customPath, opts.engine);
 
-  // Derive rootDir from the resolved DB path so loadConfig reads the right project config,
-  // consistent with openRepo(). Using findDbPath (not path.resolve(customPath)) ensures
-  // directory inputs like --db /path/to/repo are normalised before stripping two levels.
-  // Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
-  const resolvedDbPath = customPath ? findDbPath(customPath) : undefined;
-  const rootDir = resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
-  // Respect explicit engine selection: opts.engine > config.build.engine > auto.
-  // config.build.engine covers both CODEGRAPH_ENGINE env (via applyEnvOverrides)
-  // and the .codegraphrc.json config-file path. Mirrors openRepo() priority chain.
-  const engine = opts.engine ?? loadConfig(rootDir).build.engine ?? 'auto';
+  const db = openReadonlyOrFail(customPath);
 
   let nativeDb: NativeDatabase | undefined;
   if (engine !== 'wasm' && isNativeAvailable()) {
