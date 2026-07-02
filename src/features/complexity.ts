@@ -750,4 +750,4 @@ export async function buildComplexityMetrics(
 // ─── Query-Time Functions (re-exported from complexity-query.ts) ──────────
 // Split to separate query-time concerns (DB reads, filtering, pagination)
 // from compute-time concerns (AST traversal, metric algorithms).
-export { complexityData, iterComplexity } from './complexity-query.js';
+export { complexityData } from './complexity-query.js';
