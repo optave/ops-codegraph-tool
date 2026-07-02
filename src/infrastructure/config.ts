@@ -38,7 +38,11 @@ export const DEFAULTS = {
     defaultLimit: 20,
     excludeTests: false,
   },
-  embeddings: { model: null as string | null, llmProvider: null as string | null },
+  embeddings: {
+    model: null as string | null,
+    llmProvider: null as string | null,
+    provider: null as string | null,
+  },
   llm: {
     provider: null as string | null,
     model: null as string | null,
@@ -676,7 +680,12 @@ export function loadConfigWithProvenance(
   }
 
   // Layer 3+: env overrides (LLM keys)
-  const ENV_LLM_KEYS = ['CODEGRAPH_LLM_PROVIDER', 'CODEGRAPH_LLM_API_KEY', 'CODEGRAPH_LLM_MODEL'];
+  const ENV_LLM_KEYS = [
+    'CODEGRAPH_LLM_PROVIDER',
+    'CODEGRAPH_LLM_API_KEY',
+    'CODEGRAPH_LLM_MODEL',
+    'CODEGRAPH_LLM_BASE_URL',
+  ];
   if (ENV_LLM_KEYS.some((k) => process.env[k] !== undefined)) {
     provenance.llm = 'env';
   }
@@ -688,6 +697,7 @@ const ENV_LLM_MAP: Record<string, string> = {
   CODEGRAPH_LLM_PROVIDER: 'provider',
   CODEGRAPH_LLM_API_KEY: 'apiKey',
   CODEGRAPH_LLM_MODEL: 'model',
+  CODEGRAPH_LLM_BASE_URL: 'baseUrl',
 };
 
 export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {

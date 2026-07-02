@@ -5,6 +5,11 @@ import { warn } from '../../infrastructure/logger.js';
 import { DbError } from '../../shared/errors.js';
 import type { BetterSqlite3Database, NodeRow } from '../../types.js';
 import { embed, getModelConfig } from './models.js';
+import {
+  DEFAULT_REMOTE_CONTEXT_WINDOW,
+  embedRemote,
+  type RemoteEmbeddingOptions,
+} from './providers/remote.js';
 import { buildSourceText } from './strategies/source.js';
 import { buildStructuredText } from './strategies/structured.js';
 
@@ -195,6 +200,13 @@ function persistEmbeddings(
 
 export interface BuildEmbeddingsOptions {
   strategy?: EmbeddingStrategy;
+  /**
+   * When set, embeddings are generated via a remote OpenAI-compatible
+   * endpoint instead of the local bundled model. `modelKey` is then treated
+   * as an opaque model identifier passed straight to the endpoint, not a
+   * local registry key.
+   */
+  remote?: RemoteEmbeddingOptions;
 }
 
 /**
@@ -225,12 +237,21 @@ export async function buildEmbeddings(
   const nodeCount = [...byFile.values()].reduce((acc, list) => acc + list.length, 0);
   console.log(`Building embeddings for ${nodeCount} symbols (strategy: ${strategy})...`);
 
-  const config = getModelConfig(modelKey);
-  const prepared = prepareEmbeddingTexts(byFile, db, resolvedRoot, strategy, config.contextWindow);
+  let contextWindow: number;
+  let displayName: string;
+  if (options.remote) {
+    contextWindow = DEFAULT_REMOTE_CONTEXT_WINDOW;
+    displayName = options.remote.model;
+  } else {
+    const modelConfig = getModelConfig(modelKey);
+    contextWindow = modelConfig.contextWindow;
+    displayName = modelConfig.name;
+  }
+  const prepared = prepareEmbeddingTexts(byFile, db, resolvedRoot, strategy, contextWindow);
 
   if (prepared.overflowCount > 0) {
     warn(
-      `${prepared.overflowCount} symbol(s) exceeded model context window (${config.contextWindow} tokens) and were truncated`,
+      `${prepared.overflowCount} symbol(s) exceeded model context window (${contextWindow} tokens) and were truncated`,
     );
   }
 
@@ -247,13 +268,17 @@ export async function buildEmbeddings(
     );
   }
 
-  console.log(`Embedding ${prepared.texts.length} symbols...`);
-  const { vectors, dim } = await embed(prepared.texts, modelKey);
+  console.log(
+    `Embedding ${prepared.texts.length} symbols${options.remote ? ` via remote provider (${displayName})` : ''}...`,
+  );
+  const { vectors, dim } = options.remote
+    ? await embedRemote(prepared.texts, options.remote)
+    : await embed(prepared.texts, modelKey);
 
-  persistEmbeddings(db, prepared, vectors as Float32Array[], dim, config.name, strategy);
+  persistEmbeddings(db, prepared, vectors as Float32Array[], dim, displayName, strategy);
 
   console.log(
-    `\nStored ${vectors.length} embeddings (${dim}d, ${config.name}, strategy: ${strategy}) in graph.db`,
+    `\nStored ${vectors.length} embeddings (${dim}d, ${displayName}, strategy: ${strategy}) in graph.db`,
   );
   closeDb(db);
 }

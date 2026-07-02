@@ -7,6 +7,13 @@ export const command: CommandDefinition = {
   execute(_args, _opts, ctx) {
     const embeddingsConfig = ctx.config.embeddings;
     const defaultModel = (embeddingsConfig?.model as string) || DEFAULT_MODEL;
+
+    if (embeddingsConfig?.provider) {
+      console.log(
+        `\nembeddings.provider is set to "${embeddingsConfig.provider}" — codegraph embed will call ` +
+          `model "${embeddingsConfig.model}" at llm.baseUrl instead of a local model below.`,
+      );
+    }
     console.log('\nAvailable embedding models:\n');
 
     interface ModelEntry {
