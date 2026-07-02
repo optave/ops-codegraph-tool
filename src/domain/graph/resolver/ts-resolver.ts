@@ -160,6 +160,21 @@ function countLowConfidence(typeMap: Map<string, TypeMapEntry>): number {
 }
 
 /**
+ * Shared "collect candidates by name → keep only names with a single unique
+ * value → write" ambiguity-filtering algorithm used by both enrichSourceFile
+ * (ambiguity check on qualifiedName) and enrichCallAssignments (ambiguity
+ * check on calleeName).
+ *
+ * Returns `entries[0]` if every entry shares exactly one distinct value under
+ * `keyOf`, or `null` if they disagree (ambiguous) or `entries` is empty.
+ */
+function resolveUnambiguous<T>(entries: readonly T[], keyOf: (entry: T) => string): T | null {
+  const uniqueKeys = new Set(entries.map(keyOf));
+  if (uniqueKeys.size !== 1) return null;
+  return entries[0] ?? null;
+}
+
+/**
  * Walk up from rootDir looking for tsconfig.json (up to 4 levels).
  * Handles monorepo setups where rootDir is a package subdirectory but
  * the tsconfig lives at the repository root.
@@ -239,78 +254,105 @@ function createProgram(ts: TsModule, tsconfigPath: string): import('typescript')
  * Entries already at confidence 1.0 (e.g., `new Foo()` from tree-sitter) are
  * left unchanged. New entries from the compiler are added at confidence 1.0.
  */
+/**
+ * Mutable state threaded through the enrichSourceFile visitor. Grouped into
+ * one object (rather than closed-over locals) so the walk can be a plain
+ * top-level function, outside the enclosing function's own complexity count.
+ */
+interface SourceFileVisitContext {
+  ts: TsModule;
+  checker: import('typescript').TypeChecker;
+  // Collects resolved types keyed by bare identifier name. Tracks both the
+  // short name (for typeMap writes) and the fully-qualified name
+  // (module-path-prefixed) for ambiguity detection. Two classes may share the
+  // same short name (e.g., `OrderService` from two different modules), and
+  // symbol.getName() returns the declared name — not the local alias — so
+  // deduplication on short names alone would incorrectly collapse them.
+  nameToEntries: Map<string, { shortName: string; qualifiedName: string }[]>;
+  // Class property declaration names so we can also seed "this.X" entries.
+  propertyDeclNames: Set<string>;
+}
+
+function visitSourceFileNode(ctx: SourceFileVisitContext, node: import('typescript').Node): void {
+  const { ts, checker, nameToEntries, propertyDeclNames } = ctx;
+  let identName: string | null = null;
+  let nameNode: import('typescript').Identifier | null = null;
+
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+    identName = node.name.text;
+    nameNode = node.name;
+  } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
+    identName = node.name.text;
+    nameNode = node.name;
+  } else if (ts.isPropertyDeclaration(node) && ts.isIdentifier(node.name)) {
+    // TypeScript class field: `private repo: Repository<User>`
+    // Seeds typeMap so `this.repo.method()` can be resolved via receiver type.
+    identName = node.name.text;
+    nameNode = node.name;
+    propertyDeclNames.add(node.name.text);
+  }
+
+  if (identName && nameNode) {
+    const resolved = resolveTypeName(ts, nameNode, checker);
+    if (resolved) {
+      const existing = nameToEntries.get(identName);
+      if (existing) {
+        existing.push(resolved);
+      } else {
+        nameToEntries.set(identName, [resolved]);
+      }
+    }
+  }
+
+  ts.forEachChild(node, (child) => visitSourceFileNode(ctx, child));
+}
+
+/**
+ * Write one (name → candidate entries) group to typeMap if unambiguous
+ * (single unique qualified type for the name), plus its "this.<name>"
+ * companion entry when name is a class property.
+ */
+function writeSourceFileTypeMapEntry(
+  typeMap: Map<string, TypeMapEntry>,
+  propertyDeclNames: ReadonlySet<string>,
+  name: string,
+  entries: { shortName: string; qualifiedName: string }[],
+): void {
+  const first = resolveUnambiguous(entries, (e) => e.qualifiedName);
+  if (!first) return; // ambiguous across modules, or no candidates — skip
+  const shortName = first.shortName;
+  const existing = typeMap.get(name);
+  if (!existing || existing.confidence < 1.0) {
+    typeMap.set(name, { type: shortName, confidence: 1.0 });
+  }
+  // For class property declarations, also seed "this.fieldName" so that
+  // `this.repo.findById()` call sites resolve to the interface/class type.
+  if (propertyDeclNames.has(name)) {
+    const thisKey = `this.${name}`;
+    const existingThis = typeMap.get(thisKey);
+    if (!existingThis || existingThis.confidence < 1.0) {
+      typeMap.set(thisKey, { type: shortName, confidence: 1.0 });
+    }
+  }
+}
+
 function enrichSourceFile(
   ts: TsModule,
   sourceFile: import('typescript').SourceFile,
   checker: import('typescript').TypeChecker,
   typeMap: Map<string, TypeMapEntry>,
 ): void {
-  // First pass: collect resolved types keyed by bare identifier name.
-  // Track both the short name (for typeMap writes) and the fully-qualified name
-  // (module-path-prefixed) for ambiguity detection. Two classes may share the
-  // same short name (e.g., `OrderService` from two different modules), and
-  // symbol.getName() returns the declared name — not the local alias — so
-  // deduplication on short names alone would incorrectly collapse them.
-  const nameToEntries = new Map<string, { shortName: string; qualifiedName: string }[]>();
-  // Track class property declaration names so we can also seed "this.X" entries.
-  const propertyDeclNames = new Set<string>();
-
-  function visit(node: import('typescript').Node): void {
-    let identName: string | null = null;
-    let nameNode: import('typescript').Identifier | null = null;
-
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      identName = node.name.text;
-      nameNode = node.name;
-    } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
-      identName = node.name.text;
-      nameNode = node.name;
-    } else if (ts.isPropertyDeclaration(node) && ts.isIdentifier(node.name)) {
-      // TypeScript class field: `private repo: Repository<User>`
-      // Seeds typeMap so `this.repo.method()` can be resolved via receiver type.
-      identName = node.name.text;
-      nameNode = node.name;
-      propertyDeclNames.add(node.name.text);
-    }
-
-    if (identName && nameNode) {
-      const resolved = resolveTypeName(ts, nameNode, checker);
-      if (resolved) {
-        const existing = nameToEntries.get(identName);
-        if (existing) {
-          existing.push(resolved);
-        } else {
-          nameToEntries.set(identName, [resolved]);
-        }
-      }
-    }
-
-    ts.forEachChild(node, visit);
-  }
-  ts.forEachChild(sourceFile, visit);
+  const ctx: SourceFileVisitContext = {
+    ts,
+    checker,
+    nameToEntries: new Map(),
+    propertyDeclNames: new Set(),
+  };
+  ts.forEachChild(sourceFile, (node) => visitSourceFileNode(ctx, node));
 
   // Second pass: only write unambiguous entries (single unique qualified type for a name)
-  for (const [name, entries] of nameToEntries) {
-    const uniqueQualified = [...new Set(entries.map((e) => e.qualifiedName))];
-    if (uniqueQualified.length !== 1) continue; // ambiguous across modules — skip
-    // entries is non-empty because we only set() on first occurrence and push() after —
-    // TypeScript's noUncheckedIndexedAccess can flag [0] access, so assert the type.
-    const first = entries[0];
-    if (!first) continue;
-    const shortName = first.shortName;
-    const existing = typeMap.get(name);
-    if (!existing || existing.confidence < 1.0) {
-      typeMap.set(name, { type: shortName, confidence: 1.0 });
-    }
-    // For class property declarations, also seed "this.fieldName" so that
-    // `this.repo.findById()` call sites resolve to the interface/class type.
-    if (propertyDeclNames.has(name)) {
-      const thisKey = `this.${name}`;
-      const existingThis = typeMap.get(thisKey);
-      if (!existingThis || existingThis.confidence < 1.0) {
-        typeMap.set(thisKey, { type: shortName, confidence: 1.0 });
-      }
-    }
+  for (const [name, entries] of ctx.nameToEntries) {
+    writeSourceFileTypeMapEntry(typeMap, ctx.propertyDeclNames, name, entries);
   }
 }
 
@@ -327,98 +369,190 @@ function enrichSourceFile(
  * Async functions returning Promise<T> are unwrapped: the inner type argument T is
  * used so that async methods receive a returnTypeMap entry just like sync ones.
  */
+/**
+ * Mutable state threaded through the enrichReturnTypeMap visitor. Grouped
+ * into one object (rather than closed-over locals) so the node-kind handlers
+ * below can be plain top-level functions, independently testable and outside
+ * the enclosing function's own complexity count.
+ */
+interface ReturnTypeVisitContext {
+  ts: TsModule;
+  checker: import('typescript').TypeChecker;
+  returnTypeMap: Map<string, TypeMapEntry>;
+  currentClass: string | null;
+}
+
+/**
+ * Resolve the concrete return type name for a signature, unwrapping
+ * Promise<T> so async functions contribute their inner type.
+ */
+function resolveReturnTypeName(
+  checker: import('typescript').TypeChecker,
+  sig: import('typescript').Signature | undefined,
+): string | null {
+  if (!sig) return null;
+  try {
+    let retType = checker.getReturnTypeOfSignature(sig);
+
+    // Unwrap Promise<T> → T so async functions get a useful returnTypeMap entry.
+    const outerSym = retType.getSymbol() ?? retType.aliasSymbol;
+    if (outerSym?.getName() === 'Promise') {
+      const args = checker.getTypeArguments(retType as import('typescript').TypeReference);
+      if (args.length > 0) retType = args[0]!;
+    }
+
+    const sym = retType.getSymbol() ?? retType.aliasSymbol;
+    if (!sym) return null;
+    const name = sym.getName();
+    if (!name || name === '__type' || name === '__object' || SKIP_TYPE_NAMES.has(name)) return null;
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+function writeReturnTypeEntry(
+  ctx: ReturnTypeVisitContext,
+  fnName: string,
+  sigNode: import('typescript').SignatureDeclaration,
+): void {
+  const typeName = resolveReturnTypeName(
+    ctx.checker,
+    ctx.checker.getSignatureFromDeclaration(sigNode),
+  );
+  if (typeName) {
+    const existing = ctx.returnTypeMap.get(fnName);
+    if (!existing || existing.confidence < 1.0)
+      ctx.returnTypeMap.set(fnName, { type: typeName, confidence: 1.0 });
+  }
+}
+
+/**
+ * Enter class scope: visit direct children (method/property declarations),
+ * then restore the enclosing class name.
+ */
+function visitClassScopeForReturnType(
+  ctx: ReturnTypeVisitContext,
+  node: import('typescript').Node,
+): void {
+  const saved = ctx.currentClass;
+  ctx.currentClass =
+    (node as import('typescript').ClassDeclaration | import('typescript').ClassExpression).name
+      ?.text ?? null;
+  ctx.ts.forEachChild(node, (child) => visitReturnTypeNode(ctx, child));
+  ctx.currentClass = saved;
+}
+
+/** Module-level function declaration: record and stop (no body descent). */
+function visitFunctionDeclarationForReturnType(
+  ctx: ReturnTypeVisitContext,
+  node: import('typescript').FunctionDeclaration,
+): void {
+  // node.name is guaranteed truthy by the caller's guard.
+  writeReturnTypeEntry(ctx, node.name!.text, node);
+}
+
+/** Class method: record as ClassName.methodName and stop. */
+function visitMethodDeclarationForReturnType(
+  ctx: ReturnTypeVisitContext,
+  node: import('typescript').MethodDeclaration,
+): void {
+  // node.name is guaranteed to be an Identifier by the caller's guard.
+  const name = (node.name as import('typescript').Identifier).text;
+  const fnName = ctx.currentClass ? `${ctx.currentClass}.${name}` : name;
+  writeReturnTypeEntry(ctx, fnName, node);
+}
+
+/**
+ * Arrow/function-expression assigned to a variable at the current scope.
+ * Because we never recurse into function bodies, any VariableDeclaration
+ * seen here is guaranteed to be at module scope or inside a class body
+ * (not inside a method body), making the bare name safe for cross-file use.
+ */
+function visitVariableInitializerForReturnType(
+  ctx: ReturnTypeVisitContext,
+  node: import('typescript').VariableDeclaration,
+): void {
+  // node.name is guaranteed to be an Identifier and node.initializer is
+  // guaranteed defined by the caller's guard.
+  const init = node.initializer!;
+  if (ctx.ts.isArrowFunction(init) || ctx.ts.isFunctionExpression(init)) {
+    writeReturnTypeEntry(ctx, (node.name as import('typescript').Identifier).text, init);
+  }
+}
+
+/**
+ * Visit nodes at the current lexical scope (module level or class body).
+ * Does NOT recurse into function/method bodies to avoid capturing local
+ * helper functions under bare names.
+ */
+function visitReturnTypeNode(ctx: ReturnTypeVisitContext, node: import('typescript').Node): void {
+  const { ts } = ctx;
+
+  if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+    visitClassScopeForReturnType(ctx, node);
+    return; // class body fully handled — stop here
+  }
+
+  if (ts.isFunctionDeclaration(node) && node.name) {
+    visitFunctionDeclarationForReturnType(ctx, node);
+    return;
+  }
+
+  if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
+    visitMethodDeclarationForReturnType(ctx, node);
+    return;
+  }
+
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+    visitVariableInitializerForReturnType(ctx, node);
+    return; // variable declaration fully handled — stop here
+  }
+
+  // For all other node kinds (VariableStatement, VariableDeclarationList,
+  // ExportDeclaration, etc.) recurse to reach nested function/class/var nodes.
+  ts.forEachChild(node, (child) => visitReturnTypeNode(ctx, child));
+}
+
 function enrichReturnTypeMap(
   ts: TsModule,
   sourceFile: import('typescript').SourceFile,
   checker: import('typescript').TypeChecker,
   returnTypeMap: Map<string, TypeMapEntry>,
 ): void {
-  let currentClass: string | null = null;
+  const ctx: ReturnTypeVisitContext = { ts, checker, returnTypeMap, currentClass: null };
+  ts.forEachChild(sourceFile, (node) => visitReturnTypeNode(ctx, node));
+}
 
-  /**
-   * Resolve the concrete return type name for a signature, unwrapping
-   * Promise<T> so async functions contribute their inner type.
-   */
-  function resolveReturnTypeName(sig: import('typescript').Signature | undefined): string | null {
-    if (!sig) return null;
-    try {
-      let retType = checker.getReturnTypeOfSignature(sig);
-
-      // Unwrap Promise<T> → T so async functions get a useful returnTypeMap entry.
-      const outerSym = retType.getSymbol() ?? retType.aliasSymbol;
-      if (outerSym?.getName() === 'Promise') {
-        const args = checker.getTypeArguments(retType as import('typescript').TypeReference);
-        if (args.length > 0) retType = args[0]!;
-      }
-
-      const sym = retType.getSymbol() ?? retType.aliasSymbol;
-      if (!sym) return null;
-      const name = sym.getName();
-      if (!name || name === '__type' || name === '__object' || SKIP_TYPE_NAMES.has(name))
-        return null;
-      return name;
-    } catch {
-      return null;
-    }
+/**
+ * Resolve the callee name and, for receiver method calls (`obj.method()`),
+ * the receiver's typeMap-resolved type name, from a call expression's callee.
+ *
+ * Handles two callee shapes: a bare identifier (`fn()`) and a property-access
+ * expression (`obj.method()`); any other callee shape (e.g. a call expression
+ * itself, as in `getFactory()()`) yields no calleeName.
+ */
+function resolveCalleeNameAndReceiverType(
+  ts: TsModule,
+  call: import('typescript').CallExpression,
+  typeMap: Map<string, TypeMapEntry>,
+): { calleeName: string | null; receiverTypeName: string | undefined } {
+  if (ts.isIdentifier(call.expression)) {
+    return { calleeName: call.expression.text, receiverTypeName: undefined };
   }
 
-  function writeEntry(fnName: string, sigNode: import('typescript').SignatureDeclaration): void {
-    const typeName = resolveReturnTypeName(checker.getSignatureFromDeclaration(sigNode));
-    if (typeName) {
-      const existing = returnTypeMap.get(fnName);
-      if (!existing || existing.confidence < 1.0)
-        returnTypeMap.set(fnName, { type: typeName, confidence: 1.0 });
+  if (ts.isPropertyAccessExpression(call.expression)) {
+    const calleeName = call.expression.name.text;
+    const obj = call.expression.expression;
+    let receiverTypeName: string | undefined;
+    if (ts.isIdentifier(obj)) {
+      const entry = typeMap.get(obj.text);
+      if (entry && typeof entry === 'object') receiverTypeName = entry.type;
     }
+    return { calleeName, receiverTypeName };
   }
 
-  /**
-   * Visit nodes at the current lexical scope (module level or class body).
-   * Does NOT recurse into function/method bodies to avoid capturing local
-   * helper functions under bare names.
-   */
-  function visit(node: import('typescript').Node): void {
-    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-      // Enter class scope: visit direct children (method/property declarations).
-      const saved = currentClass;
-      currentClass =
-        (node as import('typescript').ClassDeclaration | import('typescript').ClassExpression).name
-          ?.text ?? null;
-      ts.forEachChild(node, visit);
-      currentClass = saved;
-      return; // class body fully handled — stop here
-    }
-
-    if (ts.isFunctionDeclaration(node) && node.name) {
-      // Module-level function declaration: record and stop (no body descent).
-      writeEntry(node.name.text, node);
-      return;
-    }
-
-    if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
-      // Class method: record as ClassName.methodName and stop.
-      const fnName = currentClass ? `${currentClass}.${node.name.text}` : node.name.text;
-      writeEntry(fnName, node);
-      return;
-    }
-
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      // Arrow/function-expression assigned to a variable at the current scope.
-      // Because we never recurse into function bodies, any VariableDeclaration
-      // we see here is guaranteed to be at module scope or inside a class body
-      // (not inside a method body), making the bare name safe for cross-file use.
-      const init = node.initializer;
-      if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-        writeEntry(node.name.text, init);
-      }
-      return; // variable declaration fully handled — stop here
-    }
-
-    // For all other node kinds (VariableStatement, VariableDeclarationList,
-    // ExportDeclaration, etc.) recurse to reach nested function/class/var nodes.
-    ts.forEachChild(node, visit);
-  }
-
-  ts.forEachChild(sourceFile, visit);
+  return { calleeName: null, receiverTypeName: undefined };
 }
 
 /**
@@ -426,13 +560,14 @@ function enrichReturnTypeMap(
  * is not yet in typeMap into callAssignments for cross-file propagation.
  * Phase 8.1 already resolved the common case into typeMap; this captures the rest.
  *
- * Uses the same two-pass "unambiguous names only" strategy as `enrichSourceFile`:
- * collect all candidates first, then only push entries where a given `varName`
- * maps to exactly one distinct `calleeName`. This prevents multiple methods in the
- * same file that each bind a different imported function to a common local name
- * (e.g., `const result = getA()` in one method, `const result = getB()` in
- * another) from both landing in `callAssignments`, which would cause
- * `propagateReturnTypesAcrossFiles` to silently resolve one arbitrarily.
+ * Uses the same two-pass "unambiguous names only" strategy as `enrichSourceFile`
+ * (via the shared `resolveUnambiguous` helper): collect all candidates first,
+ * then only push entries where a given `varName` maps to exactly one distinct
+ * `calleeName`. This prevents multiple methods in the same file that each bind
+ * a different imported function to a common local name (e.g., `const result =
+ * getA()` in one method, `const result = getB()` in another) from both landing
+ * in `callAssignments`, which would cause `propagateReturnTypesAcrossFiles` to
+ * silently resolve one arbitrarily.
  */
 function enrichCallAssignments(
   ts: TsModule,
@@ -452,20 +587,11 @@ function enrichCallAssignments(
     ) {
       const varName = node.name.text;
       if (!typeMap.has(varName)) {
-        const call = node.initializer;
-        let calleeName: string | null = null;
-        let receiverTypeName: string | undefined;
-
-        if (ts.isIdentifier(call.expression)) {
-          calleeName = call.expression.text;
-        } else if (ts.isPropertyAccessExpression(call.expression)) {
-          calleeName = call.expression.name.text;
-          const obj = call.expression.expression;
-          if (ts.isIdentifier(obj)) {
-            const entry = typeMap.get(obj.text);
-            if (entry && typeof entry === 'object') receiverTypeName = entry.type;
-          }
-        }
+        const { calleeName, receiverTypeName } = resolveCalleeNameAndReceiverType(
+          ts,
+          node.initializer,
+          typeMap,
+        );
 
         if (calleeName) {
           const ca: CallAssignment = { varName, calleeName, receiverTypeName };
@@ -488,10 +614,8 @@ function enrichCallAssignments(
   // calleeName. Ambiguous varNames (same name, different callees across scopes)
   // are excluded to avoid silently resolving the wrong type cross-file.
   for (const entries of candidates.values()) {
-    const uniqueCallees = new Set(entries.map((e) => e.calleeName));
-    if (uniqueCallees.size === 1) {
-      callAssignments.push(entries[0] as CallAssignment);
-    }
+    const resolved = resolveUnambiguous(entries, (e) => e.calleeName);
+    if (resolved) callAssignments.push(resolved);
   }
 }
 
