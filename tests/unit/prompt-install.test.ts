@@ -248,16 +248,49 @@ describe('isNpmGlobalModulesRoot', () => {
     vi.restoreAllMocks();
   });
 
-  test('returns true when dir contains node_modules/npm (npm global modules root)', async () => {
+  test('returns true when `npm root -g` matches dir/node_modules', async () => {
+    const execMock = vi.fn(() => `${path.join(tmpDir, 'node_modules')}\n`);
+    vi.doMock('node:child_process', () => ({ execFileSync: execMock }));
+
+    const { isNpmGlobalModulesRoot } = await import('../../src/domain/search/models.js');
+    expect(isNpmGlobalModulesRoot(tmpDir)).toBe(true);
+    expect(execMock).toHaveBeenCalledWith(
+      expectedNpmBin,
+      ['root', '-g'],
+      expect.objectContaining({ encoding: 'utf8' }),
+    );
+  });
+
+  test('returns false for a normal project dir even if it depends on the npm package', async () => {
+    // A project that happens to have `npm` as a dependency must NOT be
+    // misclassified as npm's global root — only `npm root -g` is authoritative.
     fs.mkdirSync(path.join(tmpDir, 'node_modules', 'npm'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'node_modules', 'npm', 'package.json'), '{}');
+    const execMock = vi.fn(() => `${path.join(os.tmpdir(), 'some-other-global-root')}\n`);
+    vi.doMock('node:child_process', () => ({ execFileSync: execMock }));
+
+    const { isNpmGlobalModulesRoot } = await import('../../src/domain/search/models.js');
+    expect(isNpmGlobalModulesRoot(tmpDir)).toBe(false);
+  });
+
+  test('falls back to node_modules/npm heuristic when `npm root -g` fails', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'node_modules', 'npm'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'node_modules', 'npm', 'package.json'), '{}');
+    const execMock = vi.fn(() => {
+      throw new Error('npm: command not found');
+    });
+    vi.doMock('node:child_process', () => ({ execFileSync: execMock }));
 
     const { isNpmGlobalModulesRoot } = await import('../../src/domain/search/models.js');
     expect(isNpmGlobalModulesRoot(tmpDir)).toBe(true);
   });
 
-  test('returns false for a normal project directory', async () => {
+  test('falls back to false when `npm root -g` fails and heuristic dir is a normal project', async () => {
     fs.mkdirSync(path.join(tmpDir, 'node_modules', '@optave', 'codegraph'), { recursive: true });
+    const execMock = vi.fn(() => {
+      throw new Error('npm: command not found');
+    });
+    vi.doMock('node:child_process', () => ({ execFileSync: execMock }));
 
     const { isNpmGlobalModulesRoot } = await import('../../src/domain/search/models.js');
     expect(isNpmGlobalModulesRoot(tmpDir)).toBe(false);
@@ -303,7 +336,13 @@ describe('promptInstall: global codegraph install', () => {
   test('never invokes npm install and rejects with -g guidance', async () => {
     process.stdin.isTTY = undefined;
 
-    const execMock = vi.fn();
+    // `npm root -g` resolves to the same simulated global root set up in
+    // beforeEach, so isNpmGlobalModulesRoot() classifies it authoritatively
+    // rather than via the node_modules/npm fallback heuristic.
+    const execMock = vi.fn((_bin: string, args: string[]) => {
+      if (args[0] === 'root') return `${path.join(tmpDir, 'node_modules')}\n`;
+      throw new Error('npm install should never be invoked in this scenario');
+    });
     vi.doMock('node:child_process', () => ({ execFileSync: execMock }));
     vi.doMock('@huggingface/transformers', () => {
       throw new Error('Cannot find package');
@@ -314,6 +353,11 @@ describe('promptInstall: global codegraph install', () => {
     await expect(embed(['test'], 'minilm')).rejects.toThrow(
       'npm install -g @huggingface/transformers',
     );
-    expect(execMock).not.toHaveBeenCalled();
+    // npm install must never have been attempted — only the read-only `npm root -g` probe.
+    expect(execMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.arrayContaining(['install']),
+      expect.anything(),
+    );
   });
 });

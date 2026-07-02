@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -7,6 +7,16 @@ import { info } from '../../infrastructure/logger.js';
 import { ConfigError, EngineError } from '../../shared/errors.js';
 
 const _require = createRequire(import.meta.url);
+const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+/** Resolve a path to its real (symlink-free) form, or return it unchanged if that fails. */
+function tryRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
 
 /**
  * Resolve the directory where `npm install` should run so the installed
@@ -37,8 +47,9 @@ export function resolveNpmInstallCwd(): string | undefined {
 }
 
 /**
- * True when `dir` is npm's own global modules root — i.e. it contains
- * `node_modules/npm` (npm ships itself as a package inside its global root).
+ * True when `dir` is npm's own global modules root — the directory whose
+ * `node_modules` is npm's global install target (and therefore already
+ * contains npm's own installation, `node_modules/npm`).
  *
  * Running `npm install` with this as `cwd` makes npm reify its *own*
  * dependency tree as a side effect of installing the requested package.
@@ -47,10 +58,32 @@ export function resolveNpmInstallCwd(): string | undefined {
  * before the install's lifecycle-script error even surfaced (#1720).
  * Global installs of codegraph must never run `npm install` here.
  *
+ * Authoritative check: ask npm itself for its global modules root
+ * (`npm root -g`) and compare against `dir`. This avoids misclassifying a
+ * normal project that merely happens to depend on the `npm` package itself
+ * (e.g. a tool that shells out to npm) — such a project's `node_modules/npm`
+ * would satisfy the old file-existence heuristic without actually being
+ * npm's global root. Falls back to the file-existence heuristic only if the
+ * `npm root -g` call itself fails (e.g. npm binary unavailable in PATH).
+ *
  * @internal Exported for unit tests; not part of the public barrel.
  */
 export function isNpmGlobalModulesRoot(dir: string | undefined): boolean {
   if (!dir) return false;
+
+  const candidate = tryRealpath(path.join(dir, 'node_modules'));
+  try {
+    const globalRoot = execFileSync(NPM_BIN, ['root', '-g'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    }).trim();
+    if (globalRoot) {
+      return tryRealpath(globalRoot) === candidate;
+    }
+  } catch {
+    // npm unavailable/unresolvable — fall back to the heuristic below.
+  }
+
   try {
     return existsSync(path.join(dir, 'node_modules', 'npm', 'package.json'));
   } catch {
@@ -161,7 +194,6 @@ export const MODELS: Record<string, ModelConfig> = {
 export const EMBEDDING_STRATEGIES: readonly string[] = ['structured', 'source'];
 
 export const DEFAULT_MODEL: string = 'nomic';
-const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const BATCH_SIZE_MAP: Record<string, number> = {
   minilm: 32,
   'jina-small': 16,
