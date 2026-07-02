@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -32,6 +33,28 @@ export function resolveNpmInstallCwd(): string | undefined {
     // Source-of-truth checkout (no @optave/codegraph in node_modules) — fall back
     // to process.cwd() so legacy behavior survives in tests.
     return undefined;
+  }
+}
+
+/**
+ * True when `dir` is npm's own global modules root — i.e. it contains
+ * `node_modules/npm` (npm ships itself as a package inside its global root).
+ *
+ * Running `npm install` with this as `cwd` makes npm reify its *own*
+ * dependency tree as a side effect of installing the requested package.
+ * On at least one observed setup (Homebrew-managed Node/npm on macOS) this
+ * deleted npm's own installation and other co-located global packages
+ * before the install's lifecycle-script error even surfaced (#1720).
+ * Global installs of codegraph must never run `npm install` here.
+ *
+ * @internal Exported for unit tests; not part of the public barrel.
+ */
+export function isNpmGlobalModulesRoot(dir: string | undefined): boolean {
+  if (!dir) return false;
+  try {
+    return existsSync(path.join(dir, 'node_modules', 'npm', 'package.json'));
+  } catch {
+    return false;
   }
 }
 
@@ -173,6 +196,14 @@ export function getModelConfig(modelKey?: string): ModelConfig {
  */
 export function promptInstall(packageName: string): Promise<boolean> {
   const installCwd = resolveNpmInstallCwd();
+
+  if (isNpmGlobalModulesRoot(installCwd)) {
+    info(
+      `${packageName} is missing, but codegraph is installed globally — auto-install is skipped to avoid modifying npm's own global installation.\nInstall it yourself with:\n  npm install -g ${packageName}`,
+    );
+    return Promise.resolve(false);
+  }
+
   if (!process.stdin.isTTY) {
     info(`Installing ${packageName} (optional dependency for semantic search)…`);
     try {
@@ -237,7 +268,10 @@ export async function loadTransformers(): Promise<unknown> {
         );
       }
     }
-    throw new EngineError(`Semantic search requires ${pkg}.\nInstall it with: npm install ${pkg}`);
+    const manualInstall = isNpmGlobalModulesRoot(resolveNpmInstallCwd())
+      ? `npm install -g ${pkg}`
+      : `npm install ${pkg}`;
+    throw new EngineError(`Semantic search requires ${pkg}.\nInstall it with: ${manualInstall}`);
   }
 }
 
