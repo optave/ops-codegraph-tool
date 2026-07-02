@@ -1308,6 +1308,13 @@ export interface CodegraphConfig {
     driftThreshold: number;
     smallFilesThreshold: number;
     /**
+     * Minimum existing file-node count for a repo to be treated as a "large
+     * codebase" when deciding whether to scope node loading to changed files.
+     * @reserved — currently not wired; see `largeCodebaseFileThreshold` in
+     * `src/infrastructure/config.ts` for wiring status.
+     */
+    largeCodebaseFileThreshold: number;
+    /**
      * Use the TypeScript compiler API to enrich typeMap for .ts/.tsx files.
      * Improves method-call edge accuracy for patterns like `const svc = container.get<MyService>()`.
      * Disabled by default because `ts.createProgram` adds ~1s overhead per build;
@@ -1335,6 +1342,15 @@ export interface CodegraphConfig {
      * Default: false.
      */
     fastSkipDiag: boolean;
+  };
+
+  db: {
+    /**
+     * SQLite `busy_timeout` pragma (ms) applied to every opened connection.
+     * @reserved — currently not wired; see `busyTimeoutMs` in
+     * `src/infrastructure/config.ts` for wiring status.
+     */
+    busyTimeoutMs: number;
   };
 
   query: {
@@ -1377,6 +1393,17 @@ export interface CodegraphConfig {
      * self-hosted server from hanging the process indefinitely. Default: 120000.
      */
     requestTimeoutMs: number;
+    /**
+     * Timeout (ms) for the `apiKeyCommand` subprocess spawned via `execFileSync`.
+     * Prevents a hung secret-manager CLI from blocking config loading indefinitely.
+     * Default: 10000.
+     */
+    apiKeyCommandTimeoutMs: number;
+    /**
+     * Max stdout buffer size (bytes) for the `apiKeyCommand` subprocess spawned via
+     * `execFileSync`. Default: 65536 (64 KB).
+     */
+    apiKeyCommandMaxBufferBytes: number;
   };
 
   search: {
@@ -1443,6 +1470,13 @@ export interface CodegraphConfig {
     maxLevels: number;
     maxLocalPasses: number;
     refinementTheta: number;
+    /**
+     * Growth multiplier applied when a Leiden partition's per-community
+     * typed arrays need to be resized to fit a larger community count.
+     * @reserved — currently not wired; see `capacityGrowthFactor` in
+     * `src/infrastructure/config.ts` for wiring status.
+     */
+    capacityGrowthFactor: number;
   };
   structure: { cohesionThreshold: number };
 
