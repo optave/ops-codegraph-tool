@@ -19,6 +19,17 @@ function tryRealpath(p: string): string {
 }
 
 /**
+ * Normalize a path for equality comparison. Windows filesystems are
+ * case-insensitive (but case-preserving), and paths sourced from
+ * `execFileSync` output vs. `require.resolve` can differ in drive-letter or
+ * segment casing (e.g. `C:\Users\...` vs `c:\users\...`) despite pointing at
+ * the same directory — so comparisons must fold case on win32.
+ */
+function normalizeForComparison(p: string): string {
+  return process.platform === 'win32' ? p.toLowerCase() : p;
+}
+
+/**
  * Resolve the directory where `npm install` should run so the installed
  * package ends up reachable by `await import(pkg)` from inside this module.
  *
@@ -71,14 +82,14 @@ export function resolveNpmInstallCwd(): string | undefined {
 export function isNpmGlobalModulesRoot(dir: string | undefined): boolean {
   if (!dir) return false;
 
-  const candidate = tryRealpath(path.join(dir, 'node_modules'));
+  const candidate = normalizeForComparison(tryRealpath(path.join(dir, 'node_modules')));
   try {
     const globalRoot = execFileSync(NPM_BIN, ['root', '-g'], {
       encoding: 'utf8',
       timeout: 10_000,
     }).trim();
     if (globalRoot) {
-      return tryRealpath(globalRoot) === candidate;
+      return normalizeForComparison(tryRealpath(globalRoot)) === candidate;
     }
   } catch {
     // npm unavailable/unresolvable — fall back to the heuristic below.
