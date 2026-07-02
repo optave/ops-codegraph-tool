@@ -330,3 +330,37 @@ describe('Registry CLI commands', () => {
     expect(out2).toContain('"api-2"');
   });
 });
+
+// ─── Config CLI ───────────────────────────────────────────────────────
+
+describe('Config CLI commands', () => {
+  let tmpHome: string;
+
+  /** Run CLI with isolated HOME so --init doesn't touch the real global config */
+  function runCfg(...args) {
+    return execFileSync('node', [...NODE_TS_FLAGS, CLI, ...args], {
+      cwd: tmpDir,
+      encoding: 'utf-8',
+      timeout: 30_000,
+      env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome },
+    });
+  }
+
+  beforeAll(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cfghome-'));
+  });
+
+  afterAll(() => {
+    if (tmpHome) fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  test('config --init scaffolds an embeddings section alongside llm', () => {
+    runCfg('config', '--init');
+    const configPath = path.join(tmpHome, '.config', 'codegraph', 'config.json');
+    const scaffolded = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+    expect(scaffolded.embeddings).toEqual({ model: null, llmProvider: null, provider: null });
+    expect(scaffolded.llm).toHaveProperty('baseUrl');
+    expect(scaffolded.llm).toHaveProperty('apiKeyCommand');
+  });
+});

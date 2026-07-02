@@ -123,6 +123,15 @@ function buildInitTemplate(): string {
       apiKeyCommand: DEFAULTS.llm.apiKeyCommand,
     },
 
+    // Embedding backend for `codegraph embed`/`search`. Leave provider null
+    // for the local bundled model, or set it to "openai" to call a remote
+    // OpenAI-compatible endpoint configured via llm.baseUrl/apiKeyCommand.
+    embeddings: {
+      model: DEFAULTS.embeddings.model,
+      llmProvider: DEFAULTS.embeddings.llmProvider,
+      provider: DEFAULTS.embeddings.provider,
+    },
+
     query: {
       defaultDepth: DEFAULTS.query.defaultDepth,
       defaultLimit: DEFAULTS.query.defaultLimit,
