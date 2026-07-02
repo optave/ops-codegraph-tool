@@ -172,6 +172,7 @@ function persistEmbeddings(
   dim: number,
   modelName: string,
   strategy: EmbeddingStrategy,
+  provider: string | null,
 ): void {
   const { nodeIds, nodeNames, previews, texts, overflowCount } = prepared;
   const insert = db.prepare(
@@ -193,6 +194,12 @@ function persistEmbeddings(
     insertMeta.run('built_at', new Date().toISOString());
     if (overflowCount > 0) {
       insertMeta.run('truncated_count', String(overflowCount));
+    }
+    // Record which backend produced these vectors so search-time routing
+    // (`embedQuery` in `search/semantic.ts`) can key off embed-time truth
+    // instead of the live config, which may have drifted since `embed` ran.
+    if (provider) {
+      insertMeta.run('provider', provider);
     }
   });
   insertAll();
@@ -275,7 +282,12 @@ export async function buildEmbeddings(
     ? await embedRemote(prepared.texts, options.remote)
     : await embed(prepared.texts, modelKey);
 
-  persistEmbeddings(db, prepared, vectors as Float32Array[], dim, displayName, strategy);
+  // Only "openai" (OpenAI-compatible /embeddings) is currently supported as a
+  // remote provider — `options.remote` being set implies it. Recorded so
+  // search-time routing doesn't have to trust the live config (see
+  // `embedQuery` in `search/semantic.ts`).
+  const provider = options.remote ? 'openai' : null;
+  persistEmbeddings(db, prepared, vectors as Float32Array[], dim, displayName, strategy, provider);
 
   console.log(
     `\nStored ${vectors.length} embeddings (${dim}d, ${displayName}, strategy: ${strategy}) in graph.db`,

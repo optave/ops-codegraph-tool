@@ -12,15 +12,24 @@ import { type PreparedSearch, prepareSearch } from './prepare.js';
  * `modelKey` is a resolved local registry key (from `--model` or matched
  * against `MODELS`), or an arbitrary identifier (an explicit `--model`
  * override, or unmatched) when embeddings were built via a remote provider.
+ *
+ * Routing is decided from `storedProvider` — the provider recorded in
+ * `embedding_meta` at embed time — rather than the live config. If the
+ * config drifted after `embed` ran (e.g. `embeddings.provider` unset later
+ * on a different machine), trusting live config here would silently route
+ * the query through the wrong backend instead of the one that actually
+ * produced the stored vectors, which can produce misleading similarity
+ * scores rather than an obvious error.
  */
 async function embedQuery(
   texts: string[],
   config: CodegraphConfig,
   modelKey: string | null,
   storedModel: string | null,
+  storedProvider: string | null,
 ): Promise<{ vectors: Float32Array[]; dim: number }> {
   const isKnownLocalModel = modelKey != null && modelKey in MODELS;
-  if (!isKnownLocalModel && config.embeddings?.provider === 'openai') {
+  if (!isKnownLocalModel && storedProvider === 'openai') {
     const remoteModel = modelKey || storedModel;
     if (remoteModel) {
       return embedRemote(texts, resolveRemoteEmbeddingOptions(config, remoteModel));
@@ -84,13 +93,13 @@ export async function searchData(
 
   const prepared = prepareSearch(customDbPath, opts);
   if (!prepared) return null;
-  const { db, rows, modelKey, storedDim, storedModel } = prepared;
+  const { db, rows, modelKey, storedDim, storedModel, storedProvider } = prepared;
 
   try {
     const {
       vectors: [queryVec],
       dim,
-    } = await embedQuery([query], config, modelKey, storedModel);
+    } = await embedQuery([query], config, modelKey, storedModel, storedProvider);
 
     if (checkDimensionMismatch(storedDim, dim)) return null;
 
@@ -215,10 +224,16 @@ export async function multiSearchData(
 
   const prepared = prepareSearch(customDbPath, opts);
   if (!prepared) return null;
-  const { db, rows, modelKey, storedDim, storedModel } = prepared;
+  const { db, rows, modelKey, storedDim, storedModel, storedProvider } = prepared;
 
   try {
-    const { vectors: queryVecs, dim } = await embedQuery(queries, config, modelKey, storedModel);
+    const { vectors: queryVecs, dim } = await embedQuery(
+      queries,
+      config,
+      modelKey,
+      storedModel,
+      storedProvider,
+    );
 
     warnOnSimilarQueries(queries, queryVecs as Float32Array[], similarityWarnThreshold);
 

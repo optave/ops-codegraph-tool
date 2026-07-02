@@ -86,4 +86,29 @@ describe('semantic search against remotely-built embeddings', () => {
       expect(call[0]).toBe('http://localhost:9999/v1/embeddings');
     }
   });
+
+  test('query embedding still routes remotely when embeddings.provider config drifts after embed', async () => {
+    await buildEmbeddings(tmpDir, 'my-remote-model', dbPath, {
+      remote: { baseUrl: 'http://localhost:9999/v1', model: 'my-remote-model', apiKey: 'sk-x' },
+    });
+
+    // Simulate config drift: whoever/whatever runs `search` no longer has
+    // embeddings.provider set to "openai" (e.g. cleared on a CI machine, or a
+    // different .codegraphrc.json applies). Routing must still honor the
+    // provider recorded in embedding_meta at embed time, not this live value
+    // — otherwise the query would silently fall back to the local model.
+    const driftedConfig = {
+      ...config,
+      embeddings: { model: 'my-remote-model', llmProvider: null, provider: null },
+    } as never;
+
+    const result = await searchData('addition helper', dbPath, { config: driftedConfig });
+
+    expect(result).not.toBeNull();
+    expect(result!.results.map((r) => r.name)).toContain('add');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(call[0]).toBe('http://localhost:9999/v1/embeddings');
+    }
+  });
 });
