@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import {
   computeLOCMetrics as _computeLOCMetrics,
@@ -22,6 +21,7 @@ import type {
   LOCMetrics,
   TreeSitterNode,
 } from '../types.js';
+import { resolveFileTree } from './shared/resolve-file-tree.js';
 
 // Re-export rules for backward compatibility
 export { COMPLEXITY_RULES, HALSTEAD_RULES };
@@ -437,41 +437,25 @@ function getTreeForFile(
   extToLang: Map<string, string> | null,
   getParser: (parsers: any, absPath: string) => any,
 ): { tree: { rootNode: TreeSitterNode }; langId: string } | null {
-  let tree = symbols._tree;
-  let langId = symbols._langId;
-
   const allPrecomputed = symbols.definitions.every(
     (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
   );
 
-  if (!allPrecomputed && !tree) {
-    const ext = path.extname(relPath).toLowerCase();
-    if (!COMPLEXITY_EXTENSIONS.has(ext)) return null;
-    if (!extToLang) return null;
-    langId = extToLang.get(ext);
-    if (!langId) return null;
+  // Every definition already has precomputed complexity and there's no cached
+  // tree to fall back on — nothing to parse.
+  if (allPrecomputed && !symbols._tree) return null;
 
-    const absPath = path.join(rootDir, relPath);
-    let code: string;
-    try {
-      code = fs.readFileSync(absPath, 'utf-8');
-    } catch (e: unknown) {
-      debug(`complexity: cannot read ${relPath}: ${(e as Error).message}`);
-      return null;
-    }
-
-    const parser = getParser(parsers, absPath);
-    if (!parser) return null;
-
-    try {
-      tree = parser.parse(code);
-    } catch (e: unknown) {
-      debug(`complexity: parse failed for ${relPath}: ${(e as Error).message}`);
-      return null;
-    }
-  }
-
-  return tree && langId ? { tree: tree as { rootNode: TreeSitterNode }, langId } : null;
+  return resolveFileTree({
+    relPath,
+    rootDir,
+    cachedTree: symbols._tree,
+    cachedLangId: symbols._langId,
+    extensions: COMPLEXITY_EXTENSIONS,
+    extToLang,
+    parsers,
+    getParser,
+    logPrefix: 'complexity',
+  });
 }
 
 function upsertPrecomputedComplexity(
