@@ -357,40 +357,75 @@ const BATCH_CHUNK = 500;
 const nodeStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
 const edgeStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
 
-function getNodeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
-  let cache = nodeStmtCache.get(db);
-  if (!cache) {
-    cache = new Map();
-    nodeStmtCache.set(db, cache);
+/**
+ * Get (or lazily prepare + cache) a multi-value INSERT statement for a given
+ * chunk size, keyed per-database. Shared by getNodeStmt/getEdgeStmt, which
+ * previously duplicated this exact WeakMap<db, Map<chunkSize, stmt>>
+ * cache-getter shape — only the SQL text differed.
+ */
+function getOrCreateBatchStmt(
+  cache: WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>,
+  db: BetterSqlite3Database,
+  chunkSize: number,
+  buildSql: (chunkSize: number) => string,
+): SqliteStatement {
+  let perDb = cache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    cache.set(db, perDb);
   }
-  let stmt = cache.get(chunkSize);
+  let stmt = perDb.get(chunkSize);
   if (!stmt) {
-    const ph = '(?,?,?,?,?,?,?,?,?)';
-    stmt = db.prepare(
-      'INSERT OR IGNORE INTO nodes (name,kind,file,line,end_line,parent_id,qualified_name,scope,visibility) VALUES ' +
-        Array.from({ length: chunkSize }, () => ph).join(','),
-    );
-    cache.set(chunkSize, stmt);
+    stmt = db.prepare(buildSql(chunkSize));
+    perDb.set(chunkSize, stmt);
   }
   return stmt;
 }
 
-function getEdgeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
-  let cache = edgeStmtCache.get(db);
-  if (!cache) {
-    cache = new Map();
-    edgeStmtCache.set(db, cache);
-  }
-  let stmt = cache.get(chunkSize);
-  if (!stmt) {
-    const ph = '(?,?,?,?,?,?,?)';
-    stmt = db.prepare(
-      'INSERT INTO edges (source_id,target_id,kind,confidence,dynamic,technique,dynamic_kind) VALUES ' +
-        Array.from({ length: chunkSize }, () => ph).join(','),
+function getNodeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
+  return getOrCreateBatchStmt(nodeStmtCache, db, chunkSize, (n) => {
+    const ph = '(?,?,?,?,?,?,?,?,?)';
+    return (
+      'INSERT OR IGNORE INTO nodes (name,kind,file,line,end_line,parent_id,qualified_name,scope,visibility) VALUES ' +
+      Array.from({ length: n }, () => ph).join(',')
     );
-    cache.set(chunkSize, stmt);
+  });
+}
+
+function getEdgeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
+  return getOrCreateBatchStmt(edgeStmtCache, db, chunkSize, (n) => {
+    const ph = '(?,?,?,?,?,?,?)';
+    return (
+      'INSERT INTO edges (source_id,target_id,kind,confidence,dynamic,technique,dynamic_kind) VALUES ' +
+      Array.from({ length: n }, () => ph).join(',')
+    );
+  });
+}
+
+/**
+ * Chunk `rows` into `BATCH_CHUNK`-sized groups and run one multi-value INSERT
+ * per group via `getStmt`, flattening each row's positional args via
+ * `pushValues`. Shared by batchInsertNodes/batchInsertEdges, which previously
+ * duplicated this exact chunk-loop-and-run shape — only the statement getter
+ * and per-row value flattening differed.
+ */
+function runBatchInsert(
+  db: BetterSqlite3Database,
+  rows: unknown[][],
+  getStmt: (db: BetterSqlite3Database, chunkSize: number) => SqliteStatement,
+  pushValues: (row: unknown[], vals: unknown[]) => void,
+): void {
+  if (!rows.length) return;
+  for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
+    const end = Math.min(i + BATCH_CHUNK, rows.length);
+    const chunkSize = end - i;
+    const stmt = getStmt(db, chunkSize);
+    const vals: unknown[] = [];
+    for (let j = i; j < end; j++) {
+      pushValues(rows[j] as unknown[], vals);
+    }
+    stmt.run(...vals);
   }
-  return stmt;
 }
 
 /**
@@ -398,18 +433,9 @@ function getEdgeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatem
  * Each row: [name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility]
  */
 export function batchInsertNodes(db: BetterSqlite3Database, rows: unknown[][]): void {
-  if (!rows.length) return;
-  for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
-    const end = Math.min(i + BATCH_CHUNK, rows.length);
-    const chunkSize = end - i;
-    const stmt = getNodeStmt(db, chunkSize);
-    const vals: unknown[] = [];
-    for (let j = i; j < end; j++) {
-      const r = rows[j] as unknown[];
-      vals.push(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]);
-    }
-    stmt.run(...vals);
-  }
+  runBatchInsert(db, rows, getNodeStmt, (r, vals) => {
+    vals.push(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]);
+  });
 }
 
 /**
@@ -417,18 +443,9 @@ export function batchInsertNodes(db: BetterSqlite3Database, rows: unknown[][]): 
  * Each row: [source_id, target_id, kind, confidence, dynamic, technique, dynamic_kind]
  */
 export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): void {
-  if (!rows.length) return;
-  for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
-    const end = Math.min(i + BATCH_CHUNK, rows.length);
-    const chunkSize = end - i;
-    const stmt = getEdgeStmt(db, chunkSize);
-    const vals: unknown[] = [];
-    for (let j = i; j < end; j++) {
-      const r = rows[j] as unknown[];
-      vals.push(r[0], r[1], r[2], r[3], r[4], r[5] ?? null, r[6] ?? null);
-    }
-    stmt.run(...vals);
-  }
+  runBatchInsert(db, rows, getEdgeStmt, (r, vals) => {
+    vals.push(r[0], r[1], r[2], r[3], r[4], r[5] ?? null, r[6] ?? null);
+  });
 }
 
 /** Confidence assigned to CHA-expanded interface/abstract dispatch edges. */
