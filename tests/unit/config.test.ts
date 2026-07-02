@@ -58,7 +58,7 @@ describe('DEFAULTS', () => {
   });
 
   it('has embeddings defaults', () => {
-    expect(DEFAULTS.embeddings).toEqual({ model: null, llmProvider: null });
+    expect(DEFAULTS.embeddings).toEqual({ model: null, llmProvider: null, provider: null });
   });
 
   it('has llm defaults', () => {
@@ -68,6 +68,7 @@ describe('DEFAULTS', () => {
       baseUrl: null,
       apiKey: null,
       apiKeyCommand: null,
+      requestTimeoutMs: 120_000,
     });
   });
 
@@ -328,6 +329,7 @@ describe('applyEnvOverrides', () => {
     'CODEGRAPH_LLM_PROVIDER',
     'CODEGRAPH_LLM_API_KEY',
     'CODEGRAPH_LLM_MODEL',
+    'CODEGRAPH_LLM_BASE_URL',
     'CODEGRAPH_ENGINE',
     'CODEGRAPH_FAST_SKIP_DIAG',
   ];
@@ -360,6 +362,14 @@ describe('applyEnvOverrides', () => {
       llm: { provider: null, model: null, baseUrl: null, apiKey: null },
     });
     expect(config.llm.model).toBe('gpt-4');
+  });
+
+  it('overrides llm.baseUrl from env', () => {
+    process.env.CODEGRAPH_LLM_BASE_URL = 'http://localhost:8080/v1';
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+    });
+    expect(config.llm.baseUrl).toBe('http://localhost:8080/v1');
   });
 
   it('env vars take priority over file config', () => {

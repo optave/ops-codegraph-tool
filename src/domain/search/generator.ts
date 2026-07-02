@@ -5,6 +5,11 @@ import { warn } from '../../infrastructure/logger.js';
 import { DbError } from '../../shared/errors.js';
 import type { BetterSqlite3Database, NodeRow } from '../../types.js';
 import { embed, getModelConfig } from './models.js';
+import {
+  DEFAULT_REMOTE_CONTEXT_WINDOW,
+  embedRemote,
+  type RemoteEmbeddingOptions,
+} from './providers/remote.js';
 import { buildSourceText } from './strategies/source.js';
 import { buildStructuredText } from './strategies/structured.js';
 
@@ -167,6 +172,7 @@ function persistEmbeddings(
   dim: number,
   modelName: string,
   strategy: EmbeddingStrategy,
+  provider: string | null,
 ): void {
   const { nodeIds, nodeNames, previews, texts, overflowCount } = prepared;
   const insert = db.prepare(
@@ -189,12 +195,25 @@ function persistEmbeddings(
     if (overflowCount > 0) {
       insertMeta.run('truncated_count', String(overflowCount));
     }
+    // Record which backend produced these vectors so search-time routing
+    // (`embedQuery` in `search/semantic.ts`) can key off embed-time truth
+    // instead of the live config, which may have drifted since `embed` ran.
+    if (provider) {
+      insertMeta.run('provider', provider);
+    }
   });
   insertAll();
 }
 
 export interface BuildEmbeddingsOptions {
   strategy?: EmbeddingStrategy;
+  /**
+   * When set, embeddings are generated via a remote OpenAI-compatible
+   * endpoint instead of the local bundled model. `modelKey` is then treated
+   * as an opaque model identifier passed straight to the endpoint, not a
+   * local registry key.
+   */
+  remote?: RemoteEmbeddingOptions;
 }
 
 /**
@@ -225,12 +244,21 @@ export async function buildEmbeddings(
   const nodeCount = [...byFile.values()].reduce((acc, list) => acc + list.length, 0);
   console.log(`Building embeddings for ${nodeCount} symbols (strategy: ${strategy})...`);
 
-  const config = getModelConfig(modelKey);
-  const prepared = prepareEmbeddingTexts(byFile, db, resolvedRoot, strategy, config.contextWindow);
+  let contextWindow: number;
+  let displayName: string;
+  if (options.remote) {
+    contextWindow = DEFAULT_REMOTE_CONTEXT_WINDOW;
+    displayName = options.remote.model;
+  } else {
+    const modelConfig = getModelConfig(modelKey);
+    contextWindow = modelConfig.contextWindow;
+    displayName = modelConfig.name;
+  }
+  const prepared = prepareEmbeddingTexts(byFile, db, resolvedRoot, strategy, contextWindow);
 
   if (prepared.overflowCount > 0) {
     warn(
-      `${prepared.overflowCount} symbol(s) exceeded model context window (${config.contextWindow} tokens) and were truncated`,
+      `${prepared.overflowCount} symbol(s) exceeded model context window (${contextWindow} tokens) and were truncated`,
     );
   }
 
@@ -247,13 +275,22 @@ export async function buildEmbeddings(
     );
   }
 
-  console.log(`Embedding ${prepared.texts.length} symbols...`);
-  const { vectors, dim } = await embed(prepared.texts, modelKey);
+  console.log(
+    `Embedding ${prepared.texts.length} symbols${options.remote ? ` via remote provider (${displayName})` : ''}...`,
+  );
+  const { vectors, dim } = options.remote
+    ? await embedRemote(prepared.texts, options.remote)
+    : await embed(prepared.texts, modelKey);
 
-  persistEmbeddings(db, prepared, vectors as Float32Array[], dim, config.name, strategy);
+  // Only "openai" (OpenAI-compatible /embeddings) is currently supported as a
+  // remote provider — `options.remote` being set implies it. Recorded so
+  // search-time routing doesn't have to trust the live config (see
+  // `embedQuery` in `search/semantic.ts`).
+  const provider = options.remote ? 'openai' : null;
+  persistEmbeddings(db, prepared, vectors as Float32Array[], dim, displayName, strategy, provider);
 
   console.log(
-    `\nStored ${vectors.length} embeddings (${dim}d, ${config.name}, strategy: ${strategy}) in graph.db`,
+    `\nStored ${vectors.length} embeddings (${dim}d, ${displayName}, strategy: ${strategy}) in graph.db`,
   );
   closeDb(db);
 }

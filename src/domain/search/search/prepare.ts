@@ -20,6 +20,15 @@ export interface PreparedSearch {
   }>;
   modelKey: string | null;
   storedDim: number | null;
+  /** Raw model identifier recorded at embed time — set even when it isn't a
+   * local registry key (e.g. a remote provider's model name). */
+  storedModel: string | null;
+  /**
+   * Embedding backend recorded at embed time (e.g. `"openai"`), or `null` for
+   * the local bundled model. Search-time routing must key off this rather
+   * than the live config — the config may have changed since `embed` ran.
+   */
+  storedProvider: string | null;
 }
 
 export interface PrepareSearchOpts {
@@ -44,6 +53,7 @@ export function prepareSearch(
     }
 
     const storedModel = getEmbeddingMeta(db, 'model') || null;
+    const storedProvider = getEmbeddingMeta(db, 'provider') || null;
     const dimStr = getEmbeddingMeta(db, 'dim');
     const storedDim = dimStr ? parseInt(dimStr, 10) : null;
 
@@ -87,7 +97,7 @@ export function prepareSearch(
     let rows = db.prepare(sql).all(...params) as PreparedSearch['rows'];
     rows = applyFilters(rows, opts);
 
-    return { db, rows, modelKey, storedDim };
+    return { db, rows, modelKey, storedDim, storedModel, storedProvider };
   } catch (err) {
     db.close();
     throw err;
