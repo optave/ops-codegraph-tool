@@ -41,23 +41,49 @@ function extractNewFileName(line: string): string | null {
   return m ? m[1]! : null;
 }
 
-function pushHunkRanges(
-  line: string,
-  currentFile: string,
-  changedRanges: Map<string, DiffRange[]>,
-  oldRanges: Map<string, DiffRange[]>,
-): void {
-  const hunkMatch = line.match(HUNK_RE);
-  if (!hunkMatch) return;
-  const oldStart = parseInt(hunkMatch[1]!, 10);
-  const oldCount = parseInt(hunkMatch[2] || '1', 10);
-  if (oldCount > 0) {
-    oldRanges.get(currentFile)!.push({ start: oldStart, end: oldStart + oldCount - 1 });
+/**
+ * Tracks the old-side line cursor and the current run of contiguously
+ * removed lines while walking a hunk body, so `parseDiffOutput` can emit
+ * precise `oldRanges` (only lines actually deleted/replaced) instead of the
+ * raw hunk header span (which always includes 3 lines of unchanged context
+ * on each side per the unified diff format).
+ */
+class RemovedLineTracker {
+  private oldLineCursor = 0;
+  private runStart: number | null = null;
+  private runEnd: number | null = null;
+
+  startHunk(oldStart: number): void {
+    this.oldLineCursor = oldStart;
   }
-  const newStart = parseInt(hunkMatch[3]!, 10);
-  const newCount = parseInt(hunkMatch[4] || '1', 10);
-  if (newCount > 0) {
-    changedRanges.get(currentFile)!.push({ start: newStart, end: newStart + newCount - 1 });
+
+  /**
+   * Consumes one hunk body line, advancing the old-side cursor as needed.
+   * Lines beginning with `--- ` (source-file headers) are already filtered
+   * out by the caller before a line ever reaches here, so a leading `-`
+   * unambiguously marks a removed line — even one whose own content starts
+   * with dashes (e.g. removing a line of literal text `-- foo`).
+   */
+  consume(line: string, file: string, oldRanges: Map<string, DiffRange[]>): void {
+    if (line.startsWith('-')) {
+      if (this.runStart === null) this.runStart = this.oldLineCursor;
+      this.runEnd = this.oldLineCursor;
+      this.oldLineCursor++;
+      return;
+    }
+    // Any non-removed line (context, addition, or a "\ No newline" marker)
+    // ends the current run of removed lines.
+    this.flush(file, oldRanges);
+    if (line.startsWith(' ')) this.oldLineCursor++;
+  }
+
+  /** Closes out the current removed-line run, if any, into `oldRanges`. */
+  flush(file: string, oldRanges: Map<string, DiffRange[]>): void {
+    if (this.runStart !== null) {
+      oldRanges.get(file)!.push({ start: this.runStart, end: this.runEnd! });
+      this.runStart = null;
+      this.runEnd = null;
+    }
   }
 }
 
@@ -67,6 +93,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
   const newFiles = new Set<string>();
   let currentFile: string | null = null;
   let prevIsDevNull = false;
+  const removedTracker = new RemovedLineTracker();
 
   for (const line of diffOutput.split('\n')) {
     if (isDevNullSourceLine(line)) {
@@ -79,6 +106,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
     }
     const newFile = extractNewFileName(line);
     if (newFile) {
+      if (currentFile) removedTracker.flush(currentFile, oldRanges);
       currentFile = newFile;
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
       if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
@@ -86,8 +114,24 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
       prevIsDevNull = false;
       continue;
     }
-    if (currentFile) pushHunkRanges(line, currentFile, changedRanges, oldRanges);
+    if (!currentFile) continue;
+
+    const hunkMatch = line.match(HUNK_RE);
+    if (hunkMatch) {
+      removedTracker.flush(currentFile, oldRanges);
+      removedTracker.startHunk(parseInt(hunkMatch[1]!, 10));
+      const newStart = parseInt(hunkMatch[3]!, 10);
+      const newCount = parseInt(hunkMatch[4] || '1', 10);
+      if (newCount > 0) {
+        changedRanges.get(currentFile)!.push({ start: newStart, end: newStart + newCount - 1 });
+      }
+      continue;
+    }
+
+    removedTracker.consume(line, currentFile, oldRanges);
   }
+  if (currentFile) removedTracker.flush(currentFile, oldRanges);
+
   return { changedRanges, oldRanges, newFiles };
 }
 
@@ -209,9 +253,16 @@ export function checkNoSignatureChanges(
     if (ranges.length === 0) continue;
     if (noTests && isTestFile(file)) continue;
 
+    // Scoped to `exported = 1`: only a symbol reachable from outside its own
+    // file can have callers this diff doesn't already account for. A
+    // private, file-local helper's declaration can be freely deleted,
+    // renamed, or reshaped — every call site lives in the same file and is
+    // necessarily part of the same diff. Without this filter, any adoption
+    // of a shared helper that removes a file-local duplicate (the exact
+    // pattern the grind workflow performs) would always trip this check.
     const defs = db
       .prepare(
-        `SELECT name, kind, file, line FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
+        `SELECT name, kind, file, line FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') AND exported = 1 ORDER BY line`,
       )
       .all(file) as SignatureViolation[];
 

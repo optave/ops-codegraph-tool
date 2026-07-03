@@ -22,10 +22,12 @@ import {
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
-function insertNode(db, name, kind, file, line, endLine = null) {
+function insertNode(db, name, kind, file, line, endLine = null, exported = 0) {
   return db
-    .prepare('INSERT INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)')
-    .run(name, kind, file, line, endLine).lastInsertRowid;
+    .prepare(
+      'INSERT INTO nodes (name, kind, file, line, end_line, exported) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    .run(name, kind, file, line, endLine, exported).lastInsertRowid;
 }
 
 function insertEdge(db, sourceId, targetId, kind) {
@@ -48,9 +50,11 @@ beforeAll(() => {
   initSchema(db);
 
   // --- Functions ---
-  // src/math.js: add (line 1-5), multiply (line 7-12)
-  const add = insertNode(db, 'add', 'function', 'src/math.js', 1, 5);
-  const multiply = insertNode(db, 'multiply', 'function', 'src/math.js', 7, 12);
+  // src/math.js: add (line 1-5, exported), multiply (line 7-12, exported),
+  // roundHalfEven (line 14-16, private — not part of the module's public API)
+  const add = insertNode(db, 'add', 'function', 'src/math.js', 1, 5, 1);
+  const multiply = insertNode(db, 'multiply', 'function', 'src/math.js', 7, 12, 1);
+  insertNode(db, 'roundHalfEven', 'function', 'src/math.js', 14, 16, 0);
 
   // src/utils.js: formatResult (line 1-10), parseInput (line 12-20)
   const formatResult = insertNode(db, 'formatResult', 'function', 'src/utils.js', 1, 10);
@@ -101,9 +105,13 @@ describe('parseDiffOutput', () => {
       '--- a/src/math.js',
       '+++ b/src/math.js',
       '@@ -1,3 +1,4 @@',
-      '-old line',
+      '-old line 1',
+      '-old line 2',
+      '-old line 3',
       '+new line 1',
       '+new line 2',
+      '+new line 3',
+      '+new line 4',
     ].join('\n');
 
     const { changedRanges, oldRanges, newFiles } = parseDiffOutput(diff);
@@ -111,6 +119,29 @@ describe('parseDiffOutput', () => {
     expect(changedRanges.get('src/math.js')).toEqual([{ start: 1, end: 4 }]);
     expect(oldRanges.get('src/math.js')).toEqual([{ start: 1, end: 3 }]);
     expect(newFiles.size).toBe(0);
+  });
+
+  test('old-side ranges exclude unchanged context lines around a removal', () => {
+    // Simulates deleting a block that sits between two untouched declarations —
+    // the hunk header span (2..9) must not swallow the untouched line 9.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -2,8 +2,2 @@',
+      ' function add() {}', // context, old line 2 — untouched
+      '-function removedHelper() {',
+      '-  return 1;',
+      '-}',
+      '-function alsoRemoved() {',
+      '-  return 2;',
+      '-}',
+      ' function multiply() {}', // context, old line 9 — untouched
+    ].join('\n');
+
+    const { oldRanges } = parseDiffOutput(diff);
+    // Only the 6 actually-removed lines (3-8) should appear, not the
+    // untouched context lines immediately before (2) and after (9).
+    expect(oldRanges.get('src/math.js')).toEqual([{ start: 3, end: 8 }]);
   });
 
   test('detects new files', () => {
@@ -210,6 +241,60 @@ describe('checkNoSignatureChanges', () => {
   test('skips test files when noTests is true', () => {
     const oldRanges = new Map([['tests/math.test.js', [{ start: 1, end: 5 }]]]);
     const result = checkNoSignatureChanges(db, oldRanges, true);
+    expect(result.passed).toBe(true);
+  });
+
+  test('does not flag a private (non-exported) symbol whose declaration was removed', () => {
+    // roundHalfEven is at line 14, exported=0. Deleting it entirely — the
+    // exact "adopt shared helper, drop the file-local duplicate" pattern
+    // grind performs — must not trip this check: every caller of a
+    // private helper lives in the same file and is already part of the diff.
+    const oldRanges = new Map([['src/math.js', [{ start: 14, end: 16 }]]]);
+    const result = checkNoSignatureChanges(db, oldRanges, false);
+    expect(result.passed).toBe(true);
+  });
+
+  test('still flags an exported symbol even when a private symbol shares the file', () => {
+    // Sanity check that the exported-only filter doesn't accidentally
+    // suppress real violations on exported declarations in the same file.
+    const oldRanges = new Map([
+      [
+        'src/math.js',
+        [
+          { start: 1, end: 2 }, // add's declaration (exported)
+          { start: 14, end: 16 }, // roundHalfEven's declaration (private)
+        ],
+      ],
+    ]);
+    const result = checkNoSignatureChanges(db, oldRanges, false);
+    expect(result.passed).toBe(false);
+    expect(result.violations.map((v) => v.name)).toEqual(['add']);
+  });
+
+  test('regression: deleting a line near a declaration does not flag it (issue #1760)', () => {
+    // Fixture DB: `add` spans lines 1-5, `multiply`'s declaration is at
+    // line 7. A real `git diff` carries 3 lines of context around a
+    // change, so deleting the single stale line 6 produces a hunk whose
+    // *header span* (3..9) includes multiply's declaration line (7) even
+    // though multiply's own text is untouched. parseDiffOutput must only
+    // record line 6 as removed, not the surrounding context.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,7 +3,6 @@',
+      '   return 1;', // context, old line 3 (inside add)
+      ' }', // context, old line 4
+      ' ', // context, old line 5
+      '-// stale comment', // removed, old line 6
+      ' function multiply() {', // context, old line 7 — multiply's declaration
+      '   return 2;', // context, old line 8
+      ' }', // context, old line 9
+    ].join('\n');
+
+    const { oldRanges } = parseDiffOutput(diff);
+    expect(oldRanges.get('src/math.js')).toEqual([{ start: 6, end: 6 }]);
+
+    const result = checkNoSignatureChanges(db, oldRanges, false);
     expect(result.passed).toBe(true);
   });
 });
