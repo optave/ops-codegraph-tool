@@ -36,6 +36,7 @@ import type {
 import { computeConfidence } from '../../resolve.js';
 import type { PointsToMap } from '../../resolver/points-to.js';
 import { buildPointsToMap, resolveViaPointsTo } from '../../resolver/points-to.js';
+import { unwrapTypeEntry } from '../../resolver/strategy.js';
 import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
   type CallNodeLookup,
@@ -43,6 +44,7 @@ import {
   isModuleScopedLanguage,
   resolveCallTargets,
   resolveReceiverEdge,
+  resolveSameClassQualifiedMethod,
 } from '../call-resolver.js';
 import type { ChaContext } from '../cha.js';
 import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
@@ -1087,27 +1089,6 @@ function resolveKotlinReflectionPreQualified(
 }
 
 /**
- * Shared by both same-class fallback strategies below: derive the enclosing
- * class name from the caller's qualified name (the segment immediately before
- * the final dot, e.g. `Namespace.MyClass.method` → `MyClass`), then look up
- * `ClassName.callName` as a method in the same file.
- */
-function resolveSameClassQualifiedMethod(
-  callName: string,
-  callerName: string,
-  relPath: string,
-  lookup: CallNodeLookup,
-): Array<{ id: number; file: string; kind?: string }> {
-  const lastDot = callerName.lastIndexOf('.');
-  if (lastDot <= 0) return [];
-  const prevDot = callerName.lastIndexOf('.', lastDot - 1);
-  const className = callerName.slice(prevDot + 1, lastDot);
-  return lookup
-    .byNameAndFile(`${className}.${callName}`, relPath)
-    .filter((n) => n.kind === 'method');
-}
-
-/**
  * Same-class `this.method()` fallback: when the call receiver is `this` and
  * resolveCallTargets found nothing, derive the enclosing class name from the
  * caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
@@ -1168,12 +1149,7 @@ function resolveReflectionKeyExprFallback(
   ) {
     return [];
   }
-  const typeEntry = typeMap.get(call.receiver);
-  const resolvedType = typeEntry
-    ? typeof typeEntry === 'string'
-      ? typeEntry
-      : (typeEntry as { type?: string }).type
-    : null;
+  const resolvedType = unwrapTypeEntry(typeMap.get(call.receiver));
   if (resolvedType) {
     const qualified = lookup
       .byNameAndFile(`${resolvedType}.${call.keyExpr}`, relPath)
@@ -1215,12 +1191,7 @@ function resolveDefinePropertyAccessorFallback(
   const receiverVarName = definePropertyReceivers.get(callerName);
   if (!receiverVarName) return [];
 
-  const typeEntry = typeMap.get(receiverVarName);
-  const typeName = typeEntry
-    ? typeof typeEntry === 'string'
-      ? typeEntry
-      : (typeEntry as { type?: string }).type
-    : null;
+  const typeName = unwrapTypeEntry(typeMap.get(receiverVarName));
   if (typeName) {
     const qualified = lookup.byNameAndFile(`${typeName}.${call.name}`, relPath);
     if (qualified.length > 0) return [...qualified];

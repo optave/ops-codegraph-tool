@@ -66,8 +66,11 @@ export function isModuleScopedLanguage(relPath: string): boolean {
  * shape `{ type?: string }` (some seeders attach extra metadata alongside the
  * target). This normalises both shapes to `string | null`, matching the
  * falsy-check semantics every call site previously duplicated inline.
+ *
+ * Exported: also used by build-edges.ts's reflection/defineProperty fallback
+ * helpers, which duplicated this exact ternary inline before being wired here.
  */
-function unwrapTypeEntry(entry: unknown): string | null {
+export function unwrapTypeEntry(entry: unknown): string | null {
   if (!entry) return null;
   return typeof entry === 'string' ? entry : ((entry as { type?: string }).type ?? null);
 }
