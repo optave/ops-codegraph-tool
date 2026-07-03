@@ -99,7 +99,12 @@ debug.sethook(hook, "cr")
 
 local ok, err = pcall(dofile, fixture_dir .. "main.lua")
 if not ok then
-    -- Swallow errors - we only care about call edges
+    -- We only care about call edges captured before the fixture errored, so
+    -- keep going rather than aborting the trace — but still surface the
+    -- error to stderr so a genuine failure (e.g. a Lua syntax error
+    -- producing zero edges) is visible instead of looking like a silent
+    -- successful trace.
+    io.stderr:write(tostring(err), "\n")
 end
 
 debug.sethook()

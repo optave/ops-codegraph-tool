@@ -14,9 +14,12 @@
 set -euo pipefail
 
 FIXTURE_DIR="${1:-}"
-LANG="${2:-}"
+# Named TRACE_LANG (not LANG) — LANG is the POSIX locale environment variable;
+# reassigning it here would clobber locale settings inherited by every
+# compiler toolchain this script spawns (gcc, cargo, dotnet, swiftc, zig, ...).
+TRACE_LANG="${2:-}"
 
-if [[ -z "$FIXTURE_DIR" || -z "$LANG" ]]; then
+if [[ -z "$FIXTURE_DIR" || -z "$TRACE_LANG" ]]; then
     echo "Usage: native-tracer.sh <fixture-dir> <language>" >&2
     exit 1
 fi
@@ -39,6 +42,143 @@ empty_result() {
     local reason="${1:-toolchain not available}"
     echo "{\"edges\":[],\"error\":\"$reason\"}"
     exit 0
+}
+
+# Shared source-instrumentation helpers used by trace_rust / trace_swift /
+# trace_zig / trace_dart. Each of those languages needs the same scan: track
+# an optional enclosing context (impl/class/struct), detect a function or
+# method declaration, and inject a trace-call statement right after the
+# opening brace. They differ only in the regexes, the qualname separator
+# context, and how the traced scope is closed:
+#
+#   raii     — the language has its own scope-exit primitive (Rust
+#              `let _tg = <Drop guard>;`, Swift/Zig `defer`), so the entry
+#              template alone is enough — no brace tracking needed.
+#   finally  — the language has neither (Dart), so the function body's
+#              closing brace is located via manual brace-depth counting and
+#              a "} finally { ... }" statement is injected right before it.
+#
+# The helpers below are dispatched one per source line from
+# instrument_one_file's loop, each handling one concern and returning 0 only
+# when it fully handled the line (caller should move on to the next line).
+# Bash dynamically scopes `local` variables into called functions, so they
+# read/write inject_trace_calls's and instrument_one_file's locals
+# (ctx_regex, decl_regex, strategy, current_ctx, in_func, tmpfile, ...)
+# directly instead of threading a dozen parameters through each call.
+
+# Tracks an optional enclosing context (impl/class/struct) block opening,
+# and detects the block's closing brace. Returns 0 (line fully handled) only
+# when it wrote the closing-brace line itself.
+maybe_close_context() {
+    local line="$1" trimmed="$2"
+    [[ -z "$ctx_regex" ]] && return 1
+
+    if [[ "$trimmed" =~ $ctx_regex ]]; then
+        current_ctx="${BASH_REMATCH[$ctx_group]}"
+    fi
+    if [[ "$trimmed" == "}" && -n "$current_ctx" ]] && [[ ! "$line" =~ ^[[:space:]] ]]; then
+        printf '%s\n' "$line" >> "$tmpfile"
+        current_ctx=""
+        return 0
+    fi
+    return 1
+}
+
+# For the "finally" strategy only: tracks the brace depth of the currently
+# open instrumented function body and injects the finally-block right before
+# its closing brace. Returns 0 once that injection is made.
+maybe_close_finally_scope() {
+    local line="$1"
+    [[ "$strategy" == "finally" ]] || return 1
+    (( in_func )) || return 1
+
+    local opens="${line//[^\{]/}" closes="${line//[^\}]/}"
+    (( func_brace_depth += ${#opens} - ${#closes} )) || true
+    (( func_brace_depth <= 0 )) || return 1
+
+    printf -- "$finally_tmpl"'\n' >> "$tmpfile"
+    printf '%s\n' "$line" >> "$tmpfile"
+    in_func=0
+    func_brace_depth=0
+    return 0
+}
+
+# Detects a function/method declaration on this line and, unless excluded,
+# injects the entry template (plus "try {" for the "finally" strategy).
+# Returns 0 once an injection is made.
+maybe_inject_declaration() {
+    local line="$1" trimmed="$2"
+    [[ "$trimmed" =~ $decl_regex ]] || return 1
+    local fname_candidate="${BASH_REMATCH[$decl_group]}"
+
+    if [[ -n "$decl_exclude_regex" && "$trimmed" =~ $decl_exclude_regex ]]; then
+        return 1
+    fi
+    [[ "$trimmed" =~ \{[[:space:]]*$ ]] || return 1
+
+    local qualname="$fname_candidate"
+    [[ -n "$current_ctx" ]] && qualname="${current_ctx}.${fname_candidate}"
+    printf '%s\n' "$line" >> "$tmpfile"
+    printf -- "$entry_tmpl"'\n' "$qualname" "$base" >> "$tmpfile"
+    if [[ "$strategy" == "finally" ]]; then
+        printf '    try {\n' >> "$tmpfile"
+        in_func=1
+        func_brace_depth=1
+    fi
+    return 0
+}
+
+# Instruments one source file in place: scans it line-by-line, dispatching
+# each line to the maybe_* handlers above in order, falling back to copying
+# the line verbatim when none of them handle it.
+instrument_one_file() {
+    local srcfile="$1"
+    local base
+    base="$(basename "$srcfile")"
+    [[ "$base" == "$skip_file" ]] && return
+
+    local current_ctx="" in_func=0 func_brace_depth=0
+    local tmpfile
+    tmpfile="$(mktemp)"
+
+    local line trimmed
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        trimmed="${line#"${line%%[![:space:]]*}"}"
+        maybe_close_context "$line" "$trimmed" && continue
+        maybe_close_finally_scope "$line" && continue
+        maybe_inject_declaration "$line" "$trimmed" && continue
+        printf '%s\n' "$line" >> "$tmpfile"
+    done < "$srcfile"
+
+    mv "$tmpfile" "$srcfile"
+}
+
+# Args:
+#   $1  glob pattern for source files to instrument (e.g. "$TMP_DIR"/*.rs)
+#   $2  filename to skip (the generated trace-support file for this language)
+#   $3  context regex (e.g. '^impl[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)');
+#       empty string disables context (class/impl) tracking entirely
+#   $4  capture group index holding the context name (ignored if $3 is empty)
+#   $5  declaration regex (e.g. matches "fn NAME"/"func NAME")
+#   $6  capture group index holding the candidate function/method name
+#   $7  declaration exclusion regex — if the trimmed line also matches this,
+#       the declaration match is discarded (empty string disables filtering;
+#       used by Dart to skip import/if/while/for/switch/catch/class lines)
+#   $8  strategy: "raii" or "finally"
+#   $9  entry template — printf format string, args are (qualname, base file)
+#   $10 finally template — printf format string with no args (only used when
+#       strategy is "finally")
+inject_trace_calls() {
+    local glob_pattern="$1" skip_file="$2"
+    local ctx_regex="$3" ctx_group="$4"
+    local decl_regex="$5" decl_group="$6" decl_exclude_regex="$7"
+    local strategy="$8" entry_tmpl="$9" finally_tmpl="${10:-}"
+
+    local srcfile
+    for srcfile in $glob_pattern; do
+        [[ -e "$srcfile" ]] || continue
+        instrument_one_file "$srcfile"
+    done
 }
 
 # ── C / C++ ──────────────────────────────────────────────────────────────
@@ -279,48 +419,17 @@ RSTRACE
     # Add mod trace_support to main.rs
     sedi '1s/^/mod trace_support;\n/' "$TMP_DIR/src/main.rs"
 
-    # Inject trace_call into every fn body using a bash loop that tracks impl blocks
-    for rsfile in "$TMP_DIR/src"/*.rs; do
-        base="$(basename "$rsfile")"
-        [[ "$base" == "trace_support.rs" ]] && continue
-
-        local current_impl=""
-        local tmpfile="$(mktemp)"
-
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            # Track impl blocks: "impl TypeName" or "impl TypeName for Trait"
-            if [[ "$line" =~ ^impl[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
-                current_impl="${BASH_REMATCH[1]}"
-            fi
-
-            # End of impl block (top-level closing brace)
-            if [[ "$line" == "}" && -n "$current_impl" ]]; then
-                printf '%s\n' "$line" >> "$tmpfile"
-                current_impl=""
-                continue
-            fi
-
-            # Detect fn declarations ending with {
-            # Save capture before second regex clobbers BASH_REMATCH
-            if [[ "$line" =~ fn[[:space:]]+([a-z_][a-z0-9_]*) ]]; then
-                local fname_candidate="${BASH_REMATCH[1]}"
-                if [[ "$line" =~ \{[[:space:]]*$ ]]; then
-                    local fname="$fname_candidate"
-                    local qualname="$fname"
-                    if [[ -n "$current_impl" ]]; then
-                        qualname="${current_impl}.${fname}"
-                    fi
-                    printf '%s\n' "$line" >> "$tmpfile"
-                    printf '        let _tg = crate::trace_support::trace_call("%s", "%s");\n' "$qualname" "$base" >> "$tmpfile"
-                    continue
-                fi
-            fi
-
-            printf '%s\n' "$line" >> "$tmpfile"
-        done < "$rsfile"
-
-        mv "$tmpfile" "$rsfile"
-    done
+    # Inject trace_call into every fn body, tracking impl blocks for qualnames.
+    # Rust's Drop-guard RAII pattern means only entry needs injecting — the
+    # guard's Drop impl fires trace_support's exit hook automatically.
+    inject_trace_calls \
+        "$TMP_DIR/src/*.rs" \
+        "trace_support.rs" \
+        '^impl[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' 1 \
+        'fn[[:space:]]+([a-z_][a-z0-9_]*)' 1 \
+        '' \
+        raii \
+        '        let _tg = crate::trace_support::trace_call("%s", "%s");'
 
     # Inject dump_trace() at end of main()
     sedi '/^fn main/,/^\}/ {
@@ -563,44 +672,17 @@ class CallTracer {
 }
 SWTRACE
 
-    # Inject traceCall into every func body using bash loop
-    for swfile in "$TMP_DIR"/*.swift; do
-        base="$(basename "$swfile")"
-        [[ "$base" == "TraceSupport.swift" ]] && continue
-        local current_class=""
-        local tmpfile="$(mktemp)"
-
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            local trimmed="${line#"${line%%[![:space:]]*}"}"
-            # Track class/struct declarations
-            if [[ "$trimmed" =~ ^(class|struct)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
-                current_class="${BASH_REMATCH[2]}"
-            fi
-            # End of class (top-level })
-            if [[ "$trimmed" == "}" && -n "$current_class" ]] && [[ ! "$line" =~ ^[[:space:]] ]]; then
-                printf '%s\n' "$line" >> "$tmpfile"
-                current_class=""
-                continue
-            fi
-            # Detect func declarations ending with {
-            # Save capture before second regex clobbers BASH_REMATCH
-            if [[ "$trimmed" =~ ^(override[[:space:]]+)?func[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*) ]]; then
-                local fname_candidate="${BASH_REMATCH[2]}"
-                if [[ "$trimmed" =~ \{[[:space:]]*$ ]]; then
-                    local fname="$fname_candidate"
-                    local qualname="$fname"
-                    if [[ -n "$current_class" ]]; then
-                        qualname="${current_class}.${fname}"
-                    fi
-                    printf '%s\n' "$line" >> "$tmpfile"
-                    printf '        CallTracer.shared.traceCall("%s", "%s"); defer { CallTracer.shared.traceReturn() }\n' "$qualname" "$base" >> "$tmpfile"
-                    continue
-                fi
-            fi
-            printf '%s\n' "$line" >> "$tmpfile"
-        done < "$swfile"
-        mv "$tmpfile" "$swfile"
-    done
+    # Inject traceCall into every func body, tracking class/struct blocks for
+    # qualnames. Swift's `defer` gives us a built-in scope-exit hook, so only
+    # entry needs injecting.
+    inject_trace_calls \
+        "$TMP_DIR/*.swift" \
+        "TraceSupport.swift" \
+        '^(class|struct)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' 2 \
+        '^(override[[:space:]]+)?func[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)' 2 \
+        '' \
+        raii \
+        '        CallTracer.shared.traceCall("%s", "%s"); defer { CallTracer.shared.traceReturn() }'
 
     # Inject dump at end of main (top-level code or main function)
     if grep -q 'func main' "$TMP_DIR/main.swift" 2>/dev/null; then
@@ -687,68 +769,19 @@ DARTTRACE
         sedi "1s|^|import 'dart:io';\nimport 'trace_support.dart';\n|" "$dartfile"
     done
 
-    # Inject traceCall + try/finally into function/method bodies.
-    # We track brace depth per function so we can inject
-    # "} finally { CallTracer.instance.traceReturn(); }" at the closing brace.
-    for dartfile in "$TMP_DIR"/*.dart; do
-        base="$(basename "$dartfile")"
-        [[ "$base" == "trace_support.dart" ]] && continue
-        local current_class=""
-        local in_func=0
-        local func_brace_depth=0
-        local tmpfile="$(mktemp)"
-
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            local trimmed="${line#"${line%%[![:space:]]*}"}"
-
-            # Track class
-            if [[ "$trimmed" =~ ^class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
-                current_class="${BASH_REMATCH[1]}"
-            fi
-            if [[ "$trimmed" == "}" && -n "$current_class" ]] && [[ ! "$line" =~ ^[[:space:]] ]]; then
-                printf '%s\n' "$line" >> "$tmpfile"
-                current_class=""
-                continue
-            fi
-
-            # If inside an instrumented function, track braces to find its end
-            if (( in_func )); then
-                local opens="${line//[^\{]/}"
-                local closes="${line//[^\}]/}"
-                (( func_brace_depth += ${#opens} - ${#closes} )) || true
-                if (( func_brace_depth <= 0 )); then
-                    # This line contains the function's closing brace —
-                    # inject "} finally { traceReturn(); }" before it
-                    printf '    } finally { CallTracer.instance.traceReturn(); }\n' >> "$tmpfile"
-                    printf '%s\n' "$line" >> "$tmpfile"
-                    in_func=0
-                    func_brace_depth=0
-                    continue
-                fi
-            fi
-
-            # Detect function declarations (return_type name(args) {)
-            # Save capture before subsequent regexes clobber BASH_REMATCH
-            if [[ "$trimmed" =~ [[:space:]]([a-zA-Z_][a-zA-Z0-9_]*)\( ]]; then
-                local fname_candidate="${BASH_REMATCH[1]}"
-                if [[ "$trimmed" =~ \{[[:space:]]*$ ]] && [[ ! "$trimmed" =~ ^(import|if|while|for|switch|catch|class) ]]; then
-                    local fname="$fname_candidate"
-                    local qualname="$fname"
-                    if [[ -n "$current_class" ]]; then
-                        qualname="${current_class}.${fname}"
-                    fi
-                    printf '%s\n' "$line" >> "$tmpfile"
-                    printf '    CallTracer.instance.traceCall("%s", "%s");\n' "$qualname" "$base" >> "$tmpfile"
-                    printf '    try {\n' >> "$tmpfile"
-                    in_func=1
-                    func_brace_depth=1  # we're inside the function's opening brace
-                    continue
-                fi
-            fi
-            printf '%s\n' "$line" >> "$tmpfile"
-        done < "$dartfile"
-        mv "$tmpfile" "$dartfile"
-    done
+    # Inject traceCall + try/finally into function/method bodies, tracking
+    # class blocks for qualnames. Dart has neither RAII nor `defer`, so the
+    # function body's closing brace is located via manual depth counting and
+    # "} finally { CallTracer.instance.traceReturn(); }" is injected before it.
+    inject_trace_calls \
+        "$TMP_DIR/*.dart" \
+        "trace_support.dart" \
+        '^class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' 1 \
+        '[[:space:]]([a-zA-Z_][a-zA-Z0-9_]*)\(' 1 \
+        '^(import|if|while|for|switch|catch|class)' \
+        finally \
+        '    CallTracer.instance.traceCall("%s", "%s");' \
+        '    } finally { CallTracer.instance.traceReturn(); }'
 
     # Inject dump at end of main
     sedi '/^void main/,/^\}/ {
@@ -844,32 +877,23 @@ pub fn dumpTrace() void {
 }
 ZIGTRACE
 
-    # Inject traceCall into fn bodies
+    # Add import of trace_support at top of every fixture file
     for zigfile in "$TMP_DIR"/*.zig; do
         base="$(basename "$zigfile")"
         [[ "$base" == "trace_support.zig" ]] && continue
-
-        # Add import of trace_support at top
         sedi "1s|^|const trace_support = @import(\"trace_support.zig\");\n|" "$zigfile"
-
-        # Use bash loop to inject trace calls
-        local tmpfile="$(mktemp)"
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            local trimmed="${line#"${line%%[![:space:]]*}"}"
-            # Save capture before second regex clobbers BASH_REMATCH
-            if [[ "$trimmed" =~ ^(pub[[:space:]]+)?fn[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*) ]]; then
-                local fname_candidate="${BASH_REMATCH[2]}"
-                if [[ "$trimmed" =~ \{[[:space:]]*$ ]]; then
-                    local fname="$fname_candidate"
-                    printf '%s\n' "$line" >> "$tmpfile"
-                    printf '    trace_support.traceCall("%s", "%s"); defer trace_support.traceReturn();\n' "$fname" "$base" >> "$tmpfile"
-                    continue
-                fi
-            fi
-            printf '%s\n' "$line" >> "$tmpfile"
-        done < "$zigfile"
-        mv "$tmpfile" "$zigfile"
     done
+
+    # Inject traceCall into fn bodies. Zig has no class/impl concept here, so
+    # context tracking is disabled; `defer` gives us a built-in scope-exit hook.
+    inject_trace_calls \
+        "$TMP_DIR/*.zig" \
+        "trace_support.zig" \
+        '' 0 \
+        '^(pub[[:space:]]+)?fn[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)' 2 \
+        '' \
+        raii \
+        '    trace_support.traceCall("%s", "%s"); defer trace_support.traceReturn();'
 
     # Inject dump at end of main
     sedi '/^pub fn main/,/^\}/ {
@@ -1121,7 +1145,7 @@ trace_cuda() {
 }
 
 # ── Dispatch ─────────────────────────────────────────────────────────────
-case "$LANG" in
+case "$TRACE_LANG" in
     c)        trace_c_cpp "gcc" "c" ;;
     cpp)      trace_c_cpp "g++" "cpp" ;;
     rust)     trace_rust ;;
@@ -1138,5 +1162,5 @@ case "$LANG" in
     cuda)     trace_cuda ;;
     verilog)  empty_result "verilog is a hardware description language — no runtime tracing" ;;
     hcl)      empty_result "HCL/Terraform has no callable functions — no runtime tracing" ;;
-    *)        empty_result "unknown language: $LANG" ;;
+    *)        empty_result "unknown language: $TRACE_LANG" ;;
 esac
