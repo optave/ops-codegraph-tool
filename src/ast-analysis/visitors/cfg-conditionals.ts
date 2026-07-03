@@ -6,7 +6,7 @@ import type {
   LoopCtx,
   ProcessStatementsFn,
 } from './cfg-shared.js';
-import { getBodyStatements, isCaseNode, isIfNode, nn } from './cfg-shared.js';
+import { getBodyStatements, isCaseNode, isIfNode, requireNode } from './cfg-shared.js';
 
 /**
  * Create a branch block off `condBlock`, wire the `branchKind` edge into it,
@@ -96,7 +96,7 @@ function processAlternative(
   } else if (alternative.type === cfgRules.elseClause) {
     const elseChildren: TreeSitterNode[] = [];
     for (let i = 0; i < alternative.namedChildCount; i++) {
-      elseChildren.push(nn(alternative.namedChild(i)));
+      elseChildren.push(requireNode(alternative.namedChild(i)));
     }
     const firstChild = elseChildren[0];
     if (elseChildren.length === 1 && firstChild && isIfNode(firstChild.type, cfgRules)) {
@@ -123,7 +123,7 @@ function processElifSiblings(
   let foundElse = false;
 
   for (let i = 0; i < ifStmt.namedChildCount; i++) {
-    const child = nn(ifStmt.namedChild(i));
+    const child = requireNode(ifStmt.namedChild(i));
 
     if (child.type === cfgRules.elifNode) {
       const elifCondBlock = S.makeBlock(
@@ -150,7 +150,7 @@ function processElifSiblings(
       } else {
         elseStmts = [];
         for (let j = 0; j < child.namedChildCount; j++) {
-          elseStmts.push(nn(child.namedChild(j)));
+          elseStmts.push(requireNode(child.namedChild(j)));
         }
       }
       processBranch(lastCondBlock, joinBlock, S, 'branch_false', 'else', (elseBlock) =>
@@ -192,7 +192,7 @@ export function processSwitch(
 
   let hasDefault = false;
   for (let i = 0; i < container.namedChildCount; i++) {
-    const caseClause = nn(container.namedChild(i));
+    const caseClause = requireNode(container.namedChild(i));
 
     const isDefault = caseClause.type === cfgRules.defaultNode;
     const isCase = isDefault || isCaseNode(caseClause.type, cfgRules);
@@ -227,11 +227,11 @@ function extractCaseBody(caseClause: TreeSitterNode, cfgRules: AnyRules): TreeSi
   const valueNode = caseClause.childForFieldName('value');
   const patternNode = caseClause.childForFieldName('pattern');
   for (let j = 0; j < caseClause.namedChildCount; j++) {
-    const child = nn(caseClause.namedChild(j));
+    const child = requireNode(caseClause.namedChild(j));
     if (child !== valueNode && child !== patternNode && child.type !== 'switch_label') {
       if (child.type === 'statement_list') {
         for (let k = 0; k < child.namedChildCount; k++) {
-          stmts.push(nn(child.namedChild(k)));
+          stmts.push(requireNode(child.namedChild(k)));
         }
       } else {
         stmts.push(child);
