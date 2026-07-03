@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { DbError, toErrorMessage } from '../shared/errors.js';
@@ -158,7 +158,10 @@ function isSameDirectory(a: string, b: string): boolean {
   }
 }
 
-export function openDb(dbPath: string): LockedDatabase {
+export function openDb(
+  dbPath: string,
+  busyTimeoutMs: number = DEFAULTS.db.busyTimeoutMs,
+): LockedDatabase {
   // Flush any deferred DB close from a previous build (avoids WAL contention)
   flushDeferredClose();
   const dir = path.dirname(dbPath);
@@ -167,7 +170,7 @@ export function openDb(dbPath: string): LockedDatabase {
   const Database = getDatabase();
   const db = new Database(dbPath) as unknown as LockedDatabase;
   db.pragma('journal_mode = WAL');
-  db.pragma('busy_timeout = 5000');
+  db.pragma(`busy_timeout = ${busyTimeoutMs}`);
   db.__lockPath = `${dbPath}.lock`;
   return db;
 }
@@ -327,7 +330,10 @@ export function findDbPath(customPath?: string): string {
 }
 
 /** Open a database in readonly mode, with a user-friendly error if the DB doesn't exist. */
-export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
+export function openReadonlyOrFail(
+  customPath?: string,
+  busyTimeoutMs: number = DEFAULTS.db.busyTimeoutMs,
+): BetterSqlite3Database {
   const dbPath = findDbPath(customPath);
   if (!fs.existsSync(dbPath)) {
     throw new DbError(
@@ -337,7 +343,7 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
   }
   const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true }) as unknown as BetterSqlite3Database;
-  db.pragma('busy_timeout = 5000');
+  db.pragma(`busy_timeout = ${busyTimeoutMs}`);
 
   warnOnVersionMismatch(() => {
     const row = db
@@ -349,8 +355,15 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
   return db;
 }
 
+/** Effective engine plus config-derived DB settings shared by openRepo() and openReadonlyWithNative(). */
+interface ResolvedDbSettings {
+  engine: 'native' | 'wasm' | 'auto';
+  busyTimeoutMs: number;
+}
+
 /**
- * Resolve the effective engine for DB access: explicit opts.engine > config.build.engine > 'auto'.
+ * Resolve the effective engine for DB access (explicit opts.engine > config.build.engine >
+ * 'auto') alongside config.db.busyTimeoutMs, in a single loadConfig() call.
  * Derives rootDir from the resolved DB path so loadConfig reads the right project config.
  * Shared by openRepo() and openReadonlyWithNative() so the two call sites can't drift.
  *
@@ -358,18 +371,22 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
  * via resolveSecrets on a malformed llm.apiKeyCommand config), and an already-open
  * handle at that point would never be closed.
  */
-function resolveDbEngine(
+function resolveDbSettings(
   customDbPath: string | undefined,
   engineOpt: 'native' | 'wasm' | 'auto' | undefined,
-): 'native' | 'wasm' | 'auto' {
+): ResolvedDbSettings {
   // Using findDbPath (not path.resolve(customDbPath)) ensures directory inputs like
   // --db /path/to/repo are normalised to .codegraph/graph.db before we strip two levels.
   // Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
   const resolvedDbPath = customDbPath ? findDbPath(customDbPath) : undefined;
   const rootDir = resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
+  const config = loadConfig(rootDir);
   // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
   // so this covers both the env-var path and the .codegraphrc.json config-file path.
-  return engineOpt ?? loadConfig(rootDir).build.engine ?? 'auto';
+  return {
+    engine: engineOpt ?? config.build.engine ?? 'auto',
+    busyTimeoutMs: config.db.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
+  };
 }
 
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */
@@ -422,7 +439,7 @@ export function openRepo(
 
   // Respect explicit engine selection: opts.engine > config.build.engine > auto.
   // This ensures --engine wasm and benchmark workers bypass the native path.
-  const engine = resolveDbEngine(customDbPath, opts.engine);
+  const { engine, busyTimeoutMs } = resolveDbSettings(customDbPath, opts.engine);
 
   // Try native rusqlite path first (Phase 6.14)
   if (engine !== 'wasm' && isNativeAvailable()) {
@@ -442,7 +459,7 @@ export function openRepo(
     }
   }
 
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, busyTimeoutMs);
   return {
     repo: new SqliteRepository(db),
     close() {
@@ -476,9 +493,9 @@ export function openReadonlyWithNative(
   // handle has been opened yet, so nothing is left leaked. (Previously this ran
   // AFTER openReadonlyOrFail(), so a config error here leaked the already-open
   // better-sqlite3 handle — see the phase-15 gauntlet finding.)
-  const engine = resolveDbEngine(customPath, opts.engine);
+  const { engine, busyTimeoutMs } = resolveDbSettings(customPath, opts.engine);
 
-  const db = openReadonlyOrFail(customPath);
+  const db = openReadonlyOrFail(customPath, busyTimeoutMs);
 
   let nativeDb: NativeDatabase | undefined;
   if (engine !== 'wasm' && isNativeAvailable()) {

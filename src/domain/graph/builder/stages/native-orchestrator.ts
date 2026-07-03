@@ -136,7 +136,7 @@ function handoffWalAfterNativeBuild(ctx: PipelineContext): boolean {
     debug(`handoffWal JS db close failed: ${toErrorMessage(e)}`);
   }
   try {
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     return true;
   } catch (reopenErr) {
     warn(`Failed to reopen DB after native build: ${(reopenErr as Error).message}`);
@@ -1789,7 +1789,7 @@ async function backfillNativeDroppedFiles(
   // for the INSERT path below).
   if (ctx.nativeFirstProxy) {
     closeNativeDb(ctx, 'pre-parity-backfill');
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     ctx.nativeFirstProxy = false;
   }
 
@@ -1951,7 +1951,7 @@ function openNativeDatabase(ctx: PipelineContext): void {
     ctx.nativeFirstProxy = false; // defensive: reset in case future refactors move the assignment above throwing lines
     releaseAdvisoryLock(`${ctx.dbPath}.lock`);
     // Reopen better-sqlite3 for JS pipeline fallback
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
   }
 }
 
@@ -2239,7 +2239,7 @@ class NativeOrchestrationSession {
     if (!needsStructure && !needsAnalysisFallback) return true;
     if (needsAnalysisFallback && this.ctx.nativeFirstProxy) {
       closeNativeDb(this.ctx, 'pre-analysis-fallback');
-      this.ctx.db = openDb(this.ctx.dbPath);
+      this.ctx.db = openDb(this.ctx.dbPath, this.ctx.config.db.busyTimeoutMs);
       this.ctx.nativeFirstProxy = false;
       return true;
     }
