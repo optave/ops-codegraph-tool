@@ -63,9 +63,12 @@ export const DEFAULTS = deepFreeze({
   db: {
     /**
      * SQLite `busy_timeout` pragma (ms) applied to every opened connection.
-     * @reserved — currently not wired; `src/db/connection.ts` still sets the
-     * hardcoded literal `5000` directly via `db.pragma('busy_timeout = 5000')`
-     * in both `openDb` and `openReadonlyOrFail`.
+     * Wired as the default `busyTimeoutMs` parameter of `openDb()` and
+     * `openReadonlyOrFail()` in `src/db/connection.ts`. Build/watch call sites
+     * that already hold a resolved config (pipeline, native orchestrator,
+     * watcher, `openRepo`/`openReadonlyWithNative`) pass the user-configured
+     * value through explicitly; the remaining ad-hoc read-only query call
+     * sites fall back to this default.
      */
     busyTimeoutMs: 5000,
   },
@@ -160,9 +163,10 @@ export const DEFAULTS = deepFreeze({
     /**
      * Growth multiplier applied when a Leiden partition's per-community
      * typed arrays need to be resized to fit a larger community count.
-     * @reserved — currently not wired; `ensureCommCapacity()` in
-     * `src/graph/algorithms/leiden/partition.ts` still uses the hardcoded
-     * literal `1.5` directly.
+     * Threaded through `communitiesData()` -> `louvainCommunities()` ->
+     * `detectClusters()` -> `makePartition()` to `ensureCommCapacity()` in
+     * `src/graph/algorithms/leiden/partition.ts`. Ignored by the native Rust
+     * Louvain path (classic Louvain doesn't use this Leiden-specific resize).
      */
     capacityGrowthFactor: 1.5,
   },

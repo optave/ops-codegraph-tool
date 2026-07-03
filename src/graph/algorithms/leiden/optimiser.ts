@@ -16,6 +16,7 @@ import { createRng } from './rng.js';
 // via .codegraphrc.json. Callers (e.g. louvain.ts) can pass overrides through options.
 const DEFAULT_MAX_LEVELS: number = 50;
 const DEFAULT_MAX_LOCAL_PASSES: number = 20;
+const DEFAULT_CAPACITY_GROWTH_FACTOR: number = 1.5;
 const GAIN_EPSILON: number = 1e-12;
 
 /** Pre-allocated scratch buffers for refinement candidate collection. */
@@ -51,6 +52,7 @@ export interface LeidenOptions {
   linkWeight?: GraphAdapterOptions['linkWeight'];
   nodeSize?: GraphAdapterOptions['nodeSize'];
   baseNodeIds?: string[];
+  capacityGrowthFactor?: number;
 }
 
 export interface NormalizedOptions {
@@ -67,6 +69,7 @@ export interface NormalizedOptions {
   maxCommunitySize: number;
   refinementTheta: number;
   fixedNodes: Set<string> | string[] | undefined;
+  capacityGrowthFactor: number;
 }
 
 export interface LevelEntry {
@@ -168,7 +171,9 @@ function runLevel(
   random: () => number,
   fixedNodeMask: Uint8Array | null,
 ): LevelOutcome {
-  const partition: Partition = makePartition(graphAdapter);
+  const partition: Partition = makePartition(graphAdapter, {
+    capacityGrowthFactor: options.capacityGrowthFactor,
+  });
   partition.graph = graphAdapter;
   partition.initializeAggregates();
 
@@ -499,7 +504,7 @@ function refineWithinCoarseCommunities(
   opts: NormalizedOptions,
   fixedMask0: Uint8Array | null,
 ): Partition {
-  const p: Partition = makePartition(g);
+  const p: Partition = makePartition(g, { capacityGrowthFactor: opts.capacityGrowthFactor });
   p.initializeAggregates();
   p.graph = g;
   const macro: Int32Array = basePart.nodeCommunity;
@@ -675,6 +680,10 @@ function normalizeOptions(options: LeidenOptions = {}): NormalizedOptions {
     : Infinity;
   const refinementTheta: number =
     typeof options.refinementTheta === 'number' ? options.refinementTheta : 1.0;
+  const capacityGrowthFactor: number =
+    typeof options.capacityGrowthFactor === 'number'
+      ? options.capacityGrowthFactor
+      : DEFAULT_CAPACITY_GROWTH_FACTOR;
   return {
     directed,
     randomSeed,
@@ -689,6 +698,7 @@ function normalizeOptions(options: LeidenOptions = {}): NormalizedOptions {
     maxCommunitySize,
     refinementTheta,
     fixedNodes: options.fixedNodes,
+    capacityGrowthFactor,
   };
 }
 

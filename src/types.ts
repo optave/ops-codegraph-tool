@@ -1346,8 +1346,7 @@ export interface CodegraphConfig {
   db: {
     /**
      * SQLite `busy_timeout` pragma (ms) applied to every opened connection.
-     * @reserved — currently not wired; see `busyTimeoutMs` in
-     * `src/infrastructure/config.ts` for wiring status.
+     * See `busyTimeoutMs` in `src/infrastructure/config.ts` for wiring status.
      */
     busyTimeoutMs: number;
   };
@@ -1472,8 +1471,7 @@ export interface CodegraphConfig {
     /**
      * Growth multiplier applied when a Leiden partition's per-community
      * typed arrays need to be resized to fit a larger community count.
-     * @reserved — currently not wired; see `capacityGrowthFactor` in
-     * `src/infrastructure/config.ts` for wiring status.
+     * See `capacityGrowthFactor` in `src/infrastructure/config.ts` for wiring status.
      */
     capacityGrowthFactor: number;
   };
