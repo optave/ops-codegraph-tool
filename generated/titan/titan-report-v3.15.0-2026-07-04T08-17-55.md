@@ -181,8 +181,11 @@ A blocking codegraph tool bug was discovered and fixed mid-GRIND: `codegraph che
 | 8 | fix(check): scope signature-change detection to exported symbols | quality_fix (tool bug) | cli/check | 1 | — | https://github.com/optave/ops-codegraph-tool/pull/1792 |
 | 9 | refactor: adopt dead helpers identified by Titan grind | adoption | cross-cutting | 6 | PR #7 | https://github.com/optave/ops-codegraph-tool/pull/1793 |
 | 10 | chore: sync Cargo.lock codegraph-core version to 3.15.0 | chore | build metadata | 1 | — | https://github.com/optave/ops-codegraph-tool/pull/1794 |
+| 11 | docs: add Titan audit report for v3.15.0 run | docs | generated/titan | 1 (this report) | — | https://github.com/optave/ops-codegraph-tool/pull/1795 |
 
-**Merge order:** PR #1 → #2 → #3 → #4 → #5 → #6 → #7 → #9 (strict chain — each is stacked directly on the previous, since later FORGE phases build on symbols the earlier phases extracted). PR #8 and PR #10 are fully independent (touch no files shared with any other commit) and can merge at any time.
+**Merge order:** PR #1 → #2 → #3 → #4 → #5 → #6 → #7 → #9 (strict chain — each is stacked directly on the previous, since later FORGE phases build on symbols the earlier phases extracted). PR #8, PR #10, and PR #11 are fully independent (touch no files shared with any other commit) and can merge at any time.
+
+PR #11 is not part of the audited 39-commit set — it carries only this report file so the Titan deliverable is committed to the repo per convention.
 
 **Why stacked branches instead of independent cherry-picks:** the 39 commits form a dense same-file dependency chain (e.g. `src/infrastructure/config.ts` is edited sequentially by 4 different commits across the run; `src/domain/graph/builder/helpers.ts` by 3). Cherry-picking non-contiguous commits onto independent `main`-based branches would either fail to apply or apply-but-not-compile for any PR whose commits reference a helper/constant extracted earlier in the sequence. Each PR branch here is a contiguous slice of the original (already-gated, already-tested) commit history, stacked on the previous PR's branch tip — this guarantees every PR builds correctly using only its own PR plus its declared dependencies, at the cost of PRs #2–#7 and #9 not being independently buildable against a bare `main` until their base PRs merge. GitHub tracks this correctly via the base-branch chain and will auto-retarget each PR to `main` as its base merges.
 
