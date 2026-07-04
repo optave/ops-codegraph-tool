@@ -85,7 +85,9 @@ export function prepareSearch(
     if (fpArr.length > 0 && !isGlob) {
       const fc = buildFileConditionSQL(fpArr, 'n.file');
       if (fc.sql) {
-        // Strip leading ' AND ' since we're using conditions array
+        // buildFileConditionSQL always prefixes its output with ' AND ' (see
+        // src/db/query-builder.ts); strip it here since we accumulate raw
+        // fragments in the conditions[] array and join with ' AND ' below.
         conditions.push(fc.sql.replace(/^ AND /, ''));
         params.push(...fc.params);
       }
