@@ -215,7 +215,7 @@ All 4 FAIL verdicts were the same root cause: blast-radius threshold (30 transit
 
 ### Codegraph Bugs
 
-23 GitHub issues total are attributable to this run's findings: **17 already filed during RECON/GAUNTLET/GRIND** (#1720, #1721, #1723, #1724, #1725, #1726, #1727, #1728, #1729, #1730, #1731, #1741, #1760, #1761, #1769, #1771, #1773, #1776 — several are cross-referenced by multiple issue-tracker entries), and **6 newly filed at CLOSE** after a duplicate check against the open issue list:
+24 GitHub issues total are attributable to this run's findings: **18 already filed during RECON/GAUNTLET/GRIND** (#1720, #1721, #1723, #1724, #1725, #1726, #1727, #1728, #1729, #1730, #1731, #1741, #1760, #1761, #1769, #1771, #1773, #1776 — several are cross-referenced by multiple issue-tracker entries), and **6 newly filed at CLOSE** after a duplicate check against the open issue list:
 
 | Issue | Title |
 |-------|-------|
