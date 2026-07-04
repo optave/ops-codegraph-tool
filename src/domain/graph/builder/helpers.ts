@@ -448,6 +448,31 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
   });
 }
 
+const exportStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
+
+function getExportStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
+  return getOrCreateBatchStmt(exportStmtCache, db, chunkSize, (n) => {
+    const conditions = Array.from(
+      { length: n },
+      () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
+    ).join(' OR ');
+    return `UPDATE nodes SET exported = 1 WHERE ${conditions}`;
+  });
+}
+
+/**
+ * Mark exported symbols as `exported = 1` in batches, keyed by
+ * `[name, kind, file, line]`. Shared by the JS-fallback definitions/exports
+ * insert (`insertDefinitionsAndExports`) and the native-orchestrator backfill
+ * (`insertBackfilledNodes`), which previously duplicated this exact
+ * chunked-UPDATE loop verbatim.
+ */
+export function markExportedSymbols(db: BetterSqlite3Database, exportKeys: unknown[][]): void {
+  runBatchInsert(db, exportKeys, getExportStmt, (k, vals) => {
+    vals.push(k[0], k[1], k[2], k[3]);
+  });
+}
+
 /** Confidence assigned to CHA-expanded interface/abstract dispatch edges. */
 export const CHA_DISPATCH_CONFIDENCE = 0.8;
 

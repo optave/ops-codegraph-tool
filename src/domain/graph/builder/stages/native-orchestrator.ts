@@ -34,7 +34,6 @@ import type {
   DataflowResult,
   Definition,
   ExtractorOutput,
-  SqliteStatement,
 } from '../../../../types.js';
 import {
   classifyNativeDrops,
@@ -57,6 +56,7 @@ import {
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
+  markExportedSymbols,
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
@@ -1691,31 +1691,7 @@ function insertBackfilledNodes(
     }
   }
   batchInsertNodes(db, rows);
-
-  // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.
-  if (exportKeys.length > 0) {
-    const EXPORT_CHUNK = 500;
-    const exportStmtCache = new Map<number, SqliteStatement>();
-    for (let i = 0; i < exportKeys.length; i += EXPORT_CHUNK) {
-      const end = Math.min(i + EXPORT_CHUNK, exportKeys.length);
-      const chunkSize = end - i;
-      let updateStmt = exportStmtCache.get(chunkSize);
-      if (!updateStmt) {
-        const conditions = Array.from(
-          { length: chunkSize },
-          () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
-        ).join(' OR ');
-        updateStmt = db.prepare(`UPDATE nodes SET exported = 1 WHERE ${conditions}`);
-        exportStmtCache.set(chunkSize, updateStmt);
-      }
-      const vals: unknown[] = [];
-      for (let j = i; j < end; j++) {
-        const k = exportKeys[j] as unknown[];
-        vals.push(k[0], k[1], k[2], k[3]);
-      }
-      updateStmt.run(...vals);
-    }
-  }
+  markExportedSymbols(db, exportKeys);
 }
 
 /**
