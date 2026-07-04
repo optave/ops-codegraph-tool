@@ -27,6 +27,7 @@ import { parseArgs } from 'node:util';
 
 import { ISSUES, extractAgentOutput, validateResult } from './token-benchmark-issues.js';
 import { getBenchmarkVersion } from './bench-version.js';
+import { median, round1, timeMedian } from './lib/bench-timing.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -75,13 +76,6 @@ const selectedIssues = selectedIssueIds.map((id) => {
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-
-function median(arr) {
-	if (arr.length === 0) return 0;
-	const sorted = [...arr].sort((a, b) => a - b);
-	const mid = Math.floor(sorted.length / 2);
-	return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
 
 function round2(n) {
 	return Math.round(n * 100) / 100;
@@ -261,24 +255,6 @@ async function runSession(mode, issue, nextjsDir) {
 
 const PERF_RUNS = 3;
 
-function round1(n) {
-	return Math.round(n * 10) / 10;
-}
-
-/**
- * Run `fn` `runs` times (default `PERF_RUNS`), recording the elapsed
- * milliseconds per run, and return the median duration.
- */
-async function timeMedian(fn, runs = PERF_RUNS) {
-	const timings = [];
-	for (let i = 0; i < runs; i++) {
-		const start = performance.now();
-		await fn();
-		timings.push(performance.now() - start);
-	}
-	return median(timings);
-}
-
 /**
  * Run build/query/stats benchmarks against the Next.js graph.
  * Reuses the same codegraph APIs as the existing benchmark scripts.
@@ -324,13 +300,13 @@ async function runPerfBenchmarks(nextjsDir) {
 			await timeMedian(async () => {
 				if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 				await buildGraph(nextjsDir, { engine, incremental: false });
-			}),
+			}, PERF_RUNS),
 		);
 
 		// No-op rebuild
 		console.error(`  No-op rebuild (${engine})...`);
 		const noopRebuildMs = Math.round(
-			await timeMedian(() => buildGraph(nextjsDir, { engine, incremental: true })),
+			await timeMedian(() => buildGraph(nextjsDir, { engine, incremental: true }), PERF_RUNS),
 		);
 
 		buildResults[engine] = { fullBuildMs, noopRebuildMs };
@@ -379,12 +355,12 @@ async function runPerfBenchmarks(nextjsDir) {
 		for (const depth of [1, 3, 5]) {
 			// fnDeps
 			queryResults[`fnDeps_depth${depth}Ms`] = round1(
-				await timeMedian(() => fnDepsData(hubName, dbPath, { depth, noTests: true })),
+				await timeMedian(() => fnDepsData(hubName, dbPath, { depth, noTests: true }), PERF_RUNS),
 			);
 
 			// fnImpact
 			queryResults[`fnImpact_depth${depth}Ms`] = round1(
-				await timeMedian(() => fnImpactData(hubName, dbPath, { depth, noTests: true })),
+				await timeMedian(() => fnImpactData(hubName, dbPath, { depth, noTests: true }), PERF_RUNS),
 			);
 		}
 
