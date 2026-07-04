@@ -680,26 +680,28 @@ export async function branchCompareData(
   if ('error' in refs) return refs;
   const { baseSha, targetSha } = refs;
 
-  const changedFiles = getChangedFilesBetweenRefs(repoRoot, baseSha, targetSha);
-
-  if (changedFiles.length === 0) {
-    return emptyBranchCompareResult(baseRef, targetRef, baseSha, targetSha);
-  }
-
-  const { tmpBase, baseDir, targetDir } = createCompareTempDirs();
-
   try {
-    return await runBranchCompareInWorktrees(
-      { baseRef, targetRef, baseSha, targetSha },
-      { repoRoot, baseDir, targetDir, engine },
-      changedFiles,
-      noTests,
-      maxDepth,
-    );
+    const changedFiles = getChangedFilesBetweenRefs(repoRoot, baseSha, targetSha);
+
+    if (changedFiles.length === 0) {
+      return emptyBranchCompareResult(baseRef, targetRef, baseSha, targetSha);
+    }
+
+    const { tmpBase, baseDir, targetDir } = createCompareTempDirs();
+
+    try {
+      return await runBranchCompareInWorktrees(
+        { baseRef, targetRef, baseSha, targetSha },
+        { repoRoot, baseDir, targetDir, engine },
+        changedFiles,
+        noTests,
+        maxDepth,
+      );
+    } finally {
+      cleanupCompareTempDirs(repoRoot, baseDir, targetDir, tmpBase);
+    }
   } catch (err) {
     return { error: toErrorMessage(err) };
-  } finally {
-    cleanupCompareTempDirs(repoRoot, baseDir, targetDir, tmpBase);
   }
 }
 
