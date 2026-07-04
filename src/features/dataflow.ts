@@ -128,6 +128,12 @@ function getDataflowForFile(
     logPrefix: 'dataflow',
   });
   if (!resolved) return null;
+  // resolveFileTree only gates on extension, not on DATAFLOW_RULES membership —
+  // for a cached tree, resolved.langId can be a language the extensions/rules
+  // set no longer covers, so this explicit check must stay to preserve the
+  // original null-for-unsupported contract (extractDataflow's own guard would
+  // otherwise return a non-null empty result instead).
+  if (!DATAFLOW_RULES.has(resolved.langId)) return null;
 
   return extractDataflow(resolved.tree, relPath, symbols.definitions, resolved.langId);
 }
