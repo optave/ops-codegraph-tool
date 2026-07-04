@@ -29,9 +29,26 @@ export const DEFAULTS = {
     dbPath: '.codegraph/graph.db',
     driftThreshold: 0.2,
     smallFilesThreshold: 5,
+    /**
+     * Minimum existing file-node count for a repo to be treated as a "large
+     * codebase" when deciding whether to scope node loading to changed files.
+     * @reserved — currently not wired; loadNodes() in
+     * `src/domain/graph/builder/stages/build-edges.ts` still uses the
+     * hardcoded literal `20` at its `existingFileCount > 20` gate.
+     */
+    largeCodebaseFileThreshold: 20,
     typescriptResolver: true,
     engine: 'auto' as 'auto' | 'native' | 'wasm',
     fastSkipDiag: false,
+  },
+  db: {
+    /**
+     * SQLite `busy_timeout` pragma (ms) applied to every opened connection.
+     * @reserved — currently not wired; `src/db/connection.ts` still sets the
+     * hardcoded literal `5000` directly via `db.pragma('busy_timeout = 5000')`
+     * in both `openDb` and `openReadonlyOrFail`.
+     */
+    busyTimeoutMs: 5000,
   },
   query: {
     defaultDepth: 3,
@@ -50,6 +67,8 @@ export const DEFAULTS = {
     apiKey: null as string | null,
     apiKeyCommand: null as string | null,
     requestTimeoutMs: 120_000,
+    apiKeyCommandTimeoutMs: 10_000,
+    apiKeyCommandMaxBufferBytes: 64 * 1024,
   },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15, similarityWarnThreshold: 0.85 },
   ci: { failOnCycles: false, impactThreshold: null as number | null },
@@ -119,6 +138,14 @@ export const DEFAULTS = {
     maxLevels: 50,
     maxLocalPasses: 20,
     refinementTheta: 1.0,
+    /**
+     * Growth multiplier applied when a Leiden partition's per-community
+     * typed arrays need to be resized to fit a larger community count.
+     * @reserved — currently not wired; `ensureCommCapacity()` in
+     * `src/graph/algorithms/leiden/partition.ts` still uses the hardcoded
+     * literal `1.5` directly.
+     */
+    capacityGrowthFactor: 1.5,
   },
   structure: {
     cohesionThreshold: 0.3,
@@ -747,8 +774,8 @@ export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
   try {
     const result = execFileSync(executable!, args, {
       encoding: 'utf-8',
-      timeout: 10_000,
-      maxBuffer: 64 * 1024,
+      timeout: config.llm.apiKeyCommandTimeoutMs,
+      maxBuffer: config.llm.apiKeyCommandMaxBufferBytes,
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     if (result) {

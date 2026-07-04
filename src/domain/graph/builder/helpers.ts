@@ -10,6 +10,7 @@ import { purgeFilesData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
 import { buildIgnoreSet, EXTENSIONS, normalizePath } from '../../../shared/constants.js';
 import { compileGlobs, globToRegex, matchesAny } from '../../../shared/globs.js';
+import { sleepSync } from '../../../shared/sleep.js';
 import type {
   BetterSqlite3Database,
   CodegraphConfig,
@@ -326,8 +327,7 @@ export function readFileSafe(filePath: string, retries: number = 2): string {
       return fs.readFileSync(filePath, 'utf-8');
     } catch (err: unknown) {
       if (attempt < retries && TRANSIENT_CODES.has((err as NodeJS.ErrnoException).code ?? '')) {
-        const sharedBuf = new SharedArrayBuffer(4);
-        Atomics.wait(new Int32Array(sharedBuf), 0, 0, RETRY_DELAY_MS);
+        sleepSync(RETRY_DELAY_MS);
         continue;
       }
       throw err;

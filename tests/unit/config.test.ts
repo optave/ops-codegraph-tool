@@ -69,6 +69,8 @@ describe('DEFAULTS', () => {
       apiKey: null,
       apiKeyCommand: null,
       requestTimeoutMs: 120_000,
+      apiKeyCommandTimeoutMs: 10_000,
+      apiKeyCommandMaxBufferBytes: 64 * 1024,
     });
   });
 
@@ -131,11 +133,20 @@ describe('DEFAULTS', () => {
       maxLevels: 50,
       maxLocalPasses: 20,
       refinementTheta: 1.0,
+      capacityGrowthFactor: 1.5,
     });
   });
 
   it('has structure defaults', () => {
     expect(DEFAULTS.structure).toEqual({ cohesionThreshold: 0.3 });
+  });
+
+  it('has db defaults', () => {
+    expect(DEFAULTS.db).toEqual({ busyTimeoutMs: 5000 });
+  });
+
+  it('has build defaults', () => {
+    expect(DEFAULTS.build).toHaveProperty('largeCodebaseFileThreshold', 20);
   });
 
   it('has mcp defaults', () => {
@@ -455,13 +466,15 @@ describe('resolveSecrets', () => {
         baseUrl: null,
         apiKey: null,
         apiKeyCommand: 'op read secret/key',
+        apiKeyCommandTimeoutMs: DEFAULTS.llm.apiKeyCommandTimeoutMs,
+        apiKeyCommandMaxBufferBytes: DEFAULTS.llm.apiKeyCommandMaxBufferBytes,
       },
     };
     resolveSecrets(config);
     expect(mockExecFile).toHaveBeenCalledWith('op', ['read', 'secret/key'], {
       encoding: 'utf-8',
-      timeout: 10_000,
-      maxBuffer: 64 * 1024,
+      timeout: DEFAULTS.llm.apiKeyCommandTimeoutMs,
+      maxBuffer: DEFAULTS.llm.apiKeyCommandMaxBufferBytes,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     expect(config.llm.apiKey).toBe('secret-key-123');
