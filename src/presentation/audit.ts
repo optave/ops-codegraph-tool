@@ -108,7 +108,7 @@ export function audit(
 ): void {
   const data: AuditResult = auditData(target, customDbPath, opts);
 
-  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
+  if (outputResult(data, null, opts)) return;
 
   if (data.functions.length === 0) {
     console.log(`No ${data.kind === 'file' ? 'file' : 'function/symbol'} matching "${target}"`);
