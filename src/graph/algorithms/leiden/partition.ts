@@ -72,8 +72,12 @@ interface PartitionState {
   capacityGrowthFactor: number;
 }
 
-/** Mirrored in DEFAULTS.community.capacityGrowthFactor (src/infrastructure/config.ts). */
-const DEFAULT_CAPACITY_GROWTH_FACTOR = 1.5;
+/**
+ * Mirrored in DEFAULTS.community.capacityGrowthFactor (src/infrastructure/config.ts).
+ * Exported so other leiden modules (e.g. optimiser.ts) share this single fallback
+ * instead of keeping an independently-drifting copy.
+ */
+export const DEFAULT_CAPACITY_GROWTH_FACTOR = 1.5;
 
 /* ------------------------------------------------------------------ */
 /*  Community-ID sort helper (used by compact)                         */

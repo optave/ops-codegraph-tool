@@ -9,14 +9,13 @@ import { makeGraphAdapter } from './adapter.js';
 import { diffCPM } from './cpm.js';
 import { diffModularity } from './modularity.js';
 import type { Partition } from './partition.js';
-import { makePartition } from './partition.js';
+import { DEFAULT_CAPACITY_GROWTH_FACTOR, makePartition } from './partition.js';
 import { createRng } from './rng.js';
 
 // Mirrored in DEFAULTS.community (src/infrastructure/config.js) for user override
 // via .codegraphrc.json. Callers (e.g. louvain.ts) can pass overrides through options.
 const DEFAULT_MAX_LEVELS: number = 50;
 const DEFAULT_MAX_LOCAL_PASSES: number = 20;
-const DEFAULT_CAPACITY_GROWTH_FACTOR: number = 1.5;
 const GAIN_EPSILON: number = 1e-12;
 
 /** Pre-allocated scratch buffers for refinement candidate collection. */
