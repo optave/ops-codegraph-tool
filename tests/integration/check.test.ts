@@ -144,6 +144,32 @@ describe('parseDiffOutput', () => {
     expect(oldRanges.get('src/math.js')).toEqual([{ start: 3, end: 8 }]);
   });
 
+  test('new-side ranges exclude unchanged context lines around an addition', () => {
+    // Symmetric counterpart of the old-side test above: `getGitDiff` always
+    // uses `--unified=0` so this never happens in practice, but
+    // `parseDiffOutput` is a public export and must stay correct for any
+    // unified diff, including ones with non-zero context.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -2,2 +2,8 @@',
+      ' function add() {}', // context, line 2 — untouched
+      '+function addedHelper() {',
+      '+  return 1;',
+      '+}',
+      '+function alsoAdded() {',
+      '+  return 2;',
+      '+}',
+      ' function multiply() {}', // context, line 9 — untouched
+    ].join('\n');
+
+    const { changedRanges } = parseDiffOutput(diff);
+    // Only the 6 actually-added lines (3-8) should appear, not the untouched
+    // context lines immediately before (2) and after (9) — even though the
+    // raw hunk header span for the new side is 2..9.
+    expect(changedRanges.get('src/math.js')).toEqual([{ start: 3, end: 8 }]);
+  });
+
   test('detects new files', () => {
     const diff = ['--- /dev/null', '+++ b/src/new-file.js', '@@ -0,0 +1,5 @@', '+line1'].join('\n');
 

@@ -42,48 +42,93 @@ function extractNewFileName(line: string): string | null {
 }
 
 /**
- * Tracks the old-side line cursor and the current run of contiguously
- * removed lines while walking a hunk body, so `parseDiffOutput` can emit
- * precise `oldRanges` (only lines actually deleted/replaced) instead of the
- * raw hunk header span (which always includes 3 lines of unchanged context
- * on each side per the unified diff format).
+ * Tracks the old-side and new-side line cursors and the current runs of
+ * contiguously removed/added lines while walking a hunk body, so
+ * `parseDiffOutput` can emit precise `oldRanges` and `changedRanges` (only
+ * lines actually deleted/replaced or added) instead of the raw hunk header
+ * span (which always includes unchanged context lines on each side per the
+ * unified diff format whenever the diff was produced with non-zero context).
+ * `getGitDiff` always passes `--unified=0`, so in practice the header span
+ * and the tracked lines coincide today — but `parseDiffOutput` is a public
+ * export and this keeps it correct for any diff input, not just this one
+ * caller's.
  */
-class RemovedLineTracker {
+class DiffLineTracker {
   private oldLineCursor = 0;
-  private runStart: number | null = null;
-  private runEnd: number | null = null;
+  private newLineCursor = 0;
+  private removedRunStart: number | null = null;
+  private removedRunEnd: number | null = null;
+  private addedRunStart: number | null = null;
+  private addedRunEnd: number | null = null;
 
-  startHunk(oldStart: number): void {
+  startHunk(oldStart: number, newStart: number): void {
     this.oldLineCursor = oldStart;
+    this.newLineCursor = newStart;
   }
 
   /**
-   * Consumes one hunk body line, advancing the old-side cursor as needed.
-   * Lines beginning with `--- ` (source-file headers) are already filtered
-   * out by the caller before a line ever reaches here, so a leading `-`
-   * unambiguously marks a removed line — even one whose own content starts
-   * with dashes (e.g. removing a line of literal text `-- foo`).
+   * Consumes one hunk body line, advancing the old- and new-side cursors as
+   * needed. Lines beginning with `--- `/`+++ ` (source-file headers) are
+   * already filtered out by the caller before a line ever reaches here, so a
+   * leading `-`/`+` unambiguously marks a removed/added line — even one
+   * whose own content starts with dashes or pluses (e.g. removing a line of
+   * literal text `-- foo`).
    */
-  consume(line: string, file: string, oldRanges: Map<string, DiffRange[]>): void {
+  consume(
+    line: string,
+    file: string,
+    oldRanges: Map<string, DiffRange[]>,
+    changedRanges: Map<string, DiffRange[]>,
+  ): void {
     if (line.startsWith('-')) {
-      if (this.runStart === null) this.runStart = this.oldLineCursor;
-      this.runEnd = this.oldLineCursor;
+      this.flushAdded(file, changedRanges);
+      if (this.removedRunStart === null) this.removedRunStart = this.oldLineCursor;
+      this.removedRunEnd = this.oldLineCursor;
       this.oldLineCursor++;
       return;
     }
-    // Any non-removed line (context, addition, or a "\ No newline" marker)
-    // ends the current run of removed lines.
-    this.flush(file, oldRanges);
-    if (line.startsWith(' ')) this.oldLineCursor++;
+    if (line.startsWith('+')) {
+      this.flushRemoved(file, oldRanges);
+      if (this.addedRunStart === null) this.addedRunStart = this.newLineCursor;
+      this.addedRunEnd = this.newLineCursor;
+      this.newLineCursor++;
+      return;
+    }
+    // A context line or a "\ No newline" marker ends both runs.
+    this.flushRemoved(file, oldRanges);
+    this.flushAdded(file, changedRanges);
+    if (line.startsWith(' ')) {
+      this.oldLineCursor++;
+      this.newLineCursor++;
+    }
   }
 
   /** Closes out the current removed-line run, if any, into `oldRanges`. */
-  flush(file: string, oldRanges: Map<string, DiffRange[]>): void {
-    if (this.runStart !== null) {
-      oldRanges.get(file)!.push({ start: this.runStart, end: this.runEnd! });
-      this.runStart = null;
-      this.runEnd = null;
+  flushRemoved(file: string, oldRanges: Map<string, DiffRange[]>): void {
+    if (this.removedRunStart !== null) {
+      oldRanges.get(file)!.push({ start: this.removedRunStart, end: this.removedRunEnd! });
+      this.removedRunStart = null;
+      this.removedRunEnd = null;
     }
+  }
+
+  /** Closes out the current added-line run, if any, into `changedRanges`. */
+  flushAdded(file: string, changedRanges: Map<string, DiffRange[]>): void {
+    if (this.addedRunStart !== null) {
+      changedRanges.get(file)!.push({ start: this.addedRunStart, end: this.addedRunEnd! });
+      this.addedRunStart = null;
+      this.addedRunEnd = null;
+    }
+  }
+
+  /** Closes out both the removed- and added-line runs, if any. */
+  flush(
+    file: string,
+    oldRanges: Map<string, DiffRange[]>,
+    changedRanges: Map<string, DiffRange[]>,
+  ): void {
+    this.flushRemoved(file, oldRanges);
+    this.flushAdded(file, changedRanges);
   }
 }
 
@@ -93,7 +138,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
   const newFiles = new Set<string>();
   let currentFile: string | null = null;
   let prevIsDevNull = false;
-  const removedTracker = new RemovedLineTracker();
+  const tracker = new DiffLineTracker();
 
   for (const line of diffOutput.split('\n')) {
     if (isDevNullSourceLine(line)) {
@@ -106,7 +151,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
     }
     const newFile = extractNewFileName(line);
     if (newFile) {
-      if (currentFile) removedTracker.flush(currentFile, oldRanges);
+      if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges);
       currentFile = newFile;
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
       if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
@@ -118,19 +163,14 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
 
     const hunkMatch = line.match(HUNK_RE);
     if (hunkMatch) {
-      removedTracker.flush(currentFile, oldRanges);
-      removedTracker.startHunk(parseInt(hunkMatch[1]!, 10));
-      const newStart = parseInt(hunkMatch[3]!, 10);
-      const newCount = parseInt(hunkMatch[4] || '1', 10);
-      if (newCount > 0) {
-        changedRanges.get(currentFile)!.push({ start: newStart, end: newStart + newCount - 1 });
-      }
+      tracker.flush(currentFile, oldRanges, changedRanges);
+      tracker.startHunk(parseInt(hunkMatch[1]!, 10), parseInt(hunkMatch[3]!, 10));
       continue;
     }
 
-    removedTracker.consume(line, currentFile, oldRanges);
+    tracker.consume(line, currentFile, oldRanges, changedRanges);
   }
-  if (currentFile) removedTracker.flush(currentFile, oldRanges);
+  if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges);
 
   return { changedRanges, oldRanges, newFiles };
 }
