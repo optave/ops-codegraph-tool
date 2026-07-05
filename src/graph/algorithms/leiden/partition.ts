@@ -8,6 +8,8 @@
  */
 
 import type { GraphAdapter } from './adapter.js';
+import { accumulateInternalEdgeWeights, accumulateNodeAggregates } from './aggregate-helpers.js';
+import { fget, iget, u8get } from './typed-array-helpers.js';
 
 export interface CompactOptions {
   keepOldOrder?: boolean;
@@ -44,18 +46,6 @@ export interface Partition {
   graph?: GraphAdapter;
 }
 
-// Typed arrays always return a number for in-bounds access, but noUncheckedIndexedAccess
-// widens to `number | undefined`. These helpers keep the compound assignment patterns readable.
-function fget(a: Float64Array, i: number): number {
-  return a[i] as number;
-}
-function iget(a: Int32Array, i: number): number {
-  return a[i] as number;
-}
-function u8get(a: Uint8Array, i: number): number {
-  return a[i] as number;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Internal mutable state bucket shared by all extracted functions    */
 /* ------------------------------------------------------------------ */
@@ -78,76 +68,47 @@ interface PartitionState {
   outEdgeWeightToCommunity: Float64Array;
   inEdgeWeightFromCommunity: Float64Array;
   isCandidateCommunity: Uint8Array;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Aggregate helpers (shared by initializeAggregates & compact)      */
-/* ------------------------------------------------------------------ */
-
-/**
- * Accumulate per-community node-level totals (size, count, strength) into the
- * provided aggregate arrays. Both `initializeAggregates` and `compactCommunityIds`
- * share this logic — extracting it eliminates the duplication.
- */
-function accumulateNodeAggregates(
-  graph: GraphAdapter,
-  nodeCommunity: Int32Array,
-  n: number,
-  totalSize: Float64Array,
-  nodeCount: Int32Array,
-  internalEdgeWeight: Float64Array,
-  totalStrength: Float64Array,
-  totalOutStrength: Float64Array,
-  totalInStrength: Float64Array,
-): void {
-  for (let i = 0; i < n; i++) {
-    const c: number = iget(nodeCommunity, i);
-    totalSize[c] = fget(totalSize, c) + fget(graph.size, i);
-    nodeCount[c] = iget(nodeCount, c) + 1;
-    if (graph.directed) {
-      totalOutStrength[c] = fget(totalOutStrength, c) + fget(graph.strengthOut, i);
-      totalInStrength[c] = fget(totalInStrength, c) + fget(graph.strengthIn, i);
-    } else {
-      totalStrength[c] = fget(totalStrength, c) + fget(graph.strengthOut, i);
-    }
-    if (fget(graph.selfLoop, i) !== 0)
-      internalEdgeWeight[c] = fget(internalEdgeWeight, c) + fget(graph.selfLoop, i);
-  }
+  /** Growth multiplier applied by ensureCommCapacity when resizing typed arrays. */
+  capacityGrowthFactor: number;
 }
 
 /**
- * Accumulate intra-community edge weights. For directed graphs, counts all
- * intra-community non-self edges. For undirected, counts each edge once (j > i).
+ * Mirrored in DEFAULTS.community.capacityGrowthFactor (src/infrastructure/config.ts).
+ * Exported so other leiden modules (e.g. optimiser.ts) share this single fallback
+ * instead of keeping an independently-drifting copy.
  */
-function accumulateInternalEdgeWeights(
-  graph: GraphAdapter,
-  nodeCommunity: Int32Array,
-  n: number,
-  internalEdgeWeight: Float64Array,
-): void {
-  if (graph.directed) {
-    for (let i = 0; i < n; i++) {
-      const ci: number = iget(nodeCommunity, i);
-      const neighbors = graph.outEdges[i]!;
-      for (let k = 0; k < neighbors.length; k++) {
-        const { to: j, w } = neighbors[k]!;
-        if (i === j) continue; // self-loop already counted via graph.selfLoop[i]
-        if (ci === iget(nodeCommunity, j))
-          internalEdgeWeight[ci] = fget(internalEdgeWeight, ci) + w;
-      }
-    }
-  } else {
-    for (let i = 0; i < n; i++) {
-      const ci: number = iget(nodeCommunity, i);
-      const neighbors = graph.outEdges[i]!;
-      for (let k = 0; k < neighbors.length; k++) {
-        const { to: j, w } = neighbors[k]!;
-        if (j <= i) continue;
-        if (ci === iget(nodeCommunity, j))
-          internalEdgeWeight[ci] = fget(internalEdgeWeight, ci) + w;
-      }
-    }
-  }
+export const DEFAULT_CAPACITY_GROWTH_FACTOR = 1.5;
+
+/* ------------------------------------------------------------------ */
+/*  Community-ID sort helper (used by compact)                         */
+/* ------------------------------------------------------------------ */
+
+/** Comparator: descending by community size, tie-broken by node count then id. */
+function compareBySizeDesc(
+  communityTotalSize: Float64Array,
+  communityNodeCount: Int32Array,
+): (a: number, b: number) => number {
+  return (a, b) =>
+    fget(communityTotalSize, b) - fget(communityTotalSize, a) ||
+    iget(communityNodeCount, b) - iget(communityNodeCount, a) ||
+    a - b;
+}
+
+/** Comparator: respects a user-provided label map, falling back to size-desc for unmapped ids. */
+function compareByPreserveMap(
+  preserveMap: Map<number, number>,
+  communityTotalSize: Float64Array,
+  communityNodeCount: Int32Array,
+): (a: number, b: number) => number {
+  const fallback = compareBySizeDesc(communityTotalSize, communityNodeCount);
+  return (a, b) => {
+    const pa = preserveMap.get(a);
+    const pb = preserveMap.get(b);
+    if (pa != null && pb != null && pa !== pb) return pa - pb;
+    if (pa != null && pb == null) return -1;
+    if (pb != null && pa == null) return 1;
+    return fallback(a, b);
+  };
 }
 
 /**
@@ -164,26 +125,9 @@ function buildSortedCommunityIds(
   if (opts.keepOldOrder) {
     ids.sort((a, b) => a - b);
   } else if (opts.preserveMap instanceof Map) {
-    const preserveMap = opts.preserveMap;
-    ids.sort((a, b) => {
-      const pa = preserveMap.get(a);
-      const pb = preserveMap.get(b);
-      if (pa != null && pb != null && pa !== pb) return pa - pb;
-      if (pa != null && pb == null) return -1;
-      if (pb != null && pa == null) return 1;
-      return (
-        fget(communityTotalSize, b) - fget(communityTotalSize, a) ||
-        iget(communityNodeCount, b) - iget(communityNodeCount, a) ||
-        a - b
-      );
-    });
+    ids.sort(compareByPreserveMap(opts.preserveMap, communityTotalSize, communityNodeCount));
   } else {
-    ids.sort(
-      (a, b) =>
-        fget(communityTotalSize, b) - fget(communityTotalSize, a) ||
-        iget(communityNodeCount, b) - iget(communityNodeCount, a) ||
-        a - b,
-    );
+    ids.sort(compareBySizeDesc(communityTotalSize, communityNodeCount));
   }
 }
 
@@ -193,7 +137,10 @@ function buildSortedCommunityIds(
 
 function ensureCommCapacity(s: PartitionState, newCount: number): void {
   if (newCount <= s.communityTotalSize.length) return;
-  const growTo: number = Math.max(newCount, Math.ceil(s.communityTotalSize.length * 1.5));
+  const growTo: number = Math.max(
+    newCount,
+    Math.ceil(s.communityTotalSize.length * s.capacityGrowthFactor),
+  );
   s.communityTotalSize = growFloat(s.communityTotalSize, growTo);
   s.communityNodeCount = growInt(s.communityNodeCount, growTo);
   s.communityInternalEdgeWeight = growFloat(s.communityInternalEdgeWeight, growTo);
@@ -218,11 +165,11 @@ function initAggregates(s: PartitionState): void {
     s.nodeCommunity,
     s.n,
     s.communityTotalSize,
-    s.communityNodeCount,
     s.communityInternalEdgeWeight,
     s.communityTotalStrength,
     s.communityTotalOutStrength,
     s.communityTotalInStrength,
+    s.communityNodeCount,
   );
   accumulateInternalEdgeWeights(s.graph, s.nodeCommunity, s.n, s.communityInternalEdgeWeight);
 }
@@ -349,30 +296,55 @@ function computeDeltaModularityDirected(
   return deltaInternal - deltaExpected;
 }
 
+/** computeCpmEdgeWeights — directed branch: in+out weight, plus self-loop correction. */
+function computeCpmEdgeWeightsDirected(
+  s: PartitionState,
+  v: number,
+  oldC: number,
+  newC: number,
+): { wOld: number; wNew: number; selfCorrection: number } {
+  const wOld: number =
+    (fget(s.outEdgeWeightToCommunity, oldC) || 0) + (fget(s.inEdgeWeightFromCommunity, oldC) || 0);
+  const wNew: number =
+    newC < s.outEdgeWeightToCommunity.length
+      ? (fget(s.outEdgeWeightToCommunity, newC) || 0) +
+        (fget(s.inEdgeWeightFromCommunity, newC) || 0)
+      : 0;
+  // Self-loop correction (see cpm.ts diffCPM)
+  const selfCorrection: number = 2 * (fget(s.graph.selfLoop, v) || 0);
+  return { wOld, wNew, selfCorrection };
+}
+
+/** computeCpmEdgeWeights — undirected branch: single neighbor-weight-to-community value. */
+function computeCpmEdgeWeightsUndirected(
+  s: PartitionState,
+  oldC: number,
+  newC: number,
+): { wOld: number; wNew: number; selfCorrection: number } {
+  const wOld: number = fget(s.neighborEdgeWeightToCommunity, oldC) || 0;
+  const wNew: number =
+    newC < s.neighborEdgeWeightToCommunity.length
+      ? fget(s.neighborEdgeWeightToCommunity, newC) || 0
+      : 0;
+  return { wOld, wNew, selfCorrection: 0 };
+}
+
+/** Directed/undirected edge-weight-to-community split used by computeDeltaCPM. */
+function computeCpmEdgeWeights(
+  s: PartitionState,
+  v: number,
+  oldC: number,
+  newC: number,
+): { wOld: number; wNew: number; selfCorrection: number } {
+  return s.graph.directed
+    ? computeCpmEdgeWeightsDirected(s, v, oldC, newC)
+    : computeCpmEdgeWeightsUndirected(s, oldC, newC);
+}
+
 function computeDeltaCPM(s: PartitionState, v: number, newC: number, gamma: number = 1.0): number {
   const oldC: number = iget(s.nodeCommunity, v);
   if (newC === oldC) return 0;
-  let w_old: number;
-  let w_new: number;
-  let selfCorrection: number = 0;
-  if (s.graph.directed) {
-    w_old =
-      (fget(s.outEdgeWeightToCommunity, oldC) || 0) +
-      (fget(s.inEdgeWeightFromCommunity, oldC) || 0);
-    w_new =
-      newC < s.outEdgeWeightToCommunity.length
-        ? (fget(s.outEdgeWeightToCommunity, newC) || 0) +
-          (fget(s.inEdgeWeightFromCommunity, newC) || 0)
-        : 0;
-    // Self-loop correction (see cpm.ts diffCPM)
-    selfCorrection = 2 * (fget(s.graph.selfLoop, v) || 0);
-  } else {
-    w_old = fget(s.neighborEdgeWeightToCommunity, oldC) || 0;
-    w_new =
-      newC < s.neighborEdgeWeightToCommunity.length
-        ? fget(s.neighborEdgeWeightToCommunity, newC) || 0
-        : 0;
-  }
+  const { wOld: w_old, wNew: w_new, selfCorrection } = computeCpmEdgeWeights(s, v, oldC, newC);
   const nodeSz: number = fget(s.graph.size, v) || 1;
   const sizeOld: number = fget(s.communityTotalSize, oldC) || 0;
   const sizeNew: number = newC < s.communityTotalSize.length ? fget(s.communityTotalSize, newC) : 0;
@@ -382,6 +354,75 @@ function computeDeltaCPM(s: PartitionState, v: number, newC: number, gamma: numb
 /* ------------------------------------------------------------------ */
 /*  Extracted: node move                                               */
 /* ------------------------------------------------------------------ */
+
+/** Directed/undirected community strength-total delta applied by moveNode. */
+function applyMoveStrengthTotals(
+  s: PartitionState,
+  oldC: number,
+  newC: number,
+  strengthOutV: number,
+  strengthInV: number,
+): void {
+  if (s.graph.directed) {
+    s.communityTotalOutStrength[oldC] = fget(s.communityTotalOutStrength, oldC) - strengthOutV;
+    s.communityTotalOutStrength[newC] = fget(s.communityTotalOutStrength, newC) + strengthOutV;
+    s.communityTotalInStrength[oldC] = fget(s.communityTotalInStrength, oldC) - strengthInV;
+    s.communityTotalInStrength[newC] = fget(s.communityTotalInStrength, newC) + strengthInV;
+  } else {
+    s.communityTotalStrength[oldC] = fget(s.communityTotalStrength, oldC) - strengthOutV;
+    s.communityTotalStrength[newC] = fget(s.communityTotalStrength, newC) + strengthOutV;
+  }
+}
+
+/** applyMoveInternalEdgeWeightDelta — directed branch. */
+function applyMoveInternalEdgeWeightDeltaDirected(
+  s: PartitionState,
+  oldC: number,
+  newC: number,
+  selfLoopWeight: number,
+): void {
+  const outToOld: number = fget(s.outEdgeWeightToCommunity, oldC) || 0;
+  const inFromOld: number = fget(s.inEdgeWeightFromCommunity, oldC) || 0;
+  const outToNew: number =
+    newC < s.outEdgeWeightToCommunity.length ? fget(s.outEdgeWeightToCommunity, newC) || 0 : 0;
+  const inFromNew: number =
+    newC < s.inEdgeWeightFromCommunity.length ? fget(s.inEdgeWeightFromCommunity, newC) || 0 : 0;
+  // outToOld/inFromOld already include the self-loop weight (self-loops are
+  // in outEdges/inEdges), so subtract it once to avoid triple-counting.
+  s.communityInternalEdgeWeight[oldC] =
+    fget(s.communityInternalEdgeWeight, oldC) - (outToOld + inFromOld - selfLoopWeight);
+  s.communityInternalEdgeWeight[newC] =
+    fget(s.communityInternalEdgeWeight, newC) + (outToNew + inFromNew + selfLoopWeight);
+}
+
+/** applyMoveInternalEdgeWeightDelta — undirected branch. */
+function applyMoveInternalEdgeWeightDeltaUndirected(
+  s: PartitionState,
+  oldC: number,
+  newC: number,
+  selfLoopWeight: number,
+): void {
+  const weightToOld: number = fget(s.neighborEdgeWeightToCommunity, oldC) || 0;
+  const weightToNew: number = fget(s.neighborEdgeWeightToCommunity, newC) || 0;
+  s.communityInternalEdgeWeight[oldC] =
+    fget(s.communityInternalEdgeWeight, oldC) - (2 * weightToOld + selfLoopWeight);
+  s.communityInternalEdgeWeight[newC] =
+    fget(s.communityInternalEdgeWeight, newC) + (2 * weightToNew + selfLoopWeight);
+}
+
+/** Directed/undirected community internal-edge-weight delta applied by moveNode. */
+function applyMoveInternalEdgeWeightDelta(
+  s: PartitionState,
+  oldC: number,
+  newC: number,
+  selfLoopWeight: number,
+): void {
+  if (s.graph.directed) {
+    applyMoveInternalEdgeWeightDeltaDirected(s, oldC, newC, selfLoopWeight);
+  } else {
+    applyMoveInternalEdgeWeightDeltaUndirected(s, oldC, newC, selfLoopWeight);
+  }
+}
 
 function moveNode(s: PartitionState, v: number, newC: number): boolean {
   const oldC: number = iget(s.nodeCommunity, v);
@@ -399,37 +440,9 @@ function moveNode(s: PartitionState, v: number, newC: number): boolean {
   s.communityNodeCount[newC] = iget(s.communityNodeCount, newC) + 1;
   s.communityTotalSize[oldC] = fget(s.communityTotalSize, oldC) - nodeSz;
   s.communityTotalSize[newC] = fget(s.communityTotalSize, newC) + nodeSz;
-  if (s.graph.directed) {
-    s.communityTotalOutStrength[oldC] = fget(s.communityTotalOutStrength, oldC) - strengthOutV;
-    s.communityTotalOutStrength[newC] = fget(s.communityTotalOutStrength, newC) + strengthOutV;
-    s.communityTotalInStrength[oldC] = fget(s.communityTotalInStrength, oldC) - strengthInV;
-    s.communityTotalInStrength[newC] = fget(s.communityTotalInStrength, newC) + strengthInV;
-  } else {
-    s.communityTotalStrength[oldC] = fget(s.communityTotalStrength, oldC) - strengthOutV;
-    s.communityTotalStrength[newC] = fget(s.communityTotalStrength, newC) + strengthOutV;
-  }
 
-  if (s.graph.directed) {
-    const outToOld: number = fget(s.outEdgeWeightToCommunity, oldC) || 0;
-    const inFromOld: number = fget(s.inEdgeWeightFromCommunity, oldC) || 0;
-    const outToNew: number =
-      newC < s.outEdgeWeightToCommunity.length ? fget(s.outEdgeWeightToCommunity, newC) || 0 : 0;
-    const inFromNew: number =
-      newC < s.inEdgeWeightFromCommunity.length ? fget(s.inEdgeWeightFromCommunity, newC) || 0 : 0;
-    // outToOld/inFromOld already include the self-loop weight (self-loops are
-    // in outEdges/inEdges), so subtract it once to avoid triple-counting.
-    s.communityInternalEdgeWeight[oldC] =
-      fget(s.communityInternalEdgeWeight, oldC) - (outToOld + inFromOld - selfLoopWeight);
-    s.communityInternalEdgeWeight[newC] =
-      fget(s.communityInternalEdgeWeight, newC) + (outToNew + inFromNew + selfLoopWeight);
-  } else {
-    const weightToOld: number = fget(s.neighborEdgeWeightToCommunity, oldC) || 0;
-    const weightToNew: number = fget(s.neighborEdgeWeightToCommunity, newC) || 0;
-    s.communityInternalEdgeWeight[oldC] =
-      fget(s.communityInternalEdgeWeight, oldC) - (2 * weightToOld + selfLoopWeight);
-    s.communityInternalEdgeWeight[newC] =
-      fget(s.communityInternalEdgeWeight, newC) + (2 * weightToNew + selfLoopWeight);
-  }
+  applyMoveStrengthTotals(s, oldC, newC, strengthOutV, strengthInV);
+  applyMoveInternalEdgeWeightDelta(s, oldC, newC, selfLoopWeight);
 
   s.nodeCommunity[v] = newC;
   return true;
@@ -463,11 +476,11 @@ function compactIds(s: PartitionState, opts: CompactOptions = {}): void {
     s.nodeCommunity,
     s.n,
     newTotalSize,
-    newNodeCount,
     newInternalEdgeWeight,
     newTotalStrength,
     newTotalOutStrength,
     newTotalInStrength,
+    newNodeCount,
   );
   accumulateInternalEdgeWeights(s.graph, s.nodeCommunity, s.n, newInternalEdgeWeight);
 
@@ -484,7 +497,11 @@ function compactIds(s: PartitionState, opts: CompactOptions = {}): void {
 /*  Factory: thin wrapper that wires state to extracted functions      */
 /* ------------------------------------------------------------------ */
 
-export function makePartition(graph: GraphAdapter): Partition {
+export interface MakePartitionOptions {
+  capacityGrowthFactor?: number;
+}
+
+export function makePartition(graph: GraphAdapter, options: MakePartitionOptions = {}): Partition {
   const n: number = graph.n;
   const nodeCommunity = new Int32Array(n);
   for (let i = 0; i < n; i++) nodeCommunity[i] = i;
@@ -506,6 +523,10 @@ export function makePartition(graph: GraphAdapter): Partition {
     outEdgeWeightToCommunity: new Float64Array(n),
     inEdgeWeightFromCommunity: new Float64Array(n),
     isCandidateCommunity: new Uint8Array(n),
+    capacityGrowthFactor:
+      typeof options.capacityGrowthFactor === 'number'
+        ? options.capacityGrowthFactor
+        : DEFAULT_CAPACITY_GROWTH_FACTOR,
   };
 
   return {

@@ -335,25 +335,38 @@ function handleCSharpVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!typeNode) return;
 
   if (typeNode.type === 'implicit_type') {
-    // var x = new Foo() — infer type from object_creation_expression initializer
-    if (!ctx.typeMap) return;
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child?.type !== 'variable_declarator') continue;
-      const nameNode = child.childForFieldName('name') || child.child(0);
-      if (nameNode?.type !== 'identifier') continue;
-      const objCreation = findChild(child, 'object_creation_expression');
-      if (!objCreation) continue;
-      const ctorTypeNode = objCreation.childForFieldName('type');
-      if (!ctorTypeNode) continue;
-      const ctorType = extractCSharpTypeName(ctorTypeNode);
-      if (ctorType) setTypeMapEntry(ctx.typeMap, nameNode.text, ctorType, 1.0);
-    }
+    handleCSharpImplicitVarDecl(node, ctx);
     return;
   }
 
   const typeName = extractCSharpTypeName(typeNode);
   if (!typeName) return;
+  handleCSharpExplicitVarDecl(node, ctx, typeName);
+}
+
+// var x = new Foo() — infer type from object_creation_expression initializer
+function handleCSharpImplicitVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  if (!ctx.typeMap) return;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child?.type !== 'variable_declarator') continue;
+    const nameNode = child.childForFieldName('name') || child.child(0);
+    if (nameNode?.type !== 'identifier') continue;
+    const objCreation = findChild(child, 'object_creation_expression');
+    if (!objCreation) continue;
+    const ctorTypeNode = objCreation.childForFieldName('type');
+    if (!ctorTypeNode) continue;
+    const ctorType = extractCSharpTypeName(ctorTypeNode);
+    if (ctorType) setTypeMapEntry(ctx.typeMap, nameNode.text, ctorType, 1.0);
+  }
+}
+
+// Explicitly-typed declarator list: `Foo x = ..., y = ...;`
+function handleCSharpExplicitVarDecl(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  typeName: string,
+): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child?.type !== 'variable_declarator') continue;

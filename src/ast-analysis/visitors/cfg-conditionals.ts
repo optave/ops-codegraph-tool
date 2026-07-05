@@ -6,7 +6,32 @@ import type {
   LoopCtx,
   ProcessStatementsFn,
 } from './cfg-shared.js';
-import { getBodyStatements, isCaseNode, isIfNode, nn } from './cfg-shared.js';
+import { getBodyStatements, isCaseNode, isIfNode, requireNode } from './cfg-shared.js';
+
+/**
+ * Create a branch block off `condBlock`, wire the `branchKind` edge into it,
+ * run `runBranchBody` to populate the branch and get its exit block, then —
+ * if the branch falls through (exit block is non-null) — wire a
+ * `fallthrough` edge from that exit into `joinBlock`.
+ *
+ * Shared by `processIf`, `processAlternative`, and `processElifSiblings` for
+ * the true-branch / else-branch / else-if-branch shapes, which all follow
+ * the same make-block -> add-edge -> run-body -> fallthrough-edge sequence
+ * (previously hand-inlined 6+ times across those three functions).
+ */
+function processBranch(
+  condBlock: CfgBlockInternal,
+  joinBlock: CfgBlockInternal,
+  S: FuncState,
+  branchKind: 'branch_true' | 'branch_false',
+  label: string,
+  runBranchBody: (branchBlock: CfgBlockInternal) => CfgBlockInternal | null,
+): void {
+  const branchBlock = S.makeBlock(branchKind, null, null, label);
+  S.addEdge(condBlock, branchBlock, branchKind);
+  const branchEnd = runBranchBody(branchBlock);
+  if (branchEnd) S.addEdge(branchEnd, joinBlock, 'fallthrough');
+}
 
 export function processIf(
   ifStmt: TreeSitterNode,
@@ -29,13 +54,10 @@ export function processIf(
 
   const consequentField = cfgRules.ifConsequentField || 'consequence';
   const consequent = ifStmt.childForFieldName(consequentField);
-  const trueBlock = S.makeBlock('branch_true', null, null, 'then');
-  S.addEdge(condBlock, trueBlock, 'branch_true');
-  const trueStmts = getBodyStatements(consequent, cfgRules);
-  const trueEnd = processStatements(trueStmts, trueBlock, S, cfgRules);
-  if (trueEnd) {
-    S.addEdge(trueEnd, joinBlock, 'fallthrough');
-  }
+  processBranch(condBlock, joinBlock, S, 'branch_true', 'then', (trueBlock) => {
+    const trueStmts = getBodyStatements(consequent, cfgRules);
+    return processStatements(trueStmts, trueBlock, S, cfgRules);
+  });
 
   if (cfgRules.elifNode) {
     processElifSiblings(ifStmt, condBlock, joinBlock, S, cfgRules, processStatements);
@@ -62,33 +84,29 @@ function processAlternative(
 
   if (cfgRules.elseViaAlternative && alternative.type !== cfgRules.elseClause) {
     if (isIfNode(alternative.type, cfgRules)) {
-      const falseBlock = S.makeBlock('branch_false', null, null, 'else-if');
-      S.addEdge(condBlock, falseBlock, 'branch_false');
-      const elseIfEnd = processIf(alternative, falseBlock, S, cfgRules, processStatements);
-      if (elseIfEnd) S.addEdge(elseIfEnd, joinBlock, 'fallthrough');
+      processBranch(condBlock, joinBlock, S, 'branch_false', 'else-if', (falseBlock) =>
+        processIf(alternative, falseBlock, S, cfgRules, processStatements),
+      );
     } else {
-      const falseBlock = S.makeBlock('branch_false', null, null, 'else');
-      S.addEdge(condBlock, falseBlock, 'branch_false');
-      const falseStmts = getBodyStatements(alternative, cfgRules);
-      const falseEnd = processStatements(falseStmts, falseBlock, S, cfgRules);
-      if (falseEnd) S.addEdge(falseEnd, joinBlock, 'fallthrough');
+      processBranch(condBlock, joinBlock, S, 'branch_false', 'else', (falseBlock) => {
+        const falseStmts = getBodyStatements(alternative, cfgRules);
+        return processStatements(falseStmts, falseBlock, S, cfgRules);
+      });
     }
   } else if (alternative.type === cfgRules.elseClause) {
     const elseChildren: TreeSitterNode[] = [];
     for (let i = 0; i < alternative.namedChildCount; i++) {
-      elseChildren.push(nn(alternative.namedChild(i)));
+      elseChildren.push(requireNode(alternative.namedChild(i)));
     }
     const firstChild = elseChildren[0];
     if (elseChildren.length === 1 && firstChild && isIfNode(firstChild.type, cfgRules)) {
-      const falseBlock = S.makeBlock('branch_false', null, null, 'else-if');
-      S.addEdge(condBlock, falseBlock, 'branch_false');
-      const elseIfEnd = processIf(firstChild, falseBlock, S, cfgRules, processStatements);
-      if (elseIfEnd) S.addEdge(elseIfEnd, joinBlock, 'fallthrough');
+      processBranch(condBlock, joinBlock, S, 'branch_false', 'else-if', (falseBlock) =>
+        processIf(firstChild, falseBlock, S, cfgRules, processStatements),
+      );
     } else {
-      const falseBlock = S.makeBlock('branch_false', null, null, 'else');
-      S.addEdge(condBlock, falseBlock, 'branch_false');
-      const falseEnd = processStatements(elseChildren, falseBlock, S, cfgRules);
-      if (falseEnd) S.addEdge(falseEnd, joinBlock, 'fallthrough');
+      processBranch(condBlock, joinBlock, S, 'branch_false', 'else', (falseBlock) =>
+        processStatements(elseChildren, falseBlock, S, cfgRules),
+      );
     }
   }
 }
@@ -105,7 +123,7 @@ function processElifSiblings(
   let foundElse = false;
 
   for (let i = 0; i < ifStmt.namedChildCount; i++) {
-    const child = nn(ifStmt.namedChild(i));
+    const child = requireNode(ifStmt.namedChild(i));
 
     if (child.type === cfgRules.elifNode) {
       const elifCondBlock = S.makeBlock(
@@ -118,17 +136,13 @@ function processElifSiblings(
 
       const elifConsequentField = cfgRules.ifConsequentField || 'consequence';
       const elifConsequent = child.childForFieldName(elifConsequentField);
-      const elifTrueBlock = S.makeBlock('branch_true', null, null, 'then');
-      S.addEdge(elifCondBlock, elifTrueBlock, 'branch_true');
-      const elifTrueStmts = getBodyStatements(elifConsequent, cfgRules);
-      const elifTrueEnd = processStatements(elifTrueStmts, elifTrueBlock, S, cfgRules);
-      if (elifTrueEnd) S.addEdge(elifTrueEnd, joinBlock, 'fallthrough');
+      processBranch(elifCondBlock, joinBlock, S, 'branch_true', 'then', (elifTrueBlock) => {
+        const elifTrueStmts = getBodyStatements(elifConsequent, cfgRules);
+        return processStatements(elifTrueStmts, elifTrueBlock, S, cfgRules);
+      });
 
       lastCondBlock = elifCondBlock;
     } else if (child.type === cfgRules.elseClause) {
-      const elseBlock = S.makeBlock('branch_false', null, null, 'else');
-      S.addEdge(lastCondBlock, elseBlock, 'branch_false');
-
       const elseBody = child.childForFieldName('body');
       let elseStmts: TreeSitterNode[];
       if (elseBody) {
@@ -136,11 +150,12 @@ function processElifSiblings(
       } else {
         elseStmts = [];
         for (let j = 0; j < child.namedChildCount; j++) {
-          elseStmts.push(nn(child.namedChild(j)));
+          elseStmts.push(requireNode(child.namedChild(j)));
         }
       }
-      const elseEnd = processStatements(elseStmts, elseBlock, S, cfgRules);
-      if (elseEnd) S.addEdge(elseEnd, joinBlock, 'fallthrough');
+      processBranch(lastCondBlock, joinBlock, S, 'branch_false', 'else', (elseBlock) =>
+        processStatements(elseStmts, elseBlock, S, cfgRules),
+      );
 
       foundElse = true;
     }
@@ -177,7 +192,7 @@ export function processSwitch(
 
   let hasDefault = false;
   for (let i = 0; i < container.namedChildCount; i++) {
-    const caseClause = nn(container.namedChild(i));
+    const caseClause = requireNode(container.namedChild(i));
 
     const isDefault = caseClause.type === cfgRules.defaultNode;
     const isCase = isDefault || isCaseNode(caseClause.type, cfgRules);
@@ -212,11 +227,11 @@ function extractCaseBody(caseClause: TreeSitterNode, cfgRules: AnyRules): TreeSi
   const valueNode = caseClause.childForFieldName('value');
   const patternNode = caseClause.childForFieldName('pattern');
   for (let j = 0; j < caseClause.namedChildCount; j++) {
-    const child = nn(caseClause.namedChild(j));
+    const child = requireNode(caseClause.namedChild(j));
     if (child !== valueNode && child !== patternNode && child.type !== 'switch_label') {
       if (child.type === 'statement_list') {
         for (let k = 0; k < child.namedChildCount; k++) {
-          stmts.push(nn(child.namedChild(k)));
+          stmts.push(requireNode(child.namedChild(k)));
         }
       } else {
         stmts.push(child);

@@ -26,6 +26,7 @@ import {
   findCaller,
   resolveCallTargets,
   resolveReceiverEdge,
+  resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
 import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
 
@@ -557,32 +558,6 @@ function buildIncrementalTypeMap(symbols: ExtractorOutput): Map<string, unknown>
 }
 
 /**
- * Strategy 1 — same-class `this.method()` fallback.
- * Derives the enclosing class name from callerName by extracting the segment
- * immediately before the final dot (e.g. `MyClass.method` → `MyClass`,
- * `Namespace.MyClass.method` → `MyClass`), then retries with the qualified
- * method name `MyClass.callName`.
- *
- * Uses lastIndexOf to match the full-build counterpart in resolveFallbackTargets
- * (build-edges.ts) — indexOf would extract `Namespace` instead of `MyClass` for
- * deeply-qualified caller names like `Namespace.MyClass.method`.
- */
-function resolveThisSameClassTarget(
-  callName: string,
-  callerName: string,
-  relPath: string,
-  lookup: CallNodeLookup,
-): Array<{ id: number; file: string; kind?: string }> {
-  const lastDot = callerName.lastIndexOf('.');
-  if (lastDot <= 0) return [];
-  const prevDot = callerName.lastIndexOf('.', lastDot - 1);
-  const className = callerName.slice(prevDot + 1, lastDot);
-  return lookup
-    .byNameAndFile(`${className}.${callName}`, relPath)
-    .filter((n) => n.kind === 'method');
-}
-
-/**
  * Strategy 2 — Object.defineProperty accessor fallback.
  * When a function is registered as a getter/setter via
  * `Object.defineProperty(obj, "bar", { get: getter })`, calls to `this.X()`
@@ -635,7 +610,7 @@ function applyThisReceiverFallbacks(
 
   // Strategy 1: same-class `this.method()` fallback.
   if (call.receiver === 'this' && callerName != null) {
-    const s1 = resolveThisSameClassTarget(call.name, callerName, relPath, lookup);
+    const s1 = resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
     if (s1.length > 0) return s1;
   }
 

@@ -16,6 +16,7 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
+import { median, round1, timeMedian } from './lib/bench-timing.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -51,12 +52,6 @@ if (!isWorker()) {
 	// jitter and produces CI-amplified false regressions.
 	const RUNS = 5;
 	const WARMUP_RUNS = 2;
-	function median(arr) {
-		const sorted = [...arr].sort((a, b) => a - b);
-		const mid = Math.floor(sorted.length / 2);
-		return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-	}
-	function round1(n) { return Math.round(n * 10) / 10; }
 
 	function collectImportPairs() {
 		const srcRoot = path.join(rootParent, 'src');
@@ -190,23 +185,15 @@ const WARMUP_RUNS = 2;
 // the same corpus.
 const BUILD_OPTS = { engine, exclude: [...resolveBenchmarkExcludes()] };
 
-function median(arr) {
-	const sorted = [...arr].sort((a, b) => a - b);
-	const mid = Math.floor(sorted.length / 2);
-	return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
 console.error(`Benchmarking ${engine} engine...`);
 
 // Full build (delete DB first)
-const fullTimings = [];
-for (let i = 0; i < RUNS; i++) {
-	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-	const start = performance.now();
-	await buildGraph(root, { ...BUILD_OPTS, incremental: false });
-	fullTimings.push(performance.now() - start);
-}
-const fullBuildMs = Math.round(median(fullTimings));
+const fullBuildMs = Math.round(
+	await timeMedian(async () => {
+		if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+		await buildGraph(root, { ...BUILD_OPTS, incremental: false });
+	}, RUNS),
+);
 
 // No-op rebuild (nothing changed)
 let noopRebuildMs = null;
@@ -214,13 +201,9 @@ try {
 	for (let i = 0; i < WARMUP_RUNS; i++) {
 		await buildGraph(root, { ...BUILD_OPTS, incremental: true });
 	}
-	const noopTimings = [];
-	for (let i = 0; i < RUNS; i++) {
-		const start = performance.now();
-		await buildGraph(root, { ...BUILD_OPTS, incremental: true });
-		noopTimings.push(performance.now() - start);
-	}
-	noopRebuildMs = Math.round(median(noopTimings));
+	noopRebuildMs = Math.round(
+		await timeMedian(() => buildGraph(root, { ...BUILD_OPTS, incremental: true }), RUNS),
+	);
 } catch (err) {
 	console.error(`  [${engine}] No-op rebuild failed: ${(err as Error).message}`);
 }
