@@ -333,6 +333,30 @@ describe('excludeTests hoisting', () => {
     expect(config.query.excludeTests).toBe(false);
     expect(config.excludeTests).toBeUndefined();
   });
+
+  it('does not leak excludeTests across repos via the shared DEFAULTS singleton (issue #1725)', () => {
+    // Regression test: applyExcludeTestsShorthand used to write
+    // `merged.query.excludeTests` in place. Since mergeConfig only deep-copies
+    // a nested key when overrides actually set it, `merged.query` for a repo
+    // whose config uses ONLY the top-level `excludeTests` shorthand is still
+    // the literal DEFAULTS.query object — so the in-place write permanently
+    // mutated the module-level DEFAULTS singleton. In a long-running process
+    // (e.g. `codegraph mcp --multi-repo`) a later loadConfig() call for a
+    // totally unrelated repo would then silently inherit excludeTests: true.
+    const dirA = fs.mkdtempSync(path.join(tmpDir, 'exclude-leak-a-'));
+    fs.writeFileSync(path.join(dirA, '.codegraphrc.json'), JSON.stringify({ excludeTests: true }));
+    const configA = loadConfig(dirA);
+    expect(configA.query.excludeTests).toBe(true);
+
+    // A second, unrelated repo with no excludeTests config of its own must
+    // still see the true default (false), not repo A's leaked value.
+    const dirB = fs.mkdtempSync(path.join(tmpDir, 'exclude-leak-b-'));
+    const configB = loadConfig(dirB);
+    expect(configB.query.excludeTests).toBe(false);
+
+    // The shared DEFAULTS singleton itself must never be mutated.
+    expect(DEFAULTS.query.excludeTests).toBe(false);
+  });
 });
 
 describe('applyEnvOverrides', () => {
@@ -442,6 +466,51 @@ describe('applyEnvOverrides', () => {
       build: { engine: 'auto', fastSkipDiag: false },
     });
     expect(config.build.fastSkipDiag).toBe(false);
+  });
+});
+
+describe('DEFAULTS singleton immutability across loadConfig calls (issue #1725)', () => {
+  // The excludeTests-hoisting leak (above) was one symptom of a broader bug:
+  // when no config layer sets a given top-level key (e.g. `llm` or `build`),
+  // mergeConfig's shallow copy leaves `merged.<key>` pointing straight at
+  // DEFAULTS.<key>. applyEnvOverrides/resolveSecrets then write onto that
+  // nested object in place, permanently poisoning DEFAULTS for the rest of
+  // the process — the same aliasing pattern as applyExcludeTestsShorthand,
+  // just reached via env vars instead of a config-file shorthand. Covered
+  // here since it's the same root cause (loadConfig used to start from a
+  // live reference to DEFAULTS) rather than a separate bug.
+  afterEach(() => {
+    delete process.env.CODEGRAPH_ENGINE;
+    delete process.env.CODEGRAPH_LLM_API_KEY;
+  });
+
+  it('does not leak an env-driven build.engine override into DEFAULTS.build', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'defaults-freeze-engine-'));
+    process.env.CODEGRAPH_ENGINE = 'native';
+    let config: ReturnType<typeof loadConfig> | undefined;
+    expect(() => {
+      config = loadConfig(dir);
+    }).not.toThrow();
+    expect(config?.build.engine).toBe('native');
+    expect(DEFAULTS.build.engine).toBe('auto');
+  });
+
+  it('does not leak an env-driven llm.apiKey override into DEFAULTS.llm', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'defaults-freeze-apikey-'));
+    process.env.CODEGRAPH_LLM_API_KEY = 'sk-should-not-leak';
+    let config: ReturnType<typeof loadConfig> | undefined;
+    expect(() => {
+      config = loadConfig(dir);
+    }).not.toThrow();
+    expect(config?.llm.apiKey).toBe('sk-should-not-leak');
+    expect(DEFAULTS.llm.apiKey).toBeNull();
+  });
+
+  it('DEFAULTS is deeply frozen', () => {
+    expect(Object.isFrozen(DEFAULTS)).toBe(true);
+    expect(Object.isFrozen(DEFAULTS.query)).toBe(true);
+    expect(Object.isFrozen(DEFAULTS.llm)).toBe(true);
+    expect(Object.isFrozen(DEFAULTS.build)).toBe(true);
   });
 });
 

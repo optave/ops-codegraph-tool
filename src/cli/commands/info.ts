@@ -1,3 +1,5 @@
+import { debug } from '../../infrastructure/logger.js';
+import { toErrorMessage } from '../../shared/errors.js';
 import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
@@ -72,8 +74,9 @@ export const command: CommandDefinition = {
           console.log();
         }
       }
-    } catch {
+    } catch (e) {
       /* diagnostics must never crash */
+      debug(`DB build-metadata diagnostics failed: ${toErrorMessage(e)}`);
     }
   },
 };

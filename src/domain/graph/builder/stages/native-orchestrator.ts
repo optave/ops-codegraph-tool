@@ -406,8 +406,11 @@ async function runDataflowVertexPass(
       }
       try {
         result = native.extractDataflowAnalysis(source, absPaths[i]!);
-      } catch {
+      } catch (e) {
         // Language-specific parse failure — fall through to WASM.
+        debug(
+          `native dataflow extraction failed for ${relPath}, falling back to WASM: ${toErrorMessage(e)}`,
+        );
       }
     }
     if (result) {
@@ -624,13 +627,13 @@ async function runPostNativeAnalysis(
   if (ctx.nativeDb) {
     try {
       ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
+    } catch (e) {
+      debug(`native DB post-analysis WAL checkpoint failed: ${toErrorMessage(e)}`);
     }
     try {
       ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
+    } catch (e) {
+      debug(`native DB close failed: ${toErrorMessage(e)}`);
     }
     ctx.nativeDb = undefined;
     if (ctx.engineOpts) {
@@ -1216,8 +1219,8 @@ function cleanupThisDispatchWasmTrees(wasmResults: Map<string, ExtractorOutput>)
     if (tree && typeof tree.delete === 'function') {
       try {
         tree.delete();
-      } catch {
-        /* ignore cleanup errors */
+      } catch (e) {
+        debug(`WASM tree cleanup failed: ${toErrorMessage(e)}`);
       }
     }
     (symbols as { _tree?: unknown; _langId?: unknown })._tree = undefined;
@@ -2175,8 +2178,11 @@ class NativeOrchestrationSession {
     const nativeDb = this.ctx.nativeDb as NonNullable<PipelineContext['nativeDb']>;
     try {
       nativeDb.exec('PRAGMA foreign_keys = OFF');
-    } catch {
+    } catch (e) {
       // exec may not exist on very old addon versions — safe to ignore
+      debug(
+        `PRAGMA foreign_keys=OFF failed (safe to ignore on old addon versions): ${toErrorMessage(e)}`,
+      );
     }
 
     let resultJson: string;
@@ -2193,8 +2199,11 @@ class NativeOrchestrationSession {
       // throws.
       try {
         nativeDb.exec('PRAGMA foreign_keys = ON');
-      } catch {
+      } catch (e) {
         // safe to ignore on very old addon versions
+        debug(
+          `PRAGMA foreign_keys=ON restore failed (safe to ignore on old addon versions): ${toErrorMessage(e)}`,
+        );
       }
     }
 
