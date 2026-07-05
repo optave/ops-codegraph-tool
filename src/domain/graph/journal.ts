@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { debug, warn } from '../../infrastructure/logger.js';
+import { sleepSync } from '../../shared/sleep.js';
 
 export const JOURNAL_FILENAME = 'changes.journal';
 const HEADER_PREFIX = '# codegraph-journal v1 ';
@@ -9,17 +10,6 @@ const LOCK_SUFFIX = '.lock';
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_MS = 25;
-
-// Busy-spin sleep avoids blocking the Node.js event loop (unlike Atomics.wait,
-// which freezes all I/O and timer callbacks). The retry interval is short
-// (25ms), so the CPU cost is negligible while keeping unrelated callbacks
-// responsive in watcher processes.
-function sleepSync(ms: number): void {
-  const end = process.hrtime.bigint() + BigInt(ms) * 1_000_000n;
-  while (process.hrtime.bigint() < end) {
-    /* spin */
-  }
-}
 
 function isPidAlive(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) return false;
