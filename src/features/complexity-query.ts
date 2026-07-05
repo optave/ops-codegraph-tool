@@ -7,7 +7,7 @@
 
 import { openReadonlyOrFail } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
-import { loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -34,6 +34,61 @@ interface ComplexityRow {
 }
 
 const isValidThreshold = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** Column-sort expressions for `codegraph complexity --sort <key>`. */
+const ORDER_BY_MAP: Record<string, string> = {
+  cognitive: 'fc.cognitive DESC',
+  cyclomatic: 'fc.cyclomatic DESC',
+  nesting: 'fc.max_nesting DESC',
+  mi: 'fc.maintainability_index ASC',
+  volume: 'fc.halstead_volume DESC',
+  effort: 'fc.halstead_effort DESC',
+  bugs: 'fc.halstead_bugs DESC',
+  loc: 'fc.loc DESC',
+};
+
+interface ThresholdMetrics {
+  cognitive: number;
+  cyclomatic: number;
+  max_nesting: number;
+  maintainability_index: number;
+}
+
+/** Single source of truth for which metric names exceed which thresholds. */
+const METRIC_THRESHOLD_CHECKS: Array<{
+  name: string;
+  exceeds: (r: ThresholdMetrics, thresholds: any) => boolean;
+}> = [
+  {
+    name: 'cognitive',
+    exceeds: (r, t) =>
+      isValidThreshold(t.cognitive?.warn) && r.cognitive >= (t.cognitive?.warn ?? 0),
+  },
+  {
+    name: 'cyclomatic',
+    exceeds: (r, t) =>
+      isValidThreshold(t.cyclomatic?.warn) && r.cyclomatic >= (t.cyclomatic?.warn ?? 0),
+  },
+  {
+    name: 'maxNesting',
+    exceeds: (r, t) =>
+      isValidThreshold(t.maxNesting?.warn) && r.max_nesting >= (t.maxNesting?.warn ?? 0),
+  },
+  {
+    name: 'maintainabilityIndex',
+    exceeds: (r, t) =>
+      isValidThreshold(t.maintainabilityIndex?.warn) &&
+      r.maintainability_index > 0 &&
+      r.maintainability_index <= (t.maintainabilityIndex?.warn ?? 0),
+  },
+];
+
+/** List of metric names a row exceeds (empty if none). */
+function getExceededMetrics(r: ThresholdMetrics, thresholds: any): string[] {
+  return METRIC_THRESHOLD_CHECKS.filter((check) => check.exceeds(r, thresholds)).map(
+    (check) => check.name,
+  );
+}
 
 /** Build WHERE clause and params for complexity query filtering. */
 function buildComplexityWhere(opts: {
@@ -90,28 +145,7 @@ function buildThresholdHaving(thresholds: any): string {
 
 /** Map a raw DB row to the public complexity result shape. */
 function mapComplexityRow(r: ComplexityRow, thresholds: any): Record<string, unknown> {
-  const exceeds: string[] = [];
-  if (
-    isValidThreshold(thresholds.cognitive?.warn) &&
-    r.cognitive >= (thresholds.cognitive?.warn ?? 0)
-  )
-    exceeds.push('cognitive');
-  if (
-    isValidThreshold(thresholds.cyclomatic?.warn) &&
-    r.cyclomatic >= (thresholds.cyclomatic?.warn ?? 0)
-  )
-    exceeds.push('cyclomatic');
-  if (
-    isValidThreshold(thresholds.maxNesting?.warn) &&
-    r.max_nesting >= (thresholds.maxNesting?.warn ?? 0)
-  )
-    exceeds.push('maxNesting');
-  if (
-    isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
-    r.maintainability_index > 0 &&
-    r.maintainability_index <= (thresholds.maintainabilityIndex?.warn ?? 0)
-  )
-    exceeds.push('maintainabilityIndex');
+  const exceeds = getExceededMetrics(r, thresholds);
 
   return {
     name: r.name,
@@ -136,21 +170,48 @@ function mapComplexityRow(r: ComplexityRow, thresholds: any): Record<string, unk
 }
 
 /** Check whether a row exceeds any threshold (for summary counting). */
-function exceedsAnyThreshold(
-  r: { cognitive: number; cyclomatic: number; max_nesting: number; maintainability_index: number },
+function exceedsAnyThreshold(r: ThresholdMetrics, thresholds: any): boolean {
+  return getExceededMetrics(r, thresholds).length > 0;
+}
+
+/** Fetch the bare metric columns (all rows) used to compute summary statistics. */
+function fetchAllComplexityMetrics(
+  db: ReturnType<typeof openReadonlyOrFail>,
+  noTests: boolean,
+): ThresholdMetrics[] {
+  return db
+    .prepare<ThresholdMetrics>(
+      `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
+       FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
+       WHERE n.kind IN ('function','method')
+       ${noTests ? `AND n.file NOT LIKE '%.test.%' AND n.file NOT LIKE '%.spec.%' AND n.file NOT LIKE '%__test__%' AND n.file NOT LIKE '%__tests__%' AND n.file NOT LIKE '%.stories.%'` : ''}`,
+    )
+    .all();
+}
+
+/** Arithmetic mean, rounded to 1 decimal (matches the summary's existing precision). */
+function average(values: number[]): number {
+  return +(values.reduce((s, v) => s + v, 0) / values.length).toFixed(1);
+}
+
+/** Reduce a set of complexity rows down to the public summary-statistics shape. */
+function summarizeComplexityMetrics(
+  allRows: ThresholdMetrics[],
   thresholds: any,
-): boolean {
-  return (
-    (isValidThreshold(thresholds.cognitive?.warn) &&
-      r.cognitive >= (thresholds.cognitive?.warn ?? 0)) ||
-    (isValidThreshold(thresholds.cyclomatic?.warn) &&
-      r.cyclomatic >= (thresholds.cyclomatic?.warn ?? 0)) ||
-    (isValidThreshold(thresholds.maxNesting?.warn) &&
-      r.max_nesting >= (thresholds.maxNesting?.warn ?? 0)) ||
-    (isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
-      r.maintainability_index > 0 &&
-      r.maintainability_index <= (thresholds.maintainabilityIndex?.warn ?? 0))
-  );
+): Record<string, unknown> {
+  const cognitiveValues = allRows.map((r) => r.cognitive);
+  const cyclomaticValues = allRows.map((r) => r.cyclomatic);
+  const miValues = allRows.map((r) => r.maintainability_index || 0);
+  return {
+    analyzed: allRows.length,
+    avgCognitive: average(cognitiveValues),
+    avgCyclomatic: average(cyclomaticValues),
+    maxCognitive: Math.max(...cognitiveValues),
+    maxCyclomatic: Math.max(...cyclomaticValues),
+    avgMI: average(miValues),
+    minMI: +Math.min(...miValues).toFixed(1),
+    aboveWarn: allRows.filter((r) => exceedsAnyThreshold(r, thresholds)).length,
+  };
 }
 
 /** Compute summary statistics across all complexity rows. */
@@ -160,33 +221,9 @@ function computeComplexitySummary(
   thresholds: any,
 ): Record<string, unknown> | null {
   try {
-    const allRows = db
-      .prepare<{
-        cognitive: number;
-        cyclomatic: number;
-        max_nesting: number;
-        maintainability_index: number;
-      }>(
-        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
-         FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
-         WHERE n.kind IN ('function','method')
-         ${noTests ? `AND n.file NOT LIKE '%.test.%' AND n.file NOT LIKE '%.spec.%' AND n.file NOT LIKE '%__test__%' AND n.file NOT LIKE '%__tests__%' AND n.file NOT LIKE '%.stories.%'` : ''}`,
-      )
-      .all();
-
+    const allRows = fetchAllComplexityMetrics(db, noTests);
     if (allRows.length === 0) return null;
-
-    const miValues = allRows.map((r) => r.maintainability_index || 0);
-    return {
-      analyzed: allRows.length,
-      avgCognitive: +(allRows.reduce((s, r) => s + r.cognitive, 0) / allRows.length).toFixed(1),
-      avgCyclomatic: +(allRows.reduce((s, r) => s + r.cyclomatic, 0) / allRows.length).toFixed(1),
-      maxCognitive: Math.max(...allRows.map((r) => r.cognitive)),
-      maxCyclomatic: Math.max(...allRows.map((r) => r.cyclomatic)),
-      avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
-      minMI: +Math.min(...miValues).toFixed(1),
-      aboveWarn: allRows.filter((r) => exceedsAnyThreshold(r, thresholds)).length,
-    };
+    return summarizeComplexityMetrics(allRows, thresholds);
   } catch (e: unknown) {
     debug(`complexity summary query failed: ${(e as Error).message}`);
     return null;
@@ -203,33 +240,89 @@ function checkHasGraph(db: ReturnType<typeof openReadonlyOrFail>): boolean {
   }
 }
 
+/** Run the main complexity rows query; returns null if the table doesn't exist yet. */
+function queryComplexityRows(
+  db: ReturnType<typeof openReadonlyOrFail>,
+  where: string,
+  having: string,
+  orderBy: string,
+  params: unknown[],
+): ComplexityRow[] | null {
+  try {
+    return db
+      .prepare<ComplexityRow>(
+        `SELECT n.name, n.kind, n.file, n.line, n.end_line,
+              fc.cognitive, fc.cyclomatic, fc.max_nesting,
+              fc.loc, fc.sloc, fc.maintainability_index,
+              fc.halstead_volume, fc.halstead_difficulty, fc.halstead_effort, fc.halstead_bugs
+       FROM function_complexity fc
+       JOIN nodes n ON fc.node_id = n.id
+       ${where} ${having}
+       ORDER BY ${orderBy}`,
+      )
+      .all(...params);
+  } catch (e: unknown) {
+    debug(`complexity query failed (table may not exist): ${(e as Error).message}`);
+    return null;
+  }
+}
+
+interface ComplexityQueryOpts {
+  target?: string;
+  limit?: number;
+  sort?: string;
+  aboveThreshold?: boolean;
+  file?: string;
+  kind?: string;
+  noTests?: boolean;
+  config?: CodegraphConfig;
+  offset?: number;
+}
+
+/** Resolve query flags + effective manifesto thresholds from opts/config/DEFAULTS. */
+function resolveComplexityQueryOptions(opts: ComplexityQueryOpts): {
+  sort: string;
+  noTests: boolean;
+  aboveThreshold: boolean;
+  thresholds: any;
+} {
+  const config = opts.config || loadConfig(process.cwd());
+  return {
+    sort: opts.sort || 'cognitive',
+    noTests: opts.noTests || false,
+    aboveThreshold: opts.aboveThreshold || false,
+    thresholds: config.manifesto?.rules || DEFAULTS.manifesto.rules,
+  };
+}
+
+/** Run the query + summary and shape the pre-pagination result object. */
+function buildComplexityResult(
+  db: ReturnType<typeof openReadonlyOrFail>,
+  sql: { where: string; having: string; orderBy: string; params: unknown[] },
+  noTests: boolean,
+  thresholds: any,
+): Record<string, unknown> {
+  const rows = queryComplexityRows(db, sql.where, sql.having, sql.orderBy, sql.params);
+  if (rows === null) {
+    return { functions: [], summary: null, thresholds, hasGraph: checkHasGraph(db) };
+  }
+
+  const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
+  const functions = filtered.map((r) => mapComplexityRow(r, thresholds));
+
+  const summary = computeComplexitySummary(db, noTests, thresholds);
+  const hasGraph = summary === null ? checkHasGraph(db) : false;
+
+  return { functions, summary, thresholds, hasGraph };
+}
+
 export function complexityData(
   customDbPath?: string,
-  opts: {
-    target?: string;
-    limit?: number;
-    sort?: string;
-    aboveThreshold?: boolean;
-    file?: string;
-    kind?: string;
-    noTests?: boolean;
-    config?: CodegraphConfig;
-    offset?: number;
-  } = {},
+  opts: ComplexityQueryOpts = {},
 ): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
   try {
-    const sort = opts.sort || 'cognitive';
-    const noTests = opts.noTests || false;
-    const aboveThreshold = opts.aboveThreshold || false;
-
-    const config = opts.config || loadConfig(process.cwd());
-    const thresholds: any = config.manifesto?.rules || {
-      cognitive: { warn: 15, fail: null },
-      cyclomatic: { warn: 10, fail: null },
-      maxNesting: { warn: 4, fail: null },
-      maintainabilityIndex: { warn: 20, fail: null },
-    };
+    const { sort, noTests, aboveThreshold, thresholds } = resolveComplexityQueryOptions(opts);
 
     const { where, params } = buildComplexityWhere({
       noTests,
@@ -239,45 +332,9 @@ export function complexityData(
     });
 
     const having = aboveThreshold ? buildThresholdHaving(thresholds) : '';
+    const orderBy = ORDER_BY_MAP[sort] || 'fc.cognitive DESC';
 
-    const orderMap: Record<string, string> = {
-      cognitive: 'fc.cognitive DESC',
-      cyclomatic: 'fc.cyclomatic DESC',
-      nesting: 'fc.max_nesting DESC',
-      mi: 'fc.maintainability_index ASC',
-      volume: 'fc.halstead_volume DESC',
-      effort: 'fc.halstead_effort DESC',
-      bugs: 'fc.halstead_bugs DESC',
-      loc: 'fc.loc DESC',
-    };
-    const orderBy = orderMap[sort] || 'fc.cognitive DESC';
-
-    let rows: ComplexityRow[];
-    try {
-      rows = db
-        .prepare<ComplexityRow>(
-          `SELECT n.name, n.kind, n.file, n.line, n.end_line,
-                fc.cognitive, fc.cyclomatic, fc.max_nesting,
-                fc.loc, fc.sloc, fc.maintainability_index,
-                fc.halstead_volume, fc.halstead_difficulty, fc.halstead_effort, fc.halstead_bugs
-         FROM function_complexity fc
-         JOIN nodes n ON fc.node_id = n.id
-         ${where} ${having}
-         ORDER BY ${orderBy}`,
-        )
-        .all(...params);
-    } catch (e: unknown) {
-      debug(`complexity query failed (table may not exist): ${(e as Error).message}`);
-      return { functions: [], summary: null, thresholds, hasGraph: checkHasGraph(db) };
-    }
-
-    const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
-    const functions = filtered.map((r) => mapComplexityRow(r, thresholds));
-
-    const summary = computeComplexitySummary(db, noTests, thresholds);
-    const hasGraph = summary === null ? checkHasGraph(db) : false;
-
-    const base = { functions, summary, thresholds, hasGraph };
+    const base = buildComplexityResult(db, { where, having, orderBy, params }, noTests, thresholds);
     return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
   } finally {
     db.close();
