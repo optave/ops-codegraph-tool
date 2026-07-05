@@ -35,52 +35,40 @@ export function extractGroovySymbols(tree: TreeSitterTree, _filePath: string): E
 }
 
 function walkGroovyNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  switch (node.type) {
-    case 'class_definition':
-    case 'class_declaration':
-      handleGroovyClassDecl(node, ctx);
-      break;
-    case 'interface_definition':
-    case 'interface_declaration':
-      handleGroovyInterfaceDecl(node, ctx);
-      break;
-    case 'enum_definition':
-    case 'enum_declaration':
-      handleGroovyEnumDecl(node, ctx);
-      break;
-    case 'method_definition':
-    case 'method_declaration':
-      handleGroovyMethodDecl(node, ctx);
-      break;
-    case 'constructor_definition':
-    case 'constructor_declaration':
-      handleGroovyConstructorDecl(node, ctx);
-      break;
-    case 'function_definition':
-    case 'function_declaration':
-      handleGroovyFunctionDecl(node, ctx);
-      break;
-    case 'import_statement':
-    case 'import_declaration':
-      handleGroovyImport(node, ctx);
-      break;
-    case 'method_call':
-    case 'method_invocation':
-    case 'call_expression':
-    case 'function_call':
-    case 'juxt_function_call':
-      handleGroovyCallExpr(node, ctx);
-      break;
-    case 'object_creation_expression':
-      handleGroovyObjectCreation(node, ctx);
-      break;
-  }
+  const handler = GROOVY_NODE_HANDLERS[node.type];
+  if (handler) handler(node, ctx);
 
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child) walkGroovyNode(child, ctx);
   }
 }
+
+// Lookup table keyed on node.type, replacing a linear switch dispatch.
+// Multiple grammar-version type names map to the same handler (mirrors the
+// original switch's fallthrough case groups).
+const GROOVY_NODE_HANDLERS: Record<string, (node: TreeSitterNode, ctx: ExtractorOutput) => void> = {
+  class_definition: handleGroovyClassDecl,
+  class_declaration: handleGroovyClassDecl,
+  interface_definition: handleGroovyInterfaceDecl,
+  interface_declaration: handleGroovyInterfaceDecl,
+  enum_definition: handleGroovyEnumDecl,
+  enum_declaration: handleGroovyEnumDecl,
+  method_definition: handleGroovyMethodDecl,
+  method_declaration: handleGroovyMethodDecl,
+  constructor_definition: handleGroovyConstructorDecl,
+  constructor_declaration: handleGroovyConstructorDecl,
+  function_definition: handleGroovyFunctionDecl,
+  function_declaration: handleGroovyFunctionDecl,
+  import_statement: handleGroovyImport,
+  import_declaration: handleGroovyImport,
+  method_call: handleGroovyCallExpr,
+  method_invocation: handleGroovyCallExpr,
+  call_expression: handleGroovyCallExpr,
+  function_call: handleGroovyCallExpr,
+  juxt_function_call: handleGroovyCallExpr,
+  object_creation_expression: handleGroovyObjectCreation,
+};
 
 // ── Handlers ───────────────────────────────────────────────────────────────
 

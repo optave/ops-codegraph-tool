@@ -162,52 +162,59 @@ function handleLibraryCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // `library(package = dplyr)`, prefer the field-named `value` child of the
   // `argument` node so we extract `dplyr` (the value), not `package` (the
   // parameter name). Keeps native (Rust) and WASM extractors in parity.
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child) continue;
-    if (child.type === 'arguments') {
-      for (let j = 0; j < child.childCount; j++) {
-        const arg = child.child(j);
-        if (!arg) continue;
-        if (arg.type === 'identifier') {
-          pushImport(ctx, node, arg.text, [arg.text]);
-          return;
-        }
-        if (arg.type === 'string' || arg.type === 'string_content') {
-          const text = stripQuotes(arg.text);
-          pushImport(ctx, node, text, [text]);
-          return;
-        }
-        // Argument might be wrapped
-        if (arg.type === 'argument') {
-          // Prefer the `value` field (correct for named arguments).
-          const valueNode = arg.childForFieldName('value');
-          let pick: TreeSitterNode | null = null;
-          if (valueNode && (valueNode.type === 'string' || valueNode.type === 'identifier')) {
-            pick = valueNode;
-          } else {
-            // Fallback: skip the parameter-name child if the grammar exposes
-            // it via the `name` field, then pick the first string/identifier.
-            const nameNode = arg.childForFieldName('name');
-            for (let k = 0; k < arg.childCount; k++) {
-              const inner = arg.child(k);
-              if (!inner) continue;
-              if (nameNode && inner.id === nameNode.id) continue;
-              if (inner.type === 'string' || inner.type === 'identifier') {
-                pick = inner;
-                break;
-              }
-            }
-          }
-          if (pick) {
-            const text = stripQuotes(pick.text);
-            pushImport(ctx, node, text, [text]);
-            return;
-          }
-        }
-      }
+  const argumentsNode = findFirstChildOfTypes(node, ['arguments']);
+  if (!argumentsNode) return;
+
+  for (let j = 0; j < argumentsNode.childCount; j++) {
+    const arg = argumentsNode.child(j);
+    if (!arg) continue;
+    const importName = resolveLibraryImportName(arg);
+    if (importName !== null) {
+      pushImport(ctx, node, importName, [importName]);
+      return;
     }
   }
+}
+
+// Extracts the package name text for a single library()/require() argument
+// node, applying the same identifier/string/wrapped-argument precedence as
+// the original inline logic (identifier args are used verbatim; string and
+// resolved wrapped-argument values are unquoted via stripQuotes).
+function resolveLibraryImportName(arg: TreeSitterNode): string | null {
+  if (arg.type === 'identifier') {
+    return arg.text;
+  }
+  if (arg.type === 'string' || arg.type === 'string_content') {
+    return stripQuotes(arg.text);
+  }
+  if (arg.type === 'argument') {
+    const pick = resolveLibraryArgumentValueNode(arg);
+    if (pick) return stripQuotes(pick.text);
+  }
+  return null;
+}
+
+// Picks the value node out of an `argument`-wrapped library()/require() call
+// argument: prefers the field-named `value` child (correct for named
+// arguments like `library(package = dplyr)`), falling back to the first
+// string/identifier child that isn't the `name` field.
+function resolveLibraryArgumentValueNode(arg: TreeSitterNode): TreeSitterNode | null {
+  const valueNode = arg.childForFieldName('value');
+  if (valueNode && (valueNode.type === 'string' || valueNode.type === 'identifier')) {
+    return valueNode;
+  }
+  // Fallback: skip the parameter-name child if the grammar exposes
+  // it via the `name` field, then pick the first string/identifier.
+  const nameNode = arg.childForFieldName('name');
+  for (let k = 0; k < arg.childCount; k++) {
+    const inner = arg.child(k);
+    if (!inner) continue;
+    if (nameNode && inner.id === nameNode.id) continue;
+    if (inner.type === 'string' || inner.type === 'identifier') {
+      return inner;
+    }
+  }
+  return null;
 }
 
 function handleSourceCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
