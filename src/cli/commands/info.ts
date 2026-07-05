@@ -5,10 +5,9 @@ import type { CliContext, CommandDefinition, CommandOpts } from '../types.js';
 
 /** Print the "Native version" diagnostic line (reconciles npm package vs. loaded binary version). */
 function printNativeVersionInfo(
-  loadNative: () => NativeAddon | null,
+  native: NativeAddon,
   getNativePackageVersion: () => string | null,
 ): void {
-  const native = loadNative()!;
   const binaryVersion =
     typeof native.engineVersion === 'function' ? native.engineVersion() : 'unknown';
   const pkgVersion = getNativePackageVersion();
@@ -38,8 +37,9 @@ function printEngineInfo(
   console.log(`  Node.js       : ${process.version}`);
   console.log(`  Platform      : ${process.platform}-${process.arch}`);
   console.log(`  Native engine : ${nativeAvailable ? 'available' : 'unavailable'}`);
-  if (nativeAvailable) {
-    printNativeVersionInfo(loadNative, getNativePackageVersion);
+  const native = nativeAvailable ? loadNative() : null;
+  if (native) {
+    printNativeVersionInfo(native, getNativePackageVersion);
   }
   console.log(`  Engine flag   : --engine ${engine}`);
   console.log(`  Active engine : ${activeName}${activeVersion ? ` (v${activeVersion})` : ''}`);

@@ -65,6 +65,12 @@ empty_result() {
 # read/write inject_trace_calls's and instrument_one_file's locals
 # (ctx_regex, decl_regex, strategy, current_ctx, in_func, tmpfile, ...)
 # directly instead of threading a dozen parameters through each call.
+# This only works because the call chain is always exactly
+# inject_trace_calls -> instrument_one_file -> maybe_*. Calling a maybe_*
+# helper outside that chain is silently wrong rather than erroring: with
+# decl_regex unset, `maybe_inject_declaration`'s `[[ "$trimmed" =~ $decl_regex ]]`
+# matches the empty pattern against every line, injecting a trace call into
+# every line of the file instead of doing nothing.
 
 # Tracks an optional enclosing context (impl/class/struct) block opening,
 # and detects the block's closing brace. Returns 0 (line fully handled) only
@@ -174,11 +180,15 @@ inject_trace_calls() {
     local decl_regex="$5" decl_group="$6" decl_exclude_regex="$7"
     local strategy="$8" entry_tmpl="$9" finally_tmpl="${10:-}"
 
+    # `compgen -G` expands the glob itself rather than relying on the shell
+    # to word-split an unquoted variable — so it still matches correctly even
+    # if TMP_DIR (from mktemp -d) ever contained a space. It exits 1 with no
+    # output on zero matches; `|| true` keeps that from tripping `set -e`.
     local srcfile
-    for srcfile in $glob_pattern; do
+    while IFS= read -r srcfile; do
         [[ -e "$srcfile" ]] || continue
         instrument_one_file "$srcfile"
-    done
+    done < <(compgen -G "$glob_pattern" || true)
 }
 
 # ── C / C++ ──────────────────────────────────────────────────────────────
