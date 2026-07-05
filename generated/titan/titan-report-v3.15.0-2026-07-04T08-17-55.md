@@ -21,7 +21,7 @@ The Titan pipeline audited 46 targets across 18 domains of the codegraph codebas
 | GAUNTLET | 2h03m | 46 targets audited across batches |
 | SYNC | 12m | 30-phase execution plan, 1 driftWarning flagged (communities.ts cycle) |
 | FORGE | 36h49m wall-clock (~14h48m active) | 30/30 phases, 29 commits (phase 8 correctly produced no commit — see below); first commit 2026-07-02 09:37 UTC, last 2026-07-03 21:50 UTC |
-| GRIND | 9h46m | 30/30 phases, 6 adoption commits, 10 documented false positives |
+| GRIND | 9h46m | 30/30 phases, 6 adoption commits, 15 confirmed false positives (10 logged findings) |
 | PARITY | 15m | Clean — 1 pre-existing divergence filed as #1778; 1 unrelated Cargo.lock version-sync commit made directly by the orchestrator |
 | GATE | across forge/grind | 39 runs inline with forge/grind commits |
 | CLOSE | 24m | Report generation, PR splitting (10 PRs), issue compilation |
@@ -129,7 +129,7 @@ Carried forward for a future Titan run — either untouched this pass, or newly 
 
 ## Grind Results
 
-**Targets processed:** 24 | **Adopted/Promoted:** 9 | **Failed:** 0 | **False positives:** 10
+**Targets processed:** 24 | **Adopted/Promoted:** 9 | **Failed:** 0 | **False positives:** 15 (24 − 9, consolidated into 10 logged findings below)
 
 ### Adoption Summary
 
@@ -145,6 +145,8 @@ Carried forward for a future Titan run — either untouched this pass, or newly 
 A blocking codegraph tool bug was discovered and fixed mid-GRIND: `codegraph check --staged`'s signature-change predicate false-positived on the `fget`/`iget` adoption (unexported, zero-caller helpers flagged as breaking API signatures due to imprecise diff-hunk-context handling). Root-caused and fixed in commit `d5f31d82` (PR #8), filed as issue #1760.
 
 ### False Positives Logged
+
+The 15 false-positive targets are consolidated into 10 findings below (several rows bundle multiple targets flagged for the same root cause, e.g. the leiden and features remainders each cover multiple helpers).
 
 | Target | File(s) | Reason |
 |--------|---------|--------|
