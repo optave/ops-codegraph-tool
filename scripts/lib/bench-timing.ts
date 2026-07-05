@@ -16,6 +16,7 @@
  *     await timeMedian(() => buildGraph(root, { engine, incremental: false }), RUNS),
  *   );
  */
+import { performance } from 'node:perf_hooks';
 
 /**
  * Returns the median of `arr`. `arr` is not mutated (sorted on a copy).
