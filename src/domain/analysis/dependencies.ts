@@ -175,7 +175,7 @@ export function fnDepsData(
   opts: {
     depth?: number;
     noTests?: boolean;
-    file?: string;
+    file?: string | string[];
     kind?: string;
     limit?: number;
     offset?: number;

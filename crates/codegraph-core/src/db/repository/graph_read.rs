@@ -28,6 +28,41 @@ fn escape_like(s: &str) -> String {
     out
 }
 
+/// Append an `AND (col LIKE ? [OR col LIKE ? ...])` fragment for a multi-value
+/// file filter and push the corresponding escaped LIKE params. Mirrors
+/// `buildFileConditionSQL()` / `NodeQuery.fileFilter()` in
+/// `src/db/query-builder.ts`, which is why callers must accept `Vec<String>`
+/// (repeatable `-f/--file`) rather than a single `String`. No-op when `files`
+/// is empty. Advances `*idx` past the placeholders it consumes.
+fn push_file_filter(
+    sql: &mut String,
+    params_v: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    idx: &mut usize,
+    column: &str,
+    files: &[String],
+) {
+    if files.is_empty() {
+        return;
+    }
+    let start = *idx;
+    if files.len() == 1 {
+        sql.push_str(&format!(" AND {column} LIKE ?{start} ESCAPE '\\'"));
+        params_v.push(Box::new(format!("%{}%", escape_like(&files[0]))));
+        *idx += 1;
+        return;
+    }
+    let clauses: Vec<String> = files
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("{column} LIKE ?{} ESCAPE '\\'", start + i))
+        .collect();
+    sql.push_str(&format!(" AND ({})", clauses.join(" OR ")));
+    for f in files {
+        params_v.push(Box::new(format!("%{}%", escape_like(f))));
+    }
+    *idx += files.len();
+}
+
 /// Check if a file path looks like a test file (mirrors `isTestFile` in JS).
 fn is_test_file(file: &str) -> bool {
     file.contains(".test.")
@@ -143,7 +178,7 @@ struct FnDepsCallerWithId {
 fn build_fn_deps_match_query(
     name: &str,
     kind: Option<&str>,
-    file: Option<&str>,
+    file: Option<&[String]>,
 ) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
     let default_kinds: Vec<String> = vec![
         "function".to_string(),
@@ -180,8 +215,7 @@ fn build_fn_deps_match_query(
         idx += kinds.len();
     }
     if let Some(f) = file {
-        sql.push_str(&format!(" AND n.file LIKE ?{idx} ESCAPE '\\'"));
-        params_v.push(Box::new(format!("%{}%", escape_like(f))));
+        push_file_filter(&mut sql, &mut params_v, &mut idx, "n.file", f);
     }
 
     (sql, params_v)
@@ -1086,7 +1120,7 @@ impl NativeDatabase {
         &self,
         name_pattern: String,
         kinds: Option<Vec<String>>,
-        file: Option<String>,
+        file: Option<Vec<String>>,
     ) -> napi::Result<Vec<NativeNodeRowWithFanIn>> {
         let conn = self.conn()?;
 
@@ -1112,8 +1146,7 @@ impl NativeDatabase {
             }
         }
         if let Some(ref f) = file {
-            sql.push_str(&format!(" AND n.file LIKE ?{idx} ESCAPE '\\'"));
-            param_values.push(Box::new(format!("%{}%", escape_like(f))));
+            push_file_filter(&mut sql, &mut param_values, &mut idx, "n.file", f);
         }
 
         let mut stmt = conn
@@ -2114,7 +2147,7 @@ impl NativeDatabase {
         name: String,
         depth: Option<i32>,
         no_tests: Option<bool>,
-        file: Option<String>,
+        file: Option<Vec<String>>,
         kind: Option<String>,
     ) -> napi::Result<FnDepsResult> {
         let conn = self.conn()?;

@@ -361,6 +361,31 @@ describe('fnDepsData', () => {
     expect(names).not.toContain('authMiddleware');
   });
 
+  // Regression test for #1726: the CLI's `-f/--file` option is a repeatable
+  // Commander accumulator (collectFile) that always produces a string[], even
+  // for a single use. The native composite fnDeps() path used to forward that
+  // array straight into a napi binding typed for a single String and crash
+  // with "Failed to convert JavaScript value ... into rust type `String`".
+  test('--file as a single-element array (real CLI shape) scopes to a single file', () => {
+    const data = fnDepsData('auth', dbPath, { file: ['auth.js'] });
+    for (const r of data.results) {
+      expect(r.file).toContain('auth.js');
+    }
+    const names = data.results.map((r) => r.name);
+    expect(names).not.toContain('authMiddleware');
+  });
+
+  test('--file with multiple values (repeated -f) scopes across all of them', () => {
+    const data = fnDepsData('auth', dbPath, { file: ['auth.js', 'middleware.js'] });
+    const names = data.results.map((r) => r.name);
+    expect(names).toContain('authenticate'); // auth.js
+    expect(names).toContain('authMiddleware'); // middleware.js
+    // routes.js/utils.js should still be excluded
+    for (const r of data.results) {
+      expect(['auth.js', 'middleware.js']).toContain(r.file);
+    }
+  });
+
   test('--kind method filters to methods only', () => {
     // All fixtures are functions, so filtering by method should return empty
     const data = fnDepsData('auth', dbPath, { kind: 'method' });
@@ -412,6 +437,28 @@ describe('fnImpactData', () => {
     expect(r.transitive).toBe(r.totalDependents - r.direct);
     // consistency check
     expect(r.direct + r.transitive).toBe(r.totalDependents);
+  });
+
+  // Regression test for #1726 — see the equivalent fnDepsData test above for
+  // full context. fnImpactData's native path (findNodesWithFanIn) forwards
+  // the file filter used to resolve the *matched root symbol(s)* (not their
+  // callers) into rusqlite, and used to crash on the array shape the CLI
+  // always sends.
+  test('--file as a single-element array scopes matched root symbols to that file', () => {
+    const data = fnImpactData('auth', dbPath, { file: ['auth.js'] });
+    const names = data.results.map((r) => r.name);
+    expect(names).toContain('authenticate');
+    expect(names).not.toContain('authMiddleware'); // middleware.js
+    for (const r of data.results) expect(r.file).toBe('auth.js');
+  });
+
+  test('--file with multiple values scopes matched root symbols across all of them', () => {
+    const data = fnImpactData('auth', dbPath, { file: ['auth.js', 'middleware.js'] });
+    const names = data.results.map((r) => r.name);
+    expect(names).toContain('authenticate'); // auth.js
+    expect(names).toContain('authMiddleware'); // middleware.js
+    // preAuthenticate (utils.js) also substring-matches "auth" — must stay excluded
+    for (const r of data.results) expect(['auth.js', 'middleware.js']).toContain(r.file);
   });
 
   test('direct and transitive are 0 for a function with no callers', () => {

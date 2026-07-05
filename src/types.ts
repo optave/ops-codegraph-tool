@@ -265,7 +265,8 @@ export interface ComplexityMetrics {
 export interface QueryOpts {
   kind?: SymbolKind;
   kinds?: SymbolKind[];
-  file?: string;
+  /** Partial-match file filter. Repeatable on the CLI (`-f/--file`), so a single value arrives as a one-element array. */
+  file?: string | string[];
   noTests?: boolean;
 }
 
@@ -346,7 +347,7 @@ export interface Repository {
   // ── Composite queries ──────────────────────────────────────────────
   fnDeps(
     name: string,
-    opts?: { depth?: number; noTests?: boolean; file?: string; kind?: string },
+    opts?: { depth?: number; noTests?: boolean; file?: string | string[]; kind?: string },
   ): {
     name: string;
     results: Array<{
@@ -2496,7 +2497,7 @@ export interface NativeDatabase {
   findNodesWithFanIn(
     namePattern: string,
     kinds: string[] | null | undefined,
-    file: string | null | undefined,
+    file: string[] | null | undefined,
   ): NativeNodeRowWithFanIn[];
   findNodesForTriage(
     kind: string | null | undefined,
@@ -2553,7 +2554,7 @@ export interface NativeDatabase {
     name: string,
     depth: number | null | undefined,
     noTests: boolean | null | undefined,
-    file: string | null | undefined,
+    file: string[] | null | undefined,
     kind: string | null | undefined,
   ): NativeFnDepsResult;
 

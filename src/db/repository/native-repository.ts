@@ -45,6 +45,7 @@ import type {
   TriageNodeRow,
   TriageQueryOpts,
 } from '../../types.js';
+import { normalizeFileFilter } from '../query-builder.js';
 import {
   type FnDepsCallerNode,
   type FnDepsEntry,
@@ -267,8 +268,9 @@ export class NativeRepository extends Repository {
   }
 
   findNodesWithFanIn(namePattern: string, opts: QueryOpts = {}): NodeRowWithFanIn[] {
+    const files = normalizeFileFilter(opts.file);
     return this.#ndb
-      .findNodesWithFanIn(namePattern, opts.kinds ?? null, opts.file ?? null)
+      .findNodesWithFanIn(namePattern, opts.kinds ?? null, files.length > 0 ? files : null)
       .map(toNodeRowWithFanIn);
   }
 
@@ -301,9 +303,11 @@ export class NativeRepository extends Repository {
   }
 
   findNodesByScope(scopeName: string, opts: QueryOpts = {}): NodeRow[] {
-    return this.#ndb
-      .findNodesByScope(scopeName, opts.kind ?? null, opts.file ?? null)
-      .map(toNodeRow);
+    // Unlike findNodesWithFanIn/fnDeps, this native binding only accepts a single
+    // file (no CLI command currently wires -f/--file to it); take the first value
+    // rather than crash if a caller ever passes the repeatable-flag array form.
+    const [file] = normalizeFileFilter(opts.file);
+    return this.#ndb.findNodesByScope(scopeName, opts.kind ?? null, file ?? null).map(toNodeRow);
   }
 
   findNodeByQualifiedName(qualifiedName: string, opts: { file?: string } = {}): NodeRow[] {
@@ -526,14 +530,15 @@ export class NativeRepository extends Repository {
   // ── Composite queries ──────────────────────────────────────────────
   fnDeps(
     name: string,
-    opts?: { depth?: number; noTests?: boolean; file?: string; kind?: string },
+    opts?: { depth?: number; noTests?: boolean; file?: string | string[]; kind?: string },
   ): FnDepsResult | null {
     if (typeof this.#ndb.fnDeps !== 'function') return null;
+    const files = normalizeFileFilter(opts?.file);
     const raw = this.#ndb.fnDeps(
       name,
       opts?.depth ?? undefined,
       opts?.noTests ?? undefined,
-      opts?.file ?? undefined,
+      files.length > 0 ? files : undefined,
       opts?.kind ?? undefined,
     );
     // Convert from native format (transitive_callers as array of groups)
