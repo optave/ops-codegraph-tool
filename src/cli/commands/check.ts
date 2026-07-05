@@ -30,7 +30,7 @@ export const command: CommandDefinition = {
     ['--rules', 'Also run manifesto rules alongside diff predicates'],
     ['--cycles', 'Assert no dependency cycles involve changed files'],
     ['--blast-radius <n>', 'Assert no function exceeds N transitive callers'],
-    ['--signatures', 'Assert no function declaration lines were modified'],
+    ['--signatures', 'Assert no exported function/method/class declaration lines were modified'],
     ['--boundaries', 'Assert no cross-owner boundary violations'],
     ['--depth <n>', 'Max BFS depth for blast radius (default: 3)'],
     ['-f, --file <path>', 'Scope to file (partial match, repeatable, manifesto mode)', collectFile],

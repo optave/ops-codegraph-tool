@@ -222,27 +222,57 @@ function handleStructDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const typeHead = findChild(node, 'type_head');
   if (!typeHead) return;
 
-  let nameNode: TreeSitterNode | null;
-  let supertypeNode: TreeSitterNode | null = null;
-
-  const binary = findChild(typeHead, 'binary_expression');
-  if (binary) {
-    // Walk into each side of the binary expression to find the base-name
-    // identifier — handles parameterized forms like `Vec{T} <: AbstractArray{T,1}`.
-    const sides: TreeSitterNode[] = [];
-    for (let i = 0; i < binary.childCount; i++) {
-      const c = binary.child(i);
-      if (c && c.type !== 'operator') sides.push(c);
-    }
-    nameNode = sides[0] ? findBaseName(sides[0]) : null;
-    supertypeNode = sides[1] ? findBaseName(sides[1]) : null;
-  } else {
-    nameNode = findBaseName(typeHead);
-  }
-
+  const { nameNode, supertypeNode } = resolveJuliaStructHeadNames(typeHead);
   if (!nameNode) return;
   const structName = nameNode.text;
 
+  const children = collectJuliaStructFields(node);
+
+  if (supertypeNode) {
+    ctx.classes.push({
+      name: structName,
+      extends: supertypeNode.text,
+      line: nodeStartLine(node),
+    });
+  }
+
+  ctx.definitions.push({
+    name: structName,
+    kind: 'struct',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(node),
+    children: children.length > 0 ? children : undefined,
+  });
+}
+
+// Resolves the struct's name and optional supertype from its `type_head`.
+// Handles both the plain form (`Name` or `Vec{T}`) and the `Name <: Super`
+// binary_expression form, walking into each side to find the base-name
+// identifier for parameterized forms like `Vec{T} <: AbstractArray{T,1}`.
+function resolveJuliaStructHeadNames(typeHead: TreeSitterNode): {
+  nameNode: TreeSitterNode | null;
+  supertypeNode: TreeSitterNode | null;
+} {
+  const binary = findChild(typeHead, 'binary_expression');
+  if (!binary) {
+    return { nameNode: findBaseName(typeHead), supertypeNode: null };
+  }
+
+  const sides: TreeSitterNode[] = [];
+  for (let i = 0; i < binary.childCount; i++) {
+    const c = binary.child(i);
+    if (c && c.type !== 'operator') sides.push(c);
+  }
+  return {
+    nameNode: sides[0] ? findBaseName(sides[0]) : null,
+    supertypeNode: sides[1] ? findBaseName(sides[1]) : null,
+  };
+}
+
+// Collects the struct's field declarations: `typed_expression` (typed field)
+// and plain `identifier` (untyped field) direct children of the
+// struct_definition node.
+function collectJuliaStructFields(node: TreeSitterNode): SubDeclaration[] {
   const children: SubDeclaration[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
@@ -263,22 +293,7 @@ function handleStructDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
       children.push({ name: child.text, kind: 'property', line: nodeStartLine(child) });
     }
   }
-
-  if (supertypeNode) {
-    ctx.classes.push({
-      name: structName,
-      extends: supertypeNode.text,
-      line: nodeStartLine(node),
-    });
-  }
-
-  ctx.definitions.push({
-    name: structName,
-    kind: 'struct',
-    line: nodeStartLine(node),
-    endLine: nodeEndLine(node),
-    children: children.length > 0 ? children : undefined,
-  });
+  return children;
 }
 
 function handleAbstractDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -341,24 +356,7 @@ function handleImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
       if (!source) source = txt;
       names.push(txt.split('.').pop() || txt);
     } else if (child.type === 'selected_import') {
-      // First identifier-bearing node is the source module; the rest are
-      // imported names. The module may itself be a `scoped_identifier`
-      // (e.g. `import Foo.Bar: baz`) — handle it alongside bare
-      // `identifier` and use the trailing segment as the display name,
-      // mirroring the outer loop.
-      let first = true;
-      for (let j = 0; j < child.childCount; j++) {
-        const part = child.child(j);
-        if (!part) continue;
-        if (part.type !== 'identifier' && part.type !== 'scoped_identifier') continue;
-        const txt = part.text;
-        if (first) {
-          if (!source) source = txt;
-          first = false;
-        } else {
-          names.push(txt.split('.').pop() || txt);
-        }
-      }
+      source = collectJuliaSelectedImportParts(child, names, source);
     }
   }
 
@@ -368,6 +366,35 @@ function handleImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
     // the previous explicit `[source]` fallback.
     pushImport(ctx, node, source, names);
   }
+}
+
+// Handles the `selected_import` shape (`import Base: show` /
+// `import Foo.Bar: baz`): the first identifier-bearing node is the source
+// module; the rest are imported names. The module may itself be a
+// `scoped_identifier` — handled alongside bare `identifier`, using the
+// trailing segment as the display name, mirroring the outer loop. Returns
+// the resolved source (unchanged from `currentSource` if already set or if
+// no identifier-bearing child was found).
+function collectJuliaSelectedImportParts(
+  child: TreeSitterNode,
+  names: string[],
+  currentSource: string,
+): string {
+  let source = currentSource;
+  let first = true;
+  for (let j = 0; j < child.childCount; j++) {
+    const part = child.child(j);
+    if (!part) continue;
+    if (part.type !== 'identifier' && part.type !== 'scoped_identifier') continue;
+    const txt = part.text;
+    if (first) {
+      if (!source) source = txt;
+      first = false;
+    } else {
+      names.push(txt.split('.').pop() || txt);
+    }
+  }
+  return source;
 }
 
 function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {

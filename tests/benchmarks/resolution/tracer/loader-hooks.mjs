@@ -34,6 +34,67 @@ const NOT_FUNCTIONS = new Set([
   'export',
 ]);
 
+/** Matches a class declaration line; returns the class name or null. */
+function matchClassDeclaration(trimmed) {
+  const classMatch = trimmed.match(/^(?:export\s+)?class\s+(\w+)/);
+  return classMatch && trimmed.includes('{') ? classMatch[1] : null;
+}
+
+/** Matches `function NAME(`, `export function NAME(`, `async function NAME(`. */
+function matchFunctionDeclaration(trimmed) {
+  const funcDecl = trimmed.match(
+    /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)\s*\(/,
+  );
+  return funcDecl ? funcDecl[1] : null;
+}
+
+/** Matches `const/let/var NAME = async? (function | arrow)`. */
+function matchAssignedFunction(trimmed) {
+  const assignedFunc = trimmed.match(
+    /^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function\s*\w*\s*\(|[^=]*=>\s*\{)/,
+  );
+  return assignedFunc ? assignedFunc[1] : null;
+}
+
+/** Matches a class method/constructor/getter/setter declaration (only inside a class body). */
+function matchClassMethod(trimmed, currentClass, braceDepth, classDepth) {
+  if (!currentClass || braceDepth <= classDepth) return null;
+  const methodDecl = trimmed.match(/^(?:async\s+)?(?:static\s+)?(?:get\s+|set\s+)?#?(\w+)\s*\(/);
+  if (!methodDecl || NOT_FUNCTIONS.has(methodDecl[1])) return null;
+  const mname = methodDecl[1];
+  return mname === 'constructor' ? `${currentClass}.constructor` : `${currentClass}.${mname}`;
+}
+
+/**
+ * Detects the function/method name declared on this line, if any.
+ * Tries each pattern in order and returns the first match.
+ */
+function detectFunctionName(trimmed, currentClass, braceDepth, classDepth) {
+  return (
+    matchFunctionDeclaration(trimmed) ||
+    matchAssignedFunction(trimmed) ||
+    matchClassMethod(trimmed, currentClass, braceDepth, classDepth)
+  );
+}
+
+/** Pops and closes any function scopes whose body ends at this line's new brace depth. */
+function closeFinishedScopes(funcStack, newDepth, indent, output) {
+  while (funcStack.length > 0 && newDepth <= funcStack[funcStack.length - 1].openDepth) {
+    funcStack.pop();
+    output.push(`${indent}} finally { globalThis.__tracer?.exit(); }`);
+  }
+}
+
+/** Opens a new traced scope (enter + try) if this line declares a function/method. */
+function openScopeIfDeclared(funcName, trimmed, indent, file, braceDepth, funcStack, output) {
+  if (!funcName || !trimmed.endsWith('{')) return;
+  const inner = `${indent}  `;
+  const escaped = funcName.replace(/'/g, "\\'");
+  output.push(`${inner}globalThis.__tracer?.enter('${escaped}', '${file}');`);
+  output.push(`${inner}try {`);
+  funcStack.push({ name: funcName, openDepth: braceDepth });
+}
+
 /**
  * Instrument all function/method declarations in source code.
  * Injects enter()/try and finally/exit() around each function body.
@@ -60,58 +121,17 @@ function instrumentSource(source, filename) {
     const closeBraces = (line.match(/\}/g) || []).length;
     const newDepth = braceDepth + openBraces - closeBraces;
 
-    // Detect class declarations
-    const classMatch = trimmed.match(/^(?:export\s+)?class\s+(\w+)/);
-    if (classMatch && trimmed.includes('{')) {
-      currentClass = classMatch[1];
+    const classMatch = matchClassDeclaration(trimmed);
+    if (classMatch) {
+      currentClass = classMatch;
       classDepth = braceDepth;
     }
 
-    // Detect function/method declarations
-    let funcName = null;
+    const funcName = detectFunctionName(trimmed, currentClass, braceDepth, classDepth);
 
-    // function NAME(, export function NAME(, async function NAME(
-    const funcDecl = trimmed.match(
-      /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)\s*\(/,
-    );
-    if (funcDecl) funcName = funcDecl[1];
-
-    // const/let/var NAME = async? (function | arrow)
-    if (!funcName) {
-      const assignedFunc = trimmed.match(
-        /^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function\s*\w*\s*\(|[^=]*=>\s*\{)/,
-      );
-      if (assignedFunc) funcName = assignedFunc[1];
-    }
-
-    // Class method (only inside a class body)
-    if (!funcName && currentClass && braceDepth > classDepth) {
-      const methodDecl = trimmed.match(
-        /^(?:async\s+)?(?:static\s+)?(?:get\s+|set\s+)?#?(\w+)\s*\(/,
-      );
-      if (methodDecl && !NOT_FUNCTIONS.has(methodDecl[1])) {
-        const mname = methodDecl[1];
-        funcName =
-          mname === 'constructor' ? `${currentClass}.constructor` : `${currentClass}.${mname}`;
-      }
-    }
-
-    // Insert finally blocks for closing function scopes
-    while (funcStack.length > 0 && newDepth <= funcStack[funcStack.length - 1].openDepth) {
-      funcStack.pop();
-      output.push(`${indent}} finally { globalThis.__tracer?.exit(); }`);
-    }
-
+    closeFinishedScopes(funcStack, newDepth, indent, output);
     output.push(line);
-
-    // Insert enter/try for new function declarations
-    if (funcName && trimmed.endsWith('{')) {
-      const inner = `${indent}  `;
-      const escaped = funcName.replace(/'/g, "\\'");
-      output.push(`${inner}globalThis.__tracer?.enter('${escaped}', '${file}');`);
-      output.push(`${inner}try {`);
-      funcStack.push({ name: funcName, openDepth: braceDepth });
-    }
+    openScopeIfDeclared(funcName, trimmed, indent, file, braceDepth, funcStack, output);
 
     braceDepth = newDepth;
 

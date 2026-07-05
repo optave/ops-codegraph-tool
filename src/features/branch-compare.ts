@@ -10,7 +10,7 @@ import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { toErrorMessage } from '../shared/errors.js';
 import { toSymbolRef } from '../shared/normalize.js';
-import type { EngineMode, NativeDatabase } from '../types.js';
+import type { BetterSqlite3Database, EngineMode, NativeDatabase } from '../types.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
 
@@ -106,6 +106,96 @@ function makeSymbolKey(kind: string, file: string, name: string): string {
   return `${kind}::${file}::${name}`;
 }
 
+interface RawNodeRow {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  end_line: number | null;
+}
+
+/** Try opening a NativeDatabase handle for batched fan-in/fan-out metrics. */
+function openNativeDbForFanMetrics(dbPath: string): NativeDatabase | undefined {
+  if (!isNativeAvailable()) return undefined;
+  try {
+    const native = getNative();
+    return native.NativeDatabase.openReadonly(dbPath);
+  } catch (e) {
+    debug(`loadSymbolsFromDb: native path failed: ${toErrorMessage(e)}`);
+    return undefined;
+  }
+}
+
+/** Query all non-file/directory nodes belonging to the given changed files. */
+function queryChangedFileNodes(db: BetterSqlite3Database, changedFiles: string[]): RawNodeRow[] {
+  const placeholders = changedFiles.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
+       FROM nodes n
+       WHERE n.file IN (${placeholders})
+         AND n.kind NOT IN ('file', 'directory')
+       ORDER BY n.file, n.line`,
+    )
+    .all(...changedFiles) as RawNodeRow[];
+}
+
+/** Build the public SymbolInfo shape from a raw row + its resolved fan metrics. */
+function makeSymbolInfo(row: RawNodeRow, fanIn: number, fanOut: number): SymbolInfo {
+  const lineCount = row.end_line ? row.end_line - row.line + 1 : 0;
+  return {
+    id: row.id,
+    name: row.name,
+    kind: row.kind,
+    file: row.file,
+    line: row.line,
+    lineCount,
+    fanIn,
+    fanOut,
+  };
+}
+
+/** Native fast path: batch all fan-in/fan-out lookups in one napi call. */
+function buildSymbolsViaNativeBatch(
+  filtered: RawNodeRow[],
+  nativeDb: NativeDatabase,
+): Map<string, SymbolInfo> {
+  const symbols = new Map<string, SymbolInfo>();
+  const nodeIds = filtered.map((r) => r.id);
+  const metrics = nativeDb.batchFanMetrics!(nodeIds);
+  const metricsMap = new Map(metrics.map((m) => [m.nodeId, m]));
+
+  for (const row of filtered) {
+    const m = metricsMap.get(row.id);
+    const key = makeSymbolKey(row.kind, row.file, row.name);
+    symbols.set(key, makeSymbolInfo(row, m?.fanIn ?? 0, m?.fanOut ?? 0));
+  }
+  return symbols;
+}
+
+/** JS fallback: per-row fan-in/fan-out COUNT queries. */
+function buildSymbolsViaJsFallback(
+  db: BetterSqlite3Database,
+  filtered: RawNodeRow[],
+): Map<string, SymbolInfo> {
+  const symbols = new Map<string, SymbolInfo>();
+  const fanInStmt = db.prepare(
+    `SELECT COUNT(*) AS cnt FROM edges WHERE target_id = ? AND kind = 'calls'`,
+  );
+  const fanOutStmt = db.prepare(
+    `SELECT COUNT(*) AS cnt FROM edges WHERE source_id = ? AND kind = 'calls'`,
+  );
+
+  for (const row of filtered) {
+    const fanIn = (fanInStmt.get(row.id) as { cnt: number }).cnt;
+    const fanOut = (fanOutStmt.get(row.id) as { cnt: number }).cnt;
+    const key = makeSymbolKey(row.kind, row.file, row.name);
+    symbols.set(key, makeSymbolInfo(row, fanIn, fanOut));
+  }
+  return symbols;
+}
+
 function loadSymbolsFromDb(
   dbPath: string,
   changedFiles: string[],
@@ -113,97 +203,23 @@ function loadSymbolsFromDb(
 ): Map<string, SymbolInfo> {
   const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true });
-
-  // Try opening a NativeDatabase for batched fan metrics
-  let nativeDb: NativeDatabase | undefined;
-  if (isNativeAvailable()) {
-    try {
-      const native = getNative();
-      nativeDb = native.NativeDatabase.openReadonly(dbPath);
-    } catch (e) {
-      debug(`loadSymbolsFromDb: native path failed: ${toErrorMessage(e)}`);
-    }
-  }
+  const nativeDb = openNativeDbForFanMetrics(dbPath);
 
   try {
-    const symbols = new Map<string, SymbolInfo>();
-
     if (changedFiles.length === 0) {
-      return symbols;
+      return new Map();
     }
 
-    const placeholders = changedFiles.map(() => '?').join(', ');
-    const rows = db
-      .prepare(
-        `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
-         FROM nodes n
-         WHERE n.file IN (${placeholders})
-           AND n.kind NOT IN ('file', 'directory')
-         ORDER BY n.file, n.line`,
-      )
-      .all(...changedFiles) as Array<{
-      id: number;
-      name: string;
-      kind: string;
-      file: string;
-      line: number;
-      end_line: number | null;
-    }>;
+    const rows = queryChangedFileNodes(db, changedFiles);
 
     // Filter first, then batch fan metrics for all surviving rows
     const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
 
-    // ── Native fast path: batch all fan-in/fan-out in one napi call ──
     if (nativeDb?.batchFanMetrics && filtered.length > 0) {
-      const nodeIds = filtered.map((r) => r.id);
-      const metrics = nativeDb.batchFanMetrics(nodeIds);
-      const metricsMap = new Map(metrics.map((m) => [m.nodeId, m]));
-
-      for (const row of filtered) {
-        const lineCount = row.end_line ? row.end_line - row.line + 1 : 0;
-        const m = metricsMap.get(row.id);
-        const key = makeSymbolKey(row.kind, row.file, row.name);
-        symbols.set(key, {
-          id: row.id,
-          name: row.name,
-          kind: row.kind,
-          file: row.file,
-          line: row.line,
-          lineCount,
-          fanIn: m?.fanIn ?? 0,
-          fanOut: m?.fanOut ?? 0,
-        });
-      }
-      return symbols;
+      return buildSymbolsViaNativeBatch(filtered, nativeDb);
     }
 
-    // ── JS fallback ───────────────────────────────────────────────────
-    const fanInStmt = db.prepare(
-      `SELECT COUNT(*) AS cnt FROM edges WHERE target_id = ? AND kind = 'calls'`,
-    );
-    const fanOutStmt = db.prepare(
-      `SELECT COUNT(*) AS cnt FROM edges WHERE source_id = ? AND kind = 'calls'`,
-    );
-
-    for (const row of filtered) {
-      const lineCount = row.end_line ? row.end_line - row.line + 1 : 0;
-      const fanIn = (fanInStmt.get(row.id) as { cnt: number }).cnt;
-      const fanOut = (fanOutStmt.get(row.id) as { cnt: number }).cnt;
-      const key = makeSymbolKey(row.kind, row.file, row.name);
-
-      symbols.set(key, {
-        id: row.id,
-        name: row.name,
-        kind: row.kind,
-        file: row.file,
-        line: row.line,
-        lineCount,
-        fanIn,
-        fanOut,
-      });
-    }
-
-    return symbols;
+    return buildSymbolsViaJsFallback(db, filtered);
   } finally {
     db.close();
     if (nativeDb) {
@@ -232,37 +248,7 @@ function loadCallersFromDb(
     const allCallers = new Set<string>();
 
     for (const startId of nodeIds) {
-      const visited = new Set<number>([startId]);
-      let frontier = [startId];
-
-      for (let d = 1; d <= maxDepth; d++) {
-        const nextFrontier: number[] = [];
-        for (const fid of frontier) {
-          const callers = db
-            .prepare(
-              `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-               FROM edges e JOIN nodes n ON e.source_id = n.id
-               WHERE e.target_id = ? AND e.kind = 'calls'`,
-            )
-            .all(fid) as Array<{
-            id: number;
-            name: string;
-            kind: string;
-            file: string;
-            line: number;
-          }>;
-
-          for (const c of callers) {
-            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-              visited.add(c.id);
-              nextFrontier.push(c.id);
-              allCallers.add(JSON.stringify(toSymbolRef(c)));
-            }
-          }
-        }
-        frontier = nextFrontier;
-        if (frontier.length === 0) break;
-      }
+      bfsCallersFromNode(db, startId, maxDepth, noTests, allCallers);
     }
 
     return [...allCallers].map((s) => JSON.parse(s) as CallerInfo);
@@ -271,63 +257,130 @@ function loadCallersFromDb(
   }
 }
 
+/** Direct DB callers of a single node id (one BFS-frontier expansion step). */
+function queryDirectCallers(
+  db: BetterSqlite3Database,
+  nodeId: number,
+): Array<{ id: number; name: string; kind: string; file: string; line: number }> {
+  return db
+    .prepare(
+      `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+       FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'calls'`,
+    )
+    .all(nodeId) as Array<{ id: number; name: string; kind: string; file: string; line: number }>;
+}
+
+/** BFS up to maxDepth from a single starting node, adding newly-seen callers to allCallers. */
+function bfsCallersFromNode(
+  db: BetterSqlite3Database,
+  startId: number,
+  maxDepth: number,
+  noTests: boolean,
+  allCallers: Set<string>,
+): void {
+  const visited = new Set<number>([startId]);
+  let frontier = [startId];
+
+  for (let d = 1; d <= maxDepth; d++) {
+    const nextFrontier: number[] = [];
+    for (const fid of frontier) {
+      const callers = queryDirectCallers(db, fid);
+      for (const c of callers) {
+        if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+          visited.add(c.id);
+          nextFrontier.push(c.id);
+          allCallers.add(JSON.stringify(toSymbolRef(c)));
+        }
+      }
+    }
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
+  }
+}
+
 // ─── Symbol Comparison ──────────────────────────────────────────────────
+
+/** Symbols present in `targetSymbols` but not `baseSymbols`. */
+function findAddedSymbols(
+  baseSymbols: Map<string, SymbolInfo>,
+  targetSymbols: Map<string, SymbolInfo>,
+): SymbolInfo[] {
+  const added: SymbolInfo[] = [];
+  for (const [key, sym] of targetSymbols) {
+    if (!baseSymbols.has(key)) added.push(sym);
+  }
+  return added;
+}
+
+/** Symbols present in `baseSymbols` but not `targetSymbols`. */
+function findRemovedSymbols(
+  baseSymbols: Map<string, SymbolInfo>,
+  targetSymbols: Map<string, SymbolInfo>,
+): SymbolInfo[] {
+  const removed: SymbolInfo[] = [];
+  for (const [key, sym] of baseSymbols) {
+    if (!targetSymbols.has(key)) removed.push(sym);
+  }
+  return removed;
+}
+
+/** Build a ChangedSymbol entry from a base/target pair whose metrics diverged. */
+function buildChangedSymbol(baseSym: SymbolInfo, targetSym: SymbolInfo): ChangedSymbol | null {
+  const lineCountDelta = targetSym.lineCount - baseSym.lineCount;
+  const fanInDelta = targetSym.fanIn - baseSym.fanIn;
+  const fanOutDelta = targetSym.fanOut - baseSym.fanOut;
+
+  if (lineCountDelta === 0 && fanInDelta === 0 && fanOutDelta === 0) return null;
+
+  return {
+    name: baseSym.name,
+    kind: baseSym.kind,
+    file: baseSym.file,
+    base: {
+      line: baseSym.line,
+      lineCount: baseSym.lineCount,
+      fanIn: baseSym.fanIn,
+      fanOut: baseSym.fanOut,
+    },
+    target: {
+      line: targetSym.line,
+      lineCount: targetSym.lineCount,
+      fanIn: targetSym.fanIn,
+      fanOut: targetSym.fanOut,
+    },
+    changes: {
+      lineCount: lineCountDelta,
+      fanIn: fanInDelta,
+      fanOut: fanOutDelta,
+    },
+  };
+}
+
+/** Symbols present in both maps whose line count / fan-in / fan-out diverged. */
+function findChangedSymbols(
+  baseSymbols: Map<string, SymbolInfo>,
+  targetSymbols: Map<string, SymbolInfo>,
+): ChangedSymbol[] {
+  const changed: ChangedSymbol[] = [];
+  for (const [key, baseSym] of baseSymbols) {
+    const targetSym = targetSymbols.get(key);
+    if (!targetSym) continue;
+    const entry = buildChangedSymbol(baseSym, targetSym);
+    if (entry) changed.push(entry);
+  }
+  return changed;
+}
 
 function compareSymbols(
   baseSymbols: Map<string, SymbolInfo>,
   targetSymbols: Map<string, SymbolInfo>,
 ): { added: SymbolInfo[]; removed: SymbolInfo[]; changed: ChangedSymbol[] } {
-  const added: SymbolInfo[] = [];
-  const removed: SymbolInfo[] = [];
-  const changed: ChangedSymbol[] = [];
-
-  for (const [key, sym] of targetSymbols) {
-    if (!baseSymbols.has(key)) {
-      added.push(sym);
-    }
-  }
-
-  for (const [key, sym] of baseSymbols) {
-    if (!targetSymbols.has(key)) {
-      removed.push(sym);
-    }
-  }
-
-  for (const [key, baseSym] of baseSymbols) {
-    const targetSym = targetSymbols.get(key);
-    if (!targetSym) continue;
-
-    const lineCountDelta = targetSym.lineCount - baseSym.lineCount;
-    const fanInDelta = targetSym.fanIn - baseSym.fanIn;
-    const fanOutDelta = targetSym.fanOut - baseSym.fanOut;
-
-    if (lineCountDelta !== 0 || fanInDelta !== 0 || fanOutDelta !== 0) {
-      changed.push({
-        name: baseSym.name,
-        kind: baseSym.kind,
-        file: baseSym.file,
-        base: {
-          line: baseSym.line,
-          lineCount: baseSym.lineCount,
-          fanIn: baseSym.fanIn,
-          fanOut: baseSym.fanOut,
-        },
-        target: {
-          line: targetSym.line,
-          lineCount: targetSym.lineCount,
-          fanIn: targetSym.fanIn,
-          fanOut: targetSym.fanOut,
-        },
-        changes: {
-          lineCount: lineCountDelta,
-          fanIn: fanInDelta,
-          fanOut: fanOutDelta,
-        },
-      });
-    }
-  }
-
-  return { added, removed, changed };
+  return {
+    added: findAddedSymbols(baseSymbols, targetSymbols),
+    removed: findRemovedSymbols(baseSymbols, targetSymbols),
+    changed: findChangedSymbols(baseSymbols, targetSymbols),
+  };
 }
 
 // ─── Main Data Function ─────────────────────────────────────────────────
@@ -362,48 +415,31 @@ interface BranchCompareResult {
   summary?: BranchCompareSummary;
 }
 
-function attachImpactToSymbols(
-  symbols: SymbolInfo[],
+/**
+ * Attach caller-impact data to each symbol, given a strategy for resolving
+ * its DB node id (removed symbols carry their own id; changed symbols must
+ * be looked up in the base-commit symbol map).
+ */
+function attachImpact<T>(
+  symbols: T[],
+  resolveId: (sym: T) => number | undefined,
   dbPath: string,
-  _baseSymbols: Map<string, SymbolInfo>,
   maxDepth: number,
   noTests: boolean,
 ): void {
   for (const sym of symbols) {
-    const symCallers = loadCallersFromDb(dbPath, sym.id ? [sym.id] : [], maxDepth, noTests);
-    (sym as SymbolInfo & { impact?: CallerInfo[] }).impact = symCallers;
+    const id = resolveId(sym);
+    const symCallers = loadCallersFromDb(dbPath, id ? [id] : [], maxDepth, noTests);
+    (sym as T & { impact?: CallerInfo[] }).impact = symCallers;
   }
 }
 
-function attachImpactToChanged(
-  changed: ChangedSymbol[],
-  dbPath: string,
-  baseSymbols: Map<string, SymbolInfo>,
-  maxDepth: number,
-  noTests: boolean,
-): void {
-  for (const sym of changed) {
-    const baseSym = baseSymbols.get(makeSymbolKey(sym.kind, sym.file, sym.name));
-    const symCallers = loadCallersFromDb(
-      dbPath,
-      baseSym?.id ? [baseSym.id] : [],
-      maxDepth,
-      noTests,
-    );
-    sym.impact = symCallers;
-  }
-}
-
-export async function branchCompareData(
+/** Confirm repoRoot is a git repo and resolve baseRef/targetRef to full SHAs. */
+function validateBranchCompareRefs(
+  repoRoot: string,
   baseRef: string,
   targetRef: string,
-  opts: BranchCompareOpts = {},
-): Promise<BranchCompareResult> {
-  const repoRoot = opts.repoRoot || process.cwd();
-  const maxDepth = opts.depth || 3;
-  const noTests = opts.noTests || false;
-  const engine = (opts.engine || 'wasm') as EngineMode;
-
+): { baseSha: string; targetSha: string } | { error: string } {
   try {
     execFileSync('git', ['rev-parse', '--git-dir'], {
       cwd: repoRoot,
@@ -421,106 +457,251 @@ export async function branchCompareData(
   const targetSha = validateGitRef(repoRoot, targetRef);
   if (!targetSha) return { error: `Invalid git ref: "${targetRef}"` };
 
-  const changedFiles = getChangedFilesBetweenRefs(repoRoot, baseSha, targetSha);
+  return { baseSha, targetSha };
+}
 
-  if (changedFiles.length === 0) {
-    return {
-      baseRef,
-      targetRef,
-      baseSha,
-      targetSha,
-      changedFiles: [],
-      added: [],
-      removed: [],
-      changed: [],
-      summary: {
-        added: 0,
-        removed: 0,
-        changed: 0,
-        totalImpacted: 0,
-        filesAffected: 0,
-      },
-    };
-  }
+/** Create detached worktrees for both refs and build their graphs. */
+async function setupCompareWorktrees(
+  repoRoot: string,
+  baseSha: string,
+  targetSha: string,
+  baseDir: string,
+  targetDir: string,
+  engine: EngineMode,
+): Promise<{ baseDbPath: string; targetDbPath: string }> {
+  createWorktree(repoRoot, baseSha, baseDir);
+  createWorktree(repoRoot, targetSha, targetDir);
 
+  await buildGraph(baseDir, { engine, skipRegistry: true });
+  await buildGraph(targetDir, { engine, skipRegistry: true });
+
+  return {
+    baseDbPath: path.join(baseDir, '.codegraph', 'graph.db'),
+    targetDbPath: path.join(targetDir, '.codegraph', 'graph.db'),
+  };
+}
+
+interface SymbolDiffWithImpact {
+  added: SymbolInfo[];
+  removed: SymbolInfo[];
+  changed: ChangedSymbol[];
+  allImpacted: Set<string>;
+  impactedFiles: Set<string>;
+}
+
+/** Resolve base-commit node ids for removed/changed symbols (for BFS impact queries). */
+function resolveImpactfulIds(
+  removed: SymbolInfo[],
+  changed: ChangedSymbol[],
+  baseSymbols: Map<string, SymbolInfo>,
+): { removedIds: number[]; changedIds: number[] } {
+  const removedIds = removed.map((s) => s.id).filter(Boolean);
+  const changedIds = changed
+    .map((s) => baseSymbols.get(makeSymbolKey(s.kind, s.file, s.name))?.id)
+    .filter((id): id is number => Boolean(id));
+  return { removedIds, changedIds };
+}
+
+/** Collapse removed+changed caller lists into the summary's impacted-symbol/file sets. */
+function computeImpactedFileSets(
+  removedImpact: CallerInfo[],
+  changedImpact: CallerInfo[],
+): { allImpacted: Set<string>; impactedFiles: Set<string> } {
+  const allImpacted = new Set<string>();
+  for (const c of removedImpact) allImpacted.add(`${c.file}:${c.name}`);
+  for (const c of changedImpact) allImpacted.add(`${c.file}:${c.name}`);
+
+  const impactedFiles = new Set<string>();
+  for (const key of allImpacted) impactedFiles.add(key.split(':')[0]!);
+
+  return { allImpacted, impactedFiles };
+}
+
+/** Load symbols from both DBs, diff them, and attach/compute blast-radius impact data. */
+function diffSymbolsWithImpact(
+  baseDbPath: string,
+  targetDbPath: string,
+  normalizedFiles: string[],
+  noTests: boolean,
+  maxDepth: number,
+): SymbolDiffWithImpact {
+  const baseSymbols = loadSymbolsFromDb(baseDbPath, normalizedFiles, noTests);
+  const targetSymbols = loadSymbolsFromDb(targetDbPath, normalizedFiles, noTests);
+
+  const { added, removed, changed } = compareSymbols(baseSymbols, targetSymbols);
+  const { removedIds, changedIds } = resolveImpactfulIds(removed, changed, baseSymbols);
+
+  const removedImpact = loadCallersFromDb(baseDbPath, removedIds, maxDepth, noTests);
+  const changedImpact = loadCallersFromDb(baseDbPath, changedIds, maxDepth, noTests);
+
+  attachImpact(removed, (s) => s.id, baseDbPath, maxDepth, noTests);
+  attachImpact(
+    changed,
+    (s) => baseSymbols.get(makeSymbolKey(s.kind, s.file, s.name))?.id,
+    baseDbPath,
+    maxDepth,
+    noTests,
+  );
+
+  const { allImpacted, impactedFiles } = computeImpactedFileSets(removedImpact, changedImpact);
+
+  return { added, removed, changed, allImpacted, impactedFiles };
+}
+
+/** Strip the internal `.id` field, keeping `.impact` where it was attached. */
+function shapeBranchCompareSymbolLists(
+  added: SymbolInfo[],
+  removed: SymbolInfo[],
+): { cleanAdded: SymbolWithoutId[]; cleanRemoved: SymbolWithoutId[] } {
+  const cleanAdded = added.map(({ id: _id, ...rest }) => rest as SymbolWithoutId);
+  const cleanRemoved = removed.map(({ id: _id, ...rest }) => {
+    const result = rest as SymbolWithoutId;
+    if ((rest as SymbolInfo & { impact?: CallerInfo[] }).impact) {
+      result.impact = (rest as SymbolInfo & { impact?: CallerInfo[] }).impact;
+    }
+    return result;
+  });
+  return { cleanAdded, cleanRemoved };
+}
+
+/** Result shape when there are no changed files between the two refs. */
+function emptyBranchCompareResult(
+  baseRef: string,
+  targetRef: string,
+  baseSha: string,
+  targetSha: string,
+): BranchCompareResult {
+  return {
+    baseRef,
+    targetRef,
+    baseSha,
+    targetSha,
+    changedFiles: [],
+    added: [],
+    removed: [],
+    changed: [],
+    summary: { added: 0, removed: 0, changed: 0, totalImpacted: 0, filesAffected: 0 },
+  };
+}
+
+/** Assemble the final BranchCompareResult from the diff + cleaned symbol lists. */
+function buildBranchCompareResult(
+  refs: { baseRef: string; targetRef: string; baseSha: string; targetSha: string },
+  normalizedFiles: string[],
+  diff: SymbolDiffWithImpact,
+  cleaned: { cleanAdded: SymbolWithoutId[]; cleanRemoved: SymbolWithoutId[] },
+): BranchCompareResult {
+  return {
+    ...refs,
+    changedFiles: normalizedFiles,
+    added: cleaned.cleanAdded,
+    removed: cleaned.cleanRemoved,
+    changed: diff.changed,
+    summary: {
+      added: diff.added.length,
+      removed: diff.removed.length,
+      changed: diff.changed.length,
+      totalImpacted: diff.allImpacted.size,
+      filesAffected: diff.impactedFiles.size,
+    },
+  };
+}
+
+/** Resolve branchCompareData's opts (repoRoot/maxDepth/noTests/engine) with their defaults. */
+function resolveBranchCompareOptions(opts: BranchCompareOpts): {
+  repoRoot: string;
+  maxDepth: number;
+  noTests: boolean;
+  engine: EngineMode;
+} {
+  return {
+    repoRoot: opts.repoRoot || process.cwd(),
+    maxDepth: opts.depth || 3,
+    noTests: opts.noTests || false,
+    engine: (opts.engine || 'wasm') as EngineMode,
+  };
+}
+
+/** Create the scratch tmpdir + base/target subdirectory paths for the dual worktrees. */
+function createCompareTempDirs(): { tmpBase: string; baseDir: string; targetDir: string } {
   const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-bc-'));
-  const baseDir = path.join(tmpBase, 'base');
-  const targetDir = path.join(tmpBase, 'target');
+  return { tmpBase, baseDir: path.join(tmpBase, 'base'), targetDir: path.join(tmpBase, 'target') };
+}
+
+/** Remove both worktrees and the scratch tmpdir (best-effort, always runs in `finally`). */
+function cleanupCompareTempDirs(
+  repoRoot: string,
+  baseDir: string,
+  targetDir: string,
+  tmpBase: string,
+): void {
+  removeWorktree(repoRoot, baseDir);
+  removeWorktree(repoRoot, targetDir);
+  try {
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  } catch (cleanupErr) {
+    debug(`branchCompareData: temp cleanup failed: ${toErrorMessage(cleanupErr)}`);
+  }
+}
+
+/** Set up worktrees, diff the symbols, and shape the final result (the try-block body). */
+async function runBranchCompareInWorktrees(
+  resolvedRefs: { baseRef: string; targetRef: string; baseSha: string; targetSha: string },
+  dirs: { repoRoot: string; baseDir: string; targetDir: string; engine: EngineMode },
+  changedFiles: string[],
+  noTests: boolean,
+  maxDepth: number,
+): Promise<BranchCompareResult> {
+  const { baseSha, targetSha } = resolvedRefs;
+  const { baseDbPath, targetDbPath } = await setupCompareWorktrees(
+    dirs.repoRoot,
+    baseSha,
+    targetSha,
+    dirs.baseDir,
+    dirs.targetDir,
+    dirs.engine,
+  );
+
+  const normalizedFiles = changedFiles.map((f) => f.replace(/\\/g, '/'));
+  const diff = diffSymbolsWithImpact(baseDbPath, targetDbPath, normalizedFiles, noTests, maxDepth);
+  const cleaned = shapeBranchCompareSymbolLists(diff.added, diff.removed);
+
+  return buildBranchCompareResult(resolvedRefs, normalizedFiles, diff, cleaned);
+}
+
+export async function branchCompareData(
+  baseRef: string,
+  targetRef: string,
+  opts: BranchCompareOpts = {},
+): Promise<BranchCompareResult> {
+  const { repoRoot, maxDepth, noTests, engine } = resolveBranchCompareOptions(opts);
+
+  const refs = validateBranchCompareRefs(repoRoot, baseRef, targetRef);
+  if ('error' in refs) return refs;
+  const { baseSha, targetSha } = refs;
 
   try {
-    createWorktree(repoRoot, baseSha, baseDir);
-    createWorktree(repoRoot, targetSha, targetDir);
+    const changedFiles = getChangedFilesBetweenRefs(repoRoot, baseSha, targetSha);
 
-    await buildGraph(baseDir, { engine, skipRegistry: true });
-    await buildGraph(targetDir, { engine, skipRegistry: true });
+    if (changedFiles.length === 0) {
+      return emptyBranchCompareResult(baseRef, targetRef, baseSha, targetSha);
+    }
 
-    const baseDbPath = path.join(baseDir, '.codegraph', 'graph.db');
-    const targetDbPath = path.join(targetDir, '.codegraph', 'graph.db');
+    const { tmpBase, baseDir, targetDir } = createCompareTempDirs();
 
-    const normalizedFiles = changedFiles.map((f) => f.replace(/\\/g, '/'));
-
-    const baseSymbols = loadSymbolsFromDb(baseDbPath, normalizedFiles, noTests);
-    const targetSymbols = loadSymbolsFromDb(targetDbPath, normalizedFiles, noTests);
-
-    const { added, removed, changed } = compareSymbols(baseSymbols, targetSymbols);
-
-    const removedIds = removed.map((s) => s.id).filter(Boolean);
-    const changedIds = changed
-      .map((s) => {
-        const baseSym = baseSymbols.get(makeSymbolKey(s.kind, s.file, s.name));
-        return baseSym?.id;
-      })
-      .filter((id): id is number => Boolean(id));
-
-    const removedImpact = loadCallersFromDb(baseDbPath, removedIds, maxDepth, noTests);
-    const changedImpact = loadCallersFromDb(baseDbPath, changedIds, maxDepth, noTests);
-
-    attachImpactToSymbols(removed, baseDbPath, baseSymbols, maxDepth, noTests);
-    attachImpactToChanged(changed, baseDbPath, baseSymbols, maxDepth, noTests);
-
-    const allImpacted = new Set<string>();
-    for (const c of removedImpact) allImpacted.add(`${c.file}:${c.name}`);
-    for (const c of changedImpact) allImpacted.add(`${c.file}:${c.name}`);
-
-    const impactedFiles = new Set<string>();
-    for (const key of allImpacted) impactedFiles.add(key.split(':')[0]!);
-
-    const cleanAdded = added.map(({ id: _id, ...rest }) => rest as SymbolWithoutId);
-    const cleanRemoved = removed.map(({ id: _id, ...rest }) => {
-      const result = rest as SymbolWithoutId;
-      if ((rest as SymbolInfo & { impact?: CallerInfo[] }).impact) {
-        result.impact = (rest as SymbolInfo & { impact?: CallerInfo[] }).impact;
-      }
-      return result;
-    });
-
-    return {
-      baseRef,
-      targetRef,
-      baseSha,
-      targetSha,
-      changedFiles: normalizedFiles,
-      added: cleanAdded,
-      removed: cleanRemoved,
-      changed,
-      summary: {
-        added: added.length,
-        removed: removed.length,
-        changed: changed.length,
-        totalImpacted: allImpacted.size,
-        filesAffected: impactedFiles.size,
-      },
-    };
+    try {
+      return await runBranchCompareInWorktrees(
+        { baseRef, targetRef, baseSha, targetSha },
+        { repoRoot, baseDir, targetDir, engine },
+        changedFiles,
+        noTests,
+        maxDepth,
+      );
+    } finally {
+      cleanupCompareTempDirs(repoRoot, baseDir, targetDir, tmpBase);
+    }
   } catch (err) {
     return { error: toErrorMessage(err) };
-  } finally {
-    removeWorktree(repoRoot, baseDir);
-    removeWorktree(repoRoot, targetDir);
-    try {
-      fs.rmSync(tmpBase, { recursive: true, force: true });
-    } catch (cleanupErr) {
-      debug(`branchCompareData: temp cleanup failed: ${toErrorMessage(cleanupErr)}`);
-    }
   }
 }
 
@@ -572,39 +753,32 @@ function collectImpactedCallers(
   return allImpacted;
 }
 
-export function branchCompareMermaid(data: BranchCompareResult): string {
-  if (data.error) return data.error;
-  if (
-    (data.added?.length ?? 0) === 0 &&
-    (data.removed?.length ?? 0) === 0 &&
-    (data.changed?.length ?? 0) === 0
-  ) {
-    return 'flowchart TB\n    none["No structural differences detected"]';
+/** Render the "Impacted Callers" subgraph block, if there are any impacted callers. */
+function renderImpactedCallersSubgraph(
+  lines: string[],
+  state: MermaidNodeIdState,
+  allImpacted: Map<string, CallerInfo>,
+): void {
+  if (allImpacted.size === 0) return;
+  lines.push('    subgraph sg_impact["Impacted Callers"]');
+  for (const [key, c] of allImpacted) {
+    const nid = mermaidNodeId(state, key);
+    lines.push(`        ${nid}["[${kindIcon(c.kind)}] ${c.name}"]`);
   }
+  lines.push('    end');
+  lines.push('    style sg_impact fill:#f3e5f5,stroke:#9c27b0');
+}
 
-  const lines = ['flowchart TB'];
-  const state: MermaidNodeIdState = { counter: 0, map: new Map() };
-
-  addMermaidSubgraph(lines, state, 'added', 'Added', data.added || [], '#e8f5e9', '#4caf50');
-  addMermaidSubgraph(lines, state, 'removed', 'Removed', data.removed || [], '#ffebee', '#f44336');
-  addMermaidSubgraph(lines, state, 'changed', 'Changed', data.changed || [], '#fff3e0', '#ff9800');
-
-  const impactSources = [...(data.removed || []), ...(data.changed || [])];
-  const allImpacted = collectImpactedCallers(impactSources);
-
-  if (allImpacted.size > 0) {
-    lines.push('    subgraph sg_impact["Impacted Callers"]');
-    for (const [key, c] of allImpacted) {
-      const nid = mermaidNodeId(state, key);
-      lines.push(`        ${nid}["[${kindIcon(c.kind)}] ${c.name}"]`);
-    }
-    lines.push('    end');
-    lines.push('    style sg_impact fill:#f3e5f5,stroke:#9c27b0');
-  }
-
+/** Draw the dotted "impacted by" edges from each removed/changed symbol to its callers. */
+function renderImpactEdges(
+  lines: string[],
+  state: MermaidNodeIdState,
+  impactSources: Array<{ kind: string; file: string; name: string; impact?: CallerInfo[] }>,
+  removed: SymbolWithoutId[],
+): void {
   for (const sym of impactSources) {
     if (!sym.impact) continue;
-    const prefix = (data.removed || []).includes(sym as SymbolWithoutId) ? 'removed' : 'changed';
+    const prefix = removed.includes(sym as SymbolWithoutId) ? 'removed' : 'changed';
     const symKey = `${prefix}::${sym.kind}::${sym.file}::${sym.name}`;
     for (const c of sym.impact) {
       const callerKey = `impact::${c.kind}::${c.file}::${c.name}`;
@@ -613,6 +787,44 @@ export function branchCompareMermaid(data: BranchCompareResult): string {
       }
     }
   }
+}
+
+/** True if the compare result has no added/removed/changed symbols to render. */
+function hasNoBranchDifferences(data: BranchCompareResult): boolean {
+  return (
+    (data.added?.length ?? 0) === 0 &&
+    (data.removed?.length ?? 0) === 0 &&
+    (data.changed?.length ?? 0) === 0
+  );
+}
+
+/** Render the three top-level Added/Removed/Changed subgraphs. */
+function renderAddedRemovedChangedSubgraphs(
+  lines: string[],
+  state: MermaidNodeIdState,
+  data: BranchCompareResult,
+): void {
+  addMermaidSubgraph(lines, state, 'added', 'Added', data.added || [], '#e8f5e9', '#4caf50');
+  addMermaidSubgraph(lines, state, 'removed', 'Removed', data.removed || [], '#ffebee', '#f44336');
+  addMermaidSubgraph(lines, state, 'changed', 'Changed', data.changed || [], '#fff3e0', '#ff9800');
+}
+
+export function branchCompareMermaid(data: BranchCompareResult): string {
+  if (data.error) return data.error;
+  if (hasNoBranchDifferences(data)) {
+    return 'flowchart TB\n    none["No structural differences detected"]';
+  }
+
+  const lines = ['flowchart TB'];
+  const state: MermaidNodeIdState = { counter: 0, map: new Map() };
+
+  renderAddedRemovedChangedSubgraphs(lines, state, data);
+
+  const impactSources = [...(data.removed || []), ...(data.changed || [])];
+  const allImpacted = collectImpactedCallers(impactSources);
+
+  renderImpactedCallersSubgraph(lines, state, allImpacted);
+  renderImpactEdges(lines, state, impactSources, data.removed || []);
 
   return lines.join('\n');
 }

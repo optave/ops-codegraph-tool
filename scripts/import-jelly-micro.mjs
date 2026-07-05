@@ -25,6 +25,7 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildLineNameMap } from './lib/name-map.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -32,6 +33,11 @@ const OUT_DIR = path.join(ROOT, 'tests/benchmarks/resolution/fixtures/jelly-micr
 
 const JELLY_RAW = 'https://raw.githubusercontent.com/cs-au-dk/jelly/master/tests/micro';
 const JELLY_API = 'https://api.github.com/repos/cs-au-dk/jelly/contents/tests/micro';
+
+// HTTP status-code ranges used by fetchText's redirect-following logic.
+const HTTP_STATUS_REDIRECT_MIN = 300;
+const HTTP_STATUS_REDIRECT_MAX = 400; // exclusive
+const HTTP_STATUS_ERROR_MIN = 400;
 
 // ── Args ────────────────────────────────────────────────────────────────────
 
@@ -46,7 +52,11 @@ function fetchText(url, redirectsLeft = 10) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('http:') ? http : https;
     client.get(url, { headers: { 'User-Agent': 'codegraph-benchmark' } }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+      if (
+        res.statusCode >= HTTP_STATUS_REDIRECT_MIN &&
+        res.statusCode < HTTP_STATUS_REDIRECT_MAX &&
+        res.headers.location
+      ) {
         if (redirectsLeft === 0) {
           reject(new Error(`Too many redirects: ${url}`));
           return;
@@ -57,7 +67,7 @@ function fetchText(url, redirectsLeft = 10) {
       let body = '';
       res.on('data', (d) => (body += d));
       res.on('end', () => {
-        if (res.statusCode && res.statusCode >= 400) {
+        if (res.statusCode && res.statusCode >= HTTP_STATUS_ERROR_MIN) {
           reject(new Error(`HTTP ${res.statusCode}: ${body.slice(0, 200)}`));
         } else {
           resolve(body);
@@ -68,139 +78,6 @@ function fetchText(url, redirectsLeft = 10) {
   });
 }
 
-// ── Name mapping ─────────────────────────────────────────────────────────────
-
-/**
- * Build a Map<"startLine:startCol", name> for all functions in a JS source.
- *
- * Extends the basic regex approach with:
- * - Object method shorthand:  { foo() {} }
- * - Object property fn:       { foo: function() {} }
- * - Prototype assignment:     Foo.prototype.bar = function() {}
- * - Class static blocks:      static { ... }
- *
- * Functions that cannot be named receive the label "<anon@line:col>".
- */
-function buildNameMap(src, filename) {
-  const lines = src.split('\n');
-  const nameMap = new Map(); // "line:col" → name (1-based line, 1-based col)
-
-  let currentClass = null;
-  let classDepth = 0;
-  let braceDepth = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const lineNo = i + 1;
-
-    // Class declaration
-    const classMatch = line.match(/^\s*(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/);
-    if (classMatch) {
-      currentClass = classMatch[1];
-      classDepth = braceDepth;
-    }
-
-    // Count braces
-    for (const ch of line) {
-      if (ch === '{') braceDepth++;
-      else if (ch === '}') {
-        braceDepth--;
-        if (currentClass !== null && braceDepth === classDepth) {
-          currentClass = null;
-        }
-      }
-    }
-
-    if (classMatch) {
-      // Class itself: name the position of the opening brace
-      // Jelly assigns the class-level function to the line of "class Foo {"
-      nameMap.set(`${lineNo}:1`, classMatch[1]);
-      continue;
-    }
-
-    // Top-level named function declaration
-    const funcDecl = line.match(/^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s+(\w+)\s*[\(<]/);
-    if (funcDecl) {
-      nameMap.set(`${lineNo}:1`, funcDecl[1]);
-      continue;
-    }
-
-    // Variable assignment: const/let/var foo = function/() =>
-    const varDecl = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=/);
-    if (varDecl && (line.includes('=>') || line.includes('function'))) {
-      nameMap.set(`${lineNo}:1`, varDecl[1]);
-      continue;
-    }
-
-    // Prototype assignment: Foo.prototype.bar = function() {}
-    const protoMatch = line.match(/^\s*(\w+)\.prototype\.(\w+)\s*=\s*function/);
-    if (protoMatch) {
-      nameMap.set(`${lineNo}:1`, `${protoMatch[1]}.${protoMatch[2]}`);
-      continue;
-    }
-
-    // Static property assignment: Foo.bar = function() {}
-    const staticPropMatch = line.match(/^\s*(\w+)\.(\w+)\s*=\s*function/);
-    if (staticPropMatch) {
-      nameMap.set(`${lineNo}:1`, `${staticPropMatch[1]}.${staticPropMatch[2]}`);
-      continue;
-    }
-
-    // Class methods (inside class body)
-    if (currentClass !== null) {
-      // constructor
-      if (/^\s+constructor\s*\(/.test(line)) {
-        nameMap.set(`${lineNo}:1`, currentClass);
-        continue;
-      }
-      // static block: static { ... }
-      if (/^\s+static\s*\{/.test(line)) {
-        nameMap.set(`${lineNo}:1`, `${currentClass}.<static>`);
-        continue;
-      }
-      // static property with initializer: static foo = ...
-      const staticProp = line.match(/^\s+static\s+(\w+)\s*=/);
-      if (staticProp && (line.includes('=>') || line.includes('function') || line.includes('('))) {
-        nameMap.set(`${lineNo}:1`, `${currentClass}.${staticProp[1]}`);
-        continue;
-      }
-      // Named method (including async, static, get/set, generator)
-      const methodMatch = line.match(
-        /^\s+(?:(?:static|async|get|set)\s+)*(?:\*\s*)?(\w+)\s*\(/
-      );
-      if (methodMatch) {
-        const mname = methodMatch[1];
-        if (!['if', 'for', 'while', 'switch', 'catch', 'return', 'new'].includes(mname)) {
-          nameMap.set(`${lineNo}:1`, `${currentClass}.${mname}`);
-          continue;
-        }
-      }
-      // Class field arrow: foo = () => {}
-      const fieldArrow = line.match(/^\s+(\w+)\s*=\s*(?:async\s+)?\(/);
-      if (fieldArrow) {
-        nameMap.set(`${lineNo}:1`, `${currentClass}.${fieldArrow[1]}`);
-        continue;
-      }
-    }
-
-    // Object shorthand method: { foo() {} } or { async foo() {} }
-    const objMethod = line.match(/^\s+(?:async\s+)?(\w+)\s*\(.*\)\s*\{/);
-    if (objMethod && !['if', 'for', 'while', 'switch', 'catch', 'function'].includes(objMethod[1])) {
-      nameMap.set(`${lineNo}:1`, objMethod[1]);
-      continue;
-    }
-
-    // Object property: foo: function() {} or foo: () => {}
-    const objProp = line.match(/^\s+(\w+)\s*:\s*(?:async\s+)?(?:function|\(|[a-zA-Z_$].*=>)/);
-    if (objProp) {
-      nameMap.set(`${lineNo}:1`, objProp[1]);
-      continue;
-    }
-  }
-
-  return nameMap;
-}
-
 // ── Jelly → expected-edges conversion ────────────────────────────────────────
 
 const SCHEMA = '../../../expected-edges.schema.json';
@@ -209,8 +86,8 @@ const SCHEMA = '../../../expected-edges.schema.json';
  * Convert a Jelly .json call graph + .js source to codegraph expected-edges format.
  *
  * Jelly function spec: "fileIdx:startLine:startCol:endLine:endCol" (1-based lines)
- * We map each function to a name using buildNameMap. Unmapped functions get
- * the label "<anon@line:col>".
+ * We map each function to a name using buildLineNameMap (scripts/lib/name-map.mjs).
+ * Unmapped functions get the label "<anon@line:col>".
  *
  * The "module root" function (always index 0 in Jelly) represents the top-level
  * script scope. We label it "<root>" so edges from it are trackable.
@@ -221,7 +98,7 @@ function convertJellyGraph(jellyJson, jsSrc, jsFilename) {
   const { files, functions, fun2fun } = jellyJson;
   if (!files || !functions || !fun2fun) return { edges: [], stats: {} };
 
-  const nameMap = buildNameMap(jsSrc, jsFilename);
+  const nameMap = buildLineNameMap(jsSrc);
 
   // Map function index → { name, file }
   function resolveFunc(idx) {

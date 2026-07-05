@@ -70,5 +70,5 @@ export function refreshJsDb(ctx: PipelineContext): void {
   } catch (e) {
     debug(`refreshJsDb close failed: ${toErrorMessage(e)}`);
   }
-  ctx.db = openDb(ctx.dbPath);
+  ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
 }
