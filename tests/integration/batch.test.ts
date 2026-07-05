@@ -39,6 +39,12 @@ function insertEdge(db, sourceId, targetId, kind = 'calls', confidence = 1.0) {
   ).run(sourceId, targetId, kind, confidence);
 }
 
+function insertComplexity(db, nodeId, cognitive, cyclomatic, maxNesting = 0) {
+  db.prepare(
+    'INSERT INTO function_complexity (node_id, cognitive, cyclomatic, max_nesting) VALUES (?, ?, ?, ?)',
+  ).run(nodeId, cognitive, cyclomatic, maxNesting);
+}
+
 // ─── Fixture DB ────────────────────────────────────────────────────────
 
 let tmpDir: string, dbPath: string;
@@ -70,6 +76,13 @@ beforeAll(() => {
   insertEdge(db, fnAuth, fnValidate);
   insertEdge(db, fnRoute, fnAuth);
   insertEdge(db, fnRoute, fnFormat);
+
+  // Complexity data, distinct per file, so batch complexity can be asserted
+  // to scope results to the requested file rather than the whole repo.
+  insertComplexity(db, fnAuth, 5, 2);
+  insertComplexity(db, fnValidate, 3, 1);
+  insertComplexity(db, fnRoute, 10, 4);
+  insertComplexity(db, fnFormat, 1, 1);
 
   db.close();
 });
@@ -197,12 +210,46 @@ describe('batchData — edge cases', () => {
 // ─── complexity (dbOnly sig) ─────────────────────────────────────────
 
 describe('batchData — complexity (dbOnly signature)', () => {
-  test('complexity command uses target as opts.target', () => {
-    const data = batchData('complexity', ['authenticate'], dbPath);
-    expect(data.total).toBe(1);
-    // complexityData returns functions array — it won't error for unknown targets
+  test('complexity command scopes each target to a file, not a symbol name (#1721)', () => {
+    // Regression test for #1721: batch previously forwarded the file-path
+    // target as opts.target (a symbol-name filter), so complexityData never
+    // matched anything and silently fell back to identical, unfiltered
+    // whole-repo results for every target. It must land in opts.file instead.
+    const data = batchData('complexity', ['src/auth.js', 'src/routes.js'], dbPath);
+    expect(data.total).toBe(2);
+    expect(data.succeeded).toBe(2);
+
+    const auth = data.results.find((r) => r.target === 'src/auth.js');
+    const routes = data.results.find((r) => r.target === 'src/routes.js');
+    expect(auth.ok).toBe(true);
+    expect(routes.ok).toBe(true);
+
+    // src/auth.js has authenticate (cognitive 5) + validateToken (cognitive 3)
+    const authNames = auth.data.functions.map((f) => f.name).sort();
+    expect(authNames).toEqual(['authenticate', 'validateToken']);
+
+    // src/routes.js has only handleRoute (cognitive 10)
+    const routeNames = routes.data.functions.map((f) => f.name);
+    expect(routeNames).toEqual(['handleRoute']);
+
+    // The two targets must not collapse into identical, unfiltered results.
+    // (Note: `summary` is a whole-repo health metric independent of the file
+    // filter, by design of complexityData — see #1807 for a separate,
+    // pre-existing gap where it should but doesn't reflect the file scope.
+    // The bug this test guards against is that `functions` came back empty
+    // for every target because the file path was routed into a symbol-name
+    // filter instead of the file filter.)
+    expect(auth.data.functions).not.toEqual(routes.data.functions);
+  });
+
+  test('complexity command still accepts a bare symbol name via opts.target passthrough', () => {
+    // BATCH_COMMANDS commands other than complexity keep symbol-name targets;
+    // this guards that complexity's own --target-style filtering (via shared
+    // opts, not the batch target) continues to work for direct callers.
+    const data = batchData('complexity', ['src/auth.js'], dbPath, { target: 'valid' });
     expect(data.results[0].ok).toBe(true);
-    expect(data.results[0].data).toHaveProperty('functions');
+    const names = data.results[0].data.functions.map((f) => f.name);
+    expect(names).toEqual(['validateToken']);
   });
 });
 

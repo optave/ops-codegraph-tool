@@ -18,6 +18,15 @@ type BatchSig = 'name' | 'target' | 'file' | 'dbOnly';
 interface BatchCommandEntry {
   fn: (...args: unknown[]) => unknown;
   sig: BatchSig;
+  /**
+   * For `sig: 'dbOnly'` commands only: the `opts` key each target should be
+   * written to before calling `fn(customDbPath, opts)`. Defaults to `'target'`
+   * (a symbol/name filter). Commands whose underlying query function expects a
+   * *file path* target (rather than a symbol name) — e.g. `complexityData`,
+   * which treats `opts.target` as a name filter and `opts.file` as the file
+   * scope — must override this so the batch target lands in the right filter.
+   */
+  targetKey?: string;
 }
 
 export const BATCH_COMMANDS: Record<string, BatchCommandEntry> = {
@@ -31,8 +40,21 @@ export const BATCH_COMMANDS: Record<string, BatchCommandEntry> = {
   exports: { fn: exportsData as (...args: unknown[]) => unknown, sig: 'file' },
   flow: { fn: flowData as (...args: unknown[]) => unknown, sig: 'name' },
   dataflow: { fn: dataflowData as (...args: unknown[]) => unknown, sig: 'name' },
-  complexity: { fn: complexityData as (...args: unknown[]) => unknown, sig: 'dbOnly' },
+  complexity: {
+    fn: complexityData as (...args: unknown[]) => unknown,
+    sig: 'dbOnly',
+    targetKey: 'file',
+  },
 };
+
+/** Resolve the opts key a `dbOnly` command's target should be written to. */
+function dbOnlyTargetOpts(
+  entry: BatchCommandEntry,
+  opts: Record<string, unknown>,
+  target: string,
+): Record<string, unknown> {
+  return { ...opts, [entry.targetKey ?? 'target']: target };
+}
 
 interface BatchResultOk {
   target: string;
@@ -77,7 +99,7 @@ export function batchData(
     try {
       let data: unknown;
       if (entry.sig === 'dbOnly') {
-        data = entry.fn(customDbPath, { ...opts, target });
+        data = entry.fn(customDbPath, dbOnlyTargetOpts(entry, opts, target));
       } else {
         data = entry.fn(target, customDbPath, opts);
       }
@@ -166,7 +188,7 @@ export function multiBatchData(
     try {
       let data: unknown;
       if (entry.sig === 'dbOnly') {
-        data = entry.fn(customDbPath, { ...merged, target });
+        data = entry.fn(customDbPath, dbOnlyTargetOpts(entry, merged, target));
       } else {
         data = entry.fn(target, customDbPath, merged);
       }
