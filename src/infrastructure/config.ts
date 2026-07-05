@@ -17,7 +17,27 @@ export const CONFIG_FILES: readonly string[] = [
   'codegraph.config.json',
 ];
 
-export const DEFAULTS = {
+/**
+ * Recursively freeze an object (and all nested plain objects/arrays) so any
+ * accidental in-place mutation throws immediately (ES modules run in strict
+ * mode) instead of silently corrupting shared state. Applied to DEFAULTS
+ * below — see the loadConfig mutation-leak bug (issue #1725): DEFAULTS.query
+ * (and, by the same aliasing pattern, DEFAULTS.llm / DEFAULTS.build) must
+ * never be a live target for mergeConfig / applyExcludeTestsShorthand /
+ * applyEnvOverrides / resolveSecrets to write onto, whether directly or via
+ * an un-cloned nested reference.
+ */
+function deepFreeze<T>(obj: T): T {
+  if (obj !== null && typeof obj === 'object' && !Object.isFrozen(obj)) {
+    Object.freeze(obj);
+    for (const value of Object.values(obj as Record<string, unknown>)) {
+      deepFreeze(value);
+    }
+  }
+  return obj;
+}
+
+export const DEFAULTS = deepFreeze({
   include: [] as string[],
   exclude: [] as string[],
   ignoreDirs: [] as string[],
@@ -29,9 +49,25 @@ export const DEFAULTS = {
     dbPath: '.codegraph/graph.db',
     driftThreshold: 0.2,
     smallFilesThreshold: 5,
+    /**
+     * Minimum existing file-node count for a repo to be treated as a "large
+     * codebase" when deciding whether to scope node loading to changed files.
+     * Used by loadNodes() in `src/domain/graph/builder/stages/build-edges.ts`
+     * at its `existingFileCount > largeCodebaseFileThreshold` gate.
+     */
+    largeCodebaseFileThreshold: 20,
     typescriptResolver: true,
     engine: 'auto' as 'auto' | 'native' | 'wasm',
     fastSkipDiag: false,
+  },
+  db: {
+    /**
+     * SQLite `busy_timeout` pragma (ms) applied to every opened connection.
+     * @reserved — currently not wired; `src/db/connection.ts` still sets the
+     * hardcoded literal `5000` directly via `db.pragma('busy_timeout = 5000')`
+     * in both `openDb` and `openReadonlyOrFail`.
+     */
+    busyTimeoutMs: 5000,
   },
   query: {
     defaultDepth: 3,
@@ -50,6 +86,8 @@ export const DEFAULTS = {
     apiKey: null as string | null,
     apiKeyCommand: null as string | null,
     requestTimeoutMs: 120_000,
+    apiKeyCommandTimeoutMs: 10_000,
+    apiKeyCommandMaxBufferBytes: 64 * 1024,
   },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15, similarityWarnThreshold: 0.85 },
   ci: { failOnCycles: false, impactThreshold: null as number | null },
@@ -119,6 +157,14 @@ export const DEFAULTS = {
     maxLevels: 50,
     maxLocalPasses: 20,
     refinementTheta: 1.0,
+    /**
+     * Growth multiplier applied when a Leiden partition's per-community
+     * typed arrays need to be resized to fit a larger community count.
+     * @reserved — currently not wired; `ensureCommCapacity()` in
+     * `src/graph/algorithms/leiden/partition.ts` still uses the hardcoded
+     * literal `1.5` directly.
+     */
+    capacityGrowthFactor: 1.5,
   },
   structure: {
     cohesionThreshold: 0.3,
@@ -183,7 +229,7 @@ export const DEFAULTS = {
     },
     disabledTools: [] as string[],
   },
-} satisfies CodegraphConfig;
+} satisfies CodegraphConfig);
 
 // ── Per-process user-config override (set by CLI flags) ────────────────
 // Set once by the preAction hook before any command runs; cleared when changed.
@@ -350,12 +396,19 @@ function applyExcludeTestsShorthand(
   rawLayer: Record<string, unknown>,
 ): Record<string, unknown> {
   if ('excludeTests' in rawLayer) {
-    // Only hoist if this layer doesn't also set query.excludeTests
-    if (!(rawLayer.query && 'excludeTests' in (rawLayer.query as object))) {
-      (merged.query as Record<string, unknown>).excludeTests = Boolean(rawLayer.excludeTests);
-    }
     const result = { ...merged };
     delete result.excludeTests;
+    // Only hoist if this layer doesn't also set query.excludeTests
+    if (!(rawLayer.query && 'excludeTests' in (rawLayer.query as object))) {
+      // Copy-on-write: never mutate `merged.query` in place. If no layer so
+      // far has overridden `query`, `merged.query` is still the same object
+      // reference as DEFAULTS.query — writing to it directly would
+      // permanently poison the shared DEFAULTS singleton (issue #1725).
+      result.query = {
+        ...(merged.query as Record<string, unknown>),
+        excludeTests: Boolean(rawLayer.excludeTests),
+      };
+    }
     return result;
   }
   if ('excludeTests' in merged) {
@@ -372,6 +425,22 @@ interface ConsentResolutionResult {
   applied: boolean;
   globalPath: string | null;
   consentDecision: ConsentDecision | undefined;
+}
+
+/**
+ * Check whether `rootDir` matches any of a parsed global config's `appliesTo`
+ * glob patterns (§4.2 step 3 of the user-config consent spec). Shared by
+ * `resolveConsent` and `promptForConsentIfNeeded` — previously duplicated
+ * verbatim between the two call sites.
+ */
+function matchesAppliesTo(parsed: ParsedUserConfig | null, rootDir: string): boolean {
+  if (!parsed?.appliesToGlobs.length) return false;
+  const expanded = parsed.appliesToGlobs.map((g) =>
+    g.startsWith('~') ? path.join(os.homedir(), g.slice(1)) : g,
+  );
+  const regexes = compileGlobs(expanded);
+  const absRoot = path.resolve(rootDir);
+  return matchesAny(regexes, absRoot);
 }
 
 /**
@@ -425,15 +494,8 @@ function resolveConsent(
 
   // §4.2 step 3: appliesTo glob match (dynamic, never persisted)
   const parsed = loadUserConfigFile(globalPath);
-  if (parsed?.appliesToGlobs.length) {
-    const expanded = parsed.appliesToGlobs.map((g) =>
-      g.startsWith('~') ? path.join(os.homedir(), g.slice(1)) : g,
-    );
-    const regexes = compileGlobs(expanded);
-    const absRoot = path.resolve(rootDir);
-    if (matchesAny(regexes, absRoot)) {
-      return { applied: true, globalPath, consentDecision: undefined };
-    }
+  if (matchesAppliesTo(parsed, rootDir)) {
+    return { applied: true, globalPath, consentDecision: undefined };
   }
 
   // §4.2 steps 4–5: undecided — caller decides whether to prompt
@@ -505,14 +567,7 @@ export async function promptForConsentIfNeeded(
 
   // Check appliesTo globs (dynamic consent — no prompt needed)
   const parsed = loadUserConfigFile(globalPath);
-  if (parsed?.appliesToGlobs.length) {
-    const expanded = parsed.appliesToGlobs.map((g) =>
-      g.startsWith('~') ? path.join(os.homedir(), g.slice(1)) : g,
-    );
-    const regexes = compileGlobs(expanded);
-    const absRoot = path.resolve(rootDir);
-    if (matchesAny(regexes, absRoot)) return; // covered by appliesTo
-  }
+  if (matchesAppliesTo(parsed, rootDir)) return; // covered by appliesTo
 
   // Only prompt in fully interactive sessions
   if (!process.stdin.isTTY || !process.stdout.isTTY) return;
@@ -579,7 +634,16 @@ export function loadConfig(cwd?: string, opts?: LoadConfigOpts): CodegraphConfig
   }
 
   // ── Layer 0: DEFAULTS ─────────────────────────────────────────────
-  let merged = DEFAULTS as unknown as Record<string, unknown>;
+  // Deep-clone so later layers (mergeConfig / applyExcludeTestsShorthand /
+  // applyEnvOverrides / resolveSecrets) never hold a live reference into the
+  // shared, frozen DEFAULTS singleton — writing to a nested key here must
+  // only ever affect this call's private copy. See issue #1725:
+  // DEFAULTS.query used to leak mutations across repos in long-running
+  // processes (e.g. `codegraph mcp --multi-repo`) because mergeConfig's
+  // shallow copy leaves untouched nested keys pointing straight at the
+  // DEFAULTS object — the same aliasing risk applied to DEFAULTS.llm /
+  // DEFAULTS.build via applyEnvOverrides / resolveSecrets.
+  let merged = structuredClone(DEFAULTS) as unknown as Record<string, unknown>;
 
   // ── Layer 1: global (if applied) ──────────────────────────────────
   if (applied && globalPath) {
@@ -747,8 +811,8 @@ export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
   try {
     const result = execFileSync(executable!, args, {
       encoding: 'utf-8',
-      timeout: 10_000,
-      maxBuffer: 64 * 1024,
+      timeout: config.llm.apiKeyCommandTimeoutMs,
+      maxBuffer: config.llm.apiKeyCommandMaxBufferBytes,
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     if (result) {

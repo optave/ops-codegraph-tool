@@ -9,7 +9,6 @@
  * Opt-in via `build --dataflow`. Supports all languages with DATAFLOW_RULES.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { DATAFLOW_RULES } from '../ast-analysis/rules/index.js';
 import {
@@ -27,6 +26,7 @@ import type { NormalizedSymbol } from '../shared/normalize.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { BetterSqlite3Database, NativeDatabase, NodeRow, TreeSitterNode } from '../types.js';
 import { findNodes } from './shared/find-nodes.js';
+import { resolveFileTree } from './shared/resolve-file-tree.js';
 
 // Re-export for backward compatibility
 export { _makeDataflowRules as makeDataflowRules, DATAFLOW_RULES };
@@ -116,49 +116,26 @@ function getDataflowForFile(
 ): DataflowResult | null {
   if (symbols.dataflow) return symbols.dataflow;
 
-  let tree = symbols._tree;
-  let langId = symbols._langId;
-
-  if (!tree) {
-    if (!getParserFn) return null;
-    const ext = path.extname(relPath).toLowerCase();
-    langId = extToLang.get(ext);
-    if (!langId || !DATAFLOW_RULES.has(langId)) return null;
-
-    const absPath = path.join(rootDir, relPath);
-    let code: string;
-    try {
-      code = fs.readFileSync(absPath, 'utf-8');
-    } catch (e: unknown) {
-      debug(`dataflow: cannot read ${relPath}: ${(e as Error).message}`);
-      return null;
-    }
-
-    const parser = getParserFn(parsers, absPath);
-    if (!parser) return null;
-
-    try {
-      tree = parser.parse(code);
-    } catch (e: unknown) {
-      debug(`dataflow: parse failed for ${relPath}: ${(e as Error).message}`);
-      return null;
-    }
-  }
-
-  if (!langId) {
-    const ext = path.extname(relPath).toLowerCase();
-    langId = extToLang.get(ext);
-    if (!langId) return null;
-  }
-
-  if (!DATAFLOW_RULES.has(langId)) return null;
-
-  return extractDataflow(
-    tree as { rootNode: TreeSitterNode },
+  const resolved = resolveFileTree({
     relPath,
-    symbols.definitions,
-    langId,
-  );
+    rootDir,
+    cachedTree: symbols._tree,
+    cachedLangId: symbols._langId,
+    extensions: DATAFLOW_EXTENSIONS,
+    extToLang,
+    parsers,
+    getParser: getParserFn,
+    logPrefix: 'dataflow',
+  });
+  if (!resolved) return null;
+  // resolveFileTree only gates on extension, not on DATAFLOW_RULES membership —
+  // for a cached tree, resolved.langId can be a language the extensions/rules
+  // set no longer covers, so this explicit check must stay to preserve the
+  // original null-for-unsupported contract (extractDataflow's own guard would
+  // otherwise return a non-null empty result instead).
+  if (!DATAFLOW_RULES.has(resolved.langId)) return null;
+
+  return extractDataflow(resolved.tree, relPath, symbols.definitions, resolved.langId);
 }
 
 interface ArgFlow {

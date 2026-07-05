@@ -354,8 +354,8 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
       if (tree && typeof tree.delete === 'function') {
         try {
           tree.delete();
-        } catch {
-          /* ignore cleanup errors */
+        } catch (e) {
+          debug(`WASM tree cleanup failed: ${toErrorMessage(e)}`);
         }
       }
       symbols._tree = undefined;
@@ -439,7 +439,13 @@ export async function buildGraph(
       try {
         await collectFiles(ctx);
         if (
-          detectNoChanges(ctx.db, ctx.allFiles, ctx.rootDir, ctx.opts as Record<string, unknown>)
+          detectNoChanges(
+            ctx.db,
+            ctx.allFiles,
+            ctx.rootDir,
+            ctx.opts as Record<string, unknown>,
+            fastSkipDiag,
+          )
         ) {
           info('No changes detected. Graph is up to date.');
           writeJournalHeader(ctx.rootDir, Date.now());
@@ -497,8 +503,8 @@ export async function buildGraph(
           if (tree && typeof tree.delete === 'function') {
             try {
               tree.delete();
-            } catch {
-              /* ignore cleanup errors */
+            } catch (e) {
+              debug(`WASM tree cleanup failed: ${toErrorMessage(e)}`);
             }
           }
           symbols._tree = undefined;

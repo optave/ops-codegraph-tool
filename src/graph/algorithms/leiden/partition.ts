@@ -8,6 +8,8 @@
  */
 
 import type { GraphAdapter } from './adapter.js';
+import { accumulateInternalEdgeWeights, accumulateNodeAggregates } from './aggregate-helpers.js';
+import { fget, iget, u8get } from './typed-array-helpers.js';
 
 export interface CompactOptions {
   keepOldOrder?: boolean;
@@ -44,18 +46,6 @@ export interface Partition {
   graph?: GraphAdapter;
 }
 
-// Typed arrays always return a number for in-bounds access, but noUncheckedIndexedAccess
-// widens to `number | undefined`. These helpers keep the compound assignment patterns readable.
-function fget(a: Float64Array, i: number): number {
-  return a[i] as number;
-}
-function iget(a: Int32Array, i: number): number {
-  return a[i] as number;
-}
-function u8get(a: Uint8Array, i: number): number {
-  return a[i] as number;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Internal mutable state bucket shared by all extracted functions    */
 /* ------------------------------------------------------------------ */
@@ -81,74 +71,8 @@ interface PartitionState {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Aggregate helpers (shared by initializeAggregates & compact)      */
+/*  Community-ID sort helper (used by compact)                         */
 /* ------------------------------------------------------------------ */
-
-/**
- * Accumulate per-community node-level totals (size, count, strength) into the
- * provided aggregate arrays. Both `initializeAggregates` and `compactCommunityIds`
- * share this logic — extracting it eliminates the duplication.
- */
-function accumulateNodeAggregates(
-  graph: GraphAdapter,
-  nodeCommunity: Int32Array,
-  n: number,
-  totalSize: Float64Array,
-  nodeCount: Int32Array,
-  internalEdgeWeight: Float64Array,
-  totalStrength: Float64Array,
-  totalOutStrength: Float64Array,
-  totalInStrength: Float64Array,
-): void {
-  for (let i = 0; i < n; i++) {
-    const c: number = iget(nodeCommunity, i);
-    totalSize[c] = fget(totalSize, c) + fget(graph.size, i);
-    nodeCount[c] = iget(nodeCount, c) + 1;
-    if (graph.directed) {
-      totalOutStrength[c] = fget(totalOutStrength, c) + fget(graph.strengthOut, i);
-      totalInStrength[c] = fget(totalInStrength, c) + fget(graph.strengthIn, i);
-    } else {
-      totalStrength[c] = fget(totalStrength, c) + fget(graph.strengthOut, i);
-    }
-    if (fget(graph.selfLoop, i) !== 0)
-      internalEdgeWeight[c] = fget(internalEdgeWeight, c) + fget(graph.selfLoop, i);
-  }
-}
-
-/**
- * Accumulate intra-community edge weights. For directed graphs, counts all
- * intra-community non-self edges. For undirected, counts each edge once (j > i).
- */
-function accumulateInternalEdgeWeights(
-  graph: GraphAdapter,
-  nodeCommunity: Int32Array,
-  n: number,
-  internalEdgeWeight: Float64Array,
-): void {
-  if (graph.directed) {
-    for (let i = 0; i < n; i++) {
-      const ci: number = iget(nodeCommunity, i);
-      const neighbors = graph.outEdges[i]!;
-      for (let k = 0; k < neighbors.length; k++) {
-        const { to: j, w } = neighbors[k]!;
-        if (i === j) continue; // self-loop already counted via graph.selfLoop[i]
-        if (ci === iget(nodeCommunity, j))
-          internalEdgeWeight[ci] = fget(internalEdgeWeight, ci) + w;
-      }
-    }
-  } else {
-    for (let i = 0; i < n; i++) {
-      const ci: number = iget(nodeCommunity, i);
-      const neighbors = graph.outEdges[i]!;
-      for (let k = 0; k < neighbors.length; k++) {
-        const { to: j, w } = neighbors[k]!;
-        if (j <= i) continue;
-        if (ci === iget(nodeCommunity, j))
-          internalEdgeWeight[ci] = fget(internalEdgeWeight, ci) + w;
-      }
-    }
-  }
-}
 
 /**
  * Sort community IDs according to the compaction options: preserve original
@@ -218,11 +142,11 @@ function initAggregates(s: PartitionState): void {
     s.nodeCommunity,
     s.n,
     s.communityTotalSize,
-    s.communityNodeCount,
     s.communityInternalEdgeWeight,
     s.communityTotalStrength,
     s.communityTotalOutStrength,
     s.communityTotalInStrength,
+    s.communityNodeCount,
   );
   accumulateInternalEdgeWeights(s.graph, s.nodeCommunity, s.n, s.communityInternalEdgeWeight);
 }
@@ -463,11 +387,11 @@ function compactIds(s: PartitionState, opts: CompactOptions = {}): void {
     s.nodeCommunity,
     s.n,
     newTotalSize,
-    newNodeCount,
     newInternalEdgeWeight,
     newTotalStrength,
     newTotalOutStrength,
     newTotalInStrength,
+    newNodeCount,
   );
   accumulateInternalEdgeWeights(s.graph, s.nodeCommunity, s.n, newInternalEdgeWeight);
 

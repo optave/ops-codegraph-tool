@@ -41,7 +41,8 @@ export const command: CommandDefinition = {
     ['--color-by <mode>', 'Color nodes by: kind | role | community | complexity'],
   ],
   async execute(_args, opts, ctx) {
-    const { generatePlotHTML, loadPlotConfig } = await import('../../features/graph-enrichment.js');
+    const { generatePlotHTML } = await import('../../presentation/plot.js');
+    const { loadPlotConfig } = await import('../../presentation/viewer.js');
     const os = await import('node:os');
     const { db, close } = openGraph(opts as { db?: string });
 

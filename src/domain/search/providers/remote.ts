@@ -70,6 +70,102 @@ export function resolveRemoteEmbeddingOptions(
 }
 
 /**
+ * Execute a single batched `/embeddings` request: build the request body,
+ * fetch with an abort-on-timeout guard, and normalize network/timeout/status
+ * failures into a descriptive `EngineError` naming the endpoint. Does not
+ * touch the response body — callers are responsible for parsing/validating it.
+ */
+async function executeRemoteEmbeddingRequest(
+  url: string,
+  headers: Record<string, string>,
+  model: string,
+  batch: string[],
+  timeoutMs: number,
+  batchNumber: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, input: batch }),
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new EngineError(
+        `Remote embedding endpoint ${url} did not respond within ${timeoutMs}ms ` +
+          `(batch ${batchNumber})`,
+      );
+    }
+    throw new EngineError(
+      `Failed to reach remote embedding endpoint at ${url}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err instanceof Error ? err : undefined },
+    );
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new EngineError(
+      `Remote embedding endpoint ${url} returned ${response.status} ${response.statusText}` +
+        (body ? `: ${body.slice(0, 500)}` : ''),
+    );
+  }
+
+  return response;
+}
+
+/**
+ * Validate and map a parsed `/embeddings` response body into vectors:
+ * shape-check `data` against the batch length, sort by index (servers aren't
+ * guaranteed to preserve input order), validate each item's `embedding`
+ * field, and enforce dimension consistency against the running `dim` seen
+ * across earlier batches in this `embedRemote` call.
+ */
+function mapRemoteEmbeddingResponse(
+  json: OpenAIEmbeddingResponse,
+  batch: string[],
+  url: string,
+  dim: number,
+): { vectors: Float32Array[]; dim: number } {
+  if (!Array.isArray(json.data) || json.data.length !== batch.length) {
+    throw new EngineError(
+      `Remote embedding endpoint ${url} returned an unexpected response shape ` +
+        `(expected ${batch.length} embeddings, got ${json.data?.length ?? 0})`,
+    );
+  }
+
+  // OpenAI-compatible servers aren't guaranteed to preserve input order — sort by index.
+  const sorted = [...json.data].sort((a, b) => a.index - b.index);
+  const vectors: Float32Array[] = [];
+  for (const item of sorted) {
+    if (!Array.isArray(item.embedding)) {
+      throw new EngineError(
+        `Remote embedding endpoint ${url} returned an item with a missing or non-array ` +
+          `"embedding" field (index ${item.index})`,
+      );
+    }
+    const vec = Float32Array.from(item.embedding);
+    if (dim === 0) {
+      dim = vec.length;
+    } else if (vec.length !== dim) {
+      throw new EngineError(
+        `Remote embedding endpoint ${url} returned inconsistent vector dimensions ` +
+          `(expected ${dim}, got ${vec.length} for response item index ${item.index})`,
+      );
+    }
+    vectors.push(vec);
+  }
+
+  return { vectors, dim };
+}
+
+/**
  * Generate embeddings via a remote OpenAI-compatible `/embeddings` endpoint.
  * Works with OpenAI itself and any self-hosted server implementing the same
  * request/response shape (text-embeddings-inference, Ollama, LM Studio, vLLM).
@@ -90,69 +186,21 @@ export async function embedRemote(
 
   for (let i = 0; i < texts.length; i += REMOTE_BATCH_SIZE) {
     const batch = texts.slice(i, i + REMOTE_BATCH_SIZE);
+    const batchNumber = Math.floor(i / REMOTE_BATCH_SIZE) + 1;
 
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
-
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ model: options.model, input: batch }),
-        signal: controller.signal,
-      });
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw new EngineError(
-          `Remote embedding endpoint ${url} did not respond within ${timeoutMs}ms ` +
-            `(batch ${Math.floor(i / REMOTE_BATCH_SIZE) + 1})`,
-        );
-      }
-      throw new EngineError(
-        `Failed to reach remote embedding endpoint at ${url}: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err instanceof Error ? err : undefined },
-      );
-    } finally {
-      clearTimeout(timeoutHandle);
-    }
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new EngineError(
-        `Remote embedding endpoint ${url} returned ${response.status} ${response.statusText}` +
-          (body ? `: ${body.slice(0, 500)}` : ''),
-      );
-    }
+    const response = await executeRemoteEmbeddingRequest(
+      url,
+      headers,
+      options.model,
+      batch,
+      timeoutMs,
+      batchNumber,
+    );
 
     const json = (await response.json()) as OpenAIEmbeddingResponse;
-    if (!Array.isArray(json.data) || json.data.length !== batch.length) {
-      throw new EngineError(
-        `Remote embedding endpoint ${url} returned an unexpected response shape ` +
-          `(expected ${batch.length} embeddings, got ${json.data?.length ?? 0})`,
-      );
-    }
-
-    // OpenAI-compatible servers aren't guaranteed to preserve input order — sort by index.
-    const sorted = [...json.data].sort((a, b) => a.index - b.index);
-    for (const item of sorted) {
-      if (!Array.isArray(item.embedding)) {
-        throw new EngineError(
-          `Remote embedding endpoint ${url} returned an item with a missing or non-array ` +
-            `"embedding" field (index ${item.index})`,
-        );
-      }
-      const vec = Float32Array.from(item.embedding);
-      if (dim === 0) {
-        dim = vec.length;
-      } else if (vec.length !== dim) {
-        throw new EngineError(
-          `Remote embedding endpoint ${url} returned inconsistent vector dimensions ` +
-            `(expected ${dim}, got ${vec.length} for response item index ${item.index})`,
-        );
-      }
-      results.push(vec);
-    }
+    const mapped = mapRemoteEmbeddingResponse(json, batch, url, dim);
+    dim = mapped.dim;
+    results.push(...mapped.vectors);
 
     if (texts.length > REMOTE_BATCH_SIZE) {
       process.stderr.write(

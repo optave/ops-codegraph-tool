@@ -6,6 +6,7 @@
  */
 
 import type { CodeGraph, EdgeAttrs, NodeAttrs } from '../../model.js';
+import { fget, taAdd } from './typed-array-helpers.js';
 
 export interface EdgeEntry {
   to: number;
@@ -37,17 +38,6 @@ export interface GraphAdapter {
   directed: boolean;
   totalWeight: number;
   forEachNeighbor: (i: number, cb: (to: number, w: number) => void) => void;
-}
-
-// Typed arrays always return a number for in-bounds access, but noUncheckedIndexedAccess
-// widens the return to `number | undefined`. These helpers wrap compound assignment
-// patterns (+=, -=) that appear frequently in this performance-critical code.
-function taGet(a: Float64Array, i: number): number {
-  return a[i] as number;
-}
-
-function taAdd(a: Float64Array, i: number, v: number): void {
-  a[i] = taGet(a, i) + v;
 }
 
 /**
@@ -145,7 +135,7 @@ function populateUndirectedEdges(
   // Note: uses single-w convention (not standard 2w) — the modularity formulas in
   // modularity.ts are written to match this convention, keeping the system self-consistent.
   for (let v = 0; v < n; v++) {
-    const w: number = taGet(selfLoop, v);
+    const w: number = fget(selfLoop, v);
     if (w !== 0) {
       (outEdges[v] as EdgeEntry[]).push({ to: v, w });
       (inEdges[v] as InEdgeEntry[]).push({ from: v, w });

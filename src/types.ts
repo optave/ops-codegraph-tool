@@ -1109,68 +1109,6 @@ export interface DataflowMutation {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// §9  Graph Model (CodeGraph)
-// ════════════════════════════════════════════════════════════════════════
-
-/** Node attributes stored in the in-memory graph. */
-export interface GraphNodeAttrs {
-  label?: string;
-  kind?: string;
-  file?: string;
-  name?: string;
-  line?: number;
-  dbId?: number;
-  [key: string]: unknown;
-}
-
-/** Edge attributes stored in the in-memory graph. */
-export interface GraphEdgeAttrs {
-  kind?: string;
-  confidence?: number;
-  weight?: number;
-  [key: string]: unknown;
-}
-
-/** The unified in-memory graph model. */
-export interface CodeGraph {
-  readonly directed: boolean;
-  readonly nodeCount: number;
-  readonly edgeCount: number;
-
-  // Node operations
-  addNode(id: string, attrs?: GraphNodeAttrs): CodeGraph;
-  hasNode(id: string): boolean;
-  getNodeAttrs(id: string): GraphNodeAttrs | undefined;
-  nodes(): IterableIterator<[string, GraphNodeAttrs]>;
-  nodeIds(): string[];
-
-  // Edge operations
-  addEdge(source: string, target: string, attrs?: GraphEdgeAttrs): CodeGraph;
-  hasEdge(source: string, target: string): boolean;
-  getEdgeAttrs(source: string, target: string): GraphEdgeAttrs | undefined;
-  edges(): Generator<[string, string, GraphEdgeAttrs]>;
-
-  // Adjacency
-  successors(id: string): string[];
-  predecessors(id: string): string[];
-  neighbors(id: string): string[];
-  outDegree(id: string): number;
-  inDegree(id: string): number;
-
-  // Filtering
-  subgraph(predicate: (id: string, attrs: GraphNodeAttrs) => boolean): CodeGraph;
-  filterEdges(predicate: (src: string, tgt: string, attrs: GraphEdgeAttrs) => boolean): CodeGraph;
-
-  // Conversion
-  toEdgeArray(): Array<{ source: string; target: string }>;
-  toGraphology(opts?: { type?: string }): unknown;
-
-  // Utilities
-  clone(): CodeGraph;
-  merge(other: CodeGraph): CodeGraph;
-}
-
-// ════════════════════════════════════════════════════════════════════════
 // §10  Build Pipeline
 // ════════════════════════════════════════════════════════════════════════
 
@@ -1370,6 +1308,12 @@ export interface CodegraphConfig {
     driftThreshold: number;
     smallFilesThreshold: number;
     /**
+     * Minimum existing file-node count for a repo to be treated as a "large
+     * codebase" when deciding whether to scope node loading to changed files.
+     * Used by loadNodes() in `src/domain/graph/builder/stages/build-edges.ts`.
+     */
+    largeCodebaseFileThreshold: number;
+    /**
      * Use the TypeScript compiler API to enrich typeMap for .ts/.tsx files.
      * Improves method-call edge accuracy for patterns like `const svc = container.get<MyService>()`.
      * Disabled by default because `ts.createProgram` adds ~1s overhead per build;
@@ -1397,6 +1341,15 @@ export interface CodegraphConfig {
      * Default: false.
      */
     fastSkipDiag: boolean;
+  };
+
+  db: {
+    /**
+     * SQLite `busy_timeout` pragma (ms) applied to every opened connection.
+     * @reserved — currently not wired; see `busyTimeoutMs` in
+     * `src/infrastructure/config.ts` for wiring status.
+     */
+    busyTimeoutMs: number;
   };
 
   query: {
@@ -1439,6 +1392,17 @@ export interface CodegraphConfig {
      * self-hosted server from hanging the process indefinitely. Default: 120000.
      */
     requestTimeoutMs: number;
+    /**
+     * Timeout (ms) for the `apiKeyCommand` subprocess spawned via `execFileSync`.
+     * Prevents a hung secret-manager CLI from blocking config loading indefinitely.
+     * Default: 10000.
+     */
+    apiKeyCommandTimeoutMs: number;
+    /**
+     * Max stdout buffer size (bytes) for the `apiKeyCommand` subprocess spawned via
+     * `execFileSync`. Default: 65536 (64 KB).
+     */
+    apiKeyCommandMaxBufferBytes: number;
   };
 
   search: {
@@ -1505,6 +1469,13 @@ export interface CodegraphConfig {
     maxLevels: number;
     maxLocalPasses: number;
     refinementTheta: number;
+    /**
+     * Growth multiplier applied when a Leiden partition's per-community
+     * typed arrays need to be resized to fit a larger community count.
+     * @reserved — currently not wired; see `capacityGrowthFactor` in
+     * `src/infrastructure/config.ts` for wiring status.
+     */
+    capacityGrowthFactor: number;
   };
   structure: { cohesionThreshold: number };
 
@@ -1627,26 +1598,6 @@ export interface PaginatedItems<T> {
 
 /** A result object with optional _pagination metadata. */
 export type Paginated<T> = T & { _pagination?: PaginationMeta };
-
-// ════════════════════════════════════════════════════════════════════════
-// §13  Error Hierarchy
-// ════════════════════════════════════════════════════════════════════════
-
-export type ErrorCode =
-  | 'CODEGRAPH_ERROR'
-  | 'PARSE_FAILED'
-  | 'DB_ERROR'
-  | 'CONFIG_INVALID'
-  | 'RESOLUTION_FAILED'
-  | 'ENGINE_UNAVAILABLE'
-  | 'ANALYSIS_FAILED'
-  | 'BOUNDARY_VIOLATION';
-
-export interface CodegraphErrorOpts {
-  code?: ErrorCode;
-  file?: string;
-  cause?: Error;
-}
 
 // ════════════════════════════════════════════════════════════════════════
 // §14  Feature Module Result Shapes
