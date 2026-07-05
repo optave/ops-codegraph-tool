@@ -115,6 +115,29 @@ impl BarrelContext for ImportEdgeContext {
     }
 }
 
+/// Pairs each locally-bound name from an import statement with its original
+/// (pre-rename) exported name — identical to the local name unless the
+/// specifier renames a binding (`import { X as Y }`). Barrel tracing and
+/// target-file symbol lookups must search using the *original* name — the
+/// renamed local alias only exists in the importing file, not in the file
+/// being imported from (#1730). Mirrors `importNamePairs` in build-edges.ts.
+pub(crate) fn import_name_pairs(imp: &crate::types::Import) -> Vec<(String, String)> {
+    let mut original_name_for: HashMap<&str, &str> = HashMap::new();
+    if let Some(renamed) = &imp.renamed_imports {
+        for r in renamed {
+            original_name_for.insert(&r.local, &r.imported);
+        }
+    }
+    imp.names
+        .iter()
+        .map(|name| {
+            let local = name.strip_prefix("* as ").unwrap_or(name);
+            let original = original_name_for.get(local).copied().unwrap_or(local);
+            (local.to_string(), original.to_string())
+        })
+        .collect()
+}
+
 /// Build the reexport map from parsed file symbols.
 pub fn build_reexport_map(ctx: &ImportEdgeContext) -> HashMap<String, Vec<ReexportEntry>> {
     let mut reexport_map = HashMap::new();
@@ -249,18 +272,17 @@ fn collect_type_only_lookup_pairs(ctx: &ImportEdgeContext) -> HashSet<(String, S
                 continue;
             }
             let resolved_path = ctx.get_resolved(abs_str, &imp.source);
-            for name in &imp.names {
-                let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+            for (_local, original) in import_name_pairs(imp) {
                 let mut target_file = resolved_path.clone();
                 if ctx.is_barrel_file(&resolved_path) {
                     let mut visited = HashSet::new();
                     if let Some(actual) =
-                        ctx.resolve_barrel_export(&resolved_path, clean_name, &mut visited)
+                        ctx.resolve_barrel_export(&resolved_path, &original, &mut visited)
                     {
                         target_file = actual;
                     }
                 }
-                pairs.insert((clean_name.to_string(), target_file));
+                pairs.insert((original, target_file));
             }
         }
     }
@@ -303,18 +325,16 @@ fn emit_type_only_symbol_rows(
     if !imp.type_only.unwrap_or(false) {
         return;
     }
-    for name in &imp.names {
-        let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+    for (_local, original) in import_name_pairs(imp) {
         let mut target_file = resolved_path.to_string();
         if ctx.is_barrel_file(resolved_path) {
             let mut visited = HashSet::new();
-            if let Some(actual) =
-                ctx.resolve_barrel_export(resolved_path, clean_name, &mut visited)
+            if let Some(actual) = ctx.resolve_barrel_export(resolved_path, &original, &mut visited)
             {
                 target_file = actual;
             }
         }
-        if let Some(&sym_id) = symbol_node_ids.get(&(clean_name.to_string(), target_file)) {
+        if let Some(&sym_id) = symbol_node_ids.get(&(original, target_file)) {
             edges.push(EdgeRow {
                 source_id: file_node_id,
                 target_id: sym_id,
@@ -347,14 +367,13 @@ fn emit_barrel_through_rows(
         _ => "imports",
     };
     let mut resolved_sources: HashSet<String> = HashSet::new();
-    for name in &imp.names {
-        let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+    for (_local, original) in import_name_pairs(imp) {
         let mut visited = HashSet::new();
-        let actual_source =
-            match ctx.resolve_barrel_export(resolved_path, clean_name, &mut visited) {
-                Some(s) => s,
-                None => continue,
-            };
+        let actual_source = match ctx.resolve_barrel_export(resolved_path, &original, &mut visited)
+        {
+            Some(s) => s,
+            None => continue,
+        };
         if actual_source == resolved_path || !resolved_sources.insert(actual_source.clone()) {
             continue;
         }

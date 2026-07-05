@@ -1277,17 +1277,22 @@ fn load_file_node_id_map(conn: &Connection) -> HashMap<String, u32> {
 /// Resolve a file's imports to the list of `ImportedName` entries the edge
 /// builder consumes. Walks barrel chains to the ultimate definition file so
 /// the edge builder's name-lookup can find the right target (#976 P1).
+///
+/// For renamed specifiers (`import { X as Y }`), `ImportedName.imported`
+/// carries the original name (X) so `resolve_call_targets` can look it up in
+/// the target file instead of the local alias (Y), which only exists in the
+/// importing file (#1730).
 fn collect_imported_names_for_file(
     abs_str: &str,
     symbols: &FileSymbols,
     import_ctx: &crate::domain::graph::builder::stages::import_edges::ImportEdgeContext,
 ) -> Vec<crate::domain::graph::builder::stages::build_edges::ImportedName> {
     use crate::domain::graph::builder::stages::build_edges::ImportedName;
+    use crate::domain::graph::builder::stages::import_edges::import_name_pairs;
     let mut imported_names: Vec<ImportedName> = Vec::new();
     for imp in &symbols.imports {
         let resolved_path = import_ctx.get_resolved(abs_str, &imp.source);
-        for name in &imp.names {
-            let clean_name = name.strip_prefix("* as ").unwrap_or(name).to_string();
+        for (local, original) in import_name_pairs(imp) {
             // CJS require bindings are included in imported_names so the receiver-edge
             // resolver treats them as import artifacts (not locally-defined symbols).
             // We use an empty target_file so the import-aware call-target lookup
@@ -1295,20 +1300,25 @@ fn collect_imported_names_for_file(
             // through to the same-file shadow node — matching WASM call-resolution
             // behaviour where CJS bindings are not in importedNamesMap (#1678).
             if imp.cjs_require.unwrap_or(false) {
-                imported_names.push(ImportedName { name: clean_name, file: String::new() });
+                imported_names.push(ImportedName {
+                    name: local,
+                    file: String::new(),
+                    imported: None,
+                });
                 continue;
             }
             let mut target_file = resolved_path.clone();
             if import_ctx.is_barrel_file(&resolved_path) {
                 let mut visited = HashSet::new();
                 if let Some(actual) =
-                    import_ctx.resolve_barrel_export(&resolved_path, &clean_name, &mut visited)
+                    import_ctx.resolve_barrel_export(&resolved_path, &original, &mut visited)
                 {
                     target_file = actual;
                 }
             }
             imported_names.push(ImportedName {
-                name: clean_name,
+                imported: if original != local { Some(original) } else { None },
+                name: local,
                 file: target_file,
             });
         }
@@ -1411,8 +1421,14 @@ fn inject_return_types_for_file(
     let imported_names = collect_imported_names_for_file(abs_str, symbols, import_ctx);
     // Later entries overwrite earlier ones on duplicate names — same as the
     // HashMap collect in build_call_edges.
-    let imported_map: HashMap<String, String> =
-        imported_names.into_iter().map(|e| (e.name, e.file)).collect();
+    let mut imported_map: HashMap<String, String> = HashMap::new();
+    let mut imported_original_map: HashMap<String, String> = HashMap::new();
+    for e in imported_names {
+        if let Some(original) = e.imported {
+            imported_original_map.insert(e.name.clone(), original);
+        }
+        imported_map.insert(e.name, e.file);
+    }
 
     let mut injections: Vec<TypeMapEntry> = Vec::new();
     let mut injected: HashSet<String> = HashSet::new();
@@ -1429,7 +1445,13 @@ fn inject_return_types_for_file(
                 global_return_types.get(&format!("{receiver}.{}", ca.callee_name))
             }
             None => imported_map.get(&ca.callee_name).and_then(|from| {
-                return_type_index.get(from).and_then(|m| m.get(&ca.callee_name))
+                // The return-type index for the imported file is keyed by the
+                // function's own declared name — use the original (pre-rename)
+                // name when the callee is a renamed import binding (#1730).
+                let callee_original_name = imported_original_map
+                    .get(&ca.callee_name)
+                    .unwrap_or(&ca.callee_name);
+                return_type_index.get(from).and_then(|m| m.get(callee_original_name))
             }),
         };
 

@@ -46,6 +46,12 @@ pub struct CallInfo {
 pub struct ImportedName {
     pub name: String,
     pub file: String,
+    /// For renamed specifiers (`import { X as Y }`): the original name
+    /// exported by `file` (X), when it differs from `name` (the local
+    /// binding Y). `resolve_call_targets` looks this up in `file` instead of
+    /// `name` — the renamed local alias only exists in the importing file,
+    /// not in `file` itself (#1730).
+    pub imported: Option<String>,
 }
 
 #[napi(object)]
@@ -384,6 +390,7 @@ struct PtsAliasCtx<'a> {
     is_dynamic: u32,
     rel_path: &'a str,
     imported_names: &'a HashMap<&'a str, &'a str>,
+    imported_original_names: &'a HashMap<&'a str, &'a str>,
     type_map: &'a HashMap<&'a str, (&'a str, f64)>,
 }
 
@@ -399,6 +406,7 @@ fn emit_pts_alias_edges<'a>(
 ) {
     for alias in resolve_via_points_to(alias_ctx.lookup_name, alias_ctx.pts) {
         let alias_imported_from = alias_ctx.imported_names.get(alias).copied();
+        let alias_imported_original_name = alias_ctx.imported_original_names.get(alias).copied();
         let alias_call = CallInfo {
             name: alias.to_string(),
             line: alias_ctx.call_line,
@@ -409,6 +417,7 @@ fn emit_pts_alias_edges<'a>(
         };
         let mut alias_targets = resolve_call_targets(
             ctx, &alias_call, alias_ctx.rel_path, alias_imported_from, alias_ctx.type_map, alias_ctx.caller_name,
+            alias_imported_original_name,
         );
         sort_targets_by_confidence(&mut alias_targets, alias_ctx.rel_path, alias_imported_from);
         for t in &alias_targets {
@@ -458,6 +467,11 @@ struct FileContext<'a> {
     rel_path: &'a str,
     file_node_id: u32,
     imported_names: HashMap<&'a str, &'a str>,
+    /// Local import alias -> original exported name, for renamed specifiers
+    /// (`import { X as Y }`) only — entries where local === original are
+    /// omitted. Consulted by `resolve_call_targets` so a call to the local
+    /// alias resolves against the correct exported symbol (#1730).
+    imported_original_names: HashMap<&'a str, &'a str>,
     type_map: HashMap<&'a str, (&'a str, f64)>,
     defs_with_ids: Vec<DefWithId<'a>>,
     pts_map: Option<HashMap<String, HashSet<String>>>,
@@ -567,6 +581,10 @@ fn build_file_context<'a>(
         .imported_names.iter()
         .map(|im| (im.name.as_str(), im.file.as_str()))
         .collect();
+    let imported_original_names: HashMap<&str, &str> = file_input
+        .imported_names.iter()
+        .filter_map(|im| im.imported.as_deref().map(|orig| (im.name.as_str(), orig)))
+        .collect();
     let type_map = build_type_map(file_input);
     let file_nodes: Vec<&NodeInfo> = all_nodes.iter().filter(|n| n.file == rel_path).collect();
     let defs_with_ids: Vec<DefWithId> = file_input.definitions.iter().map(|d| {
@@ -590,6 +608,7 @@ fn build_file_context<'a>(
         rel_path,
         file_node_id: file_input.file_node_id,
         imported_names,
+        imported_original_names,
         type_map,
         defs_with_ids,
         pts_map,
@@ -655,6 +674,7 @@ fn emit_no_receiver_pts_edges<'a>(
                 is_dynamic,
                 rel_path: fc.rel_path,
                 imported_names: &fc.imported_names,
+                imported_original_names: &fc.imported_original_names,
                 type_map: &fc.type_map,
             },
             seen_edges,
@@ -697,6 +717,7 @@ fn emit_receiver_pts_edges<'a>(
             is_dynamic,
             rel_path: fc.rel_path,
             imported_names: &fc.imported_names,
+            imported_original_names: &fc.imported_original_names,
             type_map: &fc.type_map,
         },
         seen_edges,
@@ -734,8 +755,11 @@ fn process_file<'a>(
         let (caller_id, caller_name) = find_enclosing_caller(&fc.defs_with_ids, call.line, fc.file_node_id);
         let is_dynamic = if call.dynamic.unwrap_or(false) { 1u32 } else { 0u32 };
         let imported_from = fc.imported_names.get(call.name.as_str()).copied();
+        let imported_original_name = fc.imported_original_names.get(call.name.as_str()).copied();
 
-        let mut targets = resolve_call_targets(ctx, call, fc.rel_path, imported_from, &fc.type_map, caller_name);
+        let mut targets = resolve_call_targets(
+            ctx, call, fc.rel_path, imported_from, &fc.type_map, caller_name, imported_original_name,
+        );
         sort_targets_by_confidence(&mut targets, fc.rel_path, imported_from);
         emit_call_edges(&targets, caller_id, is_dynamic, fc.rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
 
@@ -882,6 +906,7 @@ fn resolve_call_targets<'a>(
     imported_from: Option<&str>,
     type_map: &HashMap<&str, (&str, f64)>,
     caller_name: &str,
+    imported_original_name: Option<&str>,
 ) -> Vec<&'a NodeInfo> {
     // Flagged dynamic calls use synthetic names like "<dynamic:eval>". Short-circuit
     // so they never accidentally match a real symbol via name lookup.
@@ -889,10 +914,15 @@ fn resolve_call_targets<'a>(
         return vec![];
     }
 
+    // When the call site uses a renamed import binding (`import { X as Y }`),
+    // the imported file's actual symbol is declared under the *original* name
+    // (X) — look that up instead of the local alias the call site wrote (#1730).
+    let target_name = imported_original_name.unwrap_or(call.name.as_str());
+
     // 1. Import-aware resolution
     if let Some(imp_file) = imported_from {
         let targets = ctx.nodes_by_name_and_file
-            .get(&(call.name.as_str(), imp_file))
+            .get(&(target_name, imp_file))
             .cloned().unwrap_or_default();
         if !targets.is_empty() { return targets; }
     }
@@ -2081,7 +2111,7 @@ mod call_edge_tests {
         );
         // Mark `Calculator` as an imported name so the resolver treats the
         // same-file kind="function" node as an import artifact and falls through.
-        file.imported_names = vec![ImportedName { name: "Calculator".to_string(), file: "utils.js".to_string() }];
+        file.imported_names = vec![ImportedName { name: "Calculator".to_string(), file: "utils.js".to_string(), imported: None }];
 
         let edges = build_call_edges(vec![file], all_nodes, vec![]);
 
@@ -2464,7 +2494,7 @@ mod call_edge_tests {
             vec![],
             vec![],
         );
-        file.imported_names = vec![ImportedName { name: "e4".to_string(), file: "other.js".to_string() }];
+        file.imported_names = vec![ImportedName { name: "e4".to_string(), file: "other.js".to_string(), imported: None }];
         file.param_bindings = Some(vec![ParamBinding {
             callee: "f3".to_string(),
             arg_index: 0,

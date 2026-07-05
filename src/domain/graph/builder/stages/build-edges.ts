@@ -88,7 +88,7 @@ interface NativeFileEntry {
     params?: string[];
   }>;
   calls: Call[];
-  importedNames: Array<{ name: string; file: string }>;
+  importedNames: Array<{ name: string; file: string; imported?: string }>;
   classes: ClassRelation[];
   typeMap: Array<{ name: string; typeName: string; confidence: number }>;
   /** Phase 8.3: function-reference bindings for pts analysis. */
@@ -149,6 +149,23 @@ function importEdgeKind(imp: Import): string {
 }
 
 /**
+ * Pairs each locally-bound name from an import statement with its original
+ * (pre-rename) exported name — identical to the local name unless the
+ * specifier renames a binding (`import { X as Y }`). Barrel tracing and
+ * target-file symbol lookups must search using the *original* name — the
+ * renamed local alias only exists in the importing file, not in the file
+ * being imported from (#1730).
+ */
+function importNamePairs(imp: Import): Array<{ local: string; original: string }> {
+  const originalNameFor = new Map<string, string>();
+  for (const r of imp.renamedImports ?? []) originalNameFor.set(r.local, r.imported);
+  return imp.names.map((name) => {
+    const local = name.replace(/^\*\s+as\s+/, '');
+    return { local, original: originalNameFor.get(local) ?? local };
+  });
+}
+
+/**
  * For a `import type` statement, emit symbol-level `imports-type` edges so
  * the target symbols get fan-in credit and aren't classified as dead code.
  */
@@ -160,14 +177,13 @@ function emitTypeOnlySymbolEdges(
   allEdgeRows: EdgeRowTuple[],
 ): void {
   if (!ctx.nodesByNameAndFile) return;
-  for (const name of imp.names) {
-    const cleanName = name.replace(/^\*\s+as\s+/, '');
+  for (const { original } of importNamePairs(imp)) {
     let targetFile = resolvedPath;
     if (isBarrelFile(ctx, resolvedPath)) {
-      const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
+      const actual = resolveBarrelExportCached(ctx, resolvedPath, original);
       if (actual) targetFile = actual;
     }
-    const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
+    const candidates = ctx.nodesByNameAndFile.get(`${original}|${targetFile}`);
     if (candidates && candidates.length > 0) {
       allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0, null, null]);
     }
@@ -233,9 +249,8 @@ function buildBarrelEdges(
   edgeRows: EdgeRowTuple[],
 ): void {
   const resolvedSources = new Set<string>();
-  for (const name of imp.names) {
-    const cleanName = name.replace(/^\*\s+as\s+/, '');
-    const actualSource = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
+  for (const { original } of importNamePairs(imp)) {
+    const actualSource = resolveBarrelExportCached(ctx, resolvedPath, original);
     if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
       resolvedSources.add(actualSource);
       const actualRow = getNodeIdStmt.get(actualSource, 'file', actualSource, 0);
@@ -474,7 +489,12 @@ function propagateReturnTypesAcrossFiles(
     // file rather than the barrel. This means returnTypeIndex.get(importedFrom)
     // now finds entries it previously missed, improving cross-file return-type
     // propagation through re-export chains (Phase 8.2 improvement).
-    const importedNamesMap = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const { importedNames: importedNamesMap, importedOriginalNames } = buildImportedNamesMap(
+      ctx,
+      relPath,
+      symbols,
+      rootDir,
+    );
 
     for (const ca of symbols.callAssignments) {
       if (symbols.typeMap.has(ca.varName)) continue; // already resolved locally
@@ -484,7 +504,11 @@ function propagateReturnTypesAcrossFiles(
         returnEntry = globalReturnTypeMap.get(`${ca.receiverTypeName}.${ca.calleeName}`);
       } else {
         const importedFrom = importedNamesMap.get(ca.calleeName);
-        if (importedFrom) returnEntry = returnTypeIndex.get(importedFrom)?.get(ca.calleeName);
+        // The return-type index for the imported file is keyed by the
+        // function's own declared name — use the original (pre-rename) name
+        // when the call-assignment's callee is a renamed import binding (#1730).
+        const calleeOriginalName = importedOriginalNames.get(ca.calleeName) ?? ca.calleeName;
+        if (importedFrom) returnEntry = returnTypeIndex.get(importedFrom)?.get(calleeOriginalName);
       }
 
       if (returnEntry) {
@@ -639,7 +663,12 @@ function buildDefinePropertyPostPass(
     const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
     if (!fileNodeRow) continue;
 
-    const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const { importedNames, importedOriginalNames } = buildImportedNamesMap(
+      ctx,
+      relPath,
+      symbols,
+      rootDir,
+    );
     const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
     const definePropertyReceivers = symbols.definePropertyReceivers!;
 
@@ -660,6 +689,7 @@ function buildDefinePropertyPostPass(
         importedNames,
         typeMap as Map<string, unknown>,
         caller.callerName,
+        importedOriginalNames,
       );
       if (directTargets.length > 0) continue;
 
@@ -789,21 +819,28 @@ function buildImportedNamesForNative(
   relPath: string,
   symbols: ExtractorOutput,
   rootDir: string,
-): Array<{ name: string; file: string }> {
-  const importedNames: Array<{ name: string; file: string }> = [];
+): Array<{ name: string; file: string; imported?: string }> {
+  const importedNames: Array<{ name: string; file: string; imported?: string }> = [];
   // Process dynamic imports first (lower priority), then static imports
   // (higher priority). Rust HashMap::collect keeps the last entry per key,
   // so static imports win when both contribute the same name.
   const addImports = (imp: (typeof symbols.imports)[number]) => {
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
-    for (const name of imp.names) {
-      const cleanName = name.replace(/^\*\s+as\s+/, '');
+    for (const { local, original } of importNamePairs(imp)) {
       let targetFile = resolvedPath;
       if (isBarrelFile(ctx, resolvedPath)) {
-        const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
+        const actual = resolveBarrelExportCached(ctx, resolvedPath, original);
         if (actual) targetFile = actual;
       }
-      importedNames.push({ name: cleanName, file: targetFile });
+      // `imported` carries the original (pre-rename) exported name so the
+      // native resolver can look it up in `targetFile` instead of the local
+      // alias, which only exists in this file (#1730). Omitted when unrenamed.
+      const entry: { name: string; file: string; imported?: string } = {
+        name: local,
+        file: targetFile,
+      };
+      if (original !== local) entry.imported = original;
+      importedNames.push(entry);
     }
   };
   for (const imp of symbols.imports) {
@@ -831,7 +868,12 @@ function buildCallEdgesJS(
     const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
     if (!fileNodeRow) continue;
 
-    const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const { importedNames, importedOriginalNames } = buildImportedNamesMap(
+      ctx,
+      relPath,
+      symbols,
+      rootDir,
+    );
     const typeMap: Map<string, TypeMapEntry | string> = new Map(
       symbols.typeMap instanceof Map ? symbols.typeMap : [],
     );
@@ -887,48 +929,58 @@ function buildCallEdgesJS(
       ptsMap,
       chaCtx,
       importArtifactNames,
+      importedOriginalNames,
     );
     buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows);
   }
 }
 
+/**
+ * Maps each locally-bound import name in `relPath` to the file it comes from
+ * (`importedNames`), plus, for renamed specifiers (`import { X as Y }`), the
+ * *original* exported name (`importedOriginalNames`, keyed by local name Y).
+ *
+ * Barrel tracing and downstream target-file symbol lookups must search using
+ * the original name — the renamed local alias only exists in the importing
+ * file, not in the file being imported from (#1730).
+ */
 function buildImportedNamesMap(
   ctx: PipelineContext,
   relPath: string,
   symbols: ExtractorOutput,
   rootDir: string,
-): Map<string, string> {
+): { importedNames: Map<string, string>; importedOriginalNames: Map<string, string> } {
   const importedNames = new Map<string, string>();
+  const importedOriginalNames = new Map<string, string>();
+  // Phase 8.4: trace through barrel files so that symbol names map to their
+  // actual definition file, not the re-exporting barrel. Mirrors the tracing
+  // already done in buildImportedNamesForNative (the native path).
+  const traceBarrel = (resolvedPath: string, originalName: string): string => {
+    if (!isBarrelFile(ctx, resolvedPath)) return resolvedPath;
+    const actual = resolveBarrelExportCached(ctx, resolvedPath, originalName);
+    return actual ?? resolvedPath;
+  };
+  const addImportNames = (imp: (typeof symbols.imports)[number], resolvedPath: string) => {
+    for (const { local, original } of importNamePairs(imp)) {
+      importedNames.set(local, traceBarrel(resolvedPath, original));
+      if (original !== local) importedOriginalNames.set(local, original);
+    }
+  };
   // Process dynamic imports first (lower priority), then static imports
   // (higher priority). Static imports represent direct bindings while dynamic
   // imports often use aliased destructuring (`{ foo: bar } = await import(…)`).
   // When both contribute the same name, the static binding is authoritative.
-  //
-  // Phase 8.4: trace through barrel files so that symbol names map to their
-  // actual definition file, not the re-exporting barrel. Mirrors the tracing
-  // already done in buildImportedNamesForNative (the native path).
-  const traceBarrel = (resolvedPath: string, cleanName: string): string => {
-    if (!isBarrelFile(ctx, resolvedPath)) return resolvedPath;
-    const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
-    return actual ?? resolvedPath;
-  };
   for (const imp of symbols.imports) {
     if (!imp.dynamicImport) continue;
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
-    for (const name of imp.names) {
-      const cleanName = name.replace(/^\*\s+as\s+/, '');
-      importedNames.set(cleanName, traceBarrel(resolvedPath, cleanName));
-    }
+    addImportNames(imp, resolvedPath);
   }
   for (const imp of symbols.imports) {
     if (imp.dynamicImport) continue;
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
-    for (const name of imp.names) {
-      const cleanName = name.replace(/^\*\s+as\s+/, '');
-      importedNames.set(cleanName, traceBarrel(resolvedPath, cleanName));
-    }
+    addImportNames(imp, resolvedPath);
   }
-  return importedNames;
+  return { importedNames, importedOriginalNames };
 }
 
 /**
@@ -1226,6 +1278,7 @@ function resolveFallbackTargets(
   lookup: CallNodeLookup,
   typeMap: Map<string, TypeMapEntry | string>,
   definePropertyReceivers: Map<string, string> | undefined,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): {
   targets: ReadonlyArray<{ id: number; file: string; kind?: string }>;
   importedFrom: string | null | undefined;
@@ -1245,6 +1298,7 @@ function resolveFallbackTargets(
           importedNames,
           typeMap as Map<string, unknown>,
           caller.callerName,
+          importedOriginalNames,
         );
 
   // Fallback strategies, applied in order until one yields a match. Each
@@ -1403,6 +1457,7 @@ function emitPtsNoReceiverEdges(
   seenCallEdges: Set<string>,
   ptsEdgeRows: Map<string, number>,
   allEdgeRows: EdgeRowTuple[],
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): void {
   const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
   // Module-level calls (callerName === null) use the '<module>' sentinel emitted by
@@ -1445,6 +1500,8 @@ function emitPtsNoReceiverEdges(
       relPath,
       importedNames,
       typeMap as Map<string, unknown>,
+      undefined,
+      importedOriginalNames,
     );
     const sortedAliasTargets =
       aliasTargets.length > 1
@@ -1488,6 +1545,7 @@ function emitPtsReceiverEdges(
   seenCallEdges: Set<string>,
   ptsEdgeRows: Map<string, number>,
   allEdgeRows: EdgeRowTuple[],
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): void {
   const receiverKey = `${call.receiver}.${call.name}`;
   if (!ptsMap.has(receiverKey)) return;
@@ -1499,6 +1557,8 @@ function emitPtsReceiverEdges(
       relPath,
       importedNames,
       typeMap as Map<string, unknown>,
+      undefined,
+      importedOriginalNames,
     );
     const sortedAliasTargets =
       aliasTargets.length > 1
@@ -1621,6 +1681,7 @@ function buildFileCallEdges(
   ptsMap?: PointsToMap | null,
   chaCtx?: ChaContext,
   importArtifactNames?: ReadonlyMap<string, string>,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): void {
   // Tracks edges that were inserted by the pts fallback (edgeKey → allEdgeRows index).
   // Kept separate from seenCallEdges so that a subsequent direct-call edge for the same
@@ -1656,6 +1717,7 @@ function buildFileCallEdges(
       lookup,
       typeMap,
       symbols.definePropertyReceivers,
+      importedOriginalNames,
     );
 
     // Step 2: Emit direct-call edges (upgrades any pending pts edge in-place).
@@ -1687,6 +1749,7 @@ function buildFileCallEdges(
         seenCallEdges,
         ptsEdgeRows,
         allEdgeRows,
+        importedOriginalNames,
       );
     }
 
@@ -1712,6 +1775,7 @@ function buildFileCallEdges(
         seenCallEdges,
         ptsEdgeRows,
         allEdgeRows,
+        importedOriginalNames,
       );
     }
 
