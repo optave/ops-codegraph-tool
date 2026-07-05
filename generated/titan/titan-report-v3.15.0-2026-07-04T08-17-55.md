@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The Titan pipeline audited 46 targets across 18 domains of the codegraph codebase (v3.15.0), executed 30/30 planned FORGE phases (29 commits — one phase was correctly aborted after proving its target was a false cycle caused by a codegraph resolver bug, not a real architecture problem), then ran 30/30 GRIND phases (6 adoption commits) and a clean PARITY pass. Functions above complexity threshold dropped from 487 to 442 (-45), with five hotspot functions decomposed from cognitive complexity in the 15–94 range down to single digits/teens. Quality score held steady at 69. Dead-symbol count rose from 8,205 to 8,702 (+497) — GRIND traced this almost entirely to known codegraph role-classifier false positives on newly-extracted helpers (not real waste), filing 5 new root-cause issues (#1769, #1771, #1773, #1776, plus follow-ons) in the process. The FORGE phase survived a genuine mid-run interruption (a ~22-hour session/battery crash after phase 28); the resuming session correctly caught and discarded a flawed staged fix before continuing. 39 commits were split into 10 focused, dependency-ordered PRs, and 6 new codegraph bugs were filed as GitHub issues (17 others were already filed during earlier phases).
+The Titan pipeline audited 46 targets across 19 domains of the codegraph codebase (v3.15.0), executed 30/30 planned FORGE phases (29 commits — one phase was correctly aborted after proving its target was a false cycle caused by a codegraph resolver bug, not a real architecture problem), then ran 30/30 GRIND phases (6 adoption commits) and a clean PARITY pass. Functions above complexity threshold dropped from 487 to 442 (-45), with five hotspot functions decomposed from cognitive complexity in the 15–94 range down to single digits/teens. Quality score held steady at 69. Dead-symbol count rose from 8,205 to 8,702 (+497) — GRIND traced this almost entirely to known codegraph role-classifier false positives on newly-extracted helpers (not real waste), filing 5 new root-cause issues (#1769, #1771, #1773, #1776, plus follow-ons) in the process. The FORGE phase survived a genuine mid-run interruption (a ~22-hour session/battery crash after phase 28); the resuming session correctly caught and discarded a flawed staged fix before continuing. 39 commits were split into 10 focused, dependency-ordered PRs, and 6 new codegraph bugs were filed as GitHub issues (18 others were already filed during earlier phases).
 
 ---
 
@@ -17,7 +17,7 @@ The Titan pipeline audited 46 targets across 18 domains of the codegraph codebas
 
 | Phase | Duration | Notes |
 |-------|----------|-------|
-| RECON | 1h07m | Mapped 886 files, 18168 symbols, 18 domains |
+| RECON | 1h07m | Mapped 886 files, 18168 symbols, 19 domains |
 | GAUNTLET | 2h03m | 46 targets audited across batches |
 | SYNC | 12m | 30-phase execution plan, 1 driftWarning flagged (communities.ts cycle) |
 | FORGE | 36h49m wall-clock (~14h48m active) | 30/30 phases, 29 commits (phase 8 correctly produced no commit — see below); first commit 2026-07-02 09:37 UTC, last 2026-07-03 21:50 UTC |
@@ -257,7 +257,7 @@ The remaining three are process/coverage observations (dominance of false-positi
 
 ## Domains Analyzed
 
-From `GLOBAL_ARCH.md` (18 domains mapped at RECON):
+From `GLOBAL_ARCH.md` (19 domains mapped at RECON):
 
 | Domain | Files | Status this run |
 |--------|-------|------------------|
