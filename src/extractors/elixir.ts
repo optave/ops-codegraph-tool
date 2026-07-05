@@ -278,23 +278,48 @@ function pushElixirMapValues(node: TreeSitterNode, stack: TreeSitterNode[]): voi
   for (let i = 0; i < node.childCount; i++) {
     const content = node.child(i);
     if (content?.type !== 'map_content') continue;
-    for (let j = 0; j < content.childCount; j++) {
-      const kws = content.child(j);
-      if (kws?.type !== 'keywords') continue;
-      for (let k = 0; k < kws.childCount; k++) {
-        const pair = kws.child(k);
-        if (pair?.type !== 'pair') continue;
-        for (let p = 0; p < pair.childCount; p++) {
-          const part = pair.child(p);
-          if (!part || part.type === 'keyword') continue;
-          parts.push(part);
-        }
-      }
-    }
+    parts.push(...collectElixirMapContentParts(content));
   }
   for (let i = parts.length - 1; i >= 0; i--) {
     stack.push(parts[i] as TreeSitterNode);
   }
+}
+
+// Walks a `map_content` node's `keywords` children, collecting every pair's
+// value part (see collectElixirPairValueParts) in document order.
+function collectElixirMapContentParts(content: TreeSitterNode): TreeSitterNode[] {
+  const parts: TreeSitterNode[] = [];
+  for (let j = 0; j < content.childCount; j++) {
+    const kws = content.child(j);
+    if (kws?.type !== 'keywords') continue;
+    parts.push(...collectElixirKeywordsParts(kws));
+  }
+  return parts;
+}
+
+// Walks a `keywords` node's `pair` children, collecting each pair's value
+// part in document order.
+function collectElixirKeywordsParts(kws: TreeSitterNode): TreeSitterNode[] {
+  const parts: TreeSitterNode[] = [];
+  for (let k = 0; k < kws.childCount; k++) {
+    const pair = kws.child(k);
+    if (pair?.type !== 'pair') continue;
+    parts.push(...collectElixirPairValueParts(pair));
+  }
+  return parts;
+}
+
+// Collects a single `pair` node's non-keyword children (the value side of
+// `key: value`; the leading `struct`/`keyword` child is intentionally
+// skipped — see the pushElixirMapValues doc comment).
+function collectElixirPairValueParts(pair: TreeSitterNode): TreeSitterNode[] {
+  const parts: TreeSitterNode[] = [];
+  for (let p = 0; p < pair.childCount; p++) {
+    const part = pair.child(p);
+    if (!part || part.type === 'keyword') continue;
+    parts.push(part);
+  }
+  return parts;
 }
 
 function handleDefprotocol(node: TreeSitterNode, ctx: ExtractorOutput): void {

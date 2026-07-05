@@ -1,6 +1,7 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
-import { escapeLike } from '../../../db/query-builder.js';
+import { buildFileConditionSQL } from '../../../db/query-builder.js';
 import { getEmbeddingCount, getEmbeddingMeta } from '../../../db/repository/embeddings.js';
+import { info } from '../../../infrastructure/logger.js';
 import type { BetterSqlite3Database } from '../../../types.js';
 import { MODELS } from '../models.js';
 import { applyFilters } from './filters.js';
@@ -47,7 +48,7 @@ export function prepareSearch(
   try {
     const count = getEmbeddingCount(db);
     if (count === 0) {
-      console.log('No embeddings found. Run `codegraph embed` first.');
+      info('No embeddings found. Run `codegraph embed` first.');
       db.close();
       return null;
     }
@@ -82,12 +83,13 @@ export function prepareSearch(
       params.push(opts.kind);
     }
     if (fpArr.length > 0 && !isGlob) {
-      if (fpArr.length === 1) {
-        conditions.push("n.file LIKE ? ESCAPE '\\'");
-        params.push(`%${escapeLike(fpArr[0]!)}%`);
-      } else {
-        conditions.push(`(${fpArr.map(() => "n.file LIKE ? ESCAPE '\\'").join(' OR ')})`);
-        params.push(...fpArr.map((f) => `%${escapeLike(f)}%`));
+      const fc = buildFileConditionSQL(fpArr, 'n.file');
+      if (fc.sql) {
+        // buildFileConditionSQL always prefixes its output with ' AND ' (see
+        // src/db/query-builder.ts); strip it here since we accumulate raw
+        // fragments in the conditions[] array and join with ' AND ' below.
+        conditions.push(fc.sql.replace(/^ AND /, ''));
+        params.push(...fc.params);
       }
     }
     if (conditions.length > 0) {

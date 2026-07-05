@@ -34,7 +34,6 @@ import type {
   DataflowResult,
   Definition,
   ExtractorOutput,
-  SqliteStatement,
 } from '../../../../types.js';
 import {
   classifyNativeDrops,
@@ -57,6 +56,7 @@ import {
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
+  markExportedSymbols,
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
@@ -136,7 +136,7 @@ function handoffWalAfterNativeBuild(ctx: PipelineContext): boolean {
     debug(`handoffWal JS db close failed: ${toErrorMessage(e)}`);
   }
   try {
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     return true;
   } catch (reopenErr) {
     warn(`Failed to reopen DB after native build: ${(reopenErr as Error).message}`);
@@ -406,8 +406,11 @@ async function runDataflowVertexPass(
       }
       try {
         result = native.extractDataflowAnalysis(source, absPaths[i]!);
-      } catch {
+      } catch (e) {
         // Language-specific parse failure — fall through to WASM.
+        debug(
+          `native dataflow extraction failed for ${relPath}, falling back to WASM: ${toErrorMessage(e)}`,
+        );
       }
     }
     if (result) {
@@ -624,13 +627,13 @@ async function runPostNativeAnalysis(
   if (ctx.nativeDb) {
     try {
       ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
+    } catch (e) {
+      debug(`native DB post-analysis WAL checkpoint failed: ${toErrorMessage(e)}`);
     }
     try {
       ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
+    } catch (e) {
+      debug(`native DB close failed: ${toErrorMessage(e)}`);
     }
     ctx.nativeDb = undefined;
     if (ctx.engineOpts) {
@@ -1216,8 +1219,8 @@ function cleanupThisDispatchWasmTrees(wasmResults: Map<string, ExtractorOutput>)
     if (tree && typeof tree.delete === 'function') {
       try {
         tree.delete();
-      } catch {
-        /* ignore cleanup errors */
+      } catch (e) {
+        debug(`WASM tree cleanup failed: ${toErrorMessage(e)}`);
       }
     }
     (symbols as { _tree?: unknown; _langId?: unknown })._tree = undefined;
@@ -1688,31 +1691,7 @@ function insertBackfilledNodes(
     }
   }
   batchInsertNodes(db, rows);
-
-  // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.
-  if (exportKeys.length > 0) {
-    const EXPORT_CHUNK = 500;
-    const exportStmtCache = new Map<number, SqliteStatement>();
-    for (let i = 0; i < exportKeys.length; i += EXPORT_CHUNK) {
-      const end = Math.min(i + EXPORT_CHUNK, exportKeys.length);
-      const chunkSize = end - i;
-      let updateStmt = exportStmtCache.get(chunkSize);
-      if (!updateStmt) {
-        const conditions = Array.from(
-          { length: chunkSize },
-          () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
-        ).join(' OR ');
-        updateStmt = db.prepare(`UPDATE nodes SET exported = 1 WHERE ${conditions}`);
-        exportStmtCache.set(chunkSize, updateStmt);
-      }
-      const vals: unknown[] = [];
-      for (let j = i; j < end; j++) {
-        const k = exportKeys[j] as unknown[];
-        vals.push(k[0], k[1], k[2], k[3]);
-      }
-      updateStmt.run(...vals);
-    }
-  }
+  markExportedSymbols(db, exportKeys);
 }
 
 /**
@@ -1786,7 +1765,7 @@ async function backfillNativeDroppedFiles(
   // for the INSERT path below).
   if (ctx.nativeFirstProxy) {
     closeNativeDb(ctx, 'pre-parity-backfill');
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     ctx.nativeFirstProxy = false;
   }
 
@@ -1948,7 +1927,7 @@ function openNativeDatabase(ctx: PipelineContext): void {
     ctx.nativeFirstProxy = false; // defensive: reset in case future refactors move the assignment above throwing lines
     releaseAdvisoryLock(`${ctx.dbPath}.lock`);
     // Reopen better-sqlite3 for JS pipeline fallback
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
   }
 }
 
@@ -2125,6 +2104,134 @@ async function runPostNativePasses(
 }
 
 /**
+ * Owns the native-DB lifecycle steps for a single {@link tryNativeOrchestrator}
+ * run: opening the Rust-backed connection, invoking `nativeDb.buildGraph()`
+ * behind the FK-pragma toggle, detecting + backfilling dropped-language files,
+ * handing the WAL off to a fresh better-sqlite3 connection for the JS
+ * post-passes, and closing both connections.
+ *
+ * Pure extract-class refactor of steps that previously lived inline in
+ * `tryNativeOrchestrator` (plus thin wrappers around the pre-existing
+ * `openNativeDatabase`/`handoffWalAfterNativeBuild`/dropped-language helpers)
+ * so the orchestrator function itself reads as a short sequence of steps.
+ * Behavior, ordering, and error handling are unchanged from the inline
+ * version — see the class's methods for the original comments explaining
+ * each step's rationale.
+ */
+class NativeOrchestrationSession {
+  private readonly ctx: PipelineContext;
+
+  constructor(ctx: PipelineContext) {
+    this.ctx = ctx;
+  }
+
+  /** Open NativeDatabase on demand (see {@link openNativeDatabase}). */
+  open(): void {
+    openNativeDatabase(this.ctx);
+  }
+
+  /** True once `open()` succeeded and the native `buildGraph` entry point is available. */
+  get isReady(): boolean {
+    return !!this.ctx.nativeDb?.buildGraph;
+  }
+
+  /**
+   * Invoke the Rust orchestrator's `buildGraph()`.
+   *
+   * The previous full build's clear_all_graph_data() sets PRAGMA foreign_keys = ON
+   * on the native connection. Older native binaries (< v3.14) do not delete
+   * dataflow_vertices / dataflow_summary / call_edge_id rows before purging
+   * nodes/edges during incremental builds, so FK enforcement causes the purge
+   * statements to fail silently — leaving stale nodes and edges that then get
+   * duplicated when the barrel-candidate re-parse re-inserts them (issue #1644).
+   * Disabling FK before buildGraph() lets the purge succeed; FK is restored in
+   * a finally block so post-passes (gap-repair, structure patch) retain FK protection
+   * even if buildGraph() throws.
+   *
+   * Caller must only invoke this after `isReady` is true.
+   */
+  runBuildGraph(): NativeOrchestratorResult {
+    const nativeDb = this.ctx.nativeDb as NonNullable<PipelineContext['nativeDb']>;
+    try {
+      nativeDb.exec('PRAGMA foreign_keys = OFF');
+    } catch (e) {
+      // exec may not exist on very old addon versions — safe to ignore
+      debug(
+        `PRAGMA foreign_keys=OFF failed (safe to ignore on old addon versions): ${toErrorMessage(e)}`,
+      );
+    }
+
+    let resultJson: string;
+    try {
+      resultJson = nativeDb.buildGraph!(
+        this.ctx.rootDir,
+        JSON.stringify(this.ctx.config),
+        JSON.stringify(this.ctx.aliases),
+        JSON.stringify(this.ctx.opts),
+      );
+    } finally {
+      // Restore FK enforcement so any subsequent writes to this connection
+      // (gap-repair, structure patch) retain FK protection — even if buildGraph()
+      // throws.
+      try {
+        nativeDb.exec('PRAGMA foreign_keys = ON');
+      } catch (e) {
+        // safe to ignore on very old addon versions
+        debug(
+          `PRAGMA foreign_keys=ON restore failed (safe to ignore on old addon versions): ${toErrorMessage(e)}`,
+        );
+      }
+    }
+
+    return JSON.parse(resultJson) as NativeOrchestratorResult;
+  }
+
+  /**
+   * Even on no-op rebuilds, dropped-language files added since the last
+   * full build are still missing from `nodes`/`file_hashes` (#1083), and
+   * WASM-only files deleted from disk leave stale rows behind (#1073).
+   * The orchestrator's collect_files skipped them, so its earlyExit
+   * doesn't imply DB consistency. Detect and repair the gap.
+   */
+  async backfillDroppedLanguages(): Promise<void> {
+    const gap = detectDroppedLanguageGap(this.ctx);
+    if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {
+      await backfillNativeDroppedFiles(this.ctx, gap);
+    }
+  }
+
+  /**
+   * Ensure a proper better-sqlite3 connection is open before any post-pass that
+   * writes edges (dropped-language backfill, CHA) and before structure/analysis.
+   * When analysis fallback is needed, close the native proxy and reopen
+   * better-sqlite3 directly; otherwise hand the WAL off via
+   * {@link handoffWalAfterNativeBuild} unless a proxy conversion is already in
+   * place (deferred so CHA and technique-backfill can still write rows).
+   *
+   * Returns false if the DB reopen/handoff failed (caller should return a
+   * partial result with no post-pass phases completed).
+   */
+  ensureJsDbForPostPasses(needsStructure: boolean, needsAnalysisFallback: boolean): boolean {
+    if (!needsStructure && !needsAnalysisFallback) return true;
+    if (needsAnalysisFallback && this.ctx.nativeFirstProxy) {
+      closeNativeDb(this.ctx, 'pre-analysis-fallback');
+      this.ctx.db = openDb(this.ctx.dbPath, this.ctx.config.db.busyTimeoutMs);
+      this.ctx.nativeFirstProxy = false;
+      return true;
+    }
+    if (!this.ctx.nativeFirstProxy) {
+      return handoffWalAfterNativeBuild(this.ctx);
+    }
+    return true;
+  }
+
+  /** Close both the better-sqlite3 and native connections. */
+  close(): void {
+    closeDbPair({ db: this.ctx.db, nativeDb: this.ctx.nativeDb });
+  }
+}
+
+/**
  * Try the native build orchestrator.
  *
  * Returns:
@@ -2136,7 +2243,9 @@ async function runPostNativePasses(
  * invoke `nativeDb.buildGraph()` (the Rust pipeline), and run post-native
  * structure + analysis fallbacks. Lives in its own file to keep the Rust
  * orchestrator entry point separated from the JS-side `buildGraph()` driver
- * in `pipeline.ts`.
+ * in `pipeline.ts`. The native-DB lifecycle steps (open/build/backfill/handoff/close)
+ * are delegated to {@link NativeOrchestrationSession} so this function reads as
+ * a thin sequencer.
  */
 export async function tryNativeOrchestrator(
   ctx: PipelineContext,
@@ -2147,58 +2256,17 @@ export async function tryNativeOrchestrator(
     return undefined;
   }
 
-  openNativeDatabase(ctx);
+  const session = new NativeOrchestrationSession(ctx);
+  session.open();
 
-  if (!ctx.nativeDb?.buildGraph) return undefined;
+  if (!session.isReady) return undefined;
 
-  // The previous full build's clear_all_graph_data() sets PRAGMA foreign_keys = ON
-  // on the native connection. Older native binaries (< v3.14) do not delete
-  // dataflow_vertices / dataflow_summary / call_edge_id rows before purging
-  // nodes/edges during incremental builds, so FK enforcement causes the purge
-  // statements to fail silently — leaving stale nodes and edges that then get
-  // duplicated when the barrel-candidate re-parse re-inserts them (issue #1644).
-  // Disabling FK before buildGraph() lets the purge succeed; FK is restored in
-  // a finally block so post-passes (gap-repair, structure patch) retain FK protection
-  // even if buildGraph() throws.
-  try {
-    ctx.nativeDb.exec('PRAGMA foreign_keys = OFF');
-  } catch {
-    // exec may not exist on very old addon versions — safe to ignore
-  }
-
-  let resultJson: string;
-  try {
-    resultJson = ctx.nativeDb.buildGraph(
-      ctx.rootDir,
-      JSON.stringify(ctx.config),
-      JSON.stringify(ctx.aliases),
-      JSON.stringify(ctx.opts),
-    );
-  } finally {
-    // Restore FK enforcement so any subsequent writes to this connection
-    // (gap-repair, structure patch) retain FK protection — even if buildGraph()
-    // throws.
-    try {
-      ctx.nativeDb.exec('PRAGMA foreign_keys = ON');
-    } catch {
-      // safe to ignore on very old addon versions
-    }
-  }
-
-  const result = JSON.parse(resultJson) as NativeOrchestratorResult;
+  const result = session.runBuildGraph();
 
   if (result.earlyExit) {
     info('No changes detected');
-    // Even on no-op rebuilds, dropped-language files added since the last
-    // full build are still missing from `nodes`/`file_hashes` (#1083), and
-    // WASM-only files deleted from disk leave stale rows behind (#1073).
-    // The orchestrator's collect_files skipped them, so its earlyExit
-    // doesn't imply DB consistency. Run the gap repair before returning.
-    const gap = detectDroppedLanguageGap(ctx);
-    if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {
-      await backfillNativeDroppedFiles(ctx, gap);
-    }
-    closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+    await session.backfillDroppedLanguages();
+    session.close();
     return 'early-exit';
   }
 
@@ -2265,21 +2333,15 @@ export async function tryNativeOrchestrator(
   // When analysis fallback is needed the handoff already happened above; when
   // neither structure nor analysis is needed the proxy conversion is deferred to
   // here so CHA and technique-backfill can still write rows.
-  if (needsStructure || needsAnalysisFallback) {
-    if (needsAnalysisFallback && ctx.nativeFirstProxy) {
-      closeNativeDb(ctx, 'pre-analysis-fallback');
-      ctx.db = openDb(ctx.dbPath);
-      ctx.nativeFirstProxy = false;
-    } else if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
-      // DB reopen failed — return partial result (no post-pass phases completed)
-      return formatNativeTimingResult(p, 0, analysisTiming, {
-        gapDetectMs: 0,
-        chaMs: 0,
-        thisDispatchMs: 0,
-        reclassifyMs: 0,
-        techniqueBackfillMs: 0,
-      });
-    }
+  if (!session.ensureJsDbForPostPasses(needsStructure, needsAnalysisFallback)) {
+    // DB reopen failed — return partial result (no post-pass phases completed)
+    return formatNativeTimingResult(p, 0, analysisTiming, {
+      gapDetectMs: 0,
+      chaMs: 0,
+      thisDispatchMs: 0,
+      reclassifyMs: 0,
+      techniqueBackfillMs: 0,
+    });
   }
 
   const postPassTimings = await runPostNativePasses(ctx, result);
@@ -2316,6 +2378,6 @@ export async function tryNativeOrchestrator(
     await runDataflowVertexPass(ctx, result.changedFiles);
   }
 
-  closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+  session.close();
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming, postPassTimings);
 }

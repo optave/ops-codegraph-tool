@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildFileLineNameMap, buildFileNameLookup } from './lib/name-map.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -71,75 +72,6 @@ function findBin(name, envVar) {
   }
 }
 
-// ── Name resolution from source ────────────────────────────────────────────
-
-/**
- * Parse source files to build a map of (file, startLine) → class-qualified name.
- * Returns a Map<"filename:line", string>.
- *
- * Heuristic — works well for the small hand-annotated fixtures.
- */
-function buildNameMap(fixtureDir, lang) {
-  const exts = EXTENSIONS[lang] || ['.js'];
-  const nameMap = new Map();
-
-  for (const filename of fs.readdirSync(fixtureDir)) {
-    if (!exts.some((e) => filename.endsWith(e))) continue;
-
-    const src = fs.readFileSync(path.join(fixtureDir, filename), 'utf8');
-    const lines = src.split('\n');
-    let currentClass = null;
-    let classDepth = 0;
-    let braceDepth = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const lineNo = i + 1;
-      const key = `${filename}:${lineNo}`;
-
-      const classMatch = line.match(/^\s*(?:export\s+)?class\s+(\w+)/);
-      if (classMatch) {
-        currentClass = classMatch[1];
-        classDepth = braceDepth;
-        nameMap.set(key, classMatch[1]);
-      }
-
-      for (const ch of line) {
-        if (ch === '{') braceDepth++;
-        else if (ch === '}') {
-          braceDepth--;
-          if (currentClass && braceDepth === classDepth) currentClass = null;
-        }
-      }
-
-      if (classMatch) continue;
-
-      const funcMatch = line.match(/^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*[(<]/);
-      if (funcMatch) { nameMap.set(key, funcMatch[1]); continue; }
-
-      const arrowMatch = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=/);
-      if (arrowMatch && (line.includes('=>') || line.includes('function'))) {
-        nameMap.set(key, arrowMatch[1]); continue;
-      }
-
-      if (currentClass) {
-        if (/^\s+constructor\s*\(/.test(line)) {
-          nameMap.set(key, currentClass); continue;
-        }
-        const methodMatch = line.match(/^\s+(?:async\s+|static\s+|(?:get|set)\s+)*(\w+)\s*\(/);
-        if (methodMatch) {
-          const mname = methodMatch[1];
-          if (!['if', 'for', 'while', 'switch', 'catch'].includes(mname)) {
-            nameMap.set(key, `${currentClass}.${mname}`);
-          }
-        }
-      }
-    }
-  }
-
-  return nameMap;
-}
-
 // ── Jelly ──────────────────────────────────────────────────────────────────
 
 function runJelly(lang, fixtureDir) {
@@ -180,7 +112,7 @@ function runJelly(lang, fixtureDir) {
 }
 
 function jellyEdgesToSet(cg, fixtureDir, lang) {
-  const nameMap = buildNameMap(fixtureDir, lang);
+  const nameMap = buildFileLineNameMap(fixtureDir, EXTENSIONS[lang] || ['.js']);
   const files = cg.files;
   const functions = cg.functions;
 
@@ -262,75 +194,6 @@ function runAcg(lang, fixtureDir) {
 }
 
 /**
- * Build a lookup from (basename, unqualifiedName) → Set<qualifiedName>.
- *
- * ACG provides function names directly (e.g. "createUser") but not class
- * prefixes. This map lets us resolve "createUser in service.js" →
- * "UserService.createUser" using the same source scan as buildNameMap.
- *
- * The value is a Set to handle the case where multiple classes in the same
- * file share a method name (e.g. Shape.area + Circle.area + Rectangle.area
- * all in hierarchy.ts). Callers should try all candidates rather than
- * assuming a 1:1 mapping.
- */
-function buildAcgNameLookup(fixtureDir, lang) {
-  const exts = EXTENSIONS[lang] || ['.js'];
-  // Map: "basename:unqualifiedName" → Set<"qualifiedName">
-  const lookup = new Map();
-
-  /** Add a (key → value) entry, accumulating into the existing Set if any. */
-  function add(key, value) {
-    const existing = lookup.get(key);
-    if (existing) existing.add(value);
-    else lookup.set(key, new Set([value]));
-  }
-
-  for (const filename of fs.readdirSync(fixtureDir)) {
-    if (!exts.some((e) => filename.endsWith(e))) continue;
-    const src = fs.readFileSync(path.join(fixtureDir, filename), 'utf8');
-    const lines = src.split('\n');
-    let currentClass = null;
-    let classDepth = 0;
-    let braceDepth = 0;
-
-    for (const line of lines) {
-      const classMatch = line.match(/^\s*(?:export\s+)?class\s+(\w+)/);
-      if (classMatch) {
-        currentClass = classMatch[1];
-        classDepth = braceDepth;
-        // "ClassName" as an unqualified name refers to the class itself (constructor call sites)
-        add(`${filename}:${classMatch[1]}`, classMatch[1]);
-      }
-      for (const ch of line) {
-        if (ch === '{') braceDepth++;
-        else if (ch === '}') {
-          braceDepth--;
-          if (currentClass && braceDepth === classDepth) currentClass = null;
-        }
-      }
-      if (classMatch) continue;
-
-      const funcMatch = line.match(/^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*[(<]/);
-      if (funcMatch) { add(`${filename}:${funcMatch[1]}`, funcMatch[1]); continue; }
-
-      if (currentClass) {
-        // constructor → ClassName (ACG labels constructors as "constructor" in the source)
-        if (/^\s+constructor\s*\(/.test(line)) {
-          add(`${filename}:constructor`, currentClass); continue;
-        }
-        const methodMatch = line.match(/^\s+(?:async\s+|static\s+|(?:get|set)\s+)*(\w+)\s*\(/);
-        if (methodMatch) {
-          const mname = methodMatch[1];
-          if (!['if', 'for', 'while', 'switch', 'catch'].includes(mname))
-            add(`${filename}:${mname}`, `${currentClass}.${mname}`);
-        }
-      }
-    }
-  }
-  return lookup;
-}
-
-/**
  * Parse ACG text output into a set of "source→target" edge strings.
  *
  * ACG output format:
@@ -342,7 +205,7 @@ function buildAcgNameLookup(fixtureDir, lang) {
  * declaration line. So we use the function name directly for the lookup.
  */
 function acgOutputToSet(stdout, fixtureDir, lang) {
-  const lookup = buildAcgNameLookup(fixtureDir, lang);
+  const lookup = buildFileNameLookup(fixtureDir, EXTENSIONS[lang] || ['.js']);
 
   // 'funcName' (file.js@line:start-end) -> 'funcName' (file.js@line:start-end)
   const edgeRe = /^'(\w+)'\s+\((\S+?)@\d+:[^)]+\)\s+->\s+'(\w+)'\s+\((\S+?)@\d+:[^)]+\)/;

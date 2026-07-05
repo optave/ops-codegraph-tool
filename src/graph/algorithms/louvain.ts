@@ -20,6 +20,7 @@ export interface LouvainOptions {
   maxLevels?: number;
   maxLocalPasses?: number;
   refinementTheta?: number;
+  capacityGrowthFactor?: number;
 }
 
 export interface LouvainResult {
@@ -36,9 +37,14 @@ export function louvainCommunities(graph: CodeGraph, opts: LouvainOptions = {}):
 
   const native = loadNative();
   if (native?.louvainCommunities) {
-    if (opts.maxLevels != null || opts.maxLocalPasses != null || opts.refinementTheta != null) {
+    if (
+      opts.maxLevels != null ||
+      opts.maxLocalPasses != null ||
+      opts.refinementTheta != null ||
+      opts.capacityGrowthFactor != null
+    ) {
       debug(
-        'louvainCommunities: maxLevels/maxLocalPasses/refinementTheta are ignored by the native Rust path',
+        'louvainCommunities: maxLevels/maxLocalPasses/refinementTheta/capacityGrowthFactor are ignored by the native Rust path',
       );
     }
     const edges = graph.toEdgeArray();
@@ -63,6 +69,7 @@ function louvainJS(graph: CodeGraph, opts: LouvainOptions, resolution: number): 
     ...(opts.maxLevels != null && { maxLevels: opts.maxLevels }),
     ...(opts.maxLocalPasses != null && { maxLocalPasses: opts.maxLocalPasses }),
     ...(opts.refinementTheta != null && { refinementTheta: opts.refinementTheta }),
+    ...(opts.capacityGrowthFactor != null && { capacityGrowthFactor: opts.capacityGrowthFactor }),
   });
 
   const assignments = new Map<string, number>();

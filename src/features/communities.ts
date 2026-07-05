@@ -156,6 +156,7 @@ type CommunitiesDataOpts = {
   maxLevels?: number;
   maxLocalPasses?: number;
   refinementTheta?: number;
+  capacityGrowthFactor?: number;
   limit?: number;
   offset?: number;
   repo?: Repository;
@@ -197,11 +198,13 @@ export function communitiesData(
   const maxLevels = opts.maxLevels ?? config.community?.maxLevels;
   const maxLocalPasses = opts.maxLocalPasses ?? config.community?.maxLocalPasses;
   const refinementTheta = opts.refinementTheta ?? config.community?.refinementTheta;
+  const capacityGrowthFactor = opts.capacityGrowthFactor ?? config.community?.capacityGrowthFactor;
   const { assignments, modularity } = louvainCommunities(graph, {
     resolution,
     maxLevels,
     maxLocalPasses,
     refinementTheta,
+    capacityGrowthFactor,
   });
 
   const { communities, communityDirs } = buildCommunityObjects(graph, assignments, opts);

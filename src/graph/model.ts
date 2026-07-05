@@ -228,10 +228,10 @@ export class CodeGraph {
   /** Merge another graph into this one. Nodes/edges from other override on conflict. */
   merge(other: CodeGraph): this {
     for (const [id, attrs] of other.nodes()) {
-      this.addNode(id, attrs);
+      this.addNode(id, { ...attrs });
     }
     for (const [src, tgt, attrs] of other.edges()) {
-      this.addEdge(src, tgt, attrs);
+      this.addEdge(src, tgt, { ...attrs });
     }
     return this;
   }

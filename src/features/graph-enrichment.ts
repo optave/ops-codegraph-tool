@@ -7,7 +7,7 @@ import {
   DEFAULT_NODE_COLORS,
   DEFAULT_ROLE_COLORS,
 } from '../presentation/colors.js';
-import { DEFAULT_CONFIG, type PlotConfig, renderPlotHTML } from '../presentation/viewer.js';
+import { DEFAULT_CONFIG, type PlotConfig } from '../presentation/viewer.js';
 import type { BetterSqlite3Database } from '../types.js';
 
 // Re-export presentation utilities for backward compatibility
@@ -474,20 +474,4 @@ function prepareFileLevelData(
   }));
 
   return { nodes: visNodes, edges: visEdges, seedNodeIds: selectFileSeedNodes(visNodes, cfg) };
-}
-
-// ─── HTML Generation (thin wrapper) ──────────────────────────────────
-
-export function generatePlotHTML(
-  db: BetterSqlite3Database,
-  opts: {
-    fileLevel?: boolean;
-    noTests?: boolean;
-    minConfidence?: number;
-    config?: PlotConfig;
-  } = {},
-): string {
-  const cfg = opts.config || DEFAULT_CONFIG;
-  const data = prepareGraphData(db, opts);
-  return renderPlotHTML(data, cfg);
 }
