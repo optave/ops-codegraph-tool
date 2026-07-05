@@ -515,4 +515,117 @@ describe('classifyRoles', () => {
     const roles = classifyRoles(nodes);
     expect(roles.get('1')).toBe('dead-unresolved');
   });
+
+  // ── Interface/type member exemption (#1723) ─────────────────────────
+
+  it('classifies interface method-signature member as leaf, not dead', () => {
+    // TS `interface Foo { bar(): void }` extracts `bar` as a top-level
+    // `method`-kind definition named `Foo.bar`. It can never gain an inbound
+    // call edge (nothing "calls" a type-level declaration), so fanIn === 0
+    // carries zero dead-code signal here — unlike a real function/method.
+    const nodes = [
+      {
+        id: '1',
+        name: 'Foo',
+        kind: 'interface',
+        file: 'src/a.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+      },
+      {
+        id: '2',
+        name: 'Foo.bar',
+        kind: 'method',
+        file: 'src/a.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('2')).toBe('leaf');
+  });
+
+  it('classifies type-alias property-signature member as leaf, not dead', () => {
+    // TS `type Foo = { bar: string }` — a property-kind member of a `type` owner.
+    const nodes = [
+      {
+        id: '1',
+        name: 'Foo',
+        kind: 'type',
+        file: 'src/a.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+      },
+      {
+        id: '2',
+        name: 'Foo.bar',
+        kind: 'property',
+        file: 'src/a.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('2')).toBe('leaf');
+  });
+
+  it('classifies interface member as leaf even when the interface is isolated (no active siblings)', () => {
+    // Unlike bare TYPE_DEF_KINDS nodes (which need hasActiveFileSiblings to
+    // avoid being marked dead), members are exempt unconditionally — "no call
+    // edges" is a structural certainty for them, not merely a likelihood.
+    const nodes = [
+      {
+        id: '1',
+        name: 'Isolated',
+        kind: 'interface',
+        file: 'src/isolated.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+      },
+      {
+        id: '2',
+        name: 'Isolated.onlyMember',
+        kind: 'method',
+        file: 'src/isolated.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('2')).toBe('leaf');
+  });
+
+  it('does not exempt class methods sharing the Owner.member naming convention', () => {
+    // Class methods are qualified identically to interface members
+    // (`ClassName.method`), but `class` is not in TYPE_DEF_KINDS — they must
+    // remain subject to normal dead-code detection.
+    const nodes = [
+      {
+        id: '1',
+        name: 'Foo',
+        kind: 'class',
+        file: 'src/a.ts',
+        fanIn: 5,
+        fanOut: 0,
+        isExported: true,
+      },
+      {
+        id: '2',
+        name: 'Foo.deadMethod',
+        kind: 'method',
+        file: 'src/a.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('2')).toBe('dead-unresolved');
+  });
 });
