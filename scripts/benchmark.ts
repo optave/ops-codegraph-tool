@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
+import { median, round1, timeMedian } from './lib/bench-timing.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -97,16 +98,6 @@ const QUERY_WARMUP_RUNS = 3;
 const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 const BENCH_EXCLUDE = [...resolveBenchmarkExcludes()];
 
-function median(arr) {
-	const sorted = [...arr].sort((a, b) => a - b);
-	const mid = Math.floor(sorted.length / 2);
-	return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function round1(n) {
-	return Math.round(n * 10) / 10;
-}
-
 function selectTargets() {
 	const db = new Database(dbPath, { readonly: true });
 	const rows = db
@@ -158,13 +149,12 @@ try {
 	for (let i = 0; i < WARMUP_RUNS; i++) {
 		await buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE });
 	}
-	const noopTimings = [];
-	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
-		const start = performance.now();
-		await buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE });
-		noopTimings.push(performance.now() - start);
-	}
-	noopRebuildMs = Math.round(median(noopTimings));
+	noopRebuildMs = Math.round(
+		await timeMedian(
+			() => buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE }),
+			INCREMENTAL_RUNS,
+		),
+	);
 } catch (err) {
 	console.error(`  [${engine}] No-op rebuild failed: ${(err as Error).message}`);
 }

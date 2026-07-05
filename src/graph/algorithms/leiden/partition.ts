@@ -68,7 +68,16 @@ interface PartitionState {
   outEdgeWeightToCommunity: Float64Array;
   inEdgeWeightFromCommunity: Float64Array;
   isCandidateCommunity: Uint8Array;
+  /** Growth multiplier applied by ensureCommCapacity when resizing typed arrays. */
+  capacityGrowthFactor: number;
 }
+
+/**
+ * Mirrored in DEFAULTS.community.capacityGrowthFactor (src/infrastructure/config.ts).
+ * Exported so other leiden modules (e.g. optimiser.ts) share this single fallback
+ * instead of keeping an independently-drifting copy.
+ */
+export const DEFAULT_CAPACITY_GROWTH_FACTOR = 1.5;
 
 /* ------------------------------------------------------------------ */
 /*  Community-ID sort helper (used by compact)                         */
@@ -128,7 +137,10 @@ function buildSortedCommunityIds(
 
 function ensureCommCapacity(s: PartitionState, newCount: number): void {
   if (newCount <= s.communityTotalSize.length) return;
-  const growTo: number = Math.max(newCount, Math.ceil(s.communityTotalSize.length * 1.5));
+  const growTo: number = Math.max(
+    newCount,
+    Math.ceil(s.communityTotalSize.length * s.capacityGrowthFactor),
+  );
   s.communityTotalSize = growFloat(s.communityTotalSize, growTo);
   s.communityNodeCount = growInt(s.communityNodeCount, growTo);
   s.communityInternalEdgeWeight = growFloat(s.communityInternalEdgeWeight, growTo);
@@ -485,7 +497,11 @@ function compactIds(s: PartitionState, opts: CompactOptions = {}): void {
 /*  Factory: thin wrapper that wires state to extracted functions      */
 /* ------------------------------------------------------------------ */
 
-export function makePartition(graph: GraphAdapter): Partition {
+export interface MakePartitionOptions {
+  capacityGrowthFactor?: number;
+}
+
+export function makePartition(graph: GraphAdapter, options: MakePartitionOptions = {}): Partition {
   const n: number = graph.n;
   const nodeCommunity = new Int32Array(n);
   for (let i = 0; i < n; i++) nodeCommunity[i] = i;
@@ -507,6 +523,10 @@ export function makePartition(graph: GraphAdapter): Partition {
     outEdgeWeightToCommunity: new Float64Array(n),
     inEdgeWeightFromCommunity: new Float64Array(n),
     isCandidateCommunity: new Uint8Array(n),
+    capacityGrowthFactor:
+      typeof options.capacityGrowthFactor === 'number'
+        ? options.capacityGrowthFactor
+        : DEFAULT_CAPACITY_GROWTH_FACTOR,
   };
 
   return {

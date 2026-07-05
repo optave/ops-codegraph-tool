@@ -34,7 +34,6 @@ import type {
   DataflowResult,
   Definition,
   ExtractorOutput,
-  SqliteStatement,
 } from '../../../../types.js';
 import {
   classifyNativeDrops,
@@ -57,6 +56,7 @@ import {
   collectFiles as collectFilesUtil,
   fileHash,
   fileStat,
+  markExportedSymbols,
   readFileSafe,
 } from '../helpers.js';
 import { NativeDbProxy } from '../native-db-proxy.js';
@@ -136,7 +136,7 @@ function handoffWalAfterNativeBuild(ctx: PipelineContext): boolean {
     debug(`handoffWal JS db close failed: ${toErrorMessage(e)}`);
   }
   try {
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     return true;
   } catch (reopenErr) {
     warn(`Failed to reopen DB after native build: ${(reopenErr as Error).message}`);
@@ -1691,31 +1691,7 @@ function insertBackfilledNodes(
     }
   }
   batchInsertNodes(db, rows);
-
-  // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.
-  if (exportKeys.length > 0) {
-    const EXPORT_CHUNK = 500;
-    const exportStmtCache = new Map<number, SqliteStatement>();
-    for (let i = 0; i < exportKeys.length; i += EXPORT_CHUNK) {
-      const end = Math.min(i + EXPORT_CHUNK, exportKeys.length);
-      const chunkSize = end - i;
-      let updateStmt = exportStmtCache.get(chunkSize);
-      if (!updateStmt) {
-        const conditions = Array.from(
-          { length: chunkSize },
-          () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
-        ).join(' OR ');
-        updateStmt = db.prepare(`UPDATE nodes SET exported = 1 WHERE ${conditions}`);
-        exportStmtCache.set(chunkSize, updateStmt);
-      }
-      const vals: unknown[] = [];
-      for (let j = i; j < end; j++) {
-        const k = exportKeys[j] as unknown[];
-        vals.push(k[0], k[1], k[2], k[3]);
-      }
-      updateStmt.run(...vals);
-    }
-  }
+  markExportedSymbols(db, exportKeys);
 }
 
 /**
@@ -1789,7 +1765,7 @@ async function backfillNativeDroppedFiles(
   // for the INSERT path below).
   if (ctx.nativeFirstProxy) {
     closeNativeDb(ctx, 'pre-parity-backfill');
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     ctx.nativeFirstProxy = false;
   }
 
@@ -1951,7 +1927,7 @@ function openNativeDatabase(ctx: PipelineContext): void {
     ctx.nativeFirstProxy = false; // defensive: reset in case future refactors move the assignment above throwing lines
     releaseAdvisoryLock(`${ctx.dbPath}.lock`);
     // Reopen better-sqlite3 for JS pipeline fallback
-    ctx.db = openDb(ctx.dbPath);
+    ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
   }
 }
 
@@ -2239,7 +2215,7 @@ class NativeOrchestrationSession {
     if (!needsStructure && !needsAnalysisFallback) return true;
     if (needsAnalysisFallback && this.ctx.nativeFirstProxy) {
       closeNativeDb(this.ctx, 'pre-analysis-fallback');
-      this.ctx.db = openDb(this.ctx.dbPath);
+      this.ctx.db = openDb(this.ctx.dbPath, this.ctx.config.db.busyTimeoutMs);
       this.ctx.nativeFirstProxy = false;
       return true;
     }

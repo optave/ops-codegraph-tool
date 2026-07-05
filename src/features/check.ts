@@ -41,23 +41,99 @@ function extractNewFileName(line: string): string | null {
   return m ? m[1]! : null;
 }
 
-function pushHunkRanges(
-  line: string,
-  currentFile: string,
-  changedRanges: Map<string, DiffRange[]>,
-  oldRanges: Map<string, DiffRange[]>,
-): void {
-  const hunkMatch = line.match(HUNK_RE);
-  if (!hunkMatch) return;
-  const oldStart = parseInt(hunkMatch[1]!, 10);
-  const oldCount = parseInt(hunkMatch[2] || '1', 10);
-  if (oldCount > 0) {
-    oldRanges.get(currentFile)!.push({ start: oldStart, end: oldStart + oldCount - 1 });
+/** Returns true if the diff line marks the new file as /dev/null (file deletion). */
+function isDevNullTargetLine(line: string): boolean {
+  return line.startsWith('+++ /dev/null');
+}
+
+/**
+ * Tracks the old-side and new-side line cursors and the current runs of
+ * contiguously removed/added lines while walking a hunk body, so
+ * `parseDiffOutput` can emit precise `oldRanges` and `changedRanges` (only
+ * lines actually deleted/replaced or added) instead of the raw hunk header
+ * span (which always includes unchanged context lines on each side per the
+ * unified diff format whenever the diff was produced with non-zero context).
+ * `getGitDiff` always passes `--unified=0`, so in practice the header span
+ * and the tracked lines coincide today — but `parseDiffOutput` is a public
+ * export and this keeps it correct for any diff input, not just this one
+ * caller's.
+ */
+class DiffLineTracker {
+  private oldLineCursor = 0;
+  private newLineCursor = 0;
+  private removedRunStart: number | null = null;
+  private removedRunEnd: number | null = null;
+  private addedRunStart: number | null = null;
+  private addedRunEnd: number | null = null;
+
+  startHunk(oldStart: number, newStart: number): void {
+    this.oldLineCursor = oldStart;
+    this.newLineCursor = newStart;
   }
-  const newStart = parseInt(hunkMatch[3]!, 10);
-  const newCount = parseInt(hunkMatch[4] || '1', 10);
-  if (newCount > 0) {
-    changedRanges.get(currentFile)!.push({ start: newStart, end: newStart + newCount - 1 });
+
+  /**
+   * Consumes one hunk body line, advancing the old- and new-side cursors as
+   * needed. Lines beginning with `--- `/`+++ ` (source-file headers) are
+   * already filtered out by the caller before a line ever reaches here, so a
+   * leading `-`/`+` unambiguously marks a removed/added line — even one
+   * whose own content starts with dashes or pluses (e.g. removing a line of
+   * literal text `-- foo`).
+   */
+  consume(
+    line: string,
+    file: string,
+    oldRanges: Map<string, DiffRange[]>,
+    changedRanges: Map<string, DiffRange[]>,
+  ): void {
+    if (line.startsWith('-')) {
+      this.flushAdded(file, changedRanges);
+      if (this.removedRunStart === null) this.removedRunStart = this.oldLineCursor;
+      this.removedRunEnd = this.oldLineCursor;
+      this.oldLineCursor++;
+      return;
+    }
+    if (line.startsWith('+')) {
+      this.flushRemoved(file, oldRanges);
+      if (this.addedRunStart === null) this.addedRunStart = this.newLineCursor;
+      this.addedRunEnd = this.newLineCursor;
+      this.newLineCursor++;
+      return;
+    }
+    // A context line or a "\ No newline" marker ends both runs.
+    this.flushRemoved(file, oldRanges);
+    this.flushAdded(file, changedRanges);
+    if (line.startsWith(' ')) {
+      this.oldLineCursor++;
+      this.newLineCursor++;
+    }
+  }
+
+  /** Closes out the current removed-line run, if any, into `oldRanges`. */
+  flushRemoved(file: string, oldRanges: Map<string, DiffRange[]>): void {
+    if (this.removedRunStart !== null) {
+      oldRanges.get(file)!.push({ start: this.removedRunStart, end: this.removedRunEnd! });
+      this.removedRunStart = null;
+      this.removedRunEnd = null;
+    }
+  }
+
+  /** Closes out the current added-line run, if any, into `changedRanges`. */
+  flushAdded(file: string, changedRanges: Map<string, DiffRange[]>): void {
+    if (this.addedRunStart !== null) {
+      changedRanges.get(file)!.push({ start: this.addedRunStart, end: this.addedRunEnd! });
+      this.addedRunStart = null;
+      this.addedRunEnd = null;
+    }
+  }
+
+  /** Closes out both the removed- and added-line runs, if any. */
+  flush(
+    file: string,
+    oldRanges: Map<string, DiffRange[]>,
+    changedRanges: Map<string, DiffRange[]>,
+  ): void {
+    this.flushRemoved(file, oldRanges);
+    this.flushAdded(file, changedRanges);
   }
 }
 
@@ -67,6 +143,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
   const newFiles = new Set<string>();
   let currentFile: string | null = null;
   let prevIsDevNull = false;
+  const tracker = new DiffLineTracker();
 
   for (const line of diffOutput.split('\n')) {
     if (isDevNullSourceLine(line)) {
@@ -79,6 +156,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
     }
     const newFile = extractNewFileName(line);
     if (newFile) {
+      if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges);
       currentFile = newFile;
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
       if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
@@ -86,8 +164,32 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
       prevIsDevNull = false;
       continue;
     }
-    if (currentFile) pushHunkRanges(line, currentFile, changedRanges, oldRanges);
+    if (isDevNullTargetLine(line)) {
+      // `+++ /dev/null` (file deletion) is not `b/`-prefixed, so
+      // extractNewFileName returned null above and this line would otherwise
+      // fall through to tracker.consume and be misread as an added source
+      // line under whichever file preceded this one in the diff. Flush and
+      // clear the file context instead — the deleted file's hunk body that
+      // follows has no corresponding DB entry to check against anyway (its
+      // nodes are purged from the graph), so there is nothing to track here.
+      if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges);
+      currentFile = null;
+      prevIsDevNull = false;
+      continue;
+    }
+    if (!currentFile) continue;
+
+    const hunkMatch = line.match(HUNK_RE);
+    if (hunkMatch) {
+      tracker.flush(currentFile, oldRanges, changedRanges);
+      tracker.startHunk(parseInt(hunkMatch[1]!, 10), parseInt(hunkMatch[3]!, 10));
+      continue;
+    }
+
+    tracker.consume(line, currentFile, oldRanges, changedRanges);
   }
+  if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges);
+
   return { changedRanges, oldRanges, newFiles };
 }
 
@@ -209,9 +311,16 @@ export function checkNoSignatureChanges(
     if (ranges.length === 0) continue;
     if (noTests && isTestFile(file)) continue;
 
+    // Scoped to `exported = 1`: only a symbol reachable from outside its own
+    // file can have callers this diff doesn't already account for. A
+    // private, file-local helper's declaration can be freely deleted,
+    // renamed, or reshaped — every call site lives in the same file and is
+    // necessarily part of the same diff. Without this filter, any adoption
+    // of a shared helper that removes a file-local duplicate (the exact
+    // pattern the grind workflow performs) would always trip this check.
     const defs = db
       .prepare(
-        `SELECT name, kind, file, line FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
+        `SELECT name, kind, file, line FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') AND exported = 1 ORDER BY line`,
       )
       .all(file) as SignatureViolation[];
 

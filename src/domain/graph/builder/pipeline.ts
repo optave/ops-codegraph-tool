@@ -193,7 +193,7 @@ function setupPipeline(ctx: PipelineContext): void {
   // cost entirely on no-op builds that exit before reaching the orchestrator.
   const dir = path.dirname(ctx.dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  ctx.db = openDb(ctx.dbPath);
+  ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
   initSchema(ctx.db);
   // Merge caller-supplied excludes on top of the file-config excludes so
   // programmatic callers (e.g. benchmark scripts) can extend exclusion
@@ -287,7 +287,7 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
     // now-closed NativeDatabase. Replace it with a real better-sqlite3
     // connection so the JS pipeline stages can operate normally.
     if (ctx.nativeFirstProxy) {
-      ctx.db = openDb(ctx.dbPath);
+      ctx.db = openDb(ctx.dbPath, ctx.config.db.busyTimeoutMs);
       ctx.nativeFirstProxy = false;
     }
   }

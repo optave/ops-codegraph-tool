@@ -1346,8 +1346,7 @@ export interface CodegraphConfig {
   db: {
     /**
      * SQLite `busy_timeout` pragma (ms) applied to every opened connection.
-     * @reserved — currently not wired; see `busyTimeoutMs` in
-     * `src/infrastructure/config.ts` for wiring status.
+     * See `busyTimeoutMs` in `src/infrastructure/config.ts` for wiring status.
      */
     busyTimeoutMs: number;
   };
@@ -1472,8 +1471,7 @@ export interface CodegraphConfig {
     /**
      * Growth multiplier applied when a Leiden partition's per-community
      * typed arrays need to be resized to fit a larger community count.
-     * @reserved — currently not wired; see `capacityGrowthFactor` in
-     * `src/infrastructure/config.ts` for wiring status.
+     * See `capacityGrowthFactor` in `src/infrastructure/config.ts` for wiring status.
      */
     capacityGrowthFactor: number;
   };
@@ -1611,6 +1609,27 @@ export interface AuditResult {
   functions: AuditFunctionEntry[];
 }
 
+/** A single manifesto threshold breach reported against an audited function. */
+export interface ThresholdBreach {
+  metric: string;
+  value: number;
+  threshold: number;
+  level: 'warn' | 'fail';
+}
+
+/** Complexity/maintainability health metrics attached to an audited function. */
+export interface AuditHealthMetrics {
+  cognitive: number | null;
+  cyclomatic: number | null;
+  maxNesting: number | null;
+  maintainabilityIndex: number | null;
+  halstead: HalsteadMetrics;
+  loc: number;
+  sloc: number;
+  commentLines: number;
+  thresholdBreaches: ThresholdBreach[];
+}
+
 export interface AuditFunctionEntry {
   name: string;
   kind: SymbolKind;
@@ -1618,30 +1637,20 @@ export interface AuditFunctionEntry {
   line: number;
   endLine: number | null;
   role: Role | null;
-  lineCount: number;
+  lineCount: number | null;
   summary: string | null;
-  signature: string | null;
-  callees: string[];
-  callers: string[];
-  relatedTests: string[];
+  signature: { params: string | null; returnType: string | null } | null;
+  callees: Array<{ name: string; kind: string; file: string; line: number }>;
+  callers: Array<{ name: string; kind: string; file: string; line: number }>;
+  relatedTests: Array<{ file: string }>;
   impact: {
     totalDependents: number;
     levels: Record<number, ImpactLevelEntry[]>;
   };
-  health: {
-    cognitive: number;
-    cyclomatic: number;
-    maxNesting: number;
-    maintainabilityIndex: number | null;
-    halstead: HalsteadMetrics | null;
-    loc: number;
-    sloc: number;
-    commentLines: number;
-    thresholdBreaches: string[];
-  };
-  riskScore: number;
-  complexityNotes: string[];
-  sideEffects: string[];
+  health: AuditHealthMetrics;
+  riskScore: number | null;
+  complexityNotes: string | null;
+  sideEffects: string | null;
 }
 
 export interface ImpactLevelEntry {
