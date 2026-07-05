@@ -6,11 +6,11 @@ export type AnyRules = any;
 export type ProcessStatementsFn = (
   stmts: TreeSitterNode[],
   currentBlock: CfgBlockInternal,
-  S: FuncState,
+  state: FuncState,
   cfgRules: AnyRules,
 ) => CfgBlockInternal | null;
 
-export function nn(node: TreeSitterNode | null, context?: string): TreeSitterNode {
+export function requireNode(node: TreeSitterNode | null, context?: string): TreeSitterNode {
   if (node === null) {
     throw new Error(`Unexpected null tree-sitter node${context ? ` (${context})` : ''}`);
   }
@@ -114,18 +114,18 @@ export function isControlFlow(type: string, cfgRules: AnyRules): boolean {
 
 export function effectiveNode(node: TreeSitterNode, cfgRules: AnyRules): TreeSitterNode {
   if (node.type === 'expression_statement' && node.namedChildCount === 1) {
-    const inner = nn(node.namedChild(0));
+    const inner = requireNode(node.namedChild(0));
     if (isControlFlow(inner.type, cfgRules)) return inner;
   }
   return node;
 }
 
 export function registerLabelCtx(
-  S: FuncState,
+  state: FuncState,
   headerBlock: CfgBlockInternal,
   exitBlock: CfgBlockInternal,
 ): void {
-  for (const [, ctx] of Array.from(S.labelMap)) {
+  for (const [, ctx] of Array.from(state.labelMap)) {
     if (!ctx.headerBlock) {
       ctx.headerBlock = headerBlock;
       ctx.exitBlock = exitBlock;
@@ -141,10 +141,10 @@ export function getBodyStatements(
   if (isBlockNode(bodyNode.type, cfgRules)) {
     const stmts: TreeSitterNode[] = [];
     for (let i = 0; i < bodyNode.namedChildCount; i++) {
-      const child = nn(bodyNode.namedChild(i));
+      const child = requireNode(bodyNode.namedChild(i));
       if (child.type === 'statement_list') {
         for (let j = 0; j < child.namedChildCount; j++) {
-          stmts.push(nn(child.namedChild(j)));
+          stmts.push(requireNode(child.namedChild(j)));
         }
       } else {
         stmts.push(child);

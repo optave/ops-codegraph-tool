@@ -3,6 +3,8 @@
  * Vendored from ngraph.leiden (MIT) — no external dependencies.
  */
 
+import { fget, iget } from './typed-array-helpers.js';
+
 /**
  * Minimal view of a partition needed by modularity quality functions.
  */
@@ -28,14 +30,6 @@ export interface GraphView {
   strengthOut: Float64Array;
   strengthIn: Float64Array;
   selfLoop: Float64Array;
-}
-
-// Typed array safe-access helper (see adapter.ts for rationale)
-function fget(a: Float64Array, i: number): number {
-  return a[i] as number;
-}
-function iget(a: Int32Array, i: number): number {
-  return a[i] as number;
 }
 
 export function diffModularity(

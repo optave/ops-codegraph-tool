@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -6,6 +7,27 @@ import { info } from '../../infrastructure/logger.js';
 import { ConfigError, EngineError } from '../../shared/errors.js';
 
 const _require = createRequire(import.meta.url);
+const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+/** Resolve a path to its real (symlink-free) form, or return it unchanged if that fails. */
+function tryRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * Normalize a path for equality comparison. Windows filesystems are
+ * case-insensitive (but case-preserving), and paths sourced from
+ * `execFileSync` output vs. `require.resolve` can differ in drive-letter or
+ * segment casing (e.g. `C:\Users\...` vs `c:\users\...`) despite pointing at
+ * the same directory — so comparisons must fold case on win32.
+ */
+function normalizeForComparison(p: string): string {
+  return process.platform === 'win32' ? p.toLowerCase() : p;
+}
 
 /**
  * Resolve the directory where `npm install` should run so the installed
@@ -32,6 +54,51 @@ export function resolveNpmInstallCwd(): string | undefined {
     // Source-of-truth checkout (no @optave/codegraph in node_modules) — fall back
     // to process.cwd() so legacy behavior survives in tests.
     return undefined;
+  }
+}
+
+/**
+ * True when `dir` is npm's own global modules root — the directory whose
+ * `node_modules` is npm's global install target (and therefore already
+ * contains npm's own installation, `node_modules/npm`).
+ *
+ * Running `npm install` with this as `cwd` makes npm reify its *own*
+ * dependency tree as a side effect of installing the requested package.
+ * On at least one observed setup (Homebrew-managed Node/npm on macOS) this
+ * deleted npm's own installation and other co-located global packages
+ * before the install's lifecycle-script error even surfaced (#1720).
+ * Global installs of codegraph must never run `npm install` here.
+ *
+ * Authoritative check: ask npm itself for its global modules root
+ * (`npm root -g`) and compare against `dir`. This avoids misclassifying a
+ * normal project that merely happens to depend on the `npm` package itself
+ * (e.g. a tool that shells out to npm) — such a project's `node_modules/npm`
+ * would satisfy the old file-existence heuristic without actually being
+ * npm's global root. Falls back to the file-existence heuristic only if the
+ * `npm root -g` call itself fails (e.g. npm binary unavailable in PATH).
+ *
+ * @internal Exported for unit tests; not part of the public barrel.
+ */
+export function isNpmGlobalModulesRoot(dir: string | undefined): boolean {
+  if (!dir) return false;
+
+  const candidate = normalizeForComparison(tryRealpath(path.join(dir, 'node_modules')));
+  try {
+    const globalRoot = execFileSync(NPM_BIN, ['root', '-g'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    }).trim();
+    if (globalRoot) {
+      return normalizeForComparison(tryRealpath(globalRoot)) === candidate;
+    }
+  } catch {
+    // npm unavailable/unresolvable — fall back to the heuristic below.
+  }
+
+  try {
+    return existsSync(path.join(dir, 'node_modules', 'npm', 'package.json'));
+  } catch {
+    return false;
   }
 }
 
@@ -138,7 +205,6 @@ export const MODELS: Record<string, ModelConfig> = {
 export const EMBEDDING_STRATEGIES: readonly string[] = ['structured', 'source'];
 
 export const DEFAULT_MODEL: string = 'nomic';
-const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const BATCH_SIZE_MAP: Record<string, number> = {
   minilm: 32,
   'jina-small': 16,
@@ -173,6 +239,14 @@ export function getModelConfig(modelKey?: string): ModelConfig {
  */
 export function promptInstall(packageName: string): Promise<boolean> {
   const installCwd = resolveNpmInstallCwd();
+
+  if (isNpmGlobalModulesRoot(installCwd)) {
+    info(
+      `${packageName} is missing, but codegraph is installed globally — auto-install is skipped to avoid modifying npm's own global installation.\nInstall it yourself with:\n  npm install -g ${packageName}`,
+    );
+    return Promise.resolve(false);
+  }
+
   if (!process.stdin.isTTY) {
     info(`Installing ${packageName} (optional dependency for semantic search)…`);
     try {
@@ -237,7 +311,10 @@ export async function loadTransformers(): Promise<unknown> {
         );
       }
     }
-    throw new EngineError(`Semantic search requires ${pkg}.\nInstall it with: npm install ${pkg}`);
+    const manualInstall = isNpmGlobalModulesRoot(resolveNpmInstallCwd())
+      ? `npm install -g ${pkg}`
+      : `npm install ${pkg}`;
+    throw new EngineError(`Semantic search requires ${pkg}.\nInstall it with: ${manualInstall}`);
   }
 }
 

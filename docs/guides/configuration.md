@@ -214,8 +214,10 @@ Used by features that call out to a chat-completion API (e.g. query expansion), 
 | `model` | `string \| null` | `null` | Model identifier passed to the provider. |
 | `baseUrl` | `string \| null` | `null` | Override the provider's base URL (for compatible proxies, local servers, etc.). |
 | `apiKey` | `string \| null` | `null` | Plaintext API key. Prefer `apiKeyCommand` or env vars over this. |
-| `apiKeyCommand` | `string \| null` | `null` | Shell-out command that prints the key to stdout. Split on whitespace and run via `execFileSync` (no shell — `$(...)`, pipes, globs, and variable expansion are not supported). 10s timeout, 64 KB max output. |
+| `apiKeyCommand` | `string \| null` | `null` | Shell-out command that prints the key to stdout. Split on whitespace and run via `execFileSync` (no shell — `$(...)`, pipes, globs, and variable expansion are not supported). Timeout/output cap controlled by `apiKeyCommandTimeoutMs`/`apiKeyCommandMaxBufferBytes` below. |
 | `requestTimeoutMs` | `number` | `120000` | Per-request timeout for remote HTTP calls made against `baseUrl` (currently the [remote embedding provider](#embeddings-embeddings)). Aborts and throws if a self-hosted server hangs mid-request instead of blocking indefinitely. |
+| `apiKeyCommandTimeoutMs` | `number` | `10000` | Timeout for the `apiKeyCommand` subprocess. Prevents a hung secret-manager CLI from blocking config loading indefinitely. |
+| `apiKeyCommandMaxBufferBytes` | `number` | `65536` | Max stdout buffer size (bytes) for the `apiKeyCommand` subprocess. |
 
 Resolution order (first non-empty wins): `apiKeyCommand` output → `CODEGRAPH_LLM_API_KEY` env var → `apiKey` field.
 

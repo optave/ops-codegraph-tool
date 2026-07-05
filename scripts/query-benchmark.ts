@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
+import { median, round1 } from './lib/bench-timing.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -116,16 +117,6 @@ const RUNS = 5;
 // steady-state per-call latency is unchanged. Discard the first WARMUP_RUNS
 // before timing so the metric reflects warm-call latency, not cold-start.
 const WARMUP_RUNS = 3;
-
-function median(arr) {
-	const sorted = [...arr].sort((a, b) => a - b);
-	const mid = Math.floor(sorted.length / 2);
-	return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function round1(n) {
-	return Math.round(n * 10) / 10;
-}
 
 // Pinned hub targets — stable function names that exist across versions.
 // Auto-selecting the most-connected node makes version-to-version comparison
