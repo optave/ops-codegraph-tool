@@ -857,6 +857,14 @@ impl NativeDatabase {
     /// Batches are received as `serde_json::Value` and deserialized via serde so
     /// that `null` visibility values map to `None` instead of crashing napi's
     /// `Option<String>` object conversion (#709).
+    ///
+    /// `file_hashes` is committed in its own transaction, separate from node
+    /// insertion (#1731) — callers that need edge-consistent hashes (i.e. the
+    /// standard incremental build pipeline) should pass an empty array here
+    /// and commit hashes themselves once resolveImports/buildEdges have
+    /// finished rebuilding the affected files' edges (see
+    /// `insertNodes.commitFileHashes` on the JS side, or
+    /// `insert_nodes::commit_file_hashes` for the all-Rust orchestrator).
     #[napi(ts_args_type = "batches: Array<{ file: string; definitions: Array<{ name: string; kind: string; line: number; endLine?: number; visibility?: string; children: Array<{ name: string; kind: string; line: number; endLine?: number; visibility?: string }> }>; exports: Array<{ name: string; kind: string; line: number }> }>, fileHashes: FileHashEntry[], removedFiles: string[]")]
     pub fn bulk_insert_nodes(
         &self,
@@ -869,9 +877,13 @@ impl NativeDatabase {
                 napi::Error::from_reason(format!("bulk_insert_nodes: invalid batches: {e}"))
             })?;
         let conn = self.conn()?;
-        Ok(insert_nodes::do_insert_nodes(conn, &batches, &file_hashes, &removed_files)
+        let insert_ok = insert_nodes::do_insert_nodes(conn, &batches, &removed_files)
             .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_nodes failed: {e}"))
-            .is_ok())
+            .is_ok();
+        let hashes_ok = insert_nodes::commit_file_hashes(conn, &file_hashes)
+            .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_nodes hash commit failed: {e}"))
+            .is_ok();
+        Ok(insert_ok && hashes_ok)
     }
 
     /// Bulk-insert edge rows using chunked multi-value INSERT statements.

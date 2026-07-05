@@ -29,7 +29,7 @@ import {
   resolveReceiverEdge,
   resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
-import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
+import { BUILTIN_RECEIVERS, fileHash, fileStat, readFileSafe } from './helpers.js';
 
 // ── Local types ─────────────────────────────────────────────────────────
 
@@ -42,6 +42,14 @@ export interface IncrementalStmts {
   listSymbols: { all: (...params: unknown[]) => unknown[] };
   findNodeInFile: { all: (...params: unknown[]) => unknown[] };
   findNodeByName: { all: (...params: unknown[]) => unknown[] };
+  /**
+   * Upsert a `file_hashes` row: `(relPath, hash, mtime, size)`. Called only
+   * after a file's edges have been fully rebuilt (#1731) — see the call site
+   * in `rebuildFile` for why this can't happen any earlier.
+   */
+  upsertFileHash: { run: (...params: unknown[]) => unknown };
+  /** Delete a `file_hashes` row for a file removed from disk. */
+  deleteFileHash: { run: (...params: unknown[]) => unknown };
 }
 
 interface RebuildResult {
@@ -955,6 +963,10 @@ export async function rebuildFile(
 
   if (!fs.existsSync(filePath)) {
     if (cache) (cache as { remove(p: string): void }).remove(filePath);
+    // The file no longer exists, so it has no edges to keep in sync with a
+    // hash — delete it immediately (mirrors the full-build removed-file path
+    // in insertNodes.ts, which is likewise unconditional).
+    stmts.deleteFileHash.run(relPath);
     return buildDeletionResult(relPath, oldNodes, edgesBefore, oldSymbols, diffSymbols);
   }
 
@@ -998,6 +1010,18 @@ export async function rebuildFile(
   // (edgesAdded - edgesBefore) is correct even when the cascade re-inserts
   // their edges unchanged.
   const totalEdgesBefore = edgesBefore + reverseDepsEdgesBefore;
+
+  // Commit file_hashes now that relPath's edges have been fully rebuilt to
+  // match `code` (#1731). Writing this any earlier — or not at all, as
+  // before this fix — would leave file_hashes stale relative to the edges
+  // rebuildEdgesForTargetFile just wrote, so the next full/incremental
+  // `codegraph build` would either redundantly reprocess an already-correct
+  // file (stale-hash direction) or, combined with other divergent writers,
+  // risk trusting a hash that doesn't actually reflect these edges.
+  const stat = fileStat(filePath);
+  if (stat) {
+    stmts.upsertFileHash.run(relPath, fileHash(code), stat.mtime, stat.size);
+  }
 
   const symbolDiff = diffSymbols ? diffSymbols(oldSymbols, newSymbols) : null;
   const event = oldNodes === 0 ? 'added' : 'modified';

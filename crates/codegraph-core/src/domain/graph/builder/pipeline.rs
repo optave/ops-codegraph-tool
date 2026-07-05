@@ -9,10 +9,13 @@
 //! 2. Collect files (with gitignore + extension filter)
 //! 3. Detect changes (tiered: journal/mtime/hash)
 //! 4. Parse files in parallel (existing `parallel::parse_files_parallel`)
-//! 5. Insert nodes (existing `insert_nodes::do_insert_nodes`)
+//! 5. Insert nodes (existing `insert_nodes::do_insert_nodes`) — file_hashes
+//!    for changed files is NOT written here; see step 7
 //! 6. Resolve imports (existing `resolve::resolve_imports_batch`)
 //! 6b. Re-parse barrel candidates (incremental only)
-//! 7. Build import edges + call edges + barrel resolution
+//! 7. Build import edges + call edges + barrel resolution, then commit
+//!    file_hashes for changed files (`insert_nodes::commit_file_hashes`) now
+//!    that their edges match this revision (#1731)
 //! 8. Structure metrics + role classification
 //! 9. Finalize (metadata, journal)
 
@@ -505,13 +508,20 @@ pub fn run_pipeline(
     timing.parse_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 5: Insert nodes ──────────────────────────────────────────
+    // file_hashes for these files is deliberately NOT written here — only
+    // node/edge-adjacent (contains, parameter_of) data plus removed-file hash
+    // cleanup. Committing a changed file's hash this early (before Stage 7
+    // rebuilds its import/call edges) would let the hash claim "up to date"
+    // even if edge-building later fails or is interrupted, permanently
+    // desyncing file_hashes from the edges it's supposed to gate re-parsing
+    // on (#1731). The hash is committed at the end of Stage 7 instead, once
+    // edges genuinely match this revision — see `commit_file_hashes` below.
     let t0 = Instant::now();
     let insert_batches = build_insert_batches(&file_symbols);
     let file_hashes = build_file_hash_entries(&parse_changes);
     let _ = crate::domain::graph::builder::stages::insert_nodes::do_insert_nodes(
         conn,
         &insert_batches,
-        &file_hashes,
         &change_result.removed,
     );
     detect_changes::heal_metadata(conn, &change_result.metadata_updates);
@@ -564,6 +574,15 @@ pub fn run_pipeline(
     build_and_insert_call_edges(conn, &file_symbols, &import_ctx, !change_result.is_full_build);
 
     reconnect_saved_reverse_dep_edges(conn, &saved_reverse_dep_edges);
+
+    // Now that edges reflect this revision, commit file_hashes for the
+    // changed files (#1731). Deferred from Stage 5 — see the comment there.
+    if let Err(e) = crate::domain::graph::builder::stages::insert_nodes::commit_file_hashes(
+        conn,
+        &file_hashes,
+    ) {
+        eprintln!("[codegraph] commit_file_hashes failed: {e}");
+    }
     timing.edges_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 8: Structure + roles ─────────────────────────────────────

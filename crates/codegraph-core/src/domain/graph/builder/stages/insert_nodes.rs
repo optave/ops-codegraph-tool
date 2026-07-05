@@ -94,17 +94,41 @@ fn query_node_ids(
     Ok(map)
 }
 
+/// Insert nodes/children/containment edges, plus hash cleanup for removed
+/// files. `file_hashes` for CHANGED files is intentionally NOT written here —
+/// see [`commit_file_hashes`] below (#1731): committing a file's hash this
+/// early (before import/call edges are built) would let the hash claim
+/// "up to date" even if edge-building later fails or is interrupted. Deleting
+/// a removed file's hash has no such coupling risk (the file has no edges to
+/// keep in sync with), so `removed_files` is still handled immediately.
 pub(crate) fn do_insert_nodes(
     conn: &Connection,
     batches: &[InsertNodesBatch],
-    file_hashes: &[FileHashEntry],
     removed_files: &[String],
 ) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
     insert_file_nodes(&tx, batches)?;
     let (contains_edges, param_of_edges) = insert_symbol_nodes(&tx, batches)?;
     upsert_node_batch(&tx, &contains_edges, &param_of_edges)?;
-    upsert_file_hashes(&tx, file_hashes, removed_files)?;
+    delete_removed_file_hashes(&tx, removed_files)?;
+    tx.commit()
+}
+
+/// Commit `file_hashes` for changed files. Called separately from
+/// [`do_insert_nodes`], strictly AFTER import/call edges have been rebuilt
+/// for these files (#1731) — see that function's doc comment and the call
+/// site in `pipeline.rs` Stage 7. Own transaction: node insertion and hash
+/// commit are two distinct steps in the coupling this fix establishes, not
+/// one atomic unit.
+pub(crate) fn commit_file_hashes(
+    conn: &Connection,
+    file_hashes: &[FileHashEntry],
+) -> rusqlite::Result<()> {
+    if file_hashes.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    upsert_file_hashes(&tx, file_hashes)?;
     tx.commit()
 }
 
@@ -297,43 +321,57 @@ fn upsert_node_batch(
     Ok(())
 }
 
-/// Phase 4: upsert file hashes and remove hashes for deleted files. No-ops
-/// gracefully when the `file_hashes` table has not been created yet (e.g.
-/// during the initial schema migration).
+/// Returns true iff the `file_hashes` table exists. Both halves of the old
+/// combined upsert/delete function (now [`upsert_file_hashes`] and
+/// [`delete_removed_file_hashes`]) no-op gracefully when it's absent — e.g.
+/// during the initial schema migration.
+fn has_file_hashes_table(tx: &rusqlite::Transaction) -> bool {
+    tx.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_hashes'")
+        .and_then(|mut s| s.query_row([], |_| Ok(true)))
+        .unwrap_or(false)
+}
+
+/// Phase 4a: upsert file hashes for changed files. Split out from the
+/// removed-files delete (below) so the two can be committed at different
+/// points in the pipeline — see [`commit_file_hashes`] (#1731).
 fn upsert_file_hashes(
     tx: &rusqlite::Transaction,
     file_hashes: &[FileHashEntry],
-    removed_files: &[String],
 ) -> rusqlite::Result<()> {
-    let has_file_hashes = tx
-        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_hashes'")
-        .and_then(|mut s| s.query_row([], |_| Ok(true)))
-        .unwrap_or(false);
-
-    if !has_file_hashes {
+    if file_hashes.is_empty() || !has_file_hashes_table(tx) {
         return Ok(());
     }
 
-    {
-        let mut upsert = tx.prepare_cached(
-            "INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) \
-             VALUES (?1, ?2, ?3, ?4)",
-        )?;
-        for entry in file_hashes {
-            upsert.execute(params![
-                &entry.file,
-                &entry.hash,
-                entry.mtime as i64,
-                entry.size as i64
-            ])?;
-        }
+    let mut upsert = tx.prepare_cached(
+        "INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) \
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+    for entry in file_hashes {
+        upsert.execute(params![
+            &entry.file,
+            &entry.hash,
+            entry.mtime as i64,
+            entry.size as i64
+        ])?;
     }
 
-    if !removed_files.is_empty() {
-        let mut delete = tx.prepare_cached("DELETE FROM file_hashes WHERE file = ?1")?;
-        for file in removed_files {
-            delete.execute(params![file])?;
-        }
+    Ok(())
+}
+
+/// Phase 4b: remove file_hashes rows for deleted files. Safe to run
+/// immediately alongside node insertion (unlike the upsert above) — a
+/// removed file has no edges that need to stay in sync with its hash.
+fn delete_removed_file_hashes(
+    tx: &rusqlite::Transaction,
+    removed_files: &[String],
+) -> rusqlite::Result<()> {
+    if removed_files.is_empty() || !has_file_hashes_table(tx) {
+        return Ok(());
+    }
+
+    let mut delete = tx.prepare_cached("DELETE FROM file_hashes WHERE file = ?1")?;
+    for file in removed_files {
+        delete.execute(params![file])?;
     }
 
     Ok(())

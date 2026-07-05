@@ -39,7 +39,7 @@ import { buildStructure } from './stages/build-structure.js';
 import { collectFiles } from './stages/collect-files.js';
 import { detectChanges, detectNoChanges } from './stages/detect-changes.js';
 import { finalize } from './stages/finalize.js';
-import { insertNodes } from './stages/insert-nodes.js';
+import { commitFileHashes, insertNodes } from './stages/insert-nodes.js';
 import {
   closeNativeDb,
   refreshJsDb,
@@ -319,6 +319,14 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   await resolveImports(ctx);
   await buildEdges(ctx);
+
+  // Commit file_hashes for changed files now that their edges have been
+  // rebuilt to match (#1731) — see commitFileHashes() for the rationale.
+  // Placed before buildStructure/runAnalyses so a failure there still
+  // benefits from a hash that accurately reflects the (now-consistent)
+  // node+edge state committed so far.
+  commitFileHashes(ctx);
+
   await buildStructure(ctx);
 
   // Reopen nativeDb for feature modules (ast, cfg, complexity, dataflow).

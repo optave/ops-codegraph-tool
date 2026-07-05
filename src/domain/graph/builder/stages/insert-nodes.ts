@@ -2,11 +2,16 @@
  * Stage: insertNodes
  *
  * Batch-inserts file nodes, definitions, exports, children, and contains/parameter_of edges.
- * Updates file hashes for incremental builds.
  *
  * When the native engine is available, delegates all SQLite writes to Rust via
  * `bulkInsertNodes` — eliminating JS↔C boundary overhead. Falls back to the
  * JS implementation on failure or when native is unavailable.
+ *
+ * Does NOT write file_hashes for changed files (only removed-file cleanup,
+ * which carries no coupling risk — see commitFileHashes below). Hashes for
+ * changed files are committed later, once resolveImports/buildEdges have
+ * finished rebuilding their edges, so a hash can never claim a file is
+ * "up to date" while its edges still reflect an older revision (#1731).
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -19,7 +24,6 @@ import type {
   ExtractorOutput,
   FileToParse,
   MetadataUpdate,
-  SqliteStatement,
 } from '../../../../types.js';
 import type { PipelineContext } from '../context.js';
 import {
@@ -218,28 +222,26 @@ export function buildFileHashes(
 function tryNativeInsert(ctx: PipelineContext): boolean {
   if (!ctx.nativeDb?.bulkInsertNodes) return false;
 
-  const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
+  const { allSymbols, removed } = ctx;
 
   const batches = marshalSymbolBatches(allSymbols);
 
-  const precomputedData = new Map<string, PrecomputedFileData>();
-  for (const item of filesToParse) {
-    if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
-  }
-  const fileHashes = buildFileHashes(filesToParse, precomputedData, metadataUpdates, rootDir);
-
-  // In native-first mode (single rusqlite connection), no WAL dance is needed.
-  // In dual-connection mode, checkpoint JS side before native write, then
-  // checkpoint native side after (#696, #709, #715, #717).
+  // file_hashes is intentionally NOT written here. Committing a file's hash
+  // this early (before resolveImports/buildEdges have run) would let the
+  // hash claim "up to date" even if edge-building later throws or is
+  // interrupted — see commitFileHashes below, called once edges are in
+  // place (#1731). `removed` is still passed through: deleting a removed
+  // file's hash has no such coupling risk (the file has no edges to keep
+  // in sync with).
   let result: boolean;
   if (ctx.nativeFirstProxy) {
-    result = ctx.nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
+    result = ctx.nativeDb!.bulkInsertNodes(batches, [], removed);
   } else {
     try {
       if (ctx.db) {
         ctx.db.pragma('wal_checkpoint(TRUNCATE)');
       }
-      result = ctx.nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
+      result = ctx.nativeDb!.bulkInsertNodes(batches, [], removed);
     } finally {
       try {
         ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -380,36 +382,10 @@ function insertChildrenAndEdges(
   batchInsertEdges(db, edgeRows);
 }
 
-// ── JS fallback: Phase 4 ────────────────────────────────────────────
-
-function updateFileHashes(
-  _db: BetterSqlite3Database,
-  filesToParse: FileToParse[],
-  precomputedData: Map<string, PrecomputedFileData>,
-  metadataUpdates: MetadataUpdate[],
-  rootDir: string,
-  upsertHash: SqliteStatement | null,
-): void {
-  if (!upsertHash) return;
-
-  // Iterate every collected file (#1068): files that produced zero symbols
-  // (empty, parser no-op, or grammar-missing optional language) still need a
-  // hash row, otherwise the next no-op rebuild's fast-skip pre-flight rejects.
-  for (const record of iterFileHashRecords(
-    filesToParse,
-    precomputedData,
-    metadataUpdates,
-    rootDir,
-    'updateFileHashes',
-  )) {
-    upsertHash.run(record.file, record.hash, record.mtime, record.size);
-  }
-}
-
 // ── Main entry point ────────────────────────────────────────────────
 
 export async function insertNodes(ctx: PipelineContext): Promise<void> {
-  const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
+  const { allSymbols, removed } = ctx;
 
   // Populate fileSymbols before any DB writes (used by later stages)
   for (const [relPath, symbols] of allSymbols) {
@@ -423,7 +399,9 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
     try {
       if (tryNativeInsert(ctx)) {
         ctx.timing.insertMs = performance.now() - t0;
-        // Removed-file hash cleanup is handled inside the native call
+        // Removed-file hash cleanup is handled inside the native call.
+        // Content-changed files' hashes are committed later by
+        // commitFileHashes(), once their edges exist (#1731).
         return;
       }
     } catch (e) {
@@ -431,36 +409,82 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
     }
   }
 
-  // JS fallback
-  const precomputedData = new Map<string, PrecomputedFileData>();
-  for (const item of filesToParse) {
-    if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
-  }
-
-  let upsertHash: SqliteStatement | null;
-  try {
-    upsertHash = ctx.db.prepare(
-      'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
-    );
-  } catch (e) {
-    debug(`insertNodes: file_hashes prepare failed (table may not exist): ${toErrorMessage(e)}`);
-    upsertHash = null;
-  }
-
+  // JS fallback — node/edge insertion only. file_hashes for changed files is
+  // intentionally NOT written here: see commitFileHashes() below (#1731).
   const insertAll = ctx.db.transaction(() => {
     insertDefinitionsAndExports(ctx.db, allSymbols);
     insertChildrenAndEdges(ctx.db, allSymbols);
-    updateFileHashes(ctx.db, filesToParse, precomputedData, metadataUpdates, rootDir, upsertHash);
   });
 
   insertAll();
   ctx.timing.insertMs = performance.now() - t0;
 
-  // Clean up removed file hashes
-  if (upsertHash && removed.length > 0) {
-    const deleteHash = ctx.db.prepare('DELETE FROM file_hashes WHERE file = ?');
-    for (const relPath of removed) {
-      deleteHash.run(relPath);
+  // Clean up removed file hashes. Safe to do immediately (unlike the upsert
+  // path): a removed file has no edges that need to stay in sync with its hash.
+  if (removed.length > 0) {
+    try {
+      const deleteHash = ctx.db.prepare('DELETE FROM file_hashes WHERE file = ?');
+      for (const relPath of removed) {
+        deleteHash.run(relPath);
+      }
+    } catch (e) {
+      debug(
+        `insertNodes: removed-file hash cleanup failed (table may not exist): ${toErrorMessage(e)}`,
+      );
     }
+  }
+}
+
+// ── Deferred file_hashes commit ──────────────────────────────────────
+
+/**
+ * Commit `file_hashes` for every changed/parsed file, plus metadata-only
+ * healing entries. Called by the pipeline strictly AFTER resolveImports and
+ * buildEdges have finished rebuilding those files' edges.
+ *
+ * This is the fix for #1731: previously, `insertNodes` wrote file_hashes in
+ * the same transaction as node insertion — BEFORE resolveImports/buildEdges
+ * ran. Any exception, crash, or interruption between that write and the
+ * (separate) edge-building transaction(s) left the DB with a hash that
+ * claimed "up to date" while edges still reflected the previous revision (or
+ * were missing entirely) — and since change-detection trusts file_hashes
+ * exclusively, that divergence was never self-healed by later builds.
+ *
+ * Deferring the write here restores the invariant: a file's hash only ever
+ * advances once its edges have been rebuilt to match. If anything upstream
+ * throws before this point, the hash keeps its old value, so the next build
+ * correctly detects the file as still needing (re)processing.
+ */
+export function commitFileHashes(ctx: PipelineContext): void {
+  const { filesToParse, metadataUpdates, rootDir } = ctx;
+
+  const precomputedData = new Map<string, PrecomputedFileData>();
+  for (const item of filesToParse) {
+    if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
+  }
+  const fileHashes = buildFileHashes(filesToParse, precomputedData, metadataUpdates, rootDir);
+  if (fileHashes.length === 0) return;
+
+  if (ctx.engineName === 'native' && ctx.nativeDb?.healFileMetadata) {
+    try {
+      ctx.nativeDb.healFileMetadata(fileHashes);
+    } catch (e) {
+      debug(`commitFileHashes: native healFileMetadata failed: ${toErrorMessage(e)}`);
+    }
+    return;
+  }
+
+  try {
+    const upsertHash = ctx.db.prepare(
+      'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
+    );
+    const commitTx = ctx.db.transaction(() => {
+      for (const record of fileHashes) {
+        upsertHash.run(record.file, record.hash, record.mtime, record.size);
+      }
+    });
+    commitTx();
+  } catch (e) {
+    debug(`commitFileHashes: file_hashes write failed (table may not exist): ${toErrorMessage(e)}`);
   }
 }

@@ -44,6 +44,10 @@ function prepareWatcherStatements(db: ReturnType<typeof openDb>): IncrementalStm
       "SELECT id, file, kind FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')",
     ),
     listSymbols: db.prepare("SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'"),
+    upsertFileHash: db.prepare(
+      'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
+    ),
+    deleteFileHash: db.prepare('DELETE FROM file_hashes WHERE file = ?'),
   };
 }
 
