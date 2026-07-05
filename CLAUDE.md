@@ -136,9 +136,10 @@ Source is TypeScript in `src/`, compiled via `tsup`. The Rust native engine live
 | `features/snapshot.ts` | SQLite DB backup and restore |
 | `features/structure.ts` | Codebase structure analysis |
 | `features/triage.ts` | Risk-ranked audit priority queue (delegates scoring to `graph/classifiers/`) |
-| `features/graph-enrichment.ts` | Data enrichment for HTML viewer (complexity, communities, fan-in/out) |
+| `features/graph-enrichment.ts` | Plot data preparation for the HTML viewer (complexity, communities, fan-in/out) — pure data prep, no HTML/presentation imports beyond shared color/config types |
 | **`presentation/`** | **Pure output formatting + CLI command wrappers** |
 | `presentation/viewer.ts` | Interactive HTML renderer with vis-network |
+| `presentation/plot.ts` | Thin `generatePlotHTML` wrapper — prepares data via `features/graph-enrichment.ts`, renders via `presentation/viewer.ts` |
 | `presentation/queries-cli/` | CLI display wrappers for query functions, split by concern: `path.ts`, `overview.ts`, `inspect.ts`, `impact.ts`, `exports.ts` |
 | `presentation/*.ts` | Command formatters (audit, batch, check, communities, complexity, etc.) — call `features/*.ts`, format output, set exit codes |
 | `presentation/export.ts` | DOT/Mermaid/GraphML/Neo4j serializers |

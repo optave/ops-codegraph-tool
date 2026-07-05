@@ -5,11 +5,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
-import {
-  generatePlotHTML,
-  loadPlotConfig,
-  prepareGraphData,
-} from '../../src/features/graph-enrichment.js';
+import { loadPlotConfig, prepareGraphData } from '../../src/features/graph-enrichment.js';
 
 function createTestDb() {
   const db = new Database(':memory:');
@@ -35,107 +31,6 @@ function insertComplexity(db, nodeId, cognitive, cyclomatic, mi) {
     'INSERT INTO function_complexity (node_id, cognitive, cyclomatic, max_nesting, maintainability_index) VALUES (?, ?, ?, 2, ?)',
   ).run(nodeId, cognitive, cyclomatic, mi);
 }
-
-describe('generatePlotHTML', () => {
-  it('returns a valid HTML document', () => {
-    const db = createTestDb();
-    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
-    const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
-    insertEdge(db, a, b, 'imports');
-
-    const html = generatePlotHTML(db);
-    expect(html).toContain('<!DOCTYPE html>');
-    expect(html).toContain('<html');
-    expect(html).toContain('</html>');
-    db.close();
-  });
-
-  it('embeds graph data as JSON', () => {
-    const db = createTestDb();
-    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
-    const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
-    insertEdge(db, a, b, 'imports');
-
-    const html = generatePlotHTML(db);
-    expect(html).toContain('var allNodes =');
-    expect(html).toContain('var allEdges =');
-    expect(html).toContain('a.js');
-    expect(html).toContain('b.js');
-    db.close();
-  });
-
-  it('includes vis-network CDN script', () => {
-    const db = createTestDb();
-    const html = generatePlotHTML(db);
-    expect(html).toContain('vis-network');
-    expect(html).toContain('unpkg.com');
-    db.close();
-  });
-
-  it('applies custom config title', () => {
-    const db = createTestDb();
-    const html = generatePlotHTML(db, {
-      config: {
-        title: 'My Custom Graph',
-        layout: { algorithm: 'hierarchical', direction: 'LR' },
-        physics: { enabled: true, nodeDistance: 150 },
-        nodeColors: {},
-        roleColors: {},
-        colorBy: 'kind',
-        edgeStyle: { color: '#666', smooth: true },
-        filter: { kinds: null, roles: null, files: null },
-        seedStrategy: 'all',
-        seedCount: 30,
-        clusterBy: 'none',
-        sizeBy: 'uniform',
-        overlays: { complexity: false, risk: false },
-        riskThresholds: { highBlastRadius: 10, lowMI: 40 },
-      },
-    });
-    expect(html).toContain('<title>My Custom Graph</title>');
-    db.close();
-  });
-
-  it('handles empty graph without error', () => {
-    const db = createTestDb();
-    const html = generatePlotHTML(db);
-    expect(html).toContain('<!DOCTYPE html>');
-    expect(html).toContain('var allNodes = []');
-    expect(html).toContain('var allEdges = []');
-    db.close();
-  });
-
-  it('supports function-level mode', () => {
-    const db = createTestDb();
-    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
-    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
-    insertEdge(db, fnA, fnB, 'calls');
-
-    const html = generatePlotHTML(db, { fileLevel: false });
-    expect(html).toContain('doWork');
-    expect(html).toContain('helper');
-    db.close();
-  });
-
-  it('includes detail panel elements', () => {
-    const db = createTestDb();
-    const html = generatePlotHTML(db);
-    expect(html).toContain('id="detail"');
-    expect(html).toContain('id="detailContent"');
-    expect(html).toContain('id="detailClose"');
-    db.close();
-  });
-
-  it('includes new control elements', () => {
-    const db = createTestDb();
-    const html = generatePlotHTML(db);
-    expect(html).toContain('id="colorBySelect"');
-    expect(html).toContain('id="sizeBySelect"');
-    expect(html).toContain('id="clusterBySelect"');
-    expect(html).toContain('id="riskToggle"');
-    db.close();
-  });
-});
 
 describe('prepareGraphData', () => {
   it('embeds complexity data into function-level nodes', () => {

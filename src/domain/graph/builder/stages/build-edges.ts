@@ -496,6 +496,80 @@ function propagateReturnTypesAcrossFiles(
 
 // ── Call edges (native engine) ──────────────────────────────────────────
 
+/**
+ * Build the deduplicated native typeMap array for a single file's symbols.
+ * Deduplicate: keep highest-confidence entry per name (first-wins on tie),
+ * matching JS setTypeMapEntry semantics.  The Map branch is already
+ * deduped by setTypeMapEntry — this loop is only needed for the Array
+ * branch (pre-rebuilt native addon) but runs unconditionally as
+ * belt-and-suspenders since it's a cheap O(n) pass.
+ */
+function buildNativeTypeMapEntries(
+  symbols: ExtractorOutput,
+): Array<{ name: string; typeName: string; confidence: number }> {
+  const typeMapRaw: Array<{ name: string; typeName: string; confidence: number }> =
+    symbols.typeMap instanceof Map
+      ? [...symbols.typeMap.entries()].map(([name, entry]) => ({
+          name,
+          typeName: typeof entry === 'string' ? entry : entry.type,
+          confidence: typeof entry === 'object' ? entry.confidence : 0.9,
+        }))
+      : Array.isArray(symbols.typeMap)
+        ? (symbols.typeMap as Array<{ name: string; typeName: string; confidence: number }>)
+        : [];
+  const typeMapDedup = new Map<string, { name: string; typeName: string; confidence: number }>();
+  for (const entry of typeMapRaw) {
+    const existing = typeMapDedup.get(entry.name);
+    if (!existing || entry.confidence > existing.confidence) {
+      typeMapDedup.set(entry.name, entry);
+    }
+  }
+  return [...typeMapDedup.values()];
+}
+
+/** Build the native FFI file entry for a single file, including pts-analysis bindings. */
+function buildNativeFileEntry(
+  ctx: PipelineContext,
+  relPath: string,
+  fileNodeId: number,
+  symbols: ExtractorOutput,
+  rootDir: string,
+): NativeFileEntry {
+  const importedNames = buildImportedNamesForNative(ctx, relPath, symbols, rootDir);
+  const typeMap = buildNativeTypeMapEntries(symbols);
+  return {
+    file: relPath,
+    fileNodeId,
+    definitions: symbols.definitions.map((d) => {
+      const params = d.children?.filter((c) => c.kind === 'parameter').map((c) => c.name);
+      return {
+        name: d.name,
+        kind: d.kind,
+        line: d.line,
+        endLine: d.endLine ?? null,
+        params: params?.length ? params : undefined,
+      };
+    }),
+    calls: symbols.calls,
+    importedNames,
+    classes: symbols.classes,
+    typeMap,
+    fnRefBindings: symbols.fnRefBindings?.length ? symbols.fnRefBindings : undefined,
+    paramBindings: symbols.paramBindings?.length ? symbols.paramBindings : undefined,
+    thisCallBindings: symbols.thisCallBindings?.length ? symbols.thisCallBindings : undefined,
+    arrayElemBindings: symbols.arrayElemBindings?.length ? symbols.arrayElemBindings : undefined,
+    spreadArgBindings: symbols.spreadArgBindings?.length ? symbols.spreadArgBindings : undefined,
+    forOfBindings: symbols.forOfBindings?.length ? symbols.forOfBindings : undefined,
+    arrayCallbackBindings: symbols.arrayCallbackBindings?.length
+      ? symbols.arrayCallbackBindings
+      : undefined,
+    objectRestParamBindings: symbols.objectRestParamBindings?.length
+      ? symbols.objectRestParamBindings
+      : undefined,
+    objectPropBindings: symbols.objectPropBindings?.length ? symbols.objectPropBindings : undefined,
+  };
+}
+
 function buildCallEdgesNative(
   ctx: PipelineContext,
   getNodeIdStmt: NodeIdStmt,
@@ -511,63 +585,7 @@ function buildCallEdgesNative(
     const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
     if (!fileNodeRow) continue;
 
-    const importedNames = buildImportedNamesForNative(ctx, relPath, symbols, rootDir);
-    const typeMapRaw: Array<{ name: string; typeName: string; confidence: number }> =
-      symbols.typeMap instanceof Map
-        ? [...symbols.typeMap.entries()].map(([name, entry]) => ({
-            name,
-            typeName: typeof entry === 'string' ? entry : entry.type,
-            confidence: typeof entry === 'object' ? entry.confidence : 0.9,
-          }))
-        : Array.isArray(symbols.typeMap)
-          ? (symbols.typeMap as Array<{ name: string; typeName: string; confidence: number }>)
-          : [];
-    // Deduplicate: keep highest-confidence entry per name (first-wins on tie),
-    // matching JS setTypeMapEntry semantics.  The Map branch is already
-    // deduped by setTypeMapEntry — this loop is only needed for the Array
-    // branch (pre-rebuilt native addon) but runs unconditionally as
-    // belt-and-suspenders since it's a cheap O(n) pass.
-    const typeMapDedup = new Map<string, { name: string; typeName: string; confidence: number }>();
-    for (const entry of typeMapRaw) {
-      const existing = typeMapDedup.get(entry.name);
-      if (!existing || entry.confidence > existing.confidence) {
-        typeMapDedup.set(entry.name, entry);
-      }
-    }
-    const typeMap = [...typeMapDedup.values()];
-    nativeFiles.push({
-      file: relPath,
-      fileNodeId: fileNodeRow.id,
-      definitions: symbols.definitions.map((d) => {
-        const params = d.children?.filter((c) => c.kind === 'parameter').map((c) => c.name);
-        return {
-          name: d.name,
-          kind: d.kind,
-          line: d.line,
-          endLine: d.endLine ?? null,
-          params: params?.length ? params : undefined,
-        };
-      }),
-      calls: symbols.calls,
-      importedNames,
-      classes: symbols.classes,
-      typeMap,
-      fnRefBindings: symbols.fnRefBindings?.length ? symbols.fnRefBindings : undefined,
-      paramBindings: symbols.paramBindings?.length ? symbols.paramBindings : undefined,
-      thisCallBindings: symbols.thisCallBindings?.length ? symbols.thisCallBindings : undefined,
-      arrayElemBindings: symbols.arrayElemBindings?.length ? symbols.arrayElemBindings : undefined,
-      spreadArgBindings: symbols.spreadArgBindings?.length ? symbols.spreadArgBindings : undefined,
-      forOfBindings: symbols.forOfBindings?.length ? symbols.forOfBindings : undefined,
-      arrayCallbackBindings: symbols.arrayCallbackBindings?.length
-        ? symbols.arrayCallbackBindings
-        : undefined,
-      objectRestParamBindings: symbols.objectRestParamBindings?.length
-        ? symbols.objectRestParamBindings
-        : undefined,
-      objectPropBindings: symbols.objectPropBindings?.length
-        ? symbols.objectPropBindings
-        : undefined,
-    });
+    nativeFiles.push(buildNativeFileEntry(ctx, relPath, fileNodeRow.id, symbols, rootDir));
   }
 
   const nativeEdges = native.buildCallEdges(nativeFiles, allNodes, [
@@ -1042,6 +1060,183 @@ function buildDefinitionParamsMap(
 // ── Per-call resolution helpers ─────────────────────────────────────────
 
 /**
+ * RES-4: Kotlin member callable reference — `Greeter::greet` emits
+ * { name: 'greet', receiver: 'Greeter', dynamicKind: 'reflection' }.
+ * The receiver is the class qualifier (not a typeMap variable), so
+ * resolveCallTargets would find a same-named top-level function via
+ * byNameAndFile('greet', relPath) before the qualified form is tried.
+ * Prefer `Greeter.greet` in the same file first; fall through to the
+ * normal path only when no qualified match exists.
+ */
+function resolveKotlinReflectionPreQualified(
+  call: Call,
+  relPath: string,
+  lookup: CallNodeLookup,
+): ReadonlyArray<{ id: number; file: string; kind?: string }> {
+  if (
+    call.dynamicKind === 'reflection' &&
+    call.receiver &&
+    !call.keyExpr &&
+    !isModuleScopedLanguage(relPath)
+  ) {
+    return lookup
+      .byNameAndFile(`${call.receiver}.${call.name}`, relPath)
+      .filter((n) => n.kind === 'method' || n.kind === 'function');
+  }
+  return [];
+}
+
+/**
+ * Shared by both same-class fallback strategies below: derive the enclosing
+ * class name from the caller's qualified name (the segment immediately before
+ * the final dot, e.g. `Namespace.MyClass.method` → `MyClass`), then look up
+ * `ClassName.callName` as a method in the same file.
+ */
+function resolveSameClassQualifiedMethod(
+  callName: string,
+  callerName: string,
+  relPath: string,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  const lastDot = callerName.lastIndexOf('.');
+  if (lastDot <= 0) return [];
+  const prevDot = callerName.lastIndexOf('.', lastDot - 1);
+  const className = callerName.slice(prevDot + 1, lastDot);
+  return lookup
+    .byNameAndFile(`${className}.${callName}`, relPath)
+    .filter((n) => n.kind === 'method');
+}
+
+/**
+ * Same-class `this.method()` fallback: when the call receiver is `this` and
+ * resolveCallTargets found nothing, derive the enclosing class name from the
+ * caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
+ * qualified method name `Logger._write`. This mirrors what the native Rust
+ * engine does implicitly via its class-scoped symbol table.
+ * NOTE: restricted to `this` only — `super.method()` targets a parent class,
+ * not the enclosing class, so qualifying with the child class name would
+ * produce a false edge when the child also defines a same-named method.
+ */
+function resolveSameClassThisFallback(
+  call: Call,
+  callerName: string | null,
+  relPath: string,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  if (call.receiver !== 'this' || callerName == null) return [];
+  return resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
+}
+
+/**
+ * Same-class bare-call fallback: when a no-receiver call can't be resolved
+ * globally, try the caller's own class as a qualifier. Handles C# static
+ * sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
+ * to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
+ * module-scoped, not class-scoped.
+ */
+function resolveSameClassBareCallFallback(
+  call: Call,
+  callerName: string | null,
+  relPath: string,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  if (call.receiver || callerName == null || isModuleScopedLanguage(relPath)) return [];
+  return resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
+}
+
+/**
+ * RES-3: reflection with literal method name — JVM getMethod("name") / invokeMethod("name").
+ * Java/Scala/Groovy methods are stored as class-qualified names (e.g. Reflection.greet),
+ * so lookup.byNameAndFile('greet', relPath) finds nothing. When dynamicKind='reflection'
+ * and keyExpr is set (a string-literal method name was captured), try the qualified form:
+ *   1. typeMap[receiver] → resolvedType → lookup `resolvedType.keyExpr` (type-annotated local)
+ *   2. callerName class prefix → `CallerClass.keyExpr` (same-class sibling, e.g. Groovy obj)
+ * Scoped to non-JS/TS files to avoid interfering with the JS reflection path.
+ */
+function resolveReflectionKeyExprFallback(
+  call: Call,
+  callerName: string | null,
+  relPath: string,
+  typeMap: Map<string, TypeMapEntry | string>,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  if (
+    call.dynamicKind !== 'reflection' ||
+    !call.keyExpr ||
+    !call.receiver ||
+    isModuleScopedLanguage(relPath)
+  ) {
+    return [];
+  }
+  const typeEntry = typeMap.get(call.receiver);
+  const resolvedType = typeEntry
+    ? typeof typeEntry === 'string'
+      ? typeEntry
+      : (typeEntry as { type?: string }).type
+    : null;
+  if (resolvedType) {
+    const qualified = lookup
+      .byNameAndFile(`${resolvedType}.${call.keyExpr}`, relPath)
+      .filter((n) => n.kind === 'method' || n.kind === 'function');
+    if (qualified.length > 0) return qualified;
+  }
+  if (callerName != null) {
+    const lastDot = callerName.lastIndexOf('.');
+    if (lastDot > 0) {
+      const prevDot = callerName.lastIndexOf('.', lastDot - 1);
+      const callerClass = callerName.slice(prevDot + 1, lastDot);
+      const qualified = lookup
+        .byNameAndFile(`${callerClass}.${call.keyExpr}`, relPath)
+        .filter((n) => n.kind === 'method' || n.kind === 'function');
+      if (qualified.length > 0) return qualified;
+    }
+  }
+  return [];
+}
+
+/**
+ * Object.defineProperty accessor fallback: when a function is registered as
+ * a getter/setter via `Object.defineProperty(obj, "bar", { get: getter })`,
+ * calls to `this.X()` inside `getter` resolve against `obj` (this === obj
+ * when the accessor is invoked). If the same-class fallback above found
+ * nothing, try treating `obj` as the receiver and look up `obj.X` in the
+ * typeMap, or fall back to a same-file lookup of any definition named X
+ * that belongs to the object literal or its type.
+ */
+function resolveDefinePropertyAccessorFallback(
+  call: Call,
+  callerName: string | null,
+  relPath: string,
+  typeMap: Map<string, TypeMapEntry | string>,
+  lookup: CallNodeLookup,
+  definePropertyReceivers: Map<string, string> | undefined,
+): Array<{ id: number; file: string; kind?: string }> {
+  if (call.receiver !== 'this' || callerName == null || !definePropertyReceivers) return [];
+  const receiverVarName = definePropertyReceivers.get(callerName);
+  if (!receiverVarName) return [];
+
+  const typeEntry = typeMap.get(receiverVarName);
+  const typeName = typeEntry
+    ? typeof typeEntry === 'string'
+      ? typeEntry
+      : (typeEntry as { type?: string }).type
+    : null;
+  if (typeName) {
+    const qualified = lookup.byNameAndFile(`${typeName}.${call.name}`, relPath);
+    if (qualified.length > 0) return [...qualified];
+  }
+  // If still no targets, search for any definition named `call.name` in
+  // the same file — handles plain object literals where the method isn't
+  // qualified (e.g. `const obj = { baz() {} }` defines `baz` directly).
+  // Note: this is intentionally broad — it matches any same-file definition
+  // with the called name, not just members of the receiver object. This is
+  // the same behaviour used by the native post-pass path (buildDefinePropertyPostPass).
+  const sameFile = lookup.byNameAndFile(call.name, relPath);
+  if (sameFile.length > 0) return [...sameFile];
+  return [];
+}
+
+/**
  * Resolve targets for a single call site with all JS-path fallbacks applied.
  *
  * Runs in order:
@@ -1064,24 +1259,7 @@ function resolveFallbackTargets(
   targets: ReadonlyArray<{ id: number; file: string; kind?: string }>;
   importedFrom: string | null | undefined;
 } {
-  // RES-4: Kotlin member callable reference — `Greeter::greet` emits
-  // { name: 'greet', receiver: 'Greeter', dynamicKind: 'reflection' }.
-  // The receiver is the class qualifier (not a typeMap variable), so
-  // resolveCallTargets would find a same-named top-level function via
-  // byNameAndFile('greet', relPath) before the qualified form is tried.
-  // Prefer `Greeter.greet` in the same file first; fall through to the
-  // normal path only when no qualified match exists.
-  let preQualifiedTargets: ReadonlyArray<{ id: number; file: string; kind?: string }> = [];
-  if (
-    call.dynamicKind === 'reflection' &&
-    call.receiver &&
-    !call.keyExpr &&
-    !isModuleScopedLanguage(relPath)
-  ) {
-    preQualifiedTargets = lookup
-      .byNameAndFile(`${call.receiver}.${call.name}`, relPath)
-      .filter((n) => n.kind === 'method' || n.kind === 'function');
-  }
+  const preQualifiedTargets = resolveKotlinReflectionPreQualified(call, relPath, lookup);
 
   let { targets, importedFrom } =
     preQualifiedTargets.length > 0
@@ -1098,123 +1276,41 @@ function resolveFallbackTargets(
           caller.callerName,
         );
 
-  // Same-class `this.method()` fallback: when the call receiver is `this` and
-  // resolveCallTargets found nothing, derive the enclosing class name from the
-  // caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
-  // qualified method name `Logger._write`. This mirrors what the native Rust
-  // engine does implicitly via its class-scoped symbol table.
-  // NOTE: restricted to `this` only — `super.method()` targets a parent class,
-  // not the enclosing class, so qualifying with the child class name would
-  // produce a false edge when the child also defines a same-named method.
-  if (targets.length === 0 && call.receiver === 'this' && caller.callerName != null) {
-    const lastDot = caller.callerName.lastIndexOf('.');
-    if (lastDot > 0) {
-      const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
-      const className = caller.callerName.slice(prevDot + 1, lastDot);
-      const qualified = lookup
-        .byNameAndFile(`${className}.${call.name}`, relPath)
-        .filter((n) => n.kind === 'method');
-      if (qualified.length > 0) targets = qualified;
-    }
+  // Fallback strategies, applied in order until one yields a match. Each
+  // helper folds its own applicability guard internally (see helper doc
+  // comments above) — the checks here are unchanged from before, just
+  // relocated to keep this dispatcher a thin, low-complexity orchestrator.
+  if (targets.length === 0) {
+    const qualified = resolveSameClassThisFallback(call, caller.callerName, relPath, lookup);
+    if (qualified.length > 0) targets = qualified;
   }
 
-  // Same-class bare-call fallback: when a no-receiver call can't be resolved
-  // globally, try the caller's own class as a qualifier. Handles C# static
-  // sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
-  // to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
-  // module-scoped, not class-scoped.
-  if (
-    targets.length === 0 &&
-    !call.receiver &&
-    caller.callerName != null &&
-    !isModuleScopedLanguage(relPath)
-  ) {
-    const lastDot = caller.callerName.lastIndexOf('.');
-    if (lastDot > 0) {
-      const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
-      const className = caller.callerName.slice(prevDot + 1, lastDot);
-      const qualified = lookup
-        .byNameAndFile(`${className}.${call.name}`, relPath)
-        .filter((n) => n.kind === 'method');
-      if (qualified.length > 0) targets = qualified;
-    }
+  if (targets.length === 0) {
+    const qualified = resolveSameClassBareCallFallback(call, caller.callerName, relPath, lookup);
+    if (qualified.length > 0) targets = qualified;
   }
 
-  // RES-3: reflection with literal method name — JVM getMethod("name") / invokeMethod("name").
-  // Java/Scala/Groovy methods are stored as class-qualified names (e.g. Reflection.greet),
-  // so lookup.byNameAndFile('greet', relPath) finds nothing. When dynamicKind='reflection'
-  // and keyExpr is set (a string-literal method name was captured), try the qualified form:
-  //   1. typeMap[receiver] → resolvedType → lookup `resolvedType.keyExpr` (type-annotated local)
-  //   2. callerName class prefix → `CallerClass.keyExpr` (same-class sibling, e.g. Groovy obj)
-  // Scoped to non-JS/TS files to avoid interfering with the JS reflection path.
-  if (
-    targets.length === 0 &&
-    call.dynamicKind === 'reflection' &&
-    call.keyExpr &&
-    call.receiver &&
-    !isModuleScopedLanguage(relPath)
-  ) {
-    const typeEntry = typeMap.get(call.receiver);
-    const resolvedType = typeEntry
-      ? typeof typeEntry === 'string'
-        ? typeEntry
-        : (typeEntry as { type?: string }).type
-      : null;
-    if (resolvedType) {
-      const qualified = lookup
-        .byNameAndFile(`${resolvedType}.${call.keyExpr}`, relPath)
-        .filter((n) => n.kind === 'method' || n.kind === 'function');
-      if (qualified.length > 0) targets = qualified;
-    }
-    if (targets.length === 0 && caller.callerName != null) {
-      const lastDot = caller.callerName.lastIndexOf('.');
-      if (lastDot > 0) {
-        const prevDot = caller.callerName.lastIndexOf('.', lastDot - 1);
-        const callerClass = caller.callerName.slice(prevDot + 1, lastDot);
-        const qualified = lookup
-          .byNameAndFile(`${callerClass}.${call.keyExpr}`, relPath)
-          .filter((n) => n.kind === 'method' || n.kind === 'function');
-        if (qualified.length > 0) targets = qualified;
-      }
-    }
+  if (targets.length === 0) {
+    const qualified = resolveReflectionKeyExprFallback(
+      call,
+      caller.callerName,
+      relPath,
+      typeMap,
+      lookup,
+    );
+    if (qualified.length > 0) targets = qualified;
   }
 
-  // Object.defineProperty accessor fallback: when a function is registered as
-  // a getter/setter via `Object.defineProperty(obj, "bar", { get: getter })`,
-  // calls to `this.X()` inside `getter` resolve against `obj` (this === obj
-  // when the accessor is invoked). If the same-class fallback above found
-  // nothing, try treating `obj` as the receiver and look up `obj.X` in the
-  // typeMap, or fall back to a same-file lookup of any definition named X
-  // that belongs to the object literal or its type.
-  if (
-    targets.length === 0 &&
-    call.receiver === 'this' &&
-    caller.callerName != null &&
-    definePropertyReceivers
-  ) {
-    const receiverVarName = definePropertyReceivers.get(caller.callerName);
-    if (receiverVarName) {
-      const typeEntry = typeMap.get(receiverVarName);
-      const typeName = typeEntry
-        ? typeof typeEntry === 'string'
-          ? typeEntry
-          : (typeEntry as { type?: string }).type
-        : null;
-      if (typeName) {
-        const qualified = lookup.byNameAndFile(`${typeName}.${call.name}`, relPath);
-        if (qualified.length > 0) targets = [...qualified];
-      }
-      // If still no targets, search for any definition named `call.name` in
-      // the same file — handles plain object literals where the method isn't
-      // qualified (e.g. `const obj = { baz() {} }` defines `baz` directly).
-      // Note: this is intentionally broad — it matches any same-file definition
-      // with the called name, not just members of the receiver object. This is
-      // the same behaviour used by the native post-pass path (buildDefinePropertyPostPass).
-      if (targets.length === 0) {
-        const sameFile = lookup.byNameAndFile(call.name, relPath);
-        if (sameFile.length > 0) targets = [...sameFile];
-      }
-    }
+  if (targets.length === 0) {
+    const qualified = resolveDefinePropertyAccessorFallback(
+      call,
+      caller.callerName,
+      relPath,
+      typeMap,
+      lookup,
+      definePropertyReceivers,
+    );
+    if (qualified.length > 0) targets = qualified;
   }
 
   return { targets, importedFrom };
@@ -1904,7 +2000,7 @@ function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolea
     const existingFileCount = (
       db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as { c: number }
     ).c;
-    if (existingFileCount > 20) {
+    if (existingFileCount > ctx.config.build.largeCodebaseFileThreshold) {
       // Collect relevant files: changed files + their import targets
       const relevantFiles = new Set<string>(fileSymbols.keys());
       if (batchResolved) {
@@ -1962,50 +2058,149 @@ function addLazyFallback(ctx: PipelineContext, scopedLoad: boolean): void {
   };
 }
 
-export async function buildEdges(ctx: PipelineContext): Promise<void> {
-  const { db, engineName } = ctx;
-
-  const getNodeIdStmt = makeGetNodeIdStmt(db);
-
+/** Load node-lookup structures used throughout edge construction (Phase 0 setup). */
+function prepareNodeLookups(ctx: PipelineContext): {
+  getNodeIdStmt: NodeIdStmt;
+  allNodesBefore: QueryNodeRow[];
+} {
+  const getNodeIdStmt = makeGetNodeIdStmt(ctx.db);
   const { rows: allNodesBefore, scoped: scopedLoad } = loadNodes(ctx);
   setupNodeLookups(ctx, allNodesBefore);
   addLazyFallback(ctx, scopedLoad);
+  return { getNodeIdStmt, allNodesBefore };
+}
 
-  const t0 = performance.now();
-
-  // Enrich typeMap for .ts/.tsx files using the TypeScript compiler API.
-  // Runs before call-edge construction so the accurate types are available
-  // for method-call resolution. Gated on config so users can opt out.
-  //
-  // Skip for small incremental builds: TypeScript program creation requires
-  // loading the entire tsconfig file list (~700ms startup on the codegraph
-  // corpus), which dominates the 1-file rebuild time. Native engine bypasses
-  // this entirely via the Rust orchestrator; WASM/JS engines need this gate
-  // to match native's effective behaviour on tiny incremental changes.
-  // Mirrors the smallFilesThreshold gates for nativeDb and native call-edges.
+/**
+ * Enrich typeMap for .ts/.tsx files using the TypeScript compiler API.
+ * Runs before call-edge construction so the accurate types are available
+ * for method-call resolution. Gated on config so users can opt out.
+ *
+ * Skip for small incremental builds: TypeScript program creation requires
+ * loading the entire tsconfig file list (~700ms startup on the codegraph
+ * corpus), which dominates the 1-file rebuild time. Native engine bypasses
+ * this entirely via the Rust orchestrator; WASM/JS engines need this gate
+ * to match native's effective behaviour on tiny incremental changes.
+ * Mirrors the smallFilesThreshold gates for nativeDb and native call-edges.
+ */
+async function maybeEnrichTypeMapWithTsc(ctx: PipelineContext): Promise<void> {
   const isSmallIncremental =
     !ctx.isFullBuild && ctx.fileSymbols.size <= ctx.config.build.smallFilesThreshold;
   if (ctx.config.build.typescriptResolver && !isSmallIncremental) {
     await enrichTypeMapWithTsc(ctx.rootDir, ctx.fileSymbols);
   }
+}
 
-  const native = engineName === 'native' ? loadNative() : null;
+/**
+ * Import-edge sub-phase: native fast path (with JS fallback for a #750-related
+ * key-format mismatch) or the JS path directly.
+ */
+function buildImportEdgesPhase(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  native: NativeAddon | null,
+): void {
+  // Skip native import-edge path for small incremental builds: napi-rs
+  // marshaling overhead (~13ms) exceeds Rust computation savings at this scale.
+  const useNativeImportEdges =
+    native?.buildImportEdges &&
+    (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
+  if (useNativeImportEdges) {
+    const beforeLen = allEdgeRows.length;
+    buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
+    // Fallback: if native produced 0 import edges but there are imports to
+    // process, the native binary may have a key-format mismatch (e.g. Windows
+    // path separators — #750).  Retry with the JS implementation.
+    // NOTE: This also fires for codebases where every import targets an
+    // external package (npm deps) that the resolver intentionally skips.
+    // In that case the JS path resolves zero edges too, so the only cost
+    // is the redundant JS traversal — no correctness impact.
+    const hasImports = [...ctx.fileSymbols.values()].some((s) => s.imports.length > 0);
+    if (allEdgeRows.length === beforeLen && hasImports) {
+      debug('Native buildImportEdges produced 0 edges — falling back to JS');
+      buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+    }
+  } else {
+    buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+  }
+}
 
-  // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
-  // the transaction opens. This is pure in-memory mutation (no DB I/O) and must
-  // run outside the transaction to avoid leaving ctx.fileSymbols in a partial
-  // state if the transaction rolls back unexpectedly.
-  propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
-  // Phase 8.5: Build CHA context after propagation so typeMap confidence values
-  // (used for RTA seeding) reflect any cross-file propagated types.
-  const chaCtx = buildChaContext(ctx.fileSymbols);
+/**
+ * Call-edge sub-phase: native fast path (+ JS-only post-passes for
+ * Object.defineProperty accessor dispatch and CHA/RTA expansion — capabilities
+ * the native engine doesn't implement) or the full JS fallback path.
+ */
+function buildCallEdgesPhase(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  allNodesBefore: QueryNodeRow[],
+  native: NativeAddon | null,
+  chaCtx: ChaContext,
+): void {
+  // Skip native call-edge path for small incremental builds: napi-rs
+  // marshaling overhead for allNodes exceeds Rust computation savings.
+  const useNativeCallEdges =
+    native?.buildCallEdges &&
+    (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
+  if (useNativeCallEdges) {
+    buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native!);
+    // The native engine receives all pts bindings (paramBindings,
+    // fnRefBindings, thisCallBindings, objectRestParamBindings, …) through
+    // NativeFileEntry and runs the same points-to solver as the JS path, so
+    // no pts post-passes are needed here. Only capabilities that remain
+    // JS-only run as post-passes below.
+    const sharedLookup = makeContextLookup(ctx, getNodeIdStmt);
+    // Object.defineProperty accessor post-pass: resolve this-dispatch inside
+    // getter/setter functions registered via Object.defineProperty.
+    buildDefinePropertyPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
+    // Phase 8.5 post-pass: augment native call edges with CHA-resolved dispatch.
+    // The native Rust engine has no knowledge of the CHA context, so this/self
+    // calls and interface dispatch are not expanded to concrete implementations.
+    buildChaPostPass(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
+  } else {
+    buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
+  }
+}
 
-  // Phase 1: Compute edges inside a better-sqlite3 transaction.
-  // Barrel-edge deletion lives here so that the JS path (which also inserts
-  // edges in this transaction) keeps deletion + insertion atomic.
-  // When using the native rusqlite path, insertion happens in Phase 2 on a
-  // separate connection — a crash between Phase 1 and Phase 2 would leave
-  // barrel edges missing until the next incremental rebuild re-creates them.
+/**
+ * Apply the ts-native confidence floor to allEdgeRows in-memory.  The proximity
+ * heuristic returns 0.3 for cross-module calls with no import-path evidence,
+ * but both WASM and native engines perform actual name-based symbol lookup,
+ * which is stronger evidence than pure proximity.  Clamping to
+ * TS_NATIVE_CONFIDENCE_FLOOR (0.5) avoids unfairly dragging down the
+ * call-confidence metric.  Sink edges (confidence = 0.0) are excluded so
+ * they remain below DEFAULT_MIN_CONFIDENCE.
+ */
+function applyTsNativeConfidenceFloor(allEdgeRows: EdgeRowTuple[]): void {
+  for (const r of allEdgeRows) {
+    if (
+      r[2] === 'calls' &&
+      r[5] === 'ts-native' &&
+      (r[3] as number) > 0 &&
+      (r[3] as number) < TS_NATIVE_CONFIDENCE_FLOOR
+    ) {
+      r[3] = TS_NATIVE_CONFIDENCE_FLOOR;
+    }
+  }
+}
+
+/**
+ * Phase 1: Compute edges inside a better-sqlite3 transaction.
+ * Barrel-edge deletion lives here so that the JS path (which also inserts
+ * edges in this transaction) keeps deletion + insertion atomic.
+ * When using the native rusqlite path, insertion happens in Phase 2 on a
+ * separate connection — a crash between Phase 1 and Phase 2 would leave
+ * barrel edges missing until the next incremental rebuild re-creates them.
+ */
+function computeAndInsertEdges(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allNodesBefore: QueryNodeRow[],
+  native: NativeAddon | null,
+  chaCtx: ChaContext,
+): EdgeRowTuple[] {
+  const { db } = ctx;
   const allEdgeRows: EdgeRowTuple[] = [];
   const computeEdgesTx = db.transaction(() => {
     if (ctx.barrelOnlyFiles.size > 0) {
@@ -2017,71 +2212,9 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    // Skip native import-edge path for small incremental builds: napi-rs
-    // marshaling overhead (~13ms) exceeds Rust computation savings at this scale.
-    const useNativeImportEdges =
-      native?.buildImportEdges &&
-      (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
-    if (useNativeImportEdges) {
-      const beforeLen = allEdgeRows.length;
-      buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
-      // Fallback: if native produced 0 import edges but there are imports to
-      // process, the native binary may have a key-format mismatch (e.g. Windows
-      // path separators — #750).  Retry with the JS implementation.
-      // NOTE: This also fires for codebases where every import targets an
-      // external package (npm deps) that the resolver intentionally skips.
-      // In that case the JS path resolves zero edges too, so the only cost
-      // is the redundant JS traversal — no correctness impact.
-      const hasImports = [...ctx.fileSymbols.values()].some((s) => s.imports.length > 0);
-      if (allEdgeRows.length === beforeLen && hasImports) {
-        debug('Native buildImportEdges produced 0 edges — falling back to JS');
-        buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
-      }
-    } else {
-      buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
-    }
-
-    // Skip native call-edge path for small incremental builds: napi-rs
-    // marshaling overhead for allNodes exceeds Rust computation savings.
-    const useNativeCallEdges =
-      native?.buildCallEdges &&
-      (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
-    if (useNativeCallEdges) {
-      buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native!);
-      // The native engine receives all pts bindings (paramBindings,
-      // fnRefBindings, thisCallBindings, objectRestParamBindings, …) through
-      // NativeFileEntry and runs the same points-to solver as the JS path, so
-      // no pts post-passes are needed here. Only capabilities that remain
-      // JS-only run as post-passes below.
-      const sharedLookup = makeContextLookup(ctx, getNodeIdStmt);
-      // Object.defineProperty accessor post-pass: resolve this-dispatch inside
-      // getter/setter functions registered via Object.defineProperty.
-      buildDefinePropertyPostPass(ctx, getNodeIdStmt, allEdgeRows, sharedLookup);
-      // Phase 8.5 post-pass: augment native call edges with CHA-resolved dispatch.
-      // The native Rust engine has no knowledge of the CHA context, so this/self
-      // calls and interface dispatch are not expanded to concrete implementations.
-      buildChaPostPass(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
-    } else {
-      buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows, chaCtx);
-    }
-
-    // Apply ts-native confidence floor to allEdgeRows in-memory.  The proximity
-    // heuristic returns 0.3 for cross-module calls with no import-path evidence,
-    // but both WASM and native engines perform actual name-based symbol lookup,
-    // which is stronger evidence than pure proximity.  Clamping to
-    // TS_NATIVE_CONFIDENCE_FLOOR (0.5) avoids unfairly dragging down the
-    // call-confidence metric.  Sink edges (confidence = 0.0) are excluded so
-    // they remain below DEFAULT_MIN_CONFIDENCE.
-    for (const r of allEdgeRows) {
-      if (
-        r[2] === 'calls' &&
-        r[5] === 'ts-native' &&
-        (r[3] as number) > 0 &&
-        (r[3] as number) < TS_NATIVE_CONFIDENCE_FLOOR
-      ) {
-        r[3] = TS_NATIVE_CONFIDENCE_FLOOR;
-      }
-    }
+    buildImportEdgesPhase(ctx, getNodeIdStmt, allEdgeRows, native);
+    buildCallEdgesPhase(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native, chaCtx);
+    applyTsNativeConfidenceFloor(allEdgeRows);
 
     // When using native edge insert, skip JS insert here — do it after tx commits.
     // Otherwise insert edges within this transaction for atomicity.
@@ -2091,26 +2224,55 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     }
   });
   computeEdgesTx();
+  return allEdgeRows;
+}
 
-  // Phase 2: Native rusqlite bulk insert (outside better-sqlite3 transaction
-  // to avoid SQLITE_BUSY contention). Uses NativeDatabase persistent connection.
-  // Standalone napi functions were removed in 6.17.
-  if (ctx.engineName === 'native' && ctx.nativeDb?.bulkInsertEdges && allEdgeRows.length > 0) {
-    const nativeEdges = allEdgeRows.map((r) => ({
-      sourceId: r[0],
-      targetId: r[1],
-      kind: r[2],
-      confidence: r[3],
-      dynamic: r[4],
-    }));
-    const ok = ctx.nativeDb.bulkInsertEdges(nativeEdges);
-    if (!ok) {
-      debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
-      batchInsertEdges(ctx.db, allEdgeRows);
-    } else {
-      applyEdgeTechniquesAfterNativeInsert(ctx.db, allEdgeRows);
-    }
+/**
+ * Phase 2: Native rusqlite bulk insert (outside the better-sqlite3 transaction
+ * to avoid SQLITE_BUSY contention). Uses the NativeDatabase persistent
+ * connection. Standalone napi functions were removed in 6.17.
+ */
+function insertNativeBulkEdges(ctx: PipelineContext, allEdgeRows: EdgeRowTuple[]): void {
+  if (!(ctx.engineName === 'native' && ctx.nativeDb?.bulkInsertEdges && allEdgeRows.length > 0)) {
+    return;
   }
+  const nativeEdges = allEdgeRows.map((r) => ({
+    sourceId: r[0],
+    targetId: r[1],
+    kind: r[2],
+    confidence: r[3],
+    dynamic: r[4],
+  }));
+  const ok = ctx.nativeDb.bulkInsertEdges(nativeEdges);
+  if (!ok) {
+    debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
+    batchInsertEdges(ctx.db, allEdgeRows);
+  } else {
+    applyEdgeTechniquesAfterNativeInsert(ctx.db, allEdgeRows);
+  }
+}
+
+export async function buildEdges(ctx: PipelineContext): Promise<void> {
+  const { getNodeIdStmt, allNodesBefore } = prepareNodeLookups(ctx);
+
+  const t0 = performance.now();
+
+  await maybeEnrichTypeMapWithTsc(ctx);
+
+  const native = ctx.engineName === 'native' ? loadNative() : null;
+
+  // Phase 8.2: Augment typeMaps with cross-file return-type propagation before
+  // the transaction opens. This is pure in-memory mutation (no DB I/O) and must
+  // run outside the transaction to avoid leaving ctx.fileSymbols in a partial
+  // state if the transaction rolls back unexpectedly.
+  propagateReturnTypesAcrossFiles(ctx.fileSymbols, ctx, ctx.rootDir);
+  // Phase 8.5: Build CHA context after propagation so typeMap confidence values
+  // (used for RTA seeding) reflect any cross-file propagated types.
+  const chaCtx = buildChaContext(ctx.fileSymbols);
+
+  const allEdgeRows = computeAndInsertEdges(ctx, getNodeIdStmt, allNodesBefore, native, chaCtx);
+
+  insertNativeBulkEdges(ctx, allEdgeRows);
 
   // Phase 3: Reconnect saved reverse-dep edges (#932, #933).
   // When the WASM/JS path purged changed files, edges FROM reverse-dep files TO
@@ -2126,7 +2288,7 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   // committed so the DB is consistent.
   // Note: the native orchestrator success path runs this independently in
   // tryNativeOrchestrator; this phase covers the WASM and native-fallback paths.
-  runChaPostPass(db);
+  runChaPostPass(ctx.db);
 
   ctx.timing.edgesMs = performance.now() - t0;
 }
