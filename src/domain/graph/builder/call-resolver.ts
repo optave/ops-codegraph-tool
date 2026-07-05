@@ -35,6 +35,31 @@ export const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', '
 // continue to work without changes (build-edges.ts, etc.).
 export { isModuleScopedLanguage };
 
+/**
+ * Shared by both the full-build (build-edges.ts) and incremental (incremental.ts)
+ * same-class fallback strategies: derive the enclosing class name from the
+ * caller's qualified name (the segment immediately before the final dot, e.g.
+ * `Namespace.MyClass.method` → `MyClass`), then look up `ClassName.callName`
+ * as a method in the same file.
+ *
+ * Uses lastIndexOf (not indexOf) so deeply-qualified caller names extract the
+ * innermost class, not the outermost namespace.
+ */
+export function resolveSameClassQualifiedMethod(
+  callName: string,
+  callerName: string,
+  relPath: string,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  const lastDot = callerName.lastIndexOf('.');
+  if (lastDot <= 0) return [];
+  const prevDot = callerName.lastIndexOf('.', lastDot - 1);
+  const className = callerName.slice(prevDot + 1, lastDot);
+  return lookup
+    .byNameAndFile(`${className}.${callName}`, relPath)
+    .filter((n) => n.kind === 'method');
+}
+
 // ── Shared resolution functions ──────────────────────────────────────────
 
 /**

@@ -186,7 +186,7 @@ function setupWatcher(rootDir: string, opts: { engine?: string; dbPath?: string 
   const extraDirs = [...(config.ignoreDirs ?? []), ...(config.ignoreAdditionalDirs ?? [])];
   const ignoreSet = buildIgnoreSet(extraDirs.length ? extraDirs : undefined);
 
-  const db = openDb(dbPath);
+  const db = openDb(dbPath, config.db.busyTimeoutMs);
   initSchema(db);
   const engineOpts: import('../../types.js').EngineOpts = {
     engine: (opts.engine || 'auto') as import('../../types.js').EngineMode,

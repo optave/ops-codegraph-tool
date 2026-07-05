@@ -94,6 +94,81 @@ export function extractParams(
 }
 
 /**
+ * Resolution result for a single node in the parameter-name worklist: either
+ * a base case with names to record, or intermediate `next` nodes that still
+ * need to be resolved.
+ */
+type ParamNodeResolution = { names?: string[]; next?: TreeSitterNode[] };
+
+/** One entry in the node-type -> handler dispatch table used by `resolveParamNode`. */
+interface ParamNodeHandler {
+  matches(nodeType: string, rules: LanguageRules): boolean;
+  resolve(node: TreeSitterNode, rules: LanguageRules): ParamNodeResolution | null;
+}
+
+function resolveWrapperParam(node: TreeSitterNode): ParamNodeResolution | null {
+  const pattern = node.childForFieldName('pattern') || node.childForFieldName('name');
+  return pattern ? { next: [pattern] } : null;
+}
+
+function resolveDefaultParam(node: TreeSitterNode): ParamNodeResolution | null {
+  const left = node.childForFieldName('left') || node.childForFieldName('name');
+  return left ? { next: [left] } : null;
+}
+
+function resolveRestParam(node: TreeSitterNode, rules: LanguageRules): ParamNodeResolution | null {
+  const nameNode = node.childForFieldName('name');
+  if (nameNode) return { names: [nameNode.text] };
+  for (const child of node.namedChildren) {
+    if (child.type === rules.paramIdentifier) return { names: [child.text] };
+  }
+  return null;
+}
+
+function resolveObjectDestructParam(
+  node: TreeSitterNode,
+  rules: LanguageRules,
+): ParamNodeResolution {
+  return { next: collectObjectDestructChildren(node, rules) };
+}
+
+function resolveArrayDestructParam(node: TreeSitterNode): ParamNodeResolution {
+  return { next: [...node.namedChildren] };
+}
+
+/**
+ * Ordered node-type -> handler dispatch table for `resolveParamNode`. Order
+ * matters: earlier entries take precedence, matching the original
+ * if/else-if cascade exactly.
+ */
+const PARAM_NODE_HANDLERS: ParamNodeHandler[] = [
+  {
+    matches: (t, rules) => t === rules.paramIdentifier,
+    resolve: (node) => ({ names: [node.text] }),
+  },
+  {
+    matches: (t, rules) => rules.paramWrapperTypes.has(t),
+    resolve: resolveWrapperParam,
+  },
+  {
+    matches: (t, rules) => !!rules.defaultParamType && t === rules.defaultParamType,
+    resolve: resolveDefaultParam,
+  },
+  {
+    matches: (t, rules) => !!rules.restParamType && t === rules.restParamType,
+    resolve: resolveRestParam,
+  },
+  {
+    matches: (t, rules) => !!rules.objectDestructType && t === rules.objectDestructType,
+    resolve: resolveObjectDestructParam,
+  },
+  {
+    matches: (t, rules) => !!rules.arrayDestructType && t === rules.arrayDestructType,
+    resolve: resolveArrayDestructParam,
+  },
+];
+
+/**
  * Resolve a single parameter node to either a direct list of names (base case)
  * or a list of child nodes that still need processing. Returns `null` if the
  * node yields nothing.
@@ -102,46 +177,16 @@ export function extractParams(
  * `extractParamNames`, breaking the 3-node mutual recursion cycle between
  * `extractParamNames`, `extractObjectDestructNames`, and `extractArrayDestructNames`.
  */
-function resolveParamNode(
-  node: TreeSitterNode,
-  rules: LanguageRules,
-): { names?: string[]; next?: TreeSitterNode[] } | null {
-  const t = node.type;
-
+function resolveParamNode(node: TreeSitterNode, rules: LanguageRules): ParamNodeResolution | null {
   if (rules.extractParamName) {
     const result = rules.extractParamName(node);
     if (result) return { names: result };
   }
 
-  if (t === rules.paramIdentifier) return { names: [node.text] };
-
-  if (rules.paramWrapperTypes.has(t)) {
-    const pattern = node.childForFieldName('pattern') || node.childForFieldName('name');
-    return pattern ? { next: [pattern] } : null;
+  const t = node.type;
+  for (const handler of PARAM_NODE_HANDLERS) {
+    if (handler.matches(t, rules)) return handler.resolve(node, rules);
   }
-
-  if (rules.defaultParamType && t === rules.defaultParamType) {
-    const left = node.childForFieldName('left') || node.childForFieldName('name');
-    return left ? { next: [left] } : null;
-  }
-
-  if (rules.restParamType && t === rules.restParamType) {
-    const nameNode = node.childForFieldName('name');
-    if (nameNode) return { names: [nameNode.text] };
-    for (const child of node.namedChildren) {
-      if (child.type === rules.paramIdentifier) return { names: [child.text] };
-    }
-    return null;
-  }
-
-  if (rules.objectDestructType && t === rules.objectDestructType) {
-    return { next: collectObjectDestructChildren(node, rules) };
-  }
-
-  if (rules.arrayDestructType && t === rules.arrayDestructType) {
-    return { next: [...node.namedChildren] };
-  }
-
   return null;
 }
 
@@ -170,6 +215,41 @@ function collectObjectDestructChildren(
   return next;
 }
 
+/** Is this node a shorthand identifier inside an object destructuring pattern? */
+function isShorthandPropPattern(node: TreeSitterNode, rules: LanguageRules): boolean {
+  return !!rules.shorthandPropPattern && node.type === rules.shorthandPropPattern;
+}
+
+/**
+ * Push nodes onto the worklist stack in reverse order so that popping them
+ * (LIFO) visits them in the same left-to-right order as the original
+ * recursive traversal.
+ */
+function pushParamWorklist(stack: TreeSitterNode[], nodes: TreeSitterNode[]): void {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const child = nodes[i];
+    if (child) stack.push(child);
+  }
+}
+
+/** Resolve one worklist entry: record any names, queue any further nodes to visit. */
+function visitParamWorklistNode(
+  current: TreeSitterNode,
+  rules: LanguageRules,
+  names: string[],
+  stack: TreeSitterNode[],
+): void {
+  if (isShorthandPropPattern(current, rules)) {
+    names.push(current.text);
+    return;
+  }
+
+  const resolved = resolveParamNode(current, rules);
+  if (!resolved) return;
+  if (resolved.names) names.push(...resolved.names);
+  if (resolved.next) pushParamWorklist(stack, resolved.next);
+}
+
 /**
  * Extract parameter names from a single parameter node.
  *
@@ -184,24 +264,7 @@ export function extractParamNames(node: TreeSitterNode | null, rules: LanguageRu
 
   while (stack.length > 0) {
     const current = stack.pop();
-    if (!current) continue;
-
-    // Shorthand identifier inside an object destructuring is just the node's text.
-    if (rules.shorthandPropPattern && current.type === rules.shorthandPropPattern) {
-      names.push(current.text);
-      continue;
-    }
-
-    const resolved = resolveParamNode(current, rules);
-    if (!resolved) continue;
-    if (resolved.names) names.push(...resolved.names);
-    if (resolved.next) {
-      // Push in reverse so traversal order matches the previous recursive order.
-      for (let i = resolved.next.length - 1; i >= 0; i--) {
-        const child = resolved.next[i];
-        if (child) stack.push(child);
-      }
-    }
+    if (current) visitParamWorklistNode(current, rules, names, stack);
   }
 
   return names;

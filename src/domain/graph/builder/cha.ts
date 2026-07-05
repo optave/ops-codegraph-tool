@@ -10,7 +10,7 @@
  *   - buildChaPostPass (native path)    — JS post-pass on top of native edges
  */
 
-import type { ExtractorOutput } from '../../../types.js';
+import type { ClassRelation, ExtractorOutput } from '../../../types.js';
 import type { CallNodeLookup } from './call-resolver.js';
 
 // ── CHA context ──────────────────────────────────────────────────────────────
@@ -31,6 +31,63 @@ export const EMPTY_CHA_CONTEXT: ChaContext = {
 };
 
 /**
+ * Record a class's `implements` relationship into the implementors map
+ * (interface/class name → concrete classes that implement it).
+ */
+function recordImplements(cls: ClassRelation, implementors: Map<string, string[]>): void {
+  if (!cls.implements) return;
+  let list = implementors.get(cls.implements);
+  if (!list) {
+    list = [];
+    implementors.set(cls.implements, list);
+  }
+  if (!list.includes(cls.name)) list.push(cls.name);
+}
+
+/**
+ * Record a class's `extends` relationship into both the parents map (child →
+ * direct parent, for this/super hierarchy walking) and the implementors map
+ * (parent → children, for CHA dispatch expansion via extends).
+ */
+function recordExtends(
+  cls: ClassRelation,
+  implementors: Map<string, string[]>,
+  parents: Map<string, string>,
+): void {
+  if (!cls.extends) return;
+  // child → parent (for this/super hierarchy walking)
+  if (!parents.has(cls.name)) parents.set(cls.name, cls.extends);
+  // parent → children (for CHA dispatch expansion via extends)
+  let list = implementors.get(cls.extends);
+  if (!list) {
+    list = [];
+    implementors.set(cls.extends, list);
+  }
+  if (!list.includes(cls.name)) list.push(cls.name);
+}
+
+/**
+ * RTA: collect instantiated class names for one file's symbols — the Phase
+ * 8.5 dedicated `newExpressions` list (all `new X()` in the file), plus the
+ * constructor-confidence typeMap fallback (confidence >= 0.9) that covers
+ * codebases that haven't been re-parsed since Phase 8.5 was added.
+ */
+function collectInstantiatedTypes(symbols: ExtractorOutput, instantiatedTypes: Set<string>): void {
+  if (symbols.newExpressions) {
+    for (const typeName of symbols.newExpressions) {
+      instantiatedTypes.add(typeName);
+    }
+  }
+  if (symbols.typeMap instanceof Map) {
+    for (const entry of symbols.typeMap.values()) {
+      if (typeof entry !== 'string' && entry.confidence >= 0.9) {
+        instantiatedTypes.add(entry.type);
+      }
+    }
+  }
+}
+
+/**
  * Build the CHA context from all parsed file symbols.
  *
  * Must be called AFTER cross-file return-type propagation so that typeMap
@@ -43,42 +100,10 @@ export function buildChaContext(fileSymbols: ReadonlyMap<string, ExtractorOutput
 
   for (const symbols of fileSymbols.values()) {
     for (const cls of symbols.classes) {
-      if (cls.implements) {
-        let list = implementors.get(cls.implements);
-        if (!list) {
-          list = [];
-          implementors.set(cls.implements, list);
-        }
-        if (!list.includes(cls.name)) list.push(cls.name);
-      }
-      if (cls.extends) {
-        // child → parent (for this/super hierarchy walking)
-        if (!parents.has(cls.name)) parents.set(cls.name, cls.extends);
-        // parent → children (for CHA dispatch expansion via extends)
-        let list = implementors.get(cls.extends);
-        if (!list) {
-          list = [];
-          implementors.set(cls.extends, list);
-        }
-        if (!list.includes(cls.name)) list.push(cls.name);
-      }
+      recordImplements(cls, implementors);
+      recordExtends(cls, implementors, parents);
     }
-
-    // RTA: Phase 8.5 dedicated newExpressions list (all `new X()` in the file)
-    if (symbols.newExpressions) {
-      for (const typeName of symbols.newExpressions) {
-        instantiatedTypes.add(typeName);
-      }
-    }
-    // RTA fallback: constructor-confidence typeMap entries (confidence >= 0.9)
-    // covers codebases that haven't been re-parsed since Phase 8.5 was added.
-    if (symbols.typeMap instanceof Map) {
-      for (const entry of symbols.typeMap.values()) {
-        if (typeof entry !== 'string' && entry.confidence >= 0.9) {
-          instantiatedTypes.add(entry.type);
-        }
-      }
-    }
+    collectInstantiatedTypes(symbols, instantiatedTypes);
   }
 
   return { implementors, parents, instantiatedTypes };

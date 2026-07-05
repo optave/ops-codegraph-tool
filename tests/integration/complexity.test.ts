@@ -14,9 +14,13 @@ import { initSchema } from '../../src/db/index.js';
 import { complexityData } from '../../src/features/complexity.js';
 import { loadConfig } from '../../src/infrastructure/config.js';
 
-vi.mock('../../src/infrastructure/config.js', () => ({
-  loadConfig: vi.fn(() => ({})),
-}));
+vi.mock('../../src/infrastructure/config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/infrastructure/config.js')>();
+  return {
+    ...actual,
+    loadConfig: vi.fn(() => ({})),
+  };
+});
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

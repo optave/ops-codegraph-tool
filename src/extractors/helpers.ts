@@ -209,9 +209,9 @@ export function extractBodyMembers(
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
     if (!member || member.type !== memberType) continue;
-    const nn = member.childForFieldName(nameField);
-    if (!nn) continue;
-    const entry: SubDeclaration = { name: nn.text, kind, line: member.startPosition.row + 1 };
+    const nameNode = member.childForFieldName(nameField);
+    if (!nameNode) continue;
+    const entry: SubDeclaration = { name: nameNode.text, kind, line: member.startPosition.row + 1 };
     if (visibility) entry.visibility = visibility(member);
     members.push(entry);
   }
@@ -356,7 +356,7 @@ export function isCPrimitiveType(typeName: string): boolean {
 /**
  * Options for {@link extractSimpleParameters}.
  */
-export interface ExtractParametersOptions {
+interface ExtractParametersOptions {
   /** Tree-sitter types that mark a single parameter node (e.g. `formal_parameter`). */
   paramTypes: readonly string[];
   /**
