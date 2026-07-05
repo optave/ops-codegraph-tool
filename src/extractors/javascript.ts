@@ -195,6 +195,64 @@ function handleMethodCapture(c: Record<string, TreeSitterNode>, definitions: Def
   });
 }
 
+/** Node types whose own `name` field is the exported symbol's name. */
+const EXPORT_DECL_KIND: Record<string, string> = {
+  function_declaration: 'function',
+  generator_function_declaration: 'function',
+  class_declaration: 'class',
+  abstract_class_declaration: 'class',
+  interface_declaration: 'interface',
+  type_alias_declaration: 'type',
+};
+
+/**
+ * Push Export entries for the declaration wrapped by an `export` statement.
+ * Shared by both extraction paths (query-based `handleExportCapture` and
+ * walk-based `handleExportStmt`) so they can't drift apart on what counts as
+ * an export — see the "two code paths" gotcha for this extractor.
+ *
+ * Named function/class/interface/type declarations carry their own `name`
+ * field. `export const/let/var …` has no such field — each declarator's value
+ * is classified the same way `handleVariableDeclarator` classifies it when
+ * building the matching Definition (function-valued → kind 'function',
+ * literal/array/object/new-expression-valued `const` → kind 'constant').
+ * This predicate must stay identical to the Definition-building one: the
+ * exported=1 UPDATE it feeds matches DB rows by (name, kind, file, line), so
+ * a mismatched kind silently no-ops instead of marking the symbol exported (#1728).
+ */
+function collectExportedDeclarations(
+  decl: TreeSitterNode,
+  exportLine: number,
+  exps: Export[],
+): void {
+  const kind = EXPORT_DECL_KIND[decl.type];
+  if (kind) {
+    const n = decl.childForFieldName('name');
+    if (n) exps.push({ name: n.text, kind: kind as Export['kind'], line: exportLine });
+    return;
+  }
+  if (decl.type !== 'lexical_declaration' && decl.type !== 'variable_declaration') return;
+  const isConst = decl.text.startsWith('const ');
+  for (let i = 0; i < decl.childCount; i++) {
+    const declarator = decl.child(i);
+    if (declarator?.type !== 'variable_declarator') continue;
+    const nameN = declarator.childForFieldName('name');
+    const valueN = declarator.childForFieldName('value');
+    if (nameN?.type !== 'identifier' || !valueN) continue;
+    const valType = valueN.type;
+    if (
+      valType === 'arrow_function' ||
+      valType === 'function_expression' ||
+      valType === 'function' ||
+      valType === 'generator_function'
+    ) {
+      exps.push({ name: nameN.text, kind: 'function', line: exportLine });
+    } else if (isConst && isConstantValue(valueN)) {
+      exps.push({ name: nameN.text, kind: 'constant', line: exportLine });
+    }
+  }
+}
+
 /** Handle export_statement capture. */
 function handleExportCapture(
   c: Record<string, TreeSitterNode>,
@@ -203,22 +261,7 @@ function handleExportCapture(
 ): void {
   const exportLine = nodeStartLine(c.exp_node!);
   const decl = c.exp_node!.childForFieldName('declaration');
-  if (decl) {
-    const declType = decl.type;
-    const kindMap: Record<string, string> = {
-      function_declaration: 'function',
-      generator_function_declaration: 'function',
-      class_declaration: 'class',
-      abstract_class_declaration: 'class',
-      interface_declaration: 'interface',
-      type_alias_declaration: 'type',
-    };
-    const kind = kindMap[declType];
-    if (kind) {
-      const n = decl.childForFieldName('name');
-      if (n) exps.push({ name: n.text, kind: kind as Export['kind'], line: exportLine });
-    }
-  }
+  if (decl) collectExportedDeclarations(decl, exportLine, exps);
   const source = c.exp_node!.childForFieldName('source') || findChild(c.exp_node!, 'string');
   if (source && !decl) {
     const modPath = source.text.replace(/['"]/g, '');
@@ -1448,22 +1491,7 @@ function handleImportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const exportLine = nodeStartLine(node);
   const decl = node.childForFieldName('declaration');
-  if (decl) {
-    const declType = decl.type;
-    const kindMap: Record<string, string> = {
-      function_declaration: 'function',
-      generator_function_declaration: 'function',
-      class_declaration: 'class',
-      abstract_class_declaration: 'class',
-      interface_declaration: 'interface',
-      type_alias_declaration: 'type',
-    };
-    const kind = kindMap[declType];
-    if (kind) {
-      const n = decl.childForFieldName('name');
-      if (n) ctx.exports.push({ name: n.text, kind: kind as Export['kind'], line: exportLine });
-    }
-  }
+  if (decl) collectExportedDeclarations(decl, exportLine, ctx.exports);
   const source = node.childForFieldName('source') || findChild(node, 'string');
   if (source && !decl) {
     const modPath = source.text.replace(/['"]/g, '');

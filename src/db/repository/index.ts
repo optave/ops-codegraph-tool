@@ -35,6 +35,7 @@ export {
   countEdges,
   countFiles,
   countNodes,
+  findExportedNodesByFile,
   findFileNodes,
   findNodeById,
   findNodeByQualifiedName,

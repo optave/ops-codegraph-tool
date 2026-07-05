@@ -1700,6 +1700,10 @@ fn handle_export_declaration(node: &Node, decl: &Node, source: &[u8], symbols: &
         "class_declaration" | "abstract_class_declaration" => ("class", "name"),
         "interface_declaration" => ("interface", "name"),
         "type_alias_declaration" => ("type", "name"),
+        "lexical_declaration" | "variable_declaration" => {
+            collect_exported_var_declarations(node, decl, source, symbols);
+            return;
+        }
         _ => return,
     };
     if let Some(n) = decl.child_by_field_name(field) {
@@ -1708,6 +1712,55 @@ fn handle_export_declaration(node: &Node, decl: &Node, source: &[u8], symbols: &
             kind: kind_str.to_string(),
             line: start_line(node),
         });
+    }
+}
+
+/// Push `ExportInfo` entries for `export const/let/var …`, one per declarator.
+///
+/// Named function/class/interface/type declarations carry their own `name`
+/// field (handled above); a lexical/variable declaration doesn't, so each
+/// declarator's value is classified the same way `handle_var_decl` classifies
+/// it when creating the matching `Definition`: function-valued declarators
+/// become kind "function", `const` declarators with a literal/array/object/
+/// new-expression value (per `is_js_literal`) become kind "constant".
+/// Mirrors the WASM/TS extractor's `collectExportedDeclarations`.
+///
+/// This predicate must stay identical to `handle_var_decl`'s: `insert_nodes.rs`
+/// marks `exported = 1` by matching (name, kind, file, line) against
+/// already-inserted definition rows, so a mismatched kind here silently
+/// no-ops the UPDATE instead of marking the symbol exported (#1728).
+fn collect_exported_var_declarations(
+    node: &Node,
+    decl: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+) {
+    let is_const = decl
+        .child(0)
+        .map(|c| node_text(&c, source) == "const")
+        .unwrap_or(false);
+    let line = start_line(node);
+    for i in 0..decl.child_count() {
+        let Some(declarator) = decl.child(i) else { continue };
+        if declarator.kind() != "variable_declarator" { continue; }
+        let name_n = declarator.child_by_field_name("name");
+        let value_n = declarator.child_by_field_name("value");
+        let (Some(name_n), Some(value_n)) = (name_n, value_n) else { continue };
+        if name_n.kind() != "identifier" { continue; }
+        let vt = value_n.kind();
+        if vt == "arrow_function" || vt == "function_expression" || vt == "function" || vt == "generator_function" {
+            symbols.exports.push(ExportInfo {
+                name: node_text(&name_n, source).to_string(),
+                kind: "function".to_string(),
+                line,
+            });
+        } else if is_const && is_js_literal(&value_n) {
+            symbols.exports.push(ExportInfo {
+                name: node_text(&name_n, source).to_string(),
+                kind: "constant".to_string(),
+                line,
+            });
+        }
     }
 }
 

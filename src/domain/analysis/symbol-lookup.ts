@@ -3,7 +3,7 @@ import {
   findAllIncomingEdges,
   findAllOutgoingEdges,
   findCallers,
-  findCrossFileCallTargets,
+  findExportedNodesByFile,
   findFileNodes,
   findImportSources,
   findImportTargets,
@@ -177,9 +177,7 @@ function whereFileImpl(db: BetterSqlite3Database, target: string) {
 
     const importedBy = (findImportSources(db, fn.id) as ImportEdgeRow[]).map((r) => r.file);
 
-    const exportedIds = findCrossFileCallTargets(db, fn.file) as Set<number>;
-
-    const exported = symbols.filter((s) => exportedIds.has(s.id)).map((s) => s.name);
+    const exported = findExportedNodesByFile(db, fn.file).map((s) => s.name);
 
     return {
       file: fn.file,

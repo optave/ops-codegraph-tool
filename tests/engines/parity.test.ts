@@ -147,6 +147,28 @@ const add = (a, b) => a + b;
 `,
     },
     {
+      // Regression guard for #1728: `export const …` must be recognized as an
+      // export in both engines regardless of the initializer's shape — a bare
+      // literal, a `new Expr(...)` call, and an arrow function must all
+      // produce a matching exports entry, and a non-exported const must not.
+      //
+      // The object-literal-with-methods shape (e.g. `export const command = {
+      // execute() {} }`, issue #1728's other repro) is deliberately not
+      // included here: both engines already agree it's exported (see
+      // tests/parsers/javascript.test.ts and tests/engines/query-walk-parity.test.ts),
+      // but they emit its qualified/unqualified method definitions in different
+      // relative array order — a separate, pre-existing, content-neutral gap
+      // (see #1818) that this test's unsorted `normalize()` would otherwise trip on.
+      name: 'JavaScript — exported constants of varying initializer shapes',
+      file: 'exported-const.js',
+      code: `
+export const MAX_WALK_DEPTH = 200;
+export const PUNCTUATION_TOKENS = new Set([',', ';']);
+export const add = (a, b) => a + b;
+const INTERNAL = 'not exported';
+`,
+    },
+    {
       // Regression guard: native must apply the same callback-callee gating as
       // WASM. Without the gate, native over-emits dynamic calls for member-expr
       // args of non-allowlisted callees (e.g. `store.set(user.id, user)` →
