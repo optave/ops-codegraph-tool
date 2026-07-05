@@ -1,6 +1,7 @@
 import { kindIcon } from '../domain/queries.js';
 import { auditData } from '../features/audit.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
+import type { AuditFunctionEntry, AuditResult, CodegraphConfig } from '../types.js';
 
 interface AuditOpts {
   json?: boolean;
@@ -12,11 +13,14 @@ interface AuditOpts {
   limit?: number;
   offset?: number;
   depth?: number;
-  config?: unknown;
+  config?: CodegraphConfig;
 }
 
+/** A caller/callee reference as rendered under the "Calls"/"Called by" sections. */
+type CallRef = AuditFunctionEntry['callees'][number];
+
 /** Render health metrics for a single audit function. */
-function renderHealthMetrics(fn: any): void {
+function renderHealthMetrics(fn: AuditFunctionEntry): void {
   if (fn.health.cognitive == null) return;
   console.log(`\n  Health:`);
   console.log(
@@ -35,8 +39,8 @@ function renderHealthMetrics(fn: any): void {
   }
 }
 
-/** Render a single audited function with all its sections. */
-function renderAuditFunction(fn: any): void {
+/** Render the name/kind/location/summary/signature header for an audited function. */
+function renderFunctionHeader(fn: AuditFunctionEntry): void {
   const lineRange = fn.endLine ? `${fn.line}-${fn.endLine}` : `${fn.line}`;
   const roleTag = fn.role ? ` [${fn.role}]` : '';
   console.log(`## ${kindIcon(fn.kind)} ${fn.name} (${fn.kind})${roleTag}`);
@@ -46,42 +50,53 @@ function renderAuditFunction(fn: any): void {
     if (fn.signature.params != null) console.log(`  Parameters: (${fn.signature.params})`);
     if (fn.signature.returnType) console.log(`  Returns: ${fn.signature.returnType}`);
   }
+}
 
-  renderHealthMetrics(fn);
-
-  if (fn.health.thresholdBreaches.length > 0) {
-    console.log(`\n  Threshold Breaches:`);
-    for (const b of fn.health.thresholdBreaches) {
-      const icon = b.level === 'fail' ? 'FAIL' : 'WARN';
-      console.log(`    [${icon}] ${b.metric}: ${b.value} >= ${b.threshold}`);
-    }
+/** Render manifesto threshold breaches (cognitive/cyclomatic/nesting over warn/fail limits). */
+function renderThresholdBreaches(fn: AuditFunctionEntry): void {
+  if (fn.health.thresholdBreaches.length === 0) return;
+  console.log(`\n  Threshold Breaches:`);
+  for (const b of fn.health.thresholdBreaches) {
+    const icon = b.level === 'fail' ? 'FAIL' : 'WARN';
+    console.log(`    [${icon}] ${b.metric}: ${b.value} >= ${b.threshold}`);
   }
+}
 
+/** Render the transitive-dependent impact summary, one line per BFS level. */
+function renderImpactSection(fn: AuditFunctionEntry): void {
   console.log(`\n  Impact: ${fn.impact.totalDependents} transitive dependent(s)`);
   for (const [level, nodes] of Object.entries(fn.impact.levels)) {
-    console.log(
-      `    Level ${level}: ${(nodes as Array<{ name: string }>).map((n) => n.name).join(', ')}`,
-    );
+    console.log(`    Level ${level}: ${nodes.map((n) => n.name).join(', ')}`);
   }
+}
 
-  if (fn.callees.length > 0) {
-    console.log(`\n  Calls (${fn.callees.length}):`);
-    for (const c of fn.callees) {
-      console.log(`    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
-    }
+/** Render a labeled list of call references (used for both "Calls" and "Called by"). */
+function renderCallRefs(label: string, refs: CallRef[]): void {
+  if (refs.length === 0) return;
+  console.log(`\n  ${label} (${refs.length}):`);
+  for (const c of refs) {
+    console.log(`    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
   }
-  if (fn.callers.length > 0) {
-    console.log(`\n  Called by (${fn.callers.length}):`);
-    for (const c of fn.callers) {
-      console.log(`    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
-    }
+}
+
+/** Render the related-test-file list for an audited function. */
+function renderRelatedTests(fn: AuditFunctionEntry): void {
+  if (fn.relatedTests.length === 0) return;
+  console.log(`\n  Tests (${fn.relatedTests.length}):`);
+  for (const t of fn.relatedTests) {
+    console.log(`    ${t.file}`);
   }
-  if (fn.relatedTests.length > 0) {
-    console.log(`\n  Tests (${fn.relatedTests.length}):`);
-    for (const t of fn.relatedTests) {
-      console.log(`    ${t.file}`);
-    }
-  }
+}
+
+/** Render a single audited function with all its sections. */
+function renderAuditFunction(fn: AuditFunctionEntry): void {
+  renderFunctionHeader(fn);
+  renderHealthMetrics(fn);
+  renderThresholdBreaches(fn);
+  renderImpactSection(fn);
+  renderCallRefs('Calls', fn.callees);
+  renderCallRefs('Called by', fn.callers);
+  renderRelatedTests(fn);
 
   console.log();
 }
@@ -91,7 +106,7 @@ export function audit(
   customDbPath: string | undefined,
   opts: AuditOpts = {},
 ): void {
-  const data: any = auditData(target, customDbPath, opts as any);
+  const data: AuditResult = auditData(target, customDbPath, opts);
 
   if (outputResult(data, null, opts)) return;
 

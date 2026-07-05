@@ -286,35 +286,44 @@ function collectScalaBodyMembers(
     if (!member) continue;
 
     if (member.type === 'function_definition') {
-      const methName = member.childForFieldName('name');
-      if (methName) {
-        const params = extractScalaParameters(member);
-        methods.push({
-          name: `${parentName}.${methName.text}`,
-          kind: 'method',
-          line: member.startPosition.row + 1,
-          endLine: member.endPosition.row + 1,
-          visibility: extractModifierVisibility(member),
-          children: params.length > 0 ? params : undefined,
-        });
-      }
+      collectScalaFunctionMember(member, parentName, methods);
     } else if (member.type === 'val_definition' || member.type === 'var_definition') {
-      const pattern = member.childForFieldName('pattern');
-      if (pattern) {
-        const nameNode = pattern.type === 'identifier' ? pattern : findChild(pattern, 'identifier');
-        if (nameNode) {
-          children.push({
-            name: nameNode.text,
-            kind: 'property',
-            line: member.startPosition.row + 1,
-            visibility: extractModifierVisibility(member),
-          });
-        }
-      }
+      collectScalaValVarMember(member, children);
     }
   }
 
   return { children, methods };
+}
+
+function collectScalaFunctionMember(
+  member: TreeSitterNode,
+  parentName: string,
+  methods: Definition[],
+): void {
+  const methName = member.childForFieldName('name');
+  if (!methName) return;
+  const params = extractScalaParameters(member);
+  methods.push({
+    name: `${parentName}.${methName.text}`,
+    kind: 'method',
+    line: member.startPosition.row + 1,
+    endLine: member.endPosition.row + 1,
+    visibility: extractModifierVisibility(member),
+    children: params.length > 0 ? params : undefined,
+  });
+}
+
+function collectScalaValVarMember(member: TreeSitterNode, children: SubDeclaration[]): void {
+  const pattern = member.childForFieldName('pattern');
+  if (!pattern) return;
+  const nameNode = pattern.type === 'identifier' ? pattern : findChild(pattern, 'identifier');
+  if (!nameNode) return;
+  children.push({
+    name: nameNode.text,
+    kind: 'property',
+    line: member.startPosition.row + 1,
+    visibility: extractModifierVisibility(member),
+  });
 }
 
 // ── Parameter extraction ────────────────────────────────────────────────────
