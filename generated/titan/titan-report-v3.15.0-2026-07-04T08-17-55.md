@@ -167,7 +167,7 @@ The 15 false-positive targets are consolidated into 10 findings below (several r
 
 ### Commits: 39
 
-39 commits total: 29 FORGE commits (phase 8 correctly produced none), 6 GRIND adoption commits, 1 GRIND-discovered tool-bug fix (`d5f31d82`), 1 PARITY-phase Cargo.lock version-sync commit made directly by the orchestrator, and 2 dead-code-removal commits (phases 1–2). All 39 commits were split into 10 focused PRs below.
+39 commits total: 29 FORGE commits (phase 8 correctly produced none — these are the abstraction/decomposition/quality-fix/warning commits in PRs #2–#7), 6 GRIND adoption commits, 1 GRIND-discovered tool-bug fix (`d5f31d82`), 1 PARITY-phase Cargo.lock version-sync commit made directly by the orchestrator, and 2 additional dead-code-removal commits made ahead of FORGE's numbered phases (PR #1, distinct from the 29 FORGE-phase commits above). All 39 commits were split into 10 focused PRs below.
 
 ### PR Split Plan
 
