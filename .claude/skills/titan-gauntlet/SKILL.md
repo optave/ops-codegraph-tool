@@ -240,7 +240,9 @@ codegraph co-change <f> -T --json
 ```
 Find semantically similar functions. If `codegraph search` fails (no embeddings), use grep for function signature patterns. **Warn:** similar patterns. **Fail:** near-verbatim copy.
 
-> Note: requires embeddings from `/titan-recon`. If `titan-state.json → embeddingsAvailable` is false, skip semantic search and note it.
+> **Don't trust `embeddingsAvailable` blindly — verify it against the current worktree.** `.codegraph/` is gitignored, so `graph.db` and its embeddings are local, per-worktree filesystem state; they are never carried over by a branch merge or a "switch to that worktree's state" step in Step 0. A `titan-state.json` merged in from a different worktree/session can say `embeddingsAvailable: true` while the graph.db actually open right now has none — `codegraph search` will then run without erroring and silently return empty results, so Rule 11 looks clean when it never actually checked anything.
+>
+> Before relying on `embeddingsAvailable`, run a one-time smoke-test at the start of Step 2 (not per-file): `codegraph search "test query" --json`. If it errors or returns empty where a hit would be expected, regenerate for **this** worktree — `codegraph embed -m minilm` — and update `titan-state.json → embeddingsAvailable` accordingly before trusting it for any Rule 11 check this run. If regeneration also fails, fall back to grep-only DRY checks and log it to `issues.ndjson` rather than proceeding on a false green.
 
 #### Rule 12 — Naming symmetry
 ```bash
