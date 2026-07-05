@@ -105,8 +105,16 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Absolute path to the `grammars/` directory holding pre-built WASM grammar
+ * files. Exported so other modules (e.g. `infrastructure/doctor.ts`) can
+ * verify installation completeness without duplicating this relative-path
+ * computation.
+ */
+export const GRAMMARS_DIR = path.join(__dirname, '..', '..', 'grammars');
+
 function grammarPath(name: string): string {
-  return path.join(__dirname, '..', '..', 'grammars', name);
+  return path.join(GRAMMARS_DIR, name);
 }
 
 let _initialized: boolean = false;
