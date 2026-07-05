@@ -2,6 +2,7 @@ import path from 'node:path';
 import {
   AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
+  astRequiresNamedNode,
   astStopRecurseKinds,
 } from '../ast-analysis/rules/index.js';
 import { buildExtensionSet } from '../ast-analysis/shared.js';
@@ -244,6 +245,7 @@ function walkAst(
     nodeIdMap,
     stringConfig,
     astStopRecurseKinds(langId),
+    astRequiresNamedNode(langId),
   );
   const results = walkWithVisitors(rootNode, [visitor], langId);
   const collected = (results['ast-store'] || []) as AstRow[];

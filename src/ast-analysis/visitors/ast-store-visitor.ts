@@ -273,9 +273,19 @@ function collectNode(ctx: CollectCtx, node: TreeSitterNode, kind: string): void 
  * Object() function), which then crashes the worker boundary with
  * "function Object() { [native code] } could not be cloned" when the
  * resulting astNodes row is structured-cloned back to the main thread.
+ *
+ * When `requireNamedNode` is set, anonymous grammar tokens are rejected even
+ * if their `type` string matches a mapped key — e.g. TypeScript's
+ * `predefined_type` keyword (`string`, `number`, ...) lexes as an unnamed
+ * token whose type collides with the named `string` literal node (#1729).
  */
-function resolveAstKind(node: TreeSitterNode, astTypeMap: Record<string, string>): string | null {
+function resolveAstKind(
+  node: TreeSitterNode,
+  astTypeMap: Record<string, string>,
+  requireNamedNode: boolean,
+): string | null {
   if (!Object.hasOwn(astTypeMap, node.type)) return null;
+  if (requireNamedNode && !node.isNamed) return null;
   return astTypeMap[node.type] || null;
 }
 
@@ -286,6 +296,7 @@ export function createAstStoreVisitor(
   nodeIdMap: Map<string, number>,
   stringConfig: AstStringConfig = DEFAULT_STRING_CONFIG,
   stopRecurseKinds: ReadonlySet<string> = new Set(),
+  requireNamedNode = false,
 ): Visitor {
   const newTypes = newTypesFor(astTypeMap);
   // When nodeIdMap is empty, parentNodeId resolution is wasted work — the
@@ -311,7 +322,7 @@ export function createAstStoreVisitor(
       // unrelated subtree. The parent call's skipChildren handles the intended case.
       if (ctx.matched.has(node.id)) return;
 
-      const kind = resolveAstKind(node, astTypeMap);
+      const kind = resolveAstKind(node, astTypeMap, requireNamedNode);
       if (!kind) return;
 
       collectNode(ctx, node, kind);

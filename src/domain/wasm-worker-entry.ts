@@ -30,6 +30,7 @@ import { computeLOCMetrics, computeMaintainabilityIndex } from '../ast-analysis/
 import {
   AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
+  astRequiresNamedNode,
   astStopRecurseKinds,
   CFG_RULES,
   COMPLEXITY_RULES,
@@ -606,6 +607,7 @@ function buildAstVisitor(
     new Map<string, number>(),
     stringConfig,
     astStopRecurseKinds(langId),
+    astRequiresNamedNode(langId),
   );
 }
 

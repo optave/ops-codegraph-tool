@@ -1896,7 +1896,14 @@ fn walk_ast_nodes_depth(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>
             }
             return;
         }
-        "string" | "template_string" => {
+        // Guard on `is_named()`: tree-sitter-typescript's `predefined_type`
+        // production (the `string`/`number`/`boolean`/... primitive type
+        // keywords) lexes its keyword as an anonymous token whose `kind()`
+        // string is identical to the *named* `string` literal node type.
+        // Without this guard, `name: string` type annotations are
+        // misclassified as string-literal ast_nodes (#1729). Mirrors the
+        // WASM-side guard in `ast-store-visitor.ts::resolveAstKind`.
+        "string" | "template_string" if node.is_named() => {
             let raw = node_text(node, source);
             // Strip quotes to get content
             let content = raw

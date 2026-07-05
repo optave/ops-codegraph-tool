@@ -378,3 +378,23 @@ export function astStopRecurseKinds(langId: string): ReadonlySet<string> {
   }
   return EMPTY_STOP_RECURSE;
 }
+
+// ─── Per-language "named-node-required" guard ────────────────────────────
+//
+// tree-sitter-typescript's `predefined_type` production (the `string`,
+// `number`, `boolean`, `void`, ... primitive type keywords) lexes its
+// keyword as an anonymous grammar token whose `type` string is identical to
+// the *named* `string` node type used for real string literals — the
+// grammar's own node-types.json lists both a `"string", named: true` entry
+// (the literal) and a `"string", named: false` entry (the keyword token).
+// Matching by `node.type` alone therefore misclassifies `name: string`
+// type annotations as string-literal ast_nodes (#1729). Mirrors the native
+// `is_named()` guard in `extractors/javascript.rs::walk_ast_nodes_depth`.
+//
+// Scoped to the JS family: no other bundled grammar currently maps an
+// AST_TYPE_MAPS key that collides with an anonymous token of the same name.
+const JS_REQUIRES_NAMED_NODE: ReadonlySet<string> = new Set(['javascript', 'typescript', 'tsx']);
+
+export function astRequiresNamedNode(langId: string): boolean {
+  return JS_REQUIRES_NAMED_NODE.has(langId);
+}

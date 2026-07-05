@@ -182,6 +182,168 @@ describe('buildAstNodes — JS extraction', () => {
   });
 });
 
+// ─── TypeScript fixture (#1729: predefined_type keyword false-positives) ──
+//
+// tree-sitter-typescript's `predefined_type` production (the `string`,
+// `number`, `boolean`, ... primitive type keywords) lexes its keyword as an
+// anonymous token whose `type` string collides with the *named* `string`
+// literal node type. `--kind string` must only match the latter.
+
+const TS_FIXTURE_CODE = `
+interface Person {
+  name: string;
+  age: number;
+}
+
+type UserId = "user-id-literal";
+
+function greet(name: string): string {
+  return \`Hello, \${name}!\`;
+}
+
+function processItems(items: string[]): void {
+  console.log(items);
+}
+
+import { helper } from './helper.js';
+
+const greeting = "hello world";
+`;
+
+describe('buildAstNodes — TypeScript extraction (#1729)', () => {
+  let tsTmpDir: string, tsDb: any;
+
+  function queryTsAstNodes(kind: string) {
+    return tsDb.prepare('SELECT * FROM ast_nodes WHERE kind = ? ORDER BY line').all(kind);
+  }
+
+  beforeAll(async () => {
+    tsTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ast-ts-extract-'));
+    const srcDir = path.join(tsTmpDir, 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(path.join(tsTmpDir, '.codegraph'));
+
+    const fixturePath = path.join(srcDir, 'fixture.ts');
+    fs.writeFileSync(fixturePath, TS_FIXTURE_CODE);
+
+    const allSymbols = await parseFilesAuto([fixturePath], tsTmpDir, { engine: 'wasm' });
+    const symbols = allSymbols.get('src/fixture.ts');
+    if (!symbols) throw new Error('Failed to parse TS fixture file');
+
+    const dbPath = path.join(tsTmpDir, '.codegraph', 'graph.db');
+    tsDb = new Database(dbPath);
+    tsDb.pragma('journal_mode = WAL');
+    initSchema(tsDb);
+
+    const insertNode = tsDb.prepare(
+      'INSERT INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+    );
+    for (const def of symbols.definitions) {
+      insertNode.run(def.name, def.kind, 'src/fixture.ts', def.line, def.endLine);
+    }
+
+    await buildAstNodes(tsDb, allSymbols, tsTmpDir);
+  });
+
+  afterAll(() => {
+    if (tsDb) tsDb.close();
+    fs.rmSync(tsTmpDir, { recursive: true, force: true });
+  });
+
+  test('does not misclassify interface field type annotation as kind:string', () => {
+    // `name: string;` (line 3) must never surface as a bare, unquoted "string"
+    // row — genuine literals are always quoted in `text` (e.g. "hello world").
+    const nodes = queryTsAstNodes('string');
+    expect(nodes.some((n) => n.text === 'string')).toBe(false);
+  });
+
+  test('does not misclassify parameter or return type annotations as kind:string', () => {
+    // `greet(name: string): string` (param + return type, line 9) must not
+    // contribute bare "string" rows.
+    const nodes = queryTsAstNodes('string');
+    expect(nodes.filter((n) => n.text === 'string').length).toBe(0);
+  });
+
+  test('does not misclassify array-of-primitive parameter type as kind:string', () => {
+    // `processItems(items: string[])` (line 13) wraps predefined_type in
+    // array_type — must not contribute a bare "string" row either.
+    const nodes = queryTsAstNodes('string');
+    expect(nodes.some((n) => n.line === 13)).toBe(false);
+  });
+
+  test('still captures genuine string literals, template literals, and string-literal types', () => {
+    const nodes = queryTsAstNodes('string');
+    const names = nodes.map((n) => n.name);
+    expect(names).toContain('user-id-literal'); // type UserId = "user-id-literal"
+    expect(names).toContain('./helper.js'); // import source path
+    expect(names).toContain('hello world'); // genuine string literal
+    expect(nodes.some((n) => n.text?.startsWith('`Hello, '))).toBe(true); // template literal
+  });
+
+  test('captures exactly the 4 genuine literals — no keyword false-positives', () => {
+    const nodes = queryTsAstNodes('string');
+    expect(nodes.length).toBe(4);
+  });
+});
+
+// ─── TSX fixture (#1729) — shares JS_AST_TYPES + grammar family with TS ───
+
+const TSX_FIXTURE_CODE = `
+interface Props {
+  label: string;
+}
+
+function Greeting(props: Props) {
+  return <div>{"hello world"}</div>;
+}
+`;
+
+describe('buildAstNodes — TSX extraction (#1729)', () => {
+  let tsxTmpDir: string, tsxDb: any;
+
+  beforeAll(async () => {
+    tsxTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ast-tsx-extract-'));
+    const srcDir = path.join(tsxTmpDir, 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(path.join(tsxTmpDir, '.codegraph'));
+
+    const fixturePath = path.join(srcDir, 'fixture.tsx');
+    fs.writeFileSync(fixturePath, TSX_FIXTURE_CODE);
+
+    const allSymbols = await parseFilesAuto([fixturePath], tsxTmpDir, { engine: 'wasm' });
+    const symbols = allSymbols.get('src/fixture.tsx');
+    if (!symbols) throw new Error('Failed to parse TSX fixture file');
+
+    const dbPath = path.join(tsxTmpDir, '.codegraph', 'graph.db');
+    tsxDb = new Database(dbPath);
+    tsxDb.pragma('journal_mode = WAL');
+    initSchema(tsxDb);
+
+    const insertNode = tsxDb.prepare(
+      'INSERT INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+    );
+    for (const def of symbols.definitions) {
+      insertNode.run(def.name, def.kind, 'src/fixture.tsx', def.line, def.endLine);
+    }
+
+    await buildAstNodes(tsxDb, allSymbols, tsxTmpDir);
+  });
+
+  afterAll(() => {
+    if (tsxDb) tsxDb.close();
+    fs.rmSync(tsxTmpDir, { recursive: true, force: true });
+  });
+
+  test('does not misclassify interface field type annotation as kind:string, still captures JSX-embedded literal', () => {
+    const nodes = tsxDb
+      .prepare('SELECT * FROM ast_nodes WHERE kind = ? ORDER BY line')
+      .all('string');
+    expect(nodes.some((n) => n.text === 'string')).toBe(false);
+    expect(nodes.length).toBe(1);
+    expect(nodes[0].name).toBe('hello world');
+  });
+});
+
 // ─── Native engine AST node extraction ───────────────────────────────
 
 // Check if native addon is available AND supports ast_nodes.
@@ -306,5 +468,72 @@ describe.skipIf(!canTestNative)('buildAstNodes — native engine', () => {
     const all = queryAllNativeAstNodes();
     const withParent = all.filter((n) => n.parent_node_id != null);
     expect(withParent.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Native engine: TypeScript predefined_type false-positives (#1729) ────
+
+describe.skipIf(!canTestNative)('buildAstNodes — native TypeScript extraction (#1729)', () => {
+  let nativeTsTmpDir: string, nativeTsDb: any;
+
+  function queryNativeTsAstNodes(kind: string) {
+    return nativeTsDb.prepare('SELECT * FROM ast_nodes WHERE kind = ? ORDER BY line').all(kind);
+  }
+
+  beforeAll(async () => {
+    nativeTsTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ast-ts-native-'));
+    const srcDir = path.join(nativeTsTmpDir, 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(path.join(nativeTsTmpDir, '.codegraph'));
+
+    const fixturePath = path.join(srcDir, 'fixture.ts');
+    fs.writeFileSync(fixturePath, TS_FIXTURE_CODE);
+
+    const allSymbols = await parseFilesAuto([fixturePath], nativeTsTmpDir, { engine: 'native' });
+    const symbols = allSymbols.get('src/fixture.ts');
+    if (!symbols) throw new Error('Failed to parse TS fixture file with native engine');
+
+    const dbPath = path.join(nativeTsTmpDir, '.codegraph', 'graph.db');
+    nativeTsDb = new Database(dbPath);
+    nativeTsDb.pragma('journal_mode = WAL');
+    initSchema(nativeTsDb);
+
+    const insertNode = nativeTsDb.prepare(
+      'INSERT INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+    );
+    for (const def of symbols.definitions) {
+      insertNode.run(def.name, def.kind, 'src/fixture.ts', def.line, def.endLine);
+    }
+
+    await buildAstNodes(nativeTsDb, allSymbols, nativeTsTmpDir);
+  });
+
+  afterAll(() => {
+    if (nativeTsDb) nativeTsDb.close();
+    if (nativeTsTmpDir) fs.rmSync(nativeTsTmpDir, { recursive: true, force: true });
+  });
+
+  test('does not misclassify interface field type annotation as kind:string', () => {
+    const nodes = queryNativeTsAstNodes('string');
+    expect(nodes.some((n) => n.text === 'string')).toBe(false);
+  });
+
+  test('does not misclassify parameter, return, or array-element type annotations as kind:string', () => {
+    const nodes = queryNativeTsAstNodes('string');
+    expect(nodes.filter((n) => n.text === 'string').length).toBe(0);
+  });
+
+  test('still captures genuine string literals, template literals, and string-literal types', () => {
+    const nodes = queryNativeTsAstNodes('string');
+    const names = nodes.map((n) => n.name);
+    expect(names).toContain('user-id-literal');
+    expect(names).toContain('./helper.js');
+    expect(names).toContain('hello world');
+    expect(nodes.some((n) => n.text?.startsWith('`Hello, '))).toBe(true);
+  });
+
+  test('captures exactly the 4 genuine literals — no keyword false-positives', () => {
+    const nodes = queryNativeTsAstNodes('string');
+    expect(nodes.length).toBe(4);
   });
 });

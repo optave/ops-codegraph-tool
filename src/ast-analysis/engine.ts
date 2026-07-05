@@ -45,6 +45,7 @@ import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
 import {
   AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
+  astRequiresNamedNode,
   astStopRecurseKinds,
   CFG_RULES,
   COMPLEXITY_RULES,
@@ -475,6 +476,7 @@ function setupAstVisitor(
     nodeIdMap,
     stringConfig,
     astStopRecurseKinds(langId),
+    astRequiresNamedNode(langId),
   );
 }
 

@@ -11,6 +11,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
+  astRequiresNamedNode,
   astStopRecurseKinds,
 } from '../../src/ast-analysis/rules/index.js';
 import { walkWithVisitors } from '../../src/ast-analysis/visitor.js';
@@ -420,6 +421,7 @@ let run () =
       new Map(),
       stringConfig,
       astStopRecurseKinds(langId),
+      astRequiresNamedNode(langId),
     );
     const results = walkWithVisitors(tree.rootNode as any, [visitor], langId);
     const rows = (results['ast-store'] || []) as unknown[];

@@ -777,6 +777,16 @@ export interface TreeSitterNode {
   id: number;
   type: string;
   text: string;
+  /**
+   * Whether this node is a named grammar production vs. an anonymous token
+   * (keyword/punctuation). Tree-sitter grammars can define an anonymous
+   * token whose text matches a *named* node's type string — e.g.
+   * tree-sitter-typescript's `predefined_type` wraps an anonymous `string`
+   * keyword token that collides with the named `string` literal node type
+   * (#1729). Consumers matching by `type` alone must also check `isNamed`
+   * to avoid misclassifying keyword tokens as literal/expression nodes.
+   */
+  isNamed: boolean;
   startPosition: { row: number; column: number };
   endPosition: { row: number; column: number };
   childCount: number;
