@@ -256,58 +256,66 @@ function handleDartSelector(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!argPart) return;
 
   const line = node.startPosition.row + 1;
-
-  // Look for the identifier this selector belongs to.
-  // Two layouts are possible depending on grammar version:
-  //   A) selector has both unconditional_assignable_selector + argument_part (same node)
-  //   B) one selector node holds unconditional_assignable_selector (.method),
-  //      the next holds argument_part (the call args) — method name is in the previous sibling
-  const unconditional = findChild(node, 'unconditional_assignable_selector');
-  let methodName: string | null = null;
-
-  if (unconditional) {
-    const id = findChild(unconditional, 'identifier');
-    if (id) methodName = id.text;
-  } else {
-    // Layout B: look at the previous sibling selector for the method name
-    const parent = node.parent;
-    if (parent) {
-      for (let i = 0; i < parent.childCount; i++) {
-        const sibling = parent.child(i);
-        if (sibling === node) break;
-        if (sibling?.type === 'selector') {
-          const unc2 = findChild(sibling, 'unconditional_assignable_selector');
-          if (unc2) {
-            const id2 = findChild(unc2, 'identifier');
-            if (id2) methodName = id2.text;
-          }
-        }
-      }
-    }
-  }
-
+  const methodName = resolveDartSelectorMethodName(node);
   if (!methodName) return;
 
   // Function.apply(fn, positionalArgs, namedArgs) — dynamic higher-order dispatch
-  if (methodName === 'apply') {
-    const parent = node.parent;
-    if (parent) {
-      for (let i = 0; i < parent.childCount; i++) {
-        const sibling = parent.child(i);
-        if (sibling && sibling !== node && sibling.text === 'Function') {
-          ctx.calls.push({
-            name: '<dynamic:unresolved>',
-            line,
-            dynamic: true,
-            dynamicKind: 'unresolved-dynamic',
-          });
-          return;
-        }
-      }
-    }
+  if (methodName === 'apply' && isDartFunctionApplyCall(node)) {
+    ctx.calls.push({
+      name: '<dynamic:unresolved>',
+      line,
+      dynamic: true,
+      dynamicKind: 'unresolved-dynamic',
+    });
+    return;
   }
 
   ctx.calls.push({ name: methodName, line });
+}
+
+// Look for the identifier this selector belongs to.
+// Two layouts are possible depending on grammar version:
+//   A) selector has both unconditional_assignable_selector + argument_part (same node)
+//   B) one selector node holds unconditional_assignable_selector (.method),
+//      the next holds argument_part (the call args) — method name is in the previous sibling
+function resolveDartSelectorMethodName(node: TreeSitterNode): string | null {
+  const unconditional = findChild(node, 'unconditional_assignable_selector');
+  if (unconditional) {
+    const id = findChild(unconditional, 'identifier');
+    return id ? id.text : null;
+  }
+
+  // Layout B: look at the previous sibling selector for the method name
+  const parent = node.parent;
+  if (!parent) return null;
+
+  let methodName: string | null = null;
+  for (let i = 0; i < parent.childCount; i++) {
+    const sibling = parent.child(i);
+    if (sibling === node) break;
+    if (sibling?.type === 'selector') {
+      const unc2 = findChild(sibling, 'unconditional_assignable_selector');
+      if (unc2) {
+        const id2 = findChild(unc2, 'identifier');
+        if (id2) methodName = id2.text;
+      }
+    }
+  }
+  return methodName;
+}
+
+// Detects `Function.apply(...)` calls: true when a sibling selector's text is
+// the literal `Function` identifier preceding this call.
+function isDartFunctionApplyCall(node: TreeSitterNode): boolean {
+  const parent = node.parent;
+  if (!parent) return false;
+  for (let i = 0; i < parent.childCount; i++) {
+    const sibling = parent.child(i);
+    if (sibling && sibling !== node && sibling.text === 'Function') {
+      return true;
+    }
+  }
+  return false;
 }
 
 function handleDartTypeAlias(node: TreeSitterNode, ctx: ExtractorOutput): void {

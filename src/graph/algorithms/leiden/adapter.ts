@@ -6,6 +6,7 @@
  */
 
 import type { CodeGraph, EdgeAttrs, NodeAttrs } from '../../model.js';
+import { fget, taAdd } from './typed-array-helpers.js';
 
 export interface EdgeEntry {
   to: number;
@@ -37,17 +38,6 @@ export interface GraphAdapter {
   directed: boolean;
   totalWeight: number;
   forEachNeighbor: (i: number, cb: (to: number, w: number) => void) => void;
-}
-
-// Typed arrays always return a number for in-bounds access, but noUncheckedIndexedAccess
-// widens the return to `number | undefined`. These helpers wrap compound assignment
-// patterns (+=, -=) that appear frequently in this performance-critical code.
-function taGet(a: Float64Array, i: number): number {
-  return a[i] as number;
-}
-
-function taAdd(a: Float64Array, i: number, v: number): void {
-  a[i] = taGet(a, i) + v;
 }
 
 /**
@@ -84,22 +74,33 @@ function populateDirectedEdges(
   }
 }
 
-/**
- * Populate edge arrays for an undirected graph. Reciprocal pairs are
- * symmetrized and averaged to produce a single weight per undirected edge.
- * Self-loops use single-w convention (matching modularity.ts formulas).
- */
-function populateUndirectedEdges(
+/** Fold a single a→b weight into the unordered-pair aggregate, tracking which direction(s) were seen. */
+function recordUndirectedPairWeight(
+  pairAgg: Map<string, { sum: number; seenAB: number; seenBA: number }>,
+  a: number,
+  b: number,
+  w: number,
+): void {
+  const i = a < b ? a : b;
+  const j = a < b ? b : a;
+  const key = `${i}:${j}`;
+  let rec = pairAgg.get(key);
+  if (!rec) {
+    rec = { sum: 0, seenAB: 0, seenBA: 0 };
+    pairAgg.set(key, rec);
+  }
+  rec.sum += w;
+  if (a === i) rec.seenAB = 1;
+  else rec.seenBA = 1;
+}
+
+/** Aggregate raw undirected edges into one weighted record per unordered node pair. */
+function aggregateUndirectedPairs(
   graph: CodeGraph,
   idToIndex: Map<string, number>,
   linkWeight: (attrs: EdgeAttrs) => number,
-  n: number,
   selfLoop: Float64Array,
-  outEdges: EdgeEntry[][],
-  inEdges: InEdgeEntry[][],
-  strengthOut: Float64Array,
-  strengthIn: Float64Array,
-): void {
+): Map<string, { sum: number; seenAB: number; seenBA: number }> {
   const pairAgg = new Map<string, { sum: number; seenAB: number; seenBA: number }>();
 
   for (const [src, tgt, attrs] of graph.edges()) {
@@ -111,19 +112,20 @@ function populateUndirectedEdges(
       taAdd(selfLoop, a, w);
       continue;
     }
-    const i = a < b ? a : b;
-    const j = a < b ? b : a;
-    const key = `${i}:${j}`;
-    let rec = pairAgg.get(key);
-    if (!rec) {
-      rec = { sum: 0, seenAB: 0, seenBA: 0 };
-      pairAgg.set(key, rec);
-    }
-    rec.sum += w;
-    if (a === i) rec.seenAB = 1;
-    else rec.seenBA = 1;
+    recordUndirectedPairWeight(pairAgg, a, b, w);
   }
 
+  return pairAgg;
+}
+
+/** Emit symmetrized undirected edges (averaged over any reciprocal pairs) into the adjacency lists. */
+function emitUndirectedPairs(
+  pairAgg: Map<string, { sum: number; seenAB: number; seenBA: number }>,
+  outEdges: EdgeEntry[][],
+  inEdges: InEdgeEntry[][],
+  strengthOut: Float64Array,
+  strengthIn: Float64Array,
+): void {
   for (const [key, rec] of pairAgg.entries()) {
     const parts = key.split(':');
     const i = +(parts[0] as string);
@@ -140,12 +142,23 @@ function populateUndirectedEdges(
     taAdd(strengthIn, i, w);
     taAdd(strengthIn, j, w);
   }
+}
 
-  // Add self-loops into adjacency and strengths.
-  // Note: uses single-w convention (not standard 2w) — the modularity formulas in
-  // modularity.ts are written to match this convention, keeping the system self-consistent.
+/**
+ * Add self-loops into adjacency and strengths.
+ * Note: uses single-w convention (not standard 2w) — the modularity formulas in
+ * modularity.ts are written to match this convention, keeping the system self-consistent.
+ */
+function applyUndirectedSelfLoops(
+  n: number,
+  selfLoop: Float64Array,
+  outEdges: EdgeEntry[][],
+  inEdges: InEdgeEntry[][],
+  strengthOut: Float64Array,
+  strengthIn: Float64Array,
+): void {
   for (let v = 0; v < n; v++) {
-    const w: number = taGet(selfLoop, v);
+    const w: number = fget(selfLoop, v);
     if (w !== 0) {
       (outEdges[v] as EdgeEntry[]).push({ to: v, w });
       (inEdges[v] as InEdgeEntry[]).push({ from: v, w });
@@ -155,15 +168,56 @@ function populateUndirectedEdges(
   }
 }
 
-export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {}): GraphAdapter {
-  const linkWeight: (attrs: EdgeAttrs) => number =
-    opts.linkWeight || ((attrs) => (attrs && typeof attrs.weight === 'number' ? attrs.weight : 1));
-  const nodeSize: (attrs: NodeAttrs) => number =
-    opts.nodeSize || ((attrs) => (attrs && typeof attrs.size === 'number' ? attrs.size : 1));
-  const directed: boolean = !!opts.directed;
-  const baseNodeIds: string[] | undefined = opts.baseNodeIds;
+/**
+ * Populate edge arrays for an undirected graph. Reciprocal pairs are
+ * symmetrized and averaged to produce a single weight per undirected edge.
+ * Self-loops use single-w convention (matching modularity.ts formulas).
+ */
+function populateUndirectedEdges(
+  graph: CodeGraph,
+  idToIndex: Map<string, number>,
+  linkWeight: (attrs: EdgeAttrs) => number,
+  n: number,
+  selfLoop: Float64Array,
+  outEdges: EdgeEntry[][],
+  inEdges: InEdgeEntry[][],
+  strengthOut: Float64Array,
+  strengthIn: Float64Array,
+): void {
+  const pairAgg = aggregateUndirectedPairs(graph, idToIndex, linkWeight, selfLoop);
+  emitUndirectedPairs(pairAgg, outEdges, inEdges, strengthOut, strengthIn);
+  applyUndirectedSelfLoops(n, selfLoop, outEdges, inEdges, strengthOut, strengthIn);
+}
 
-  // Build dense node index mapping
+interface ResolvedAdapterOptions {
+  linkWeight: (attrs: EdgeAttrs) => number;
+  nodeSize: (attrs: NodeAttrs) => number;
+  directed: boolean;
+  baseNodeIds: string[] | undefined;
+}
+
+/** Apply GraphAdapterOptions defaults (weight=1, size=1, directed=false). */
+function resolveAdapterOptions(opts: GraphAdapterOptions): ResolvedAdapterOptions {
+  return {
+    linkWeight:
+      opts.linkWeight ||
+      ((attrs) => (attrs && typeof attrs.weight === 'number' ? attrs.weight : 1)),
+    nodeSize:
+      opts.nodeSize || ((attrs) => (attrs && typeof attrs.size === 'number' ? attrs.size : 1)),
+    directed: !!opts.directed,
+    baseNodeIds: opts.baseNodeIds,
+  };
+}
+
+/**
+ * Build the dense node index mapping. When `baseNodeIds` is provided, node
+ * order/indices are pinned to it (used to align adapters built from related
+ * graphs); otherwise indices are assigned in CodeGraph iteration order.
+ */
+function buildNodeIndex(
+  graph: CodeGraph,
+  baseNodeIds: string[] | undefined,
+): { nodeIds: string[]; idToIndex: Map<string, number> } {
   const nodeIds: string[] = [];
   const idToIndex = new Map<string, number>();
   if (Array.isArray(baseNodeIds) && baseNodeIds.length > 0) {
@@ -179,10 +233,39 @@ export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {
       nodeIds.push(id);
     }
   }
+  return { nodeIds, idToIndex };
+}
+
+/** Resolve per-node sizes via the adapter's nodeSize accessor, dense-indexed. */
+function computeNodeSizes(
+  graph: CodeGraph,
+  idToIndex: Map<string, number>,
+  n: number,
+  nodeSize: (attrs: NodeAttrs) => number,
+): Float64Array {
+  const size = new Float64Array(n);
+  for (const [id, attrs] of graph.nodes()) {
+    const i = idToIndex.get(id);
+    if (i != null) size[i] = +nodeSize(attrs) || 0;
+  }
+  return size;
+}
+
+function makeForEachNeighbor(
+  outEdges: EdgeEntry[][],
+): (i: number, cb: (to: number, w: number) => void) => void {
+  return (i, cb) => {
+    const list = outEdges[i] as EdgeEntry[];
+    for (let k = 0; k < list.length; k++) cb((list[k] as EdgeEntry).to, (list[k] as EdgeEntry).w);
+  };
+}
+
+export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {}): GraphAdapter {
+  const { linkWeight, nodeSize, directed, baseNodeIds } = resolveAdapterOptions(opts);
+  const { nodeIds, idToIndex } = buildNodeIndex(graph, baseNodeIds);
   const n: number = nodeIds.length;
 
   // Storage
-  const size = new Float64Array(n);
   const selfLoop = new Float64Array(n);
   const strengthOut = new Float64Array(n);
   const strengthIn = new Float64Array(n);
@@ -221,19 +304,10 @@ export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {
     );
   }
 
-  // Node sizes
-  for (const [id, attrs] of graph.nodes()) {
-    const i = idToIndex.get(id);
-    if (i != null) size[i] = +nodeSize(attrs) || 0;
-  }
+  const size = computeNodeSizes(graph, idToIndex, n, nodeSize);
 
   // Totals
   const totalWeight: number = strengthOut.reduce((a, b) => a + b, 0);
-
-  function forEachNeighbor(i: number, cb: (to: number, w: number) => void): void {
-    const list = outEdges[i] as EdgeEntry[];
-    for (let k = 0; k < list.length; k++) cb((list[k] as EdgeEntry).to, (list[k] as EdgeEntry).w);
-  }
 
   return {
     n,
@@ -247,6 +321,6 @@ export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {
     inEdges,
     directed,
     totalWeight,
-    forEachNeighbor,
+    forEachNeighbor: makeForEachNeighbor(outEdges),
   };
 }

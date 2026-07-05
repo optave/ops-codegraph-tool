@@ -1,6 +1,6 @@
 import type { TreeSitterNode } from '../../types.js';
 import type { AnyRules, CfgBlockInternal, FuncState, ProcessStatementsFn } from './cfg-shared.js';
-import { getBodyStatements, nn } from './cfg-shared.js';
+import { getBodyStatements, requireNode } from './cfg-shared.js';
 
 export function processTryCatch(
   tryStmt: TreeSitterNode,
@@ -23,7 +23,7 @@ export function processTryCatch(
     tryBodyStart = tryStmt.startPosition.row + 1;
     tryStmts = [];
     for (let i = 0; i < tryStmt.namedChildCount; i++) {
-      const child = nn(tryStmt.namedChild(i));
+      const child = requireNode(tryStmt.namedChild(i));
       if (cfgRules.catchNode && child.type === cfgRules.catchNode) continue;
       if (cfgRules.finallyNode && child.type === cfgRules.finallyNode) continue;
       tryStmts.push(child);
@@ -63,7 +63,7 @@ function findTryHandlers(
   let catchHandler: TreeSitterNode | null = null;
   let finallyHandler: TreeSitterNode | null = null;
   for (let i = 0; i < tryStmt.namedChildCount; i++) {
-    const child = nn(tryStmt.namedChild(i));
+    const child = requireNode(tryStmt.namedChild(i));
     if (cfgRules.catchNode && child.type === cfgRules.catchNode) catchHandler = child;
     if (cfgRules.finallyNode && child.type === cfgRules.finallyNode) finallyHandler = child;
   }
@@ -90,7 +90,7 @@ function processCatchHandler(
   } else {
     catchStmts = [];
     for (let i = 0; i < catchHandler.namedChildCount; i++) {
-      catchStmts.push(nn(catchHandler.namedChild(i)));
+      catchStmts.push(requireNode(catchHandler.namedChild(i)));
     }
   }
   const catchEnd = processStatements(catchStmts, catchBlock, S, cfgRules);

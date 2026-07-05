@@ -79,7 +79,175 @@ function buildThisAssignmentMap(
 }
 
 /**
+ * Phase 8.3c: parameter-flow constraints.
+ *
+ * For each call f(x) at argIndex i where f is locally defined, add
+ * constraint: pts(f::paramName_i) ⊇ pts(x). This makes the pts solver
+ * inter-procedural within the module so that `fn()` inside `f` resolves
+ * to the concrete function passed at each call site.
+ *
+ * Keys are scoped as "callee::paramName" to prevent name collisions: bare
+ * parameter names like `fn`, `cb`, and `callback` appear in many functions
+ * within the same file. Without scoping, pts(fn) from runA and runB would
+ * merge into a single set, producing spurious call edges. The scoped key is
+ * resolved in buildFileCallEdges by combining the enclosing caller's name
+ * with the call's name (see callerName::call.name lookup there).
+ *
+ * Scope: intra-module only (definitionParams contains local defs only).
+ *
+ * Appends to `constraints`.
+ */
+function buildParamFlowConstraints(
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  paramBindings?: readonly ParamBinding[],
+  definitionParams?: ReadonlyMap<string, readonly string[]>,
+): void {
+  if (!paramBindings || !definitionParams) return;
+  for (const { callee, argIndex, argName } of paramBindings) {
+    const params = definitionParams.get(callee);
+    if (!params || argIndex >= params.length) continue;
+    const paramName = params[argIndex];
+    if (paramName) constraints.push({ lhs: `${callee}::${paramName}`, rhsKey: argName });
+  }
+}
+
+/**
+ * Phase 8.3e: array-element bindings — seed concrete elements and wildcard.
+ *
+ * `arr[0]` etc. are seeded from literal arrays; `arr[*]` collects all elements.
+ *
+ * Mutates `pts` (seeds per-index entries) and appends to `constraints`.
+ */
+function buildArrayElemConstraints(
+  pts: PointsToMap,
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  arrayElemBindings?: readonly ArrayElemBinding[],
+): void {
+  if (!arrayElemBindings || arrayElemBindings.length === 0) return;
+  for (const { arrayName, index, elemName } of arrayElemBindings) {
+    const elemKey = `${arrayName}[${index}]`;
+    const wildcardKey = `${arrayName}[*]`;
+    // Seed the per-index entry if the elemName is a concrete function.
+    if (!pts.has(elemKey)) pts.set(elemKey, new Set());
+    pts.get(elemKey)!.add(elemName);
+    // Wildcard: array[*] collects all element targets for imprecise spread/for-of.
+    constraints.push({ lhs: wildcardKey, rhsKey: elemKey });
+  }
+}
+
+/**
+ * Build a per-array index count from arrayElemBindings for precise
+ * per-index spread-argument constraints.
+ */
+function computeArrayMaxIndex(
+  arrayElemBindings: readonly ArrayElemBinding[] | undefined,
+): Map<string, number> {
+  const arrayMaxIndex = new Map<string, number>();
+  for (const { arrayName, index } of arrayElemBindings ?? []) {
+    const cur = arrayMaxIndex.get(arrayName) ?? -1;
+    if (index > cur) arrayMaxIndex.set(arrayName, index);
+  }
+  return arrayMaxIndex;
+}
+
+/**
+ * Push spread-argument constraints for one callee: precise per-element
+ * constraints when the source array's max index is known, otherwise a
+ * wildcard constraint for every parameter at/after startIndex.
+ */
+function pushSpreadArgConstraintsForCallee(
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  callee: string,
+  params: readonly string[],
+  arrayName: string,
+  startIndex: number,
+  maxIdx: number,
+): void {
+  if (maxIdx >= 0) {
+    // Precise: per-element constraints.
+    for (let i = 0; i <= maxIdx; i++) {
+      const paramIdx = startIndex + i;
+      if (paramIdx >= params.length) break;
+      constraints.push({ lhs: `${callee}::${params[paramIdx]}`, rhsKey: `${arrayName}[${i}]` });
+    }
+  } else {
+    // Unknown array size: all params at/after startIndex get the wildcard.
+    for (let j = startIndex; j < params.length; j++) {
+      constraints.push({ lhs: `${callee}::${params[j]}`, rhsKey: `${arrayName}[*]` });
+    }
+  }
+}
+
+/**
+ * Phase 8.3e: spread-argument constraints.
+ *
+ * f(...arr) → pts[f::param_i] ⊇ pts[arr[i]] for each known element.
+ *
+ * Appends to `constraints`.
+ */
+function buildSpreadArgConstraints(
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  spreadArgBindings?: readonly SpreadArgBinding[],
+  arrayElemBindings?: readonly ArrayElemBinding[],
+  definitionParams?: ReadonlyMap<string, readonly string[]>,
+): void {
+  if (!spreadArgBindings || spreadArgBindings.length === 0 || !definitionParams) return;
+  const arrayMaxIndex = computeArrayMaxIndex(arrayElemBindings);
+
+  for (const { callee, arrayName, startIndex } of spreadArgBindings) {
+    const params = definitionParams.get(callee);
+    if (!params) continue;
+    const maxIdx = arrayMaxIndex.get(arrayName) ?? -1;
+    pushSpreadArgConstraintsForCallee(constraints, callee, params, arrayName, startIndex, maxIdx);
+  }
+}
+
+/**
+ * Phase 8.3e: for-of iteration constraints.
+ *
+ * `for (const x of arr)` inside `outer` → pts[outer::x] ⊇ pts[arr[*]]
+ *
+ * Appends to `constraints`.
+ */
+function buildForOfConstraints(
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  forOfBindings?: readonly ForOfBinding[],
+): void {
+  if (!forOfBindings) return;
+  for (const { varName, sourceName, enclosingFunc } of forOfBindings) {
+    constraints.push({ lhs: `${enclosingFunc}::${varName}`, rhsKey: `${sourceName}[*]` });
+  }
+}
+
+/**
+ * Phase 8.3e: Array.from / callback constraints.
+ *
+ * Array.from(source, cb) → pts[cb::param0] ⊇ pts[source[*]]
+ *
+ * Appends to `constraints`.
+ */
+function buildArrayCallbackConstraints(
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  arrayCallbackBindings?: readonly ArrayCallbackBinding[],
+  definitionParams?: ReadonlyMap<string, readonly string[]>,
+): void {
+  if (!arrayCallbackBindings || !definitionParams) return;
+  for (const { sourceName, calleeName } of arrayCallbackBindings) {
+    const params = definitionParams.get(calleeName);
+    if (!params || params.length === 0) continue;
+    constraints.push({ lhs: `${calleeName}::${params[0]}`, rhsKey: `${sourceName}[*]` });
+  }
+}
+
+/**
  * Append parameter-flow and array/spread/forOf/callback constraints (Phases 8.3c and 8.3e).
+ *
+ * Delegates to one named helper per binding kind (buildParamFlowConstraints,
+ * buildArrayElemConstraints, buildSpreadArgConstraints, buildForOfConstraints,
+ * buildArrayCallbackConstraints) — each handler owns exactly one binding kind's
+ * guard + iteration + constraint-push shape, called in the same order the
+ * original inline blocks ran in (none of the blocks read state written by an
+ * earlier one, so extraction does not change solver input order).
  *
  * Mutates `pts` (seeds array-element entries) and appends to `constraints`.
  */
@@ -93,90 +261,11 @@ function buildParamAndArrayConstraints(
   forOfBindings?: readonly ForOfBinding[],
   arrayCallbackBindings?: readonly ArrayCallbackBinding[],
 ): void {
-  // Phase 8.3c: parameter-flow constraints.
-  // For each call f(x) at argIndex i where f is locally defined, add
-  // constraint: pts(f::paramName_i) ⊇ pts(x). This makes the pts solver
-  // inter-procedural within the module so that `fn()` inside `f` resolves
-  // to the concrete function passed at each call site.
-  //
-  // Keys are scoped as "callee::paramName" to prevent name collisions: bare
-  // parameter names like `fn`, `cb`, and `callback` appear in many functions
-  // within the same file. Without scoping, pts(fn) from runA and runB would
-  // merge into a single set, producing spurious call edges. The scoped key is
-  // resolved in buildFileCallEdges by combining the enclosing caller's name
-  // with the call's name (see callerName::call.name lookup there).
-  //
-  // Scope: intra-module only (definitionParams contains local defs only).
-  if (paramBindings && definitionParams) {
-    for (const { callee, argIndex, argName } of paramBindings) {
-      const params = definitionParams.get(callee);
-      if (!params || argIndex >= params.length) continue;
-      const paramName = params[argIndex];
-      if (paramName) constraints.push({ lhs: `${callee}::${paramName}`, rhsKey: argName });
-    }
-  }
-
-  // Phase 8.3e: array-element bindings — seed concrete elements and wildcard.
-  // `arr[0]` etc. are seeded from literal arrays; `arr[*]` collects all elements.
-  if (arrayElemBindings && arrayElemBindings.length > 0) {
-    for (const { arrayName, index, elemName } of arrayElemBindings) {
-      const elemKey = `${arrayName}[${index}]`;
-      const wildcardKey = `${arrayName}[*]`;
-      // Seed the per-index entry if the elemName is a concrete function.
-      if (!pts.has(elemKey)) pts.set(elemKey, new Set());
-      pts.get(elemKey)!.add(elemName);
-      // Wildcard: array[*] collects all element targets for imprecise spread/for-of.
-      constraints.push({ lhs: wildcardKey, rhsKey: elemKey });
-    }
-  }
-
-  // Phase 8.3e: spread-argument constraints.
-  // f(...arr) → pts[f::param_i] ⊇ pts[arr[i]] for each known element.
-  if (spreadArgBindings && spreadArgBindings.length > 0 && definitionParams) {
-    // Build a per-array index count from arrayElemBindings for precise per-index constraints.
-    const arrayMaxIndex = new Map<string, number>();
-    for (const { arrayName, index } of arrayElemBindings ?? []) {
-      const cur = arrayMaxIndex.get(arrayName) ?? -1;
-      if (index > cur) arrayMaxIndex.set(arrayName, index);
-    }
-
-    for (const { callee, arrayName, startIndex } of spreadArgBindings) {
-      const params = definitionParams.get(callee);
-      if (!params) continue;
-      const maxIdx = arrayMaxIndex.get(arrayName) ?? -1;
-      if (maxIdx >= 0) {
-        // Precise: per-element constraints.
-        for (let i = 0; i <= maxIdx; i++) {
-          const paramIdx = startIndex + i;
-          if (paramIdx >= params.length) break;
-          constraints.push({ lhs: `${callee}::${params[paramIdx]}`, rhsKey: `${arrayName}[${i}]` });
-        }
-      } else {
-        // Unknown array size: all params at/after startIndex get the wildcard.
-        for (let j = startIndex; j < params.length; j++) {
-          constraints.push({ lhs: `${callee}::${params[j]}`, rhsKey: `${arrayName}[*]` });
-        }
-      }
-    }
-  }
-
-  // Phase 8.3e: for-of iteration constraints.
-  // `for (const x of arr)` inside `outer` → pts[outer::x] ⊇ pts[arr[*]]
-  if (forOfBindings) {
-    for (const { varName, sourceName, enclosingFunc } of forOfBindings) {
-      constraints.push({ lhs: `${enclosingFunc}::${varName}`, rhsKey: `${sourceName}[*]` });
-    }
-  }
-
-  // Phase 8.3e: Array.from / callback constraints.
-  // Array.from(source, cb) → pts[cb::param0] ⊇ pts[source[*]]
-  if (arrayCallbackBindings && definitionParams) {
-    for (const { sourceName, calleeName } of arrayCallbackBindings) {
-      const params = definitionParams.get(calleeName);
-      if (!params || params.length === 0) continue;
-      constraints.push({ lhs: `${calleeName}::${params[0]}`, rhsKey: `${sourceName}[*]` });
-    }
-  }
+  buildParamFlowConstraints(constraints, paramBindings, definitionParams);
+  buildArrayElemConstraints(pts, constraints, arrayElemBindings);
+  buildSpreadArgConstraints(constraints, spreadArgBindings, arrayElemBindings, definitionParams);
+  buildForOfConstraints(constraints, forOfBindings);
+  buildArrayCallbackConstraints(constraints, arrayCallbackBindings, definitionParams);
 }
 
 /**

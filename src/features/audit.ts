@@ -8,7 +8,16 @@ import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { toErrorMessage } from '../shared/errors.js';
 import { toSymbolRef } from '../shared/normalize.js';
-import type { BetterSqlite3Database, CodegraphConfig } from '../types.js';
+import type {
+  AuditFunctionEntry,
+  AuditHealthMetrics,
+  AuditResult,
+  BetterSqlite3Database,
+  CodegraphConfig,
+  Role,
+  SymbolKind,
+  ThresholdBreach,
+} from '../types.js';
 import { RULE_DEFS } from './manifesto.js';
 
 // ─── Threshold resolution ───────────────────────────────────────────
@@ -64,13 +73,6 @@ const METRIC_TO_RULE: Record<string, string> = {
   cyclomatic: 'cyclomatic',
   max_nesting: 'maxNesting',
 };
-
-interface ThresholdBreach {
-  metric: string;
-  value: number;
-  threshold: number;
-  level: 'warn' | 'fail';
-}
 
 function checkBreaches(
   row: Record<string, unknown>,
@@ -128,18 +130,6 @@ interface SymbolRef {
   line: number;
 }
 
-interface HealthMetrics {
-  cognitive: number | null;
-  cyclomatic: number | null;
-  maxNesting: number | null;
-  maintainabilityIndex: number | null;
-  halstead: { volume: number; difficulty: number; effort: number; bugs: number };
-  loc: number;
-  sloc: number;
-  commentLines: number;
-  thresholdBreaches: ThresholdBreach[];
-}
-
 interface AuditDataOpts {
   noTests?: boolean;
   config?: CodegraphConfig;
@@ -152,7 +142,7 @@ export function auditData(
   target: string,
   customDbPath?: string,
   opts: AuditDataOpts = {},
-): { target: string; kind: string; functions: unknown[] } {
+): AuditResult {
   const noTests = opts.noTests || false;
   const config = opts.config || loadConfig();
   const maxDepth =
@@ -176,14 +166,14 @@ export function auditData(
   }
 
   if (results.length === 0) {
-    return { target, kind: explained.kind, functions: [] };
+    return { target, kind: explained.kind as 'function' | 'file', functions: [] };
   }
 
   // 2. Open DB for enrichment
   const db = openReadonlyOrFail(customDbPath);
   const thresholds = resolveThresholds(customDbPath, opts.config);
 
-  let functions: unknown[];
+  let functions: AuditFunctionEntry[];
   try {
     if (explained.kind === 'file') {
       functions = enrichFileResults(db, results, kind, noTests, maxDepth, thresholds);
@@ -196,24 +186,25 @@ export function auditData(
     db.close();
   }
 
-  return { target, kind: explained.kind, functions };
+  return { target, kind: explained.kind as 'function' | 'file', functions };
 }
 
 // ─── Enrich a function result from explainData ──────────────────────
 
+/** A function-target result as returned by `explainFunctionImpl` (always fully populated -- see domain/analysis/context.ts). */
 interface ExplainResult {
   name: string;
   kind: string;
   file: string;
   line: number;
-  endLine?: number | null;
-  role?: string | null;
-  lineCount?: number | null;
-  summary?: string | null;
-  signature?: string | null;
-  callees?: SymbolRef[];
-  callers?: SymbolRef[];
-  relatedTests?: { file: string }[];
+  endLine: number | null;
+  role: string | null;
+  lineCount: number | null;
+  summary: string | null;
+  signature: { params: string | null; returnType: string | null } | null;
+  callees: SymbolRef[];
+  callers: SymbolRef[];
+  relatedTests: { file: string }[];
 }
 
 /** Enrich all symbols from file-target results. */
@@ -224,8 +215,8 @@ function enrichFileResults(
   noTests: boolean,
   maxDepth: number,
   thresholds: Record<string, ThresholdEntry>,
-): unknown[] {
-  const functions: unknown[] = [];
+): AuditFunctionEntry[] {
+  const functions: AuditFunctionEntry[] = [];
   for (const fileResult of results) {
     let allSymbols = [
       ...(fileResult.publicApi || []),
@@ -245,7 +236,7 @@ function enrichFunction(
   noTests: boolean,
   maxDepth: number,
   thresholds: Record<string, ThresholdEntry>,
-): unknown {
+): AuditFunctionEntry {
   const nodeRow = db
     .prepare('SELECT id FROM nodes WHERE name = ? AND file = ? AND line = ?')
     .get(r.name, r.file, r.line) as { id: number } | undefined;
@@ -261,11 +252,11 @@ function enrichFunction(
 
   return {
     name: r.name,
-    kind: r.kind,
+    kind: r.kind as SymbolKind,
     file: r.file,
     line: r.line,
     endLine: r.endLine,
-    role: r.role,
+    role: r.role as Role | null,
     lineCount: r.lineCount,
     summary: r.summary,
     signature: r.signature,
@@ -280,13 +271,14 @@ function enrichFunction(
 
 // ─── Enrich a symbol from file-level explainData ────────────────────
 
+/** A file-target symbol as returned by `explainFileImpl`'s `mapSymbol` (always fully populated -- see domain/analysis/context.ts). */
 interface FileSymbol {
   name: string;
   kind: string;
   line: number;
-  role?: string | null;
-  summary?: string | null;
-  signature?: string | null;
+  role: string | null;
+  summary: string | null;
+  signature: { params: string | null; returnType: string | null } | null;
 }
 
 /** Query callees, callers, and related test files for a node. */
@@ -336,7 +328,7 @@ function enrichSymbol(
   noTests: boolean,
   maxDepth: number,
   thresholds: Record<string, ThresholdEntry>,
-): unknown {
+): AuditFunctionEntry {
   const nodeRow = db
     .prepare('SELECT id, end_line FROM nodes WHERE name = ? AND file = ? AND line = ?')
     .get(sym.name, file, sym.line) as { id: number; end_line: number | null } | undefined;
@@ -359,11 +351,11 @@ function enrichSymbol(
 
   return {
     name: sym.name,
-    kind: sym.kind,
+    kind: sym.kind as SymbolKind,
     file,
     line: sym.line,
     endLine,
-    role: sym.role || null,
+    role: (sym.role || null) as Role | null,
     lineCount,
     summary: sym.summary || null,
     signature: sym.signature || null,
@@ -396,7 +388,7 @@ function buildHealth(
   db: BetterSqlite3Database,
   nodeId: number,
   thresholds: Record<string, ThresholdEntry>,
-): HealthMetrics {
+): AuditHealthMetrics {
   try {
     const row = db
       .prepare(
@@ -431,7 +423,7 @@ function buildHealth(
   }
 }
 
-function defaultHealth(): HealthMetrics {
+function defaultHealth(): AuditHealthMetrics {
   return {
     cognitive: null,
     cyclomatic: null,
