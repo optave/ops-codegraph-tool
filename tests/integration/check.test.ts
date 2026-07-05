@@ -179,6 +179,37 @@ describe('parseDiffOutput', () => {
     expect(oldRanges.get('src/new-file.js')).toEqual([]);
   });
 
+  test('a deleted file does not corrupt the ranges of the preceding file', () => {
+    // Regression test: `+++ /dev/null` (file deletion) is not `b/`-prefixed,
+    // so it was previously missed by every guard and fell through to
+    // tracker.consume, which recorded it as an added line under whichever
+    // file preceded it in the diff — corrupting that file's changedRanges
+    // and then misattributing the deleted file's removed lines to it too.
+    const diff = [
+      '--- a/src/kept.js',
+      '+++ b/src/kept.js',
+      '@@ -1,1 +1,1 @@',
+      '-old kept line',
+      '+new kept line',
+      '--- a/src/removed.js',
+      '+++ /dev/null',
+      '@@ -1,2 +0,0 @@',
+      '-deleted line 1',
+      '-deleted line 2',
+    ].join('\n');
+
+    const { changedRanges, oldRanges } = parseDiffOutput(diff);
+    // kept.js's ranges must reflect only its own hunk, not the deleted
+    // file's `+++ /dev/null` header or removed body lines.
+    expect(changedRanges.get('src/kept.js')).toEqual([{ start: 1, end: 1 }]);
+    expect(oldRanges.get('src/kept.js')).toEqual([{ start: 1, end: 1 }]);
+    // The deleted file itself is not tracked — its nodes are purged from the
+    // DB during the rebuild, so there is nothing for the check predicates to
+    // match against.
+    expect(changedRanges.has('src/removed.js')).toBe(false);
+    expect(oldRanges.has('src/removed.js')).toBe(false);
+  });
+
   test('handles multiple files', () => {
     const diff = [
       '--- a/src/a.js',

@@ -41,6 +41,11 @@ function extractNewFileName(line: string): string | null {
   return m ? m[1]! : null;
 }
 
+/** Returns true if the diff line marks the new file as /dev/null (file deletion). */
+function isDevNullTargetLine(line: string): boolean {
+  return line.startsWith('+++ /dev/null');
+}
+
 /**
  * Tracks the old-side and new-side line cursors and the current runs of
  * contiguously removed/added lines while walking a hunk body, so
@@ -156,6 +161,19 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
       if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
       if (prevIsDevNull) newFiles.add(currentFile);
+      prevIsDevNull = false;
+      continue;
+    }
+    if (isDevNullTargetLine(line)) {
+      // `+++ /dev/null` (file deletion) is not `b/`-prefixed, so
+      // extractNewFileName returned null above and this line would otherwise
+      // fall through to tracker.consume and be misread as an added source
+      // line under whichever file preceded this one in the diff. Flush and
+      // clear the file context instead — the deleted file's hunk body that
+      // follows has no corresponding DB entry to check against anyway (its
+      // nodes are purged from the graph), so there is nothing to track here.
+      if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges);
+      currentFile = null;
       prevIsDevNull = false;
       continue;
     }
