@@ -5,6 +5,7 @@ import { loadNative } from '../../infrastructure/native.js';
 import { normalizePath } from '../../shared/constants.js';
 import { toErrorMessage } from '../../shared/errors.js';
 import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } from '../../types.js';
+import { LANGUAGE_REGISTRY } from '../parser.js';
 
 // ── package.json exports resolution ─────────────────────────────────
 
@@ -496,6 +497,68 @@ function directoryDistance(a: string, b: string): number {
   return Infinity;
 }
 
+// ── Language-family scoping for global-by-name fallback resolution ─────────
+
+/**
+ * LANGUAGE_REGISTRY ids that must be treated as one family for cross-file
+ * call resolution. TypeScript/TSX compile to and interoperate directly with
+ * JavaScript — a `.ts` file routinely imports from and calls into a `.js`
+ * file and vice versa (this codebase's own `src/` tree does this
+ * throughout) — despite being three separate grammar entries in
+ * LANGUAGE_REGISTRY. Every other registry id keeps its own family, which
+ * preserves LANGUAGE_REGISTRY's existing per-language extension groupings
+ * (e.g. C's `.c`+`.h`, C++'s `.cpp`/`.cc`/`.cxx`/`.hpp`).
+ */
+const JS_FAMILY_REGISTRY_IDS = new Set(['javascript', 'typescript', 'tsx']);
+
+/**
+ * extension → language-family lookup, derived from LANGUAGE_REGISTRY (the
+ * single source of truth for language definitions) so newly-added languages
+ * are automatically covered without a second hand-maintained extension list.
+ */
+const _extToLanguageFamily: Map<string, string> = new Map();
+for (const entry of LANGUAGE_REGISTRY) {
+  const family = JS_FAMILY_REGISTRY_IDS.has(entry.id) ? 'javascript' : entry.id;
+  for (const ext of entry.extensions) {
+    _extToLanguageFamily.set(ext, family);
+  }
+}
+
+/**
+ * Resolve a file's coarse language family from its extension. Returns null
+ * for extensionless or unrecognised files so ambiguous cases fall through to
+ * ordinary distance-based scoring rather than being rejected outright.
+ */
+function languageFamily(file: string): string | null {
+  const dot = file.lastIndexOf('.');
+  if (dot === -1) return null;
+  return _extToLanguageFamily.get(file.slice(dot).toLowerCase()) ?? null;
+}
+
+/**
+ * True when `fileA` and `fileB` belong to the same language family, or when
+ * either extension is unrecognised (ambiguous cases are not rejected — they
+ * fall through to normal scoring). False only when both extensions are
+ * recognised AND resolve to different families.
+ *
+ * Guards the global-by-name call-resolution fallback against matching a
+ * same-named symbol across unrelated languages — e.g. a Ruby file's bare
+ * `load` call has no static relationship to a same-named `load` export in a
+ * JS file, even when both happen to live in the same directory (issue
+ * #1783). This codebase has no cross-language static-call mechanism its
+ * resolvers legitimately model (the `dead-ffi` role classifier only
+ * suppresses false dead-code flags for compiled-language files consumed via
+ * FFI — it never creates call edges), so rejecting cross-family candidates
+ * is a strict precision improvement with no legitimate resolution to
+ * regress.
+ */
+export function isSameLanguageFamily(fileA: string, fileB: string): boolean {
+  const famA = languageFamily(fileA);
+  const famB = languageFamily(fileB);
+  if (!famA || !famB) return true;
+  return famA === famB;
+}
+
 function computeConfidenceJS(
   callerFile: string,
   targetFile: string,
@@ -506,6 +569,10 @@ function computeConfidenceJS(
   if (importedFrom === targetFile) return 1.0;
   // Workspace-resolved imports get high confidence even across package boundaries
   if (importedFrom && _workspaceResolvedPaths.has(importedFrom)) return 0.95;
+  // Cross-language candidates are never legitimate call targets (#1783) — reject
+  // before scoring proximity so a same-directory, same-named symbol in an
+  // unrelated language can never pass the resolver's 0.5 confidence threshold.
+  if (!isSameLanguageFamily(callerFile, targetFile)) return 0;
   const dist = directoryDistance(path.dirname(callerFile), path.dirname(targetFile));
   if (dist === 0) return 0.7; // same directory
   if (dist === 1) return 0.6; // direct parent/child directory

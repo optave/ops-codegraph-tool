@@ -1342,9 +1342,13 @@ fn emit_receiver_edge(
         samefile_candidates
     } else {
         // Fall back to any cross-file class/struct/interface candidate.
+        // Cross-language candidates are never legitimate receiver targets
+        // (#1783) — a `new Foo()` in one language can't statically resolve to
+        // an unrelated same-named class in another. Mirrors JS resolveReceiverEdge.
         ctx.nodes_by_name.get(effective_receiver).cloned().unwrap_or_default()
             .into_iter()
-            .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str()))
+            .filter(|n| ctx.receiver_kinds.contains(n.kind.as_str())
+                && resolve::is_same_language_family(rel_path, &n.file))
             .collect()
     };
 
@@ -2317,6 +2321,65 @@ mod call_edge_tests {
             "local function constructor must block global class fallback — no receiver edge expected; got: {:?}",
             edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
         );
+    }
+
+    /// Issue #1783: the global (cross-file) receiver fallback had no
+    /// language-consistency check at all, so `Widget.render()` in a Python
+    /// caller with no same-file `Widget` definition could resolve to an
+    /// unrelated same-named class declared in a JS file purely by name.
+    #[test]
+    fn receiver_edge_rejects_cross_language_match() {
+        let all_nodes = vec![
+            node(1, "main",   "function", "widget.py", 3),
+            node(2, "Widget", "class",    "widget.js", 1),
+        ];
+
+        let files = vec![make_file(
+            "widget.py",
+            10,
+            vec![def("main", "function", 3, 8)],
+            vec![call("render", 7, Some("Widget"))],
+            vec![],
+            vec![],
+        )];
+
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
+
+        let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
+        assert!(
+            receiver_edge.is_none(),
+            "a Python caller must not resolve a receiver edge to an unrelated same-named JS class; got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+    }
+
+    /// Same-language global receiver fallback must still work after the
+    /// #1783 language-scoping fix — only cross-language candidates are rejected.
+    #[test]
+    fn receiver_edge_still_resolves_same_language_cross_file_match() {
+        let all_nodes = vec![
+            node(1, "main",   "function", "widget.py", 3),
+            node(2, "Widget", "class",    "widget_impl.py", 1),
+        ];
+
+        let files = vec![make_file(
+            "widget.py",
+            10,
+            vec![def("main", "function", 3, 8)],
+            vec![call("render", 7, Some("Widget"))],
+            vec![],
+            vec![],
+        )];
+
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
+
+        let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
+        assert!(
+            receiver_edge.is_some(),
+            "same-language cross-file receiver fallback must still resolve; got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+        assert_eq!(receiver_edge.unwrap().target_id, 2);
     }
 
     /// Issue #1453: `this.logger.error()` inside `UserService.create` where the

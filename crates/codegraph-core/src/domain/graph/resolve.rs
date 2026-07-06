@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
+use crate::domain::parser::LanguageKind;
 use crate::types::{ImportResolutionInput, PathAliases, ResolvedImport};
 
 /// Check file existence using known_files set when available, falling back to FS.
@@ -281,6 +282,40 @@ fn directory_distance(a: &str, b: &str) -> usize {
     usize::MAX
 }
 
+/// Coarse "language family" for a file, derived from its extension via
+/// `LanguageKind::from_extension`. Collapses TypeScript/Tsx into the same
+/// family as JavaScript: despite being distinct `LanguageKind` variants (one
+/// per tree-sitter grammar), `.ts`/`.tsx` files routinely import from and
+/// call into `.js` files and vice versa within the same project (this
+/// codebase's own `src/` tree does this throughout) — treating them as
+/// separate families would reject huge amounts of legitimate same-project
+/// resolution. Every other `LanguageKind` variant keeps its own family,
+/// preserving `from_extension`'s existing per-language extension groupings
+/// (e.g. C's `.c`+`.h`, C++'s `.cpp`/`.cc`/`.cxx`/`.hpp`).
+fn language_family(file: &str) -> Option<LanguageKind> {
+    match LanguageKind::from_extension(file) {
+        Some(LanguageKind::TypeScript) | Some(LanguageKind::Tsx) => Some(LanguageKind::JavaScript),
+        other => other,
+    }
+}
+
+/// True when `file_a` and `file_b` belong to the same language family, or
+/// when either extension is unrecognised (ambiguous cases are not rejected —
+/// they fall through to normal scoring). False only when both extensions are
+/// recognised AND resolve to different families.
+///
+/// Guards the global-by-name call-resolution fallback against matching a
+/// same-named symbol across unrelated languages — e.g. a Ruby file's bare
+/// `load` call has no static relationship to a same-named `load` export in a
+/// JS file, even when both happen to live in the same directory (issue
+/// #1783). Mirrors `isSameLanguageFamily()` in resolve.ts.
+pub fn is_same_language_family(file_a: &str, file_b: &str) -> bool {
+    match (language_family(file_a), language_family(file_b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
 /// Compute proximity-based confidence for call resolution.
 /// Mirrors `computeConfidence()` in resolve.ts.
 pub fn compute_confidence(
@@ -298,6 +333,12 @@ pub fn compute_confidence(
         if imp == target_file {
             return 1.0;
         }
+    }
+    // Cross-language candidates are never legitimate call targets (#1783) —
+    // reject before scoring proximity so a same-directory, same-named symbol
+    // in an unrelated language can never pass the resolver's 0.5 threshold.
+    if !is_same_language_family(caller_file, target_file) {
+        return 0.0;
     }
 
     let caller_dir = Path::new(caller_file)
@@ -531,5 +572,87 @@ mod tests {
         // `algorithms` is nested inside `graph`, which is a sibling of `features` —
         // not a direct sibling pair despite sharing the `src` ancestor.
         assert_eq!(directory_distance("src/graph/algorithms", "src/features"), 3);
+    }
+
+    // Regression tests for #1783: the global-by-name call-resolution fallback
+    // had no language-consistency check at all, so a bare-name call with no
+    // import/receiver match could resolve against a same-named symbol in a
+    // completely unrelated language — e.g. a Ruby file's builtin `Kernel#load`
+    // call matched a JS ESM loader hook's unrelated `load` export purely
+    // because both files sat in the same directory (confidence 0.7 from
+    // proximity alone, well above the resolver's 0.5 threshold).
+
+    #[test]
+    fn is_same_language_family_rejects_ruby_and_js() {
+        assert!(!is_same_language_family("tracer/ruby-tracer.rb", "tracer/loader-hooks.mjs"));
+    }
+
+    #[test]
+    fn is_same_language_family_rejects_python_and_go() {
+        assert!(!is_same_language_family("src/main.py", "src/main.go"));
+    }
+
+    #[test]
+    fn is_same_language_family_accepts_same_extension() {
+        assert!(is_same_language_family("src/a.rb", "lib/b.rb"));
+    }
+
+    #[test]
+    fn is_same_language_family_merges_javascript_and_typescript() {
+        assert!(is_same_language_family("src/a.ts", "src/b.js"));
+        assert!(is_same_language_family("src/a.tsx", "src/b.mjs"));
+        assert!(is_same_language_family("src/a.cjs", "src/b.jsx"));
+    }
+
+    #[test]
+    fn is_same_language_family_merges_c_source_and_header() {
+        assert!(is_same_language_family("src/a.c", "src/a.h"));
+    }
+
+    #[test]
+    fn is_same_language_family_merges_cpp_source_and_header_variants() {
+        assert!(is_same_language_family("src/a.cpp", "src/a.hpp"));
+        assert!(is_same_language_family("src/a.cc", "src/a.cxx"));
+    }
+
+    #[test]
+    fn is_same_language_family_does_not_merge_c_and_cpp() {
+        assert!(!is_same_language_family("src/a.c", "src/a.cpp"));
+    }
+
+    #[test]
+    fn is_same_language_family_does_not_reject_unrecognised_extensions() {
+        // Ambiguous (unrecognised) extensions fall through rather than being rejected.
+        assert!(is_same_language_family("README", "src/b.rb"));
+        assert!(is_same_language_family("src/a.rb", "Makefile"));
+    }
+
+    #[test]
+    fn compute_confidence_rejects_cross_language_same_directory_match() {
+        // The exact #1783 repro shape: same directory, different languages.
+        let conf = compute_confidence(
+            "tests/benchmarks/resolution/tracer/ruby-tracer.rb",
+            "tests/benchmarks/resolution/tracer/loader-hooks.mjs",
+            None,
+        );
+        assert_eq!(conf, 0.0);
+    }
+
+    #[test]
+    fn compute_confidence_still_scores_same_language_same_directory_pair() {
+        let conf = compute_confidence(
+            "tests/benchmarks/resolution/tracer/ruby-tracer.rb",
+            "tests/benchmarks/resolution/tracer/other-tracer.rb",
+            None,
+        );
+        assert_eq!(conf, 0.7);
+    }
+
+    #[test]
+    fn compute_confidence_does_not_regress_same_project_js_ts_resolution() {
+        // A .ts caller resolving a same-directory .js target must be unaffected —
+        // TS/JS are one family despite being different LanguageKind variants.
+        let conf = compute_confidence("src/graph/a.ts", "src/graph/b.js", None);
+        assert_eq!(conf, 0.7);
     }
 }

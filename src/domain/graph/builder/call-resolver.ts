@@ -9,7 +9,7 @@
  * `resolveByMethodOrGlobal` delegates its two branches to strategy helpers
  * in `../resolver/strategy.ts` to keep per-strategy complexity manageable.
  */
-import { computeConfidence } from '../resolve.js';
+import { computeConfidence, isSameLanguageFamily } from '../resolve.js';
 import {
   isModuleScopedLanguage,
   resolveByGlobal,
@@ -347,9 +347,15 @@ export function resolveReceiverEdge(
   const sameFileAll = lookup.byNameAndFile(effectiveReceiver, relPath);
   const isLocalDefinition = sameFileAll.length > 0 && !importedNames?.has(effectiveReceiver);
   const sameFileCandidates = sameFileAll.filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+  // Cross-language candidates are never legitimate receiver targets (#1783) —
+  // a `new Foo()` in one language can't statically resolve to an unrelated
+  // same-named class in another. Only the global (cross-file) branch needs
+  // the check: sameFileCandidates are already scoped to relPath itself.
   const candidates = isLocalDefinition
     ? sameFileCandidates
-    : lookup.byName(effectiveReceiver).filter((n) => RECEIVER_KINDS.has(n.kind ?? ''));
+    : lookup
+        .byName(effectiveReceiver)
+        .filter((n) => RECEIVER_KINDS.has(n.kind ?? '') && isSameLanguageFamily(relPath, n.file));
   if (candidates.length === 0) return null;
   const recvTarget = candidates[0]!;
   const recvKey = `recv|${caller.id}|${recvTarget.id}`;
