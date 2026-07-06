@@ -298,6 +298,10 @@ describe('exportsData — import type consumer crediting (#1724)', () => {
     expect(config.consumerCount).toBe(1);
     expect(config.consumers.length).toBe(1);
     expect(config.consumers[0].file).toBe('consumer.ts');
+    // imports-type edges source from the importing *file* node, not a
+    // function — so name/line carry file-level values, not a call site.
+    expect(config.consumers[0].name).toBe('consumer.ts');
+    expect(config.consumers[0].line).toBe(0);
   });
 
   test('interface consumed only via `import type` is excluded from --unused', () => {
