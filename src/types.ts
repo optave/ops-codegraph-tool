@@ -1363,6 +1363,12 @@ export interface CodegraphConfig {
      * Default: false.
      */
     fastSkipDiag: boolean;
+    /**
+     * Max stdout buffer size (bytes) for the `git check-ignore` subprocess spawned via
+     * `execFileSync` in the native-orchestrator build stage (used to filter gitignored
+     * files out of the dropped-language-gap detection). Default: 104857600 (100 MB).
+     */
+    execMaxBufferBytes: number;
   };
 
   db: {
@@ -1449,6 +1455,12 @@ export interface CodegraphConfig {
     signatures: boolean;
     boundaries: boolean;
     depth: number;
+    /**
+     * Max stdout buffer size (bytes) for the `git diff` subprocess spawned via
+     * `execFileSync` when computing changed-line ranges for `codegraph check`
+     * and `codegraph diff-impact`. Default: 10485760 (10 MB).
+     */
+    execMaxBufferBytes: number;
   };
 
   coChange: {
@@ -1456,6 +1468,12 @@ export interface CodegraphConfig {
     minSupport: number;
     minJaccard: number;
     maxFilesPerCommit: number;
+    /**
+     * Max stdout buffer size (bytes) for the `git log` subprocess spawned via
+     * `execFileSync` when scanning commit history for co-change analysis.
+     * Default: 52428800 (50 MB).
+     */
+    execMaxBufferBytes: number;
   };
 
   analysis: {

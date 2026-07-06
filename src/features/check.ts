@@ -452,14 +452,18 @@ function findGitRoot(repoRoot: string): string | null {
 }
 
 /** Run git diff and return the raw output string. */
-function getGitDiff(repoRoot: string, opts: { staged?: boolean; ref?: string }): string {
+function getGitDiff(
+  repoRoot: string,
+  opts: { staged?: boolean; ref?: string },
+  maxBuffer: number,
+): string {
   const args = opts.staged
     ? ['diff', '--cached', '--unified=0', '--no-color']
     : ['diff', opts.ref || 'HEAD', '--unified=0', '--no-color'];
   return execFileSync('git', args, {
     cwd: repoRoot,
     encoding: 'utf-8',
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
@@ -539,7 +543,7 @@ export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}
 
     let diffOutput: string;
     try {
-      diffOutput = getGitDiff(repoRoot, opts);
+      diffOutput = getGitDiff(repoRoot, opts, config.check.execMaxBufferBytes);
     } catch (e) {
       return { error: `Failed to run git diff: ${(e as Error).message}` };
     }
