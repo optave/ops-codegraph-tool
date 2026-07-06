@@ -72,10 +72,10 @@ function rowVector(row: StoredRow): Float32Array {
 /** Warn when stored embeddings and the query model use different dimensions. */
 function checkDimensionMismatch(storedDim: number | null, dim: number): boolean {
   if (storedDim && dim !== storedDim) {
-    console.log(
-      `Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`,
+    warn(
+      `Query model dimension (${dim}) doesn't match stored embeddings (${storedDim}). ` +
+        'Re-run `codegraph embed` with the same model, or use --model to match.',
     );
-    console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
     return true;
   }
   return false;

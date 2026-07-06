@@ -36,9 +36,9 @@ import {
   ftsSearchData,
   hybridSearchData,
   multiSearchData,
-  search,
   searchData,
 } from '../../src/domain/search/index.js';
+import { search } from '../../src/presentation/search.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

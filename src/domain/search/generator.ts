@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { closeDb, findDbPath, getBuildMeta, openDb } from '../../db/index.js';
-import { warn } from '../../infrastructure/logger.js';
+import { info, warn } from '../../infrastructure/logger.js';
 import { DbError } from '../../shared/errors.js';
 import type { BetterSqlite3Database, NodeRow } from '../../types.js';
 import { embed, getModelConfig } from './models.js';
@@ -242,7 +242,7 @@ export async function buildEmbeddings(
   const byFile = loadNodesByFile(db);
 
   const nodeCount = [...byFile.values()].reduce((acc, list) => acc + list.length, 0);
-  console.log(`Building embeddings for ${nodeCount} symbols (strategy: ${strategy})...`);
+  info(`Building embeddings for ${nodeCount} symbols (strategy: ${strategy})...`);
 
   let contextWindow: number;
   let displayName: string;
@@ -275,7 +275,7 @@ export async function buildEmbeddings(
     );
   }
 
-  console.log(
+  info(
     `Embedding ${prepared.texts.length} symbols${options.remote ? ` via remote provider (${displayName})` : ''}...`,
   );
   const { vectors, dim } = options.remote
@@ -289,8 +289,8 @@ export async function buildEmbeddings(
   const provider = options.remote ? 'openai' : null;
   persistEmbeddings(db, prepared, vectors as Float32Array[], dim, displayName, strategy, provider);
 
-  console.log(
-    `\nStored ${vectors.length} embeddings (${dim}d, ${displayName}, strategy: ${strategy}) in graph.db`,
+  info(
+    `Stored ${vectors.length} embeddings (${dim}d, ${displayName}, strategy: ${strategy}) in graph.db`,
   );
   closeDb(db);
 }
