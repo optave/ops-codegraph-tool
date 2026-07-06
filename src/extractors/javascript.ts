@@ -1112,7 +1112,23 @@ function handleTypeAliasDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 /**
  * Extract definitions from destructured object bindings.
  * `const { handleToken, checkPermissions } = initAuth(...)` creates definitions
- * for handleToken and checkPermissions so they can be resolved as call targets.
+ * for handleToken and checkPermissions, kind `constant` — matching the
+ * convention for plain `const x = <literal>` bindings (handleConstIdentifierAssignment)
+ * and array-pattern destructuring (the sibling branch in the callers below).
+ *
+ * Every call site of this function is already gated to `const` declarations
+ * (never `let`/`var`), so `constant` is unconditionally correct here — there is
+ * no live binding-mutability to branch on. Prior to #1773 this used `kind:
+ * 'function'` on the theory that destructured names are usually callbacks, but
+ * that miscategorized every non-function destructured value (e.g. `const {
+ * dbPath } = workerData`), which polluted `--kind function` queries and caused
+ * the dead-code classifier to misjudge them via the wrong kind's heuristics.
+ * `constant`-kind nodes remain fully resolvable as call targets — call-target
+ * resolution (`resolveByGlobal`'s exact by-name lookup) is kind-agnostic, and
+ * `constant` is already in the caller-attribution fallback tier
+ * (`TOP_LEVEL_BINDING_KINDS` in call-resolver.ts) — so callback-style
+ * destructured bindings (`const { handleToken } = router; handleToken(req)`)
+ * still resolve correctly.
  */
 function extractDestructuredBindings(
   pattern: TreeSitterNode,
@@ -1128,7 +1144,7 @@ function extractDestructuredBindings(
       child.type === 'shorthand_property_identifier'
     ) {
       // { handleToken } — shorthand binding
-      definitions.push({ name: child.text, kind: 'function', line, endLine });
+      definitions.push({ name: child.text, kind: 'constant', line, endLine });
     } else if (child.type === 'pair_pattern' || child.type === 'pair') {
       // { original: renamed } — renamed binding, use the local alias
       const value = child.childForFieldName('value');
@@ -1136,7 +1152,7 @@ function extractDestructuredBindings(
         value &&
         (value.type === 'identifier' || value.type === 'shorthand_property_identifier_pattern')
       ) {
-        definitions.push({ name: value.text, kind: 'function', line, endLine });
+        definitions.push({ name: value.text, kind: 'constant', line, endLine });
       }
     }
   }
@@ -1259,8 +1275,9 @@ function handleConstObjectPatternAssignment(
   ctx: ExtractorOutput,
 ): void {
   // Destructured bindings: const { handleToken, checkPermissions } = initAuth(...)
-  // Each destructured property becomes a function definition so it can be
-  // resolved when passed as a callback (e.g. router.use(handleToken)).
+  // Each destructured property becomes a constant definition (#1773) — still
+  // resolvable when passed as a callback (e.g. router.use(handleToken)), since
+  // call-target resolution is kind-agnostic (see extractDestructuredBindings).
   // Restricted to const to avoid creating spurious definitions for
   // transient let/var destructuring (e.g. let { userId } = parseRequest(req)).
   // Scope guard mirrors extractDestructuredBindingsWalk (query path) and
