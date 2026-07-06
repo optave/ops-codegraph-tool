@@ -78,7 +78,7 @@ export function scanGitHistory(
     output = execFileSync('git', buildGitLogArgs(opts), {
       cwd: repoRoot,
       encoding: 'utf-8',
-      maxBuffer: 50 * 1024 * 1024,
+      maxBuffer: DEFAULTS.coChange.execMaxBufferBytes,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e: unknown) {

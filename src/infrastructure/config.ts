@@ -59,6 +59,11 @@ export const DEFAULTS = deepFreeze({
     typescriptResolver: true,
     engine: 'auto' as 'auto' | 'native' | 'wasm',
     fastSkipDiag: false,
+    /**
+     * Max stdout buffer size (bytes) for the `git check-ignore` subprocess spawned via
+     * `execFileSync` in `queryGitIgnoredFiles()` (src/domain/graph/builder/stages/native-orchestrator.ts).
+     */
+    execMaxBufferBytes: 100 * 1024 * 1024,
   },
   db: {
     /**
@@ -116,12 +121,23 @@ export const DEFAULTS = deepFreeze({
     signatures: true,
     boundaries: true,
     depth: 3,
+    /**
+     * Max stdout buffer size (bytes) for the `git diff` subprocess spawned via
+     * `execFileSync` in `getGitDiff()` (src/features/check.ts) and `runGitDiff()`
+     * (src/domain/analysis/diff-impact.ts).
+     */
+    execMaxBufferBytes: 10 * 1024 * 1024,
   },
   coChange: {
     since: '1 year ago',
     minSupport: 3,
     minJaccard: 0.3,
     maxFilesPerCommit: 50,
+    /**
+     * Max stdout buffer size (bytes) for the `git log` subprocess spawned via
+     * `execFileSync` in `scanGitHistory()` (src/features/cochange.ts).
+     */
+    execMaxBufferBytes: 50 * 1024 * 1024,
   },
   analysis: {
     impactDepth: 3,

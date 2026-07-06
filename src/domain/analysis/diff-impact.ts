@@ -41,6 +41,7 @@ function findGitRoot(repoRoot: string): boolean {
 function runGitDiff(
   repoRoot: string,
   opts: { staged?: boolean; ref?: string },
+  maxBuffer: number,
 ): { output: string; error?: never } | { error: string; output?: never } {
   try {
     const args = opts.staged
@@ -49,7 +50,7 @@ function runGitDiff(
     const output = execFileSync('git', args, {
       cwd: repoRoot,
       encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024,
+      maxBuffer,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     return { output };
@@ -281,7 +282,7 @@ export function diffImpactData(
       return { error: `Not a git repository: ${repoRoot}` };
     }
 
-    const gitResult = runGitDiff(repoRoot, opts);
+    const gitResult = runGitDiff(repoRoot, opts, config.check.execMaxBufferBytes);
     if ('error' in gitResult) return { error: gitResult.error };
 
     if (!gitResult.output.trim()) {

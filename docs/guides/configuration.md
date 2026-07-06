@@ -156,6 +156,7 @@ Controls graph construction.
 | `dbPath` | `string` | `".codegraph/graph.db"` | Path to the SQLite database, relative to the project root. |
 | `driftThreshold` | `number` | `0.2` | Fraction (0–1). If incremental rebuild changes node or edge counts by more than this, codegraph warns and suggests `--no-incremental`. |
 | `smallFilesThreshold` | `number` | `5` | When ≤ this many files change in an incremental build, codegraph takes faster code paths (skips full rebuilds of structure metrics, scoped barrel re-parsing, JS fallback for inserts). |
+| `execMaxBufferBytes` | `number` | `104857600` | Max stdout buffer size (bytes) for the `git check-ignore` subprocess spawned while detecting gitignored files during native-orchestrator drop detection. |
 
 ---
 
@@ -318,6 +319,7 @@ Toggles for the lightweight `codegraph check` command (separate from manifesto).
 | `signatures` | `boolean` | `true` | Warn on signature changes in the diff. |
 | `boundaries` | `boolean` | `true` | Honor the `manifesto.boundaries` rules. |
 | `depth` | `number` | `3` | Transitive depth for blast-radius calculation. |
+| `execMaxBufferBytes` | `number` | `10485760` | Max stdout buffer size (bytes) for the `git diff` subprocess spawned to compute changed-line ranges (also used by `diff-impact`). |
 
 ---
 
@@ -331,6 +333,7 @@ Configures `codegraph co-changes` (files that historically change together based
 | `minSupport` | `number` | `3` | Minimum number of co-occurring commits before a pair is reported. |
 | `minJaccard` | `number` | `0.3` | Minimum Jaccard similarity (`|A∩B| / |A∪B|`) for a pair. |
 | `maxFilesPerCommit` | `number` | `50` | Skip commits touching more than this many files (avoids noise from large refactors / merges). |
+| `execMaxBufferBytes` | `number` | `52428800` | Max stdout buffer size (bytes) for the `git log` subprocess spawned while scanning commit history. |
 
 ---
 

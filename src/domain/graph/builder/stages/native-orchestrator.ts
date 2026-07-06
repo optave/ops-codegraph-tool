@@ -1457,7 +1457,11 @@ function groupByExtension(relPaths: Iterable<string>): Map<string, string[]> {
  * the result set can be matched directly against the `expected` set in
  * `detectDroppedLanguageGap` without any further path manipulation.
  */
-function queryGitIgnoredFiles(rootDir: string, relPaths: Iterable<string>): Set<string> {
+function queryGitIgnoredFiles(
+  rootDir: string,
+  relPaths: Iterable<string>,
+  maxBuffer: number,
+): Set<string> {
   const ignored = new Set<string>();
   const paths = [...relPaths];
   if (paths.length === 0) return ignored;
@@ -1467,7 +1471,7 @@ function queryGitIgnoredFiles(rootDir: string, relPaths: Iterable<string>): Set<
       cwd: rootDir,
       input: stdin,
       encoding: 'utf-8',
-      maxBuffer: 100 * 1024 * 1024,
+      maxBuffer,
       // git check-ignore exits with 1 when none of the paths are ignored —
       // that is not an error for our purposes. stdio: 'pipe' lets us capture
       // stdout without swallowing stderr, and the try/catch handles the
@@ -1530,7 +1534,11 @@ function detectDroppedLanguageGap(ctx: PipelineContext): DroppedLanguageGap {
   // (e.g. NAPI-RS generated crates/codegraph-core/index.js / index.d.ts) appear
   // in `expected` but not in the DB, causing a spurious "native extractor bug"
   // WARN and triggering an unnecessary WASM backfill (#1626).
-  const gitIgnored = queryGitIgnoredFiles(ctx.rootDir, expectedRaw);
+  const gitIgnored = queryGitIgnoredFiles(
+    ctx.rootDir,
+    expectedRaw,
+    ctx.config.build.execMaxBufferBytes,
+  );
   const expected = new Set(
     gitIgnored.size > 0 ? expectedRaw.filter((r) => !gitIgnored.has(r)) : expectedRaw,
   );
