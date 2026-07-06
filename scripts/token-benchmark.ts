@@ -81,6 +81,11 @@ function round2(n) {
 	return Math.round(n * 100) / 100;
 }
 
+/** Percentage reduction from `a` to `b` (e.g. token/cost savings). Returns 0 when `a <= 0`. */
+function pct(a, b) {
+	return a > 0 ? Math.round(((a - b) / a) * 100) : 0;
+}
+
 function git(args, cwd) {
 	return execFileSync('git', args, { cwd, stdio: 'pipe', encoding: 'utf8' }).trim();
 }
@@ -423,19 +428,9 @@ function medianForRuns(runs) {
 /** Token + cost savings (% reduction) between two median objects. */
 function computeSavings(baselineMedian, codegraphMedian) {
 	if (!baselineMedian || !codegraphMedian || baselineMedian.inputTokens <= 0) return null;
-	const tokenSavings =
-		((baselineMedian.inputTokens - codegraphMedian.inputTokens) /
-			baselineMedian.inputTokens) *
-		100;
-	const costSavings =
-		baselineMedian.totalCostUsd > 0
-			? ((baselineMedian.totalCostUsd - codegraphMedian.totalCostUsd) /
-					baselineMedian.totalCostUsd) *
-				100
-			: 0;
 	return {
-		inputTokensPct: Math.round(tokenSavings),
-		costPct: Math.round(costSavings),
+		inputTokensPct: pct(baselineMedian.inputTokens, codegraphMedian.inputTokens),
+		costPct: pct(baselineMedian.totalCostUsd, codegraphMedian.totalCostUsd),
 	};
 }
 
@@ -484,7 +479,6 @@ function computeAggregate(results) {
 	const totalCodegraphTokens = sum((r) => r.codegraph.median.inputTokens);
 	const totalBaselineCost = sum((r) => r.baseline.median.totalCostUsd);
 	const totalCodegraphCost = sum((r) => r.codegraph.median.totalCostUsd);
-	const pct = (a, b) => (a > 0 ? Math.round(((a - b) / a) * 100) : 0);
 
 	return {
 		savings: {
@@ -501,6 +495,36 @@ function computeAggregate(results) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────
+
+/** Where in-progress results are (re)written after each issue completes. */
+const PARTIAL_RESULTS_PATH = path.join(root, 'token-benchmark.partial.json');
+
+/**
+ * Overwrite the partial-results snapshot with the results collected so far.
+ * Called after each issue completes so a later crash (another issue
+ * throwing, or `runPerfBenchmarks` failing) doesn't discard the
+ * already-computed results for the issues that already finished (#1757).
+ */
+function writePartialResults(results, totalIssues) {
+	const partialOutput = {
+		version: benchVersion,
+		date: new Date().toISOString().slice(0, 10),
+		model: MODEL,
+		runsPerIssue: RUNS,
+		maxTurns: MAX_TURNS,
+		maxBudgetUsd: MAX_BUDGET,
+		partial: true,
+		completedIssues: results.length,
+		totalIssues,
+		issues: results,
+		aggregate: computeAggregate(results),
+		perfBenchmarks: null,
+	};
+	fs.writeFileSync(PARTIAL_RESULTS_PATH, JSON.stringify(partialOutput, null, 2));
+	console.error(
+		`  Partial results written to ${PARTIAL_RESULTS_PATH} (${results.length}/${totalIssues} issues)`,
+	);
+}
 
 async function main() {
 	// Resolve Next.js directory
@@ -522,6 +546,7 @@ async function main() {
 	const results = [];
 	for (const issue of selectedIssues) {
 		results.push(await runIssueExperiment(issue, nextjsDir));
+		writePartialResults(results, selectedIssues.length);
 	}
 
 	const aggregate = computeAggregate(results);
@@ -549,6 +574,11 @@ async function main() {
 	};
 
 	console.log(JSON.stringify(output, null, 2));
+
+	// Full run (including perf benchmarks, if requested) succeeded — the
+	// complete results are now in the stdout output above, so the partial
+	// snapshot is no longer needed.
+	fs.rmSync(PARTIAL_RESULTS_PATH, { force: true });
 }
 
 main().catch((err) => {
