@@ -768,11 +768,14 @@ function buildCallEdges(
       initialTargets,
     );
 
-    // #1771: object-literal property-value references resolve against
-    // function/method-kind targets only — mirrors the same filter in
-    // resolveFallbackTargets (stages/build-edges.ts, full-build path).
+    // #1771/#1784: value-ref references resolve against function/method/
+    // class-kind targets only (class included for `instanceof ClassName`,
+    // #1784) — mirrors the same filter in resolveFallbackTargets
+    // (stages/build-edges.ts, full-build path).
     if (call.dynamicKind === 'value-ref') {
-      targets = targets.filter((t) => t.kind === 'function' || t.kind === 'method');
+      targets = targets.filter(
+        (t) => t.kind === 'function' || t.kind === 'method' || t.kind === 'class',
+      );
     }
 
     edgesAdded += emitIncrementalCallEdges(

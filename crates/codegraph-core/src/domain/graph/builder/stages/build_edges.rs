@@ -785,16 +785,21 @@ fn process_file<'a>(
         let mut targets = resolve_call_targets(
             ctx, call, fc.rel_path, imported_from, &fc.type_map, caller_name, imported_original_name,
         );
-        // #1771: object-literal property-value references resolve against
-        // function/method-kind targets only — a bare identifier there is as
-        // likely to be a plain data reference (`{ name: SOME_CONSTANT }`) as
-        // a function reference, so drop any non-callable match rather than
-        // fabricating a "calls" edge to a constant/class/etc. Applied once
-        // here (after all resolve_call_targets tiers), mirroring the
+        // #1771/#1784: value-ref references (object-literal property values,
+        // Lua builtin reassignment, `instanceof ClassName`) resolve against
+        // function/method/class-kind targets only. A bare identifier in one
+        // of these positions is as likely to be a plain data reference
+        // (`{ name: SOME_CONSTANT }`) as a real function/class, so drop any
+        // other-kind match rather than fabricating a "calls" edge to a
+        // constant. `class` is included alongside function/method because
+        // `instanceof`'s right operand is always a class/constructor
+        // (#1784) — unlike the original #1771 object-literal case, which is
+        // function/method only. Applied once here (after all
+        // resolve_call_targets tiers), mirroring the
         // `dynamicKind === 'value-ref'` filter in resolveFallbackTargets
         // (stages/build-edges.ts).
         if call.dynamic_kind.as_deref() == Some("value-ref") {
-            targets.retain(|t| t.kind == "function" || t.kind == "method");
+            targets.retain(|t| t.kind == "function" || t.kind == "method" || t.kind == "class");
         }
         sort_targets_by_confidence(&mut targets, fc.rel_path, imported_from);
         emit_call_edges(&targets, caller_id, is_dynamic, fc.rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);

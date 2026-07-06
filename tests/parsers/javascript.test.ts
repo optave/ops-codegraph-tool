@@ -1271,6 +1271,61 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('instanceof value-ref extraction (#1784)', () => {
+    it('extracts a value-ref call for `instanceof ClassName`', () => {
+      const symbols = parseJS(`
+        function handle(err) {
+          if (err instanceof CodegraphError) { report(err); }
+        }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({
+          name: 'CodegraphError',
+          dynamic: true,
+          dynamicKind: 'value-ref',
+        }),
+      );
+    });
+
+    it('extracts a value-ref call for `instanceof` used as an expression value', () => {
+      const symbols = parseJS(`const isConfig = (err) => err instanceof ConfigError;`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'ConfigError', dynamic: true, dynamicKind: 'value-ref' }),
+      );
+    });
+
+    it('does not extract a value-ref call for a member-expression right operand', () => {
+      const symbols = parseJS(`const check = (a) => a instanceof ns.SomeClass;`);
+      expect(symbols.calls).not.toContainEqual(
+        expect.objectContaining({ dynamicKind: 'value-ref', name: 'SomeClass' }),
+      );
+    });
+
+    it('does not extract a value-ref call for a call-expression right operand', () => {
+      const symbols = parseJS(`const check = (a) => a instanceof getClass();`);
+      expect(symbols.calls.filter((c) => c.dynamicKind === 'value-ref')).toHaveLength(0);
+    });
+
+    it('excludes builtin globals from instanceof value-ref extraction', () => {
+      const symbols = parseJS(`
+        function isBuiltin(x) {
+          return x instanceof Error || x instanceof Array || x instanceof Map;
+        }
+      `);
+      expect(symbols.calls.filter((c) => c.dynamicKind === 'value-ref')).toHaveLength(0);
+    });
+
+    it('does not extract a value-ref call for the unrelated `in` operator', () => {
+      const symbols = parseJS(`const has = (obj) => 'key' in obj;`);
+      expect(symbols.calls.filter((c) => c.dynamicKind === 'value-ref')).toHaveLength(0);
+    });
+
+    it('does not extract a value-ref call for other binary operators', () => {
+      const symbols = parseJS(`const sum = (a, b) => a + b === Total;`);
+      expect(symbols.calls.filter((c) => c.dynamicKind === 'value-ref')).toHaveLength(0);
+    });
+  });
+
   describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
     function parseJS(code) {
       const parser = parsers.get('javascript');

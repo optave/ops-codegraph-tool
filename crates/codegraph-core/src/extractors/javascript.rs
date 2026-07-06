@@ -1081,6 +1081,8 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "shorthand_property_identifier" => {
             handle_object_literal_shorthand_value_ref(node, source, &mut symbols.calls)
         }
+        // #1784: `instanceof ClassName` checks, e.g. `err instanceof CodegraphError`.
+        "binary_expression" => handle_instanceof_value_ref(node, source, &mut symbols.calls),
         _ => {}
     }
 }
@@ -2496,6 +2498,47 @@ fn handle_object_literal_shorthand_value_ref(node: &Node, source: &[u8], calls: 
     calls.push(Call {
         name: text.to_string(),
         line: start_line(node),
+        dynamic: Some(true),
+        dynamic_kind: Some("value-ref".to_string()),
+        ..Default::default()
+    });
+}
+
+/// Collect a dynamic value-ref `Call` for the right-hand operand of an
+/// `instanceof` binary expression when it's a bare identifier — e.g.
+/// `err instanceof CodegraphError` (issue #1784). `instanceof` reads its
+/// right operand as a value (a prototype-chain check), never calls it, so
+/// this is the same "referenced as a value, not a call site" shape as the
+/// object-literal (#1771) and Lua builtin-reassignment (#1776) sites —
+/// reused rather than given its own `dynamic_kind` (see ADR-002).
+///
+/// Restricted to plain `identifier` right operands: `a instanceof B.C`
+/// (`member_expression`) and `a instanceof (foo())` (parenthesized/call
+/// expressions) are left unresolved rather than guessing — same
+/// "restrict to the simplest syntactic shape" precedent as #1771.
+///
+/// Unlike the function/method-only value-ref sites, `instanceof`'s operand
+/// is always a class/constructor — the resolver-side kind filter in
+/// `build_edges.rs` accepts `class`-kind targets in addition to
+/// function/method for this reason.
+///
+/// Mirrors `collectInstanceofValueRefCall` in `src/extractors/javascript.ts`.
+fn handle_instanceof_value_ref(node: &Node, source: &[u8], calls: &mut Vec<Call>) {
+    let Some(operator_n) = node.child_by_field_name("operator") else { return };
+    if node_text(&operator_n, source) != "instanceof" {
+        return;
+    }
+    let Some(right_n) = node.child_by_field_name("right") else { return };
+    if right_n.kind() != "identifier" {
+        return;
+    }
+    let text = node_text(&right_n, source);
+    if JS_BUILTIN_GLOBALS.contains(&text) {
+        return;
+    }
+    calls.push(Call {
+        name: text.to_string(),
+        line: start_line(&right_n),
         dynamic: Some(true),
         dynamic_kind: Some("value-ref".to_string()),
         ..Default::default()
@@ -4420,6 +4463,69 @@ mod tests {
     #[test]
     fn no_value_ref_call_for_builtin_globals() {
         let s = parse_js("const table = { log: console, Ctor: Object };");
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    // ── #1784: instanceof value-ref extraction ──────────────────────────────
+
+    #[test]
+    fn extracts_value_ref_call_for_instanceof_class_name() {
+        let s = parse_js(
+            "function handle(err) { if (err instanceof CodegraphError) { report(err); } }",
+        );
+        let value_refs: Vec<_> = s
+            .calls
+            .iter()
+            .filter(|c| c.dynamic_kind.as_deref() == Some("value-ref"))
+            .collect();
+        assert!(value_refs.iter().any(|c| c.name == "CodegraphError"));
+        assert!(value_refs.iter().all(|c| c.dynamic == Some(true)));
+    }
+
+    #[test]
+    fn extracts_value_ref_call_for_instanceof_as_expression_value() {
+        let s = parse_js("const isConfig = (err) => err instanceof ConfigError;");
+        let value_refs: Vec<_> = s
+            .calls
+            .iter()
+            .filter(|c| c.dynamic_kind.as_deref() == Some("value-ref"))
+            .collect();
+        assert!(value_refs.iter().any(|c| c.name == "ConfigError"));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_instanceof_member_expression_operand() {
+        let s = parse_js("const check = (a) => a instanceof ns.SomeClass;");
+        assert!(
+            s.calls
+                .iter()
+                .all(|c| !(c.dynamic_kind.as_deref() == Some("value-ref") && c.name == "SomeClass"))
+        );
+    }
+
+    #[test]
+    fn no_value_ref_call_for_instanceof_call_expression_operand() {
+        let s = parse_js("const check = (a) => a instanceof getClass();");
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_instanceof_builtin_globals() {
+        let s = parse_js(
+            "function isBuiltin(x) { return x instanceof Error || x instanceof Array || x instanceof Map; }",
+        );
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_in_operator() {
+        let s = parse_js("const has = (obj) => 'key' in obj;");
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_other_binary_operators() {
+        let s = parse_js("const sum = (a, b) => a + b === Total;");
         assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
     }
 

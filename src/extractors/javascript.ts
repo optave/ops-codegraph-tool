@@ -3185,6 +3185,37 @@ function collectObjectLiteralValueRefCall(pairNode: TreeSitterNode, calls: Call[
   });
 }
 
+/**
+ * Collect a dynamic value-ref `Call` for the right-hand operand of an
+ * `instanceof` binary expression when it's a bare identifier — e.g.
+ * `err instanceof CodegraphError` (issue #1784). `instanceof` reads its
+ * right operand as a value (a prototype-chain check), never calls it, so
+ * this is the same "referenced as a value, not a call site" shape as the
+ * object-literal (#1771) and Lua builtin-reassignment (#1776) sites — reused
+ * rather than given its own DynamicKind (see ADR-002).
+ *
+ * Restricted to plain `identifier` right operands: `a instanceof B.C`
+ * (`member_expression`) and `a instanceof (foo())` (parenthesized/call
+ * expressions) are left unresolved rather than guessing — same
+ * "restrict to the simplest syntactic shape" precedent as #1771.
+ *
+ * Unlike the function/method-only value-ref sites, `instanceof`'s operand is
+ * always a class/constructor — the resolver-side kind filter
+ * (`resolveFallbackTargets` / `build_edges.rs`) accepts `class`-kind targets
+ * in addition to function/method for this reason.
+ */
+function collectInstanceofValueRefCall(binaryNode: TreeSitterNode, calls: Call[]): void {
+  if (binaryNode.childForFieldName('operator')?.text !== 'instanceof') return;
+  const rightNode = binaryNode.childForFieldName('right');
+  if (rightNode?.type !== 'identifier' || BUILTIN_GLOBALS.has(rightNode.text)) return;
+  calls.push({
+    name: rightNode.text,
+    line: nodeStartLine(rightNode),
+    dynamic: true,
+    dynamicKind: 'value-ref',
+  });
+}
+
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
   if (!objNode) return undefined;
   const t = objNode.type;
@@ -3740,11 +3771,11 @@ function collectThisCallAndBindings(
  * `valueRefCalls` is REQUIRED (unlike `calls`) — both paths route
  * object-literal value-ref extraction through this single field, since
  * neither `walkJavaScriptNode` (walk path) nor the compiled query patterns
- * (query path) visit `pair`/`shorthand_property_identifier` nodes on their
- * own (#1771). Both callers pass their own `calls` array here; it's a
- * separate field from the optional `calls` above purely so this collector
- * isn't accidentally gated off by the walk path's "don't double-collect
- * call_expression" omission.
+ * (query path) visit `pair`/`shorthand_property_identifier`/`binary_expression`
+ * nodes on their own (#1771, #1784). Both callers pass their own `calls`
+ * array here; it's a separate field from the optional `calls` above purely
+ * so this collector isn't accidentally gated off by the walk path's "don't
+ * double-collect call_expression" omission.
  */
 interface CollectorWalkTargets {
   definitions: Definition[];
@@ -3848,6 +3879,10 @@ function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTarget
             dynamicKind: 'value-ref',
           });
         }
+        break;
+      case 'binary_expression':
+        // #1784: `instanceof ClassName` checks, e.g. `err instanceof CodegraphError`.
+        collectInstanceofValueRefCall(node, targets.valueRefCalls);
         break;
     }
     for (let i = 0; i < node.childCount; i++) {
