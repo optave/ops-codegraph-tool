@@ -29,7 +29,10 @@ export const command: CommandDefinition = {
     ['--staged', 'Analyze staged changes'],
     ['--rules', 'Also run manifesto rules alongside diff predicates'],
     ['--cycles', 'Assert no dependency cycles involve changed files'],
-    ['--blast-radius <n>', 'Assert no function exceeds N transitive callers'],
+    [
+      '--blast-radius <n>',
+      'Assert no function whose call graph shape changed (signature or call targets) exceeds N transitive callers',
+    ],
     ['--signatures', 'Assert no exported function/method/class declaration lines were modified'],
     ['--boundaries', 'Assert no cross-owner boundary violations'],
     ['--depth <n>', 'Max BFS depth for blast radius (default: 3)'],

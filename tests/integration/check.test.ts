@@ -69,6 +69,15 @@ beforeAll(() => {
   // tests/math.test.js: testAdd (line 1-5)
   insertNode(db, 'testAdd', 'function', 'tests/math.test.js', 1, 5);
 
+  // src/multiline.js: multiLineSig (line 20-24) — declaration spans lines
+  // 20-22 (opening line + two parameters, one per line), body on 23-24.
+  // Exercises the multi-line-signature guard (issue #1740 follow-up).
+  const multiLineSig = insertNode(db, 'multiLineSig', 'function', 'src/multiline.js', 20, 24);
+  const paramA = insertNode(db, 'a', 'parameter', 'src/multiline.js', 21);
+  const paramB = insertNode(db, 'b', 'parameter', 'src/multiline.js', 22);
+  insertEdge(db, paramA, multiLineSig, 'parameter_of');
+  insertEdge(db, paramB, multiLineSig, 'parameter_of');
+
   // --- Call edges (for blast radius) ---
   // handleRequest -> add -> multiply (chain of 2)
   insertEdge(db, handleRequest, add, 'calls');
@@ -79,6 +88,9 @@ beforeAll(() => {
   insertEdge(db, parseInput, formatResult, 'calls');
   // processNode -> handleRequest
   insertEdge(db, processNode, handleRequest, 'calls');
+  // handleRequest -> multiLineSig (direct); processNode -> handleRequest
+  // (above) gives multiLineSig a transitive caller too.
+  insertEdge(db, handleRequest, multiLineSig, 'calls');
 
   // --- Import edges (for cycles) ---
   // Create a file-level cycle: math.js <-> utils.js
@@ -225,6 +237,100 @@ describe('parseDiffOutput', () => {
     expect(changedRanges.has('src/a.js')).toBe(true);
     expect(changedRanges.has('src/b.js')).toBe(true);
   });
+
+  // ─── changedEdits (issue #1740) ───────────────────────────────────────
+
+  test('changedEdits pairs a replacement run with its added/removed text', () => {
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,1 +3,1 @@',
+      '-  return a + b + 0;',
+      '+  return a + b + ZERO_OFFSET;',
+    ].join('\n');
+
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+    expect(changedRanges.get('src/math.js')).toEqual([{ start: 3, end: 3 }]);
+    expect(changedEdits.get('src/math.js')).toEqual([
+      {
+        start: 3,
+        end: 3,
+        addedText: ['  return a + b + ZERO_OFFSET;'],
+        removedText: ['  return a + b + 0;'],
+      },
+    ]);
+  });
+
+  test('changedEdits records empty removedText for a pure insertion', () => {
+    const diff = ['--- a/src/math.js', '+++ b/src/math.js', '@@ -3,0 +4,1 @@', '+  // note'].join(
+      '\n',
+    );
+
+    const { changedEdits } = parseDiffOutput(diff);
+    expect(changedEdits.get('src/math.js')).toEqual([
+      { start: 4, end: 4, addedText: ['  // note'], removedText: [] },
+    ]);
+  });
+
+  test('changedEdits does not pair a pure deletion with an unrelated later hunk', () => {
+    // First hunk is a pure deletion (no added lines) so it never becomes a
+    // changedEdits entry; the second hunk's pure insertion must NOT be
+    // paired with the first hunk's removed text (they are unrelated edits).
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,1 +3,0 @@',
+      '-  // stale comment',
+      '@@ -10,0 +9,1 @@',
+      '+  // fresh comment',
+    ].join('\n');
+
+    const { changedEdits } = parseDiffOutput(diff);
+    expect(changedEdits.get('src/math.js')).toEqual([
+      { start: 9, end: 9, addedText: ['  // fresh comment'], removedText: [] },
+    ]);
+  });
+
+  test('changedEdits pairs multi-line replacement blocks as a single edit', () => {
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -1,2 +1,2 @@',
+      '-line A',
+      '-line A2',
+      '+line B',
+      '+line B2',
+    ].join('\n');
+
+    const { changedEdits } = parseDiffOutput(diff);
+    expect(changedEdits.get('src/math.js')).toEqual([
+      { start: 1, end: 2, addedText: ['line B', 'line B2'], removedText: ['line A', 'line A2'] },
+    ]);
+  });
+
+  test('changedEdits does not pair a removal with an unrelated addition separated by a context line', () => {
+    // Within a single hunk (non-zero context, e.g. a plain `git diff`
+    // without `--unified=0`), a context line between a removal and a later,
+    // unrelated addition must break the pairing — otherwise the removal's
+    // text gets wrongly attributed as "replaced by" the addition purely
+    // because it was the most recently closed removed run. `getGitDiff`
+    // always uses `--unified=0` so this never happens in production, but
+    // `parseDiffOutput` is a public export and must stay correct for any
+    // unified diff.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -1,2 +1,2 @@',
+      '-old line 1',
+      ' unchanged context',
+      '+new line 3',
+    ].join('\n');
+
+    const { changedEdits } = parseDiffOutput(diff);
+    expect(changedEdits.get('src/math.js')).toEqual([
+      { start: 2, end: 2, addedText: ['new line 3'], removedText: [] },
+    ]);
+  });
 });
 
 // ─── checkNoNewCycles ─────────────────────────────────────────────────
@@ -253,14 +359,17 @@ describe('checkMaxBlastRadius', () => {
     // multiply has callers: add(d1), handleRequest+formatResult(d2), processNode+parseInput(d3) = 5
     // With depth 1 only, multiply has 1 caller (add), so threshold 3 passes
     const ranges = new Map([['src/math.js', [{ start: 7, end: 12 }]]]);
-    const result = checkMaxBlastRadius(db, ranges, 3, false, 1);
+    const result = checkMaxBlastRadius(db, ranges, new Map(), 3, false, 1);
     expect(result.passed).toBe(true);
   });
 
   test('fails when max callers exceeds threshold', () => {
     // add has callers: handleRequest, formatResult at depth 1; parseInput, processNode at depth 2
+    // No changedEdits data is provided (empty map) — a range with no matching
+    // edit entry is conservatively treated as a call-graph-shape change, so
+    // this predates and is unaffected by the issue #1740 exemption.
     const ranges = new Map([['src/math.js', [{ start: 1, end: 5 }]]]);
-    const result = checkMaxBlastRadius(db, ranges, 1, false, 3);
+    const result = checkMaxBlastRadius(db, ranges, new Map(), 1, false, 3);
     expect(result.passed).toBe(false);
     expect(result.violations.length).toBe(1);
     expect(result.violations[0].name).toBe('add');
@@ -270,9 +379,159 @@ describe('checkMaxBlastRadius', () => {
   test('respects maxDepth', () => {
     // With depth 1, add has 2 direct callers (handleRequest, formatResult)
     const ranges = new Map([['src/math.js', [{ start: 1, end: 5 }]]]);
-    const result = checkMaxBlastRadius(db, ranges, 10, false, 1);
+    const result = checkMaxBlastRadius(db, ranges, new Map(), 10, false, 1);
     expect(result.passed).toBe(true);
     expect(result.maxFound).toBeLessThanOrEqual(10);
+  });
+
+  // ─── Call-graph shape exemption (issue #1740) ────────────────────────
+  //
+  // `add` (src/math.js, lines 1-5) has several transitive callers in the
+  // fixture graph (handleRequest, formatResult direct; parseInput,
+  // processNode transitive) — a real "high fan-in spine function" shape.
+  // These tests drive `checkMaxBlastRadius` through `parseDiffOutput` (not
+  // hand-built ranges) so `changedEdits` is populated for real, proving the
+  // exemption logic itself rather than just the safe-fallback path above.
+
+  test('passes for a high-fan-in function when only an internal literal changes (no call graph shape change)', () => {
+    // Body-only edit on line 3 (inside add's 1-5 span), declaration
+    // untouched, and neither side of the edit contains any call syntax.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,1 +3,1 @@',
+      '-  return a + b + 0;',
+      '+  return a + b + ZERO_OFFSET;',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    // Threshold 1 would normally fail on add's multiple callers (as proven
+    // by the "fails when max callers exceeds threshold" test above using
+    // the same threshold) — but this diff never changed add's call graph
+    // shape, so its pre-existing fan-in should not fail the gate.
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.exemptedCount).toBe(1);
+    expect(result.note).toMatch(/exempted/);
+  });
+
+  test('still fails for a high-fan-in function when the diff adds a new call', () => {
+    // Same line, but the replacement introduces a brand new call target
+    // (`validate`) that wasn't referenced before — a genuine call-graph
+    // shape change, so the pre-existing fan-in must still gate.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,1 +3,1 @@',
+      '-  return a + b;',
+      '+  return validate(a) + b;',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(false);
+    expect(result.violations.length).toBe(1);
+    expect(result.violations[0].name).toBe('add');
+    expect(result.exemptedCount).toBe(0);
+  });
+
+  test('still fails for a high-fan-in function when the diff changes its own declaration line', () => {
+    // add's declaration is at line 1. Even though neither side references a
+    // new call target, touching the declaration line itself is a signature
+    // risk and must not be exempted.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -1,1 +1,1 @@',
+      '-function add(a, b) {',
+      '+function add(a, b, c) {',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(false);
+    expect(result.violations.length).toBe(1);
+    expect(result.violations[0].name).toBe('add');
+  });
+
+  test('still fails when a call target is swapped even though a paren token is reused', () => {
+    // Both sides reference identifiers followed by `(`, but the SETS differ
+    // (formatResult replaced by parseInput) — a real callee swap, not a
+    // no-op, so it must not be exempted.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,1 +3,1 @@',
+      '-  return formatResult(a) + b;',
+      '+  return parseInput(a) + b;',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(false);
+    expect(result.exemptedCount).toBe(0);
+  });
+
+  test('still fails for a high-fan-in function when a parameter is added on line 2+ of a multi-line signature', () => {
+    // multiLineSig's declaration spans lines 20 (opening) through 22 (its
+    // last parameter, `b`, on its own line) — only line 20 is `def.line`.
+    // Editing line 22 to add a parameter must still be read as a
+    // declaration/signature change even though it never touches line 20
+    // itself, and a parameter list has no `identifier(` tokens for the
+    // paren-token comparison to catch either.
+    const diff = [
+      '--- a/src/multiline.js',
+      '+++ b/src/multiline.js',
+      '@@ -22,1 +22,1 @@',
+      '-  b,',
+      '+  b, c,',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(false);
+    expect(result.violations.length).toBe(1);
+    expect(result.violations[0].name).toBe('multiLineSig');
+    expect(result.exemptedCount).toBe(0);
+  });
+
+  test('passes for a high-fan-in function when a multi-line signature is untouched and only the body changes', () => {
+    // Sanity check for the fix above: an edit strictly inside the body
+    // (line 23, past the last parameter on line 22) with no new call target
+    // must still be exempted — the signature-end-line widening must not
+    // over-exempt the whole function span.
+    const diff = [
+      '--- a/src/multiline.js',
+      '+++ b/src/multiline.js',
+      '@@ -23,1 +23,1 @@',
+      '-  return a + b + 0;',
+      '+  return a + b + ZERO_OFFSET;',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(true);
+    expect(result.exemptedCount).toBe(1);
+  });
+
+  test('still fails when a real call is replaced by a string literal merely mentioning the same identifier', () => {
+    // The removed line makes a genuine call to `bar`; the added line only
+    // *mentions* `bar(` inside a string literal. Without stripping string
+    // content first, the naive regex would read both sides as referencing
+    // the token "bar" and wrongly treat this as a no-op.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,1 +3,1 @@',
+      '-  return bar() + b;',
+      "+  return 'invoke bar(x)' + b;",
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(false);
+    expect(result.exemptedCount).toBe(0);
   });
 });
 
