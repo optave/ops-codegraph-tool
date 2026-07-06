@@ -9,7 +9,7 @@
 
 use crate::types::FileSymbols;
 use rusqlite::Connection;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Per-file metrics to upsert into node_metrics.
 #[derive(Debug, Clone)]
@@ -25,7 +25,7 @@ pub struct FileMetrics {
 
 /// Build line count map from parsed file symbols.
 pub fn build_line_count_map(
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     root_dir: &str,
 ) -> HashMap<String, i64> {
     let mut map = HashMap::new();
@@ -50,7 +50,7 @@ pub fn update_changed_file_metrics(
     conn: &Connection,
     changed_files: &[String],
     line_count_map: &HashMap<String, i64>,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
 ) {
     if changed_files.is_empty() {
         return;
@@ -250,7 +250,7 @@ struct ImportEdge {
 /// and contains-edge insertion to affected directories only.
 pub fn build_full_structure(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     discovered_dirs: &HashSet<String>,
     root_dir: &str,
     line_count_map: &HashMap<String, i64>,
@@ -408,7 +408,7 @@ fn load_file_paths_in_dirs(conn: &Connection, dirs: &HashSet<String>) -> Vec<Str
 fn insert_dir_to_file_contains_edges(
     tx: &rusqlite::Transaction,
     stmt: &mut rusqlite::Statement,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     all_file_paths: &[String],
     affected_dirs: Option<&HashSet<String>>,
 ) {
@@ -508,7 +508,7 @@ fn restore_unchanged_dir_edges(
 
 fn insert_contains_edges(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     all_dirs: &HashSet<String>,
     changed_files: Option<&[String]>,
 ) {
@@ -595,7 +595,7 @@ fn compute_import_edge_maps(
 
 fn compute_file_metrics(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     line_count_map: &HashMap<String, i64>,
     fan_in_map: &HashMap<String, i64>,
     fan_out_map: &HashMap<String, i64>,
@@ -718,7 +718,7 @@ fn record_file_in_ancestor_dirs<'a>(
 fn build_dir_files_map<'a>(
     all_dirs: &'a HashSet<String>,
     all_db_files: &'a [String],
-    file_symbols: &'a HashMap<String, FileSymbols>,
+    file_symbols: &'a BTreeMap<String, FileSymbols>,
 ) -> HashMap<&'a str, Vec<&'a str>> {
     let mut dir_files: HashMap<&str, Vec<&str>> = HashMap::new();
     for dir in all_dirs {
@@ -831,7 +831,7 @@ fn count_distinct_definitions(sym: &FileSymbols) -> i64 {
 fn compute_dir_symbol_counts<'a>(
     dir_files: &HashMap<&'a str, Vec<&'a str>>,
     db_symbol_counts: &HashMap<String, i64>,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
 ) -> HashMap<&'a str, i64> {
     let mut dir_symbol_counts: HashMap<&str, i64> = HashMap::new();
     for (dir, files) in dir_files {
@@ -897,7 +897,7 @@ fn write_directory_metric_rows(
 
 fn compute_directory_metrics(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     all_dirs: &HashSet<String>,
     import_edges: &[ImportEdge],
 ) {
@@ -920,7 +920,7 @@ mod tests {
 
     #[test]
     fn line_count_map_from_symbols() {
-        let mut file_symbols = HashMap::new();
+        let mut file_symbols = BTreeMap::new();
         let mut sym = FileSymbols::new("src/a.ts".to_string());
         sym.line_count = Some(42);
         file_symbols.insert("src/a.ts".to_string(), sym.clone());

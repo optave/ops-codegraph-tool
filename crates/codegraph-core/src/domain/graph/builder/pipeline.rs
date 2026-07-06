@@ -33,7 +33,7 @@ use crate::features::structure;
 use crate::types::{FileSymbols, ImportResolutionInput, TypeMapEntry};
 use rusqlite::Connection;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
@@ -218,12 +218,12 @@ fn parse_and_index_files(
     root_dir: &str,
     include_dataflow: bool,
     include_ast: bool,
-) -> HashMap<String, FileSymbols> {
+) -> BTreeMap<String, FileSymbols> {
     let files_to_parse: Vec<String> =
         parse_changes.iter().map(|c| c.abs_path.clone()).collect();
     let parsed =
         parallel::parse_files_parallel(&files_to_parse, root_dir, include_dataflow, include_ast);
-    let mut file_symbols: HashMap<String, FileSymbols> = HashMap::new();
+    let mut file_symbols: BTreeMap<String, FileSymbols> = BTreeMap::new();
     for mut sym in parsed {
         let rel = relative_path(root_dir, &sym.file);
         sym.file = rel.clone();
@@ -235,7 +235,7 @@ fn parse_and_index_files(
 /// Build the batched import-resolution input set and run resolution, returning
 /// `(batch_resolved, known_files)`. Mirrors stage 6 of `run_pipeline`.
 fn resolve_pipeline_imports(
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     collect_files: &[String],
     root_dir: &str,
     napi_aliases: &crate::types::PathAliases,
@@ -288,7 +288,7 @@ fn reconnect_saved_reverse_dep_edges(
 /// are present (reverse-deps are reconnected, not re-parsed).
 fn run_structure_phase(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     collect_directories: &HashSet<String>,
     root_dir: &str,
     line_count_map: &HashMap<String, i64>,
@@ -326,7 +326,7 @@ fn run_structure_phase(
 /// nodes are gone (#1027).
 fn run_role_classification(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     removal_reverse_deps: Vec<String>,
     is_full_build: bool,
 ) {
@@ -367,7 +367,7 @@ struct AnalysisPersistenceResult {
 /// analysis scope.
 fn run_analysis_persistence(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     analysis_scope: Option<&Vec<String>>,
     opts: &BuildOpts,
     include_ast: bool,
@@ -765,7 +765,7 @@ fn reparse_barrel_candidates(
     root_dir: &str,
     napi_aliases: &crate::types::PathAliases,
     known_files: &HashSet<String>,
-    file_symbols: &mut HashMap<String, FileSymbols>,
+    file_symbols: &mut BTreeMap<String, FileSymbols>,
     batch_resolved: &mut HashMap<String, String>,
 ) {
     // Find all barrel files from DB (files that have 'reexports' edges)
@@ -892,7 +892,7 @@ fn collect_imported_barrel_candidates(
     from_files: &[String],
     batch_resolved: &HashMap<String, String>,
     barrel_files_in_db: &HashSet<String>,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
 ) -> Vec<String> {
     let mut out = Vec::new();
     for rel_path in from_files {
@@ -926,7 +926,7 @@ fn collect_reexport_from_barrels(
     conn: &Connection,
     root_dir: &str,
     changed_files: &[String],
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
 ) -> Vec<String> {
     let mut out = Vec::new();
     let mut stmt = match conn.prepare(
@@ -1018,7 +1018,7 @@ fn check_version_mismatch(conn: &Connection) -> bool {
 
 /// Build InsertNodesBatch from parsed file symbols.
 fn build_insert_batches(
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
 ) -> Vec<crate::domain::graph::builder::stages::insert_nodes::InsertNodesBatch> {
     file_symbols
         .iter()
@@ -1155,7 +1155,7 @@ const EDGE_NODE_KIND_FILTER: &str = "kind IN ('function','method','class','inter
 /// ultimate definition files barrel chains resolve to. Mirrors the JS
 /// `relevantFiles` accumulation in `loadNodes` (#976, greptile P1).
 fn compute_edge_relevant_files(
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     import_ctx: &crate::domain::graph::builder::stages::import_edges::ImportEdgeContext,
 ) -> HashSet<String> {
     let mut relevant_files: HashSet<String> = file_symbols.keys().cloned().collect();
@@ -1192,7 +1192,7 @@ fn compute_edge_relevant_files(
 /// `Vec<NodeInfo>` suitable for the native edge builder.
 fn load_edge_node_set(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     import_ctx: &crate::domain::graph::builder::stages::import_edges::ImportEdgeContext,
     is_incremental: bool,
 ) -> Vec<crate::domain::graph::builder::stages::build_edges::NodeInfo> {
@@ -1354,7 +1354,7 @@ fn collect_imported_names_for_file(
 /// so method calls and receiver edges on that variable resolve. Must run
 /// before `build_and_insert_call_edges`.
 fn propagate_return_types_across_files(
-    file_symbols: &mut HashMap<String, FileSymbols>,
+    file_symbols: &mut BTreeMap<String, FileSymbols>,
     import_ctx: &ImportEdgeContext,
 ) {
     use crate::domain::graph::builder::stages::build_edges::PROPAGATION_HOP_PENALTY;
@@ -1386,7 +1386,7 @@ fn propagate_return_types_across_files(
 /// - `global_return_types`: flat map for qualified `Type.method` lookups; higher
 ///   confidence wins, tie-break is deterministic (paths visited in sorted order).
 fn build_return_type_index(
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
 ) -> (
     HashMap<String, HashMap<String, (String, f64)>>,
     HashMap<String, (String, f64)>,
@@ -1511,7 +1511,7 @@ fn insert_call_edge_rows(conn: &Connection, edges: &[crate::domain::graph::build
 /// Full builds always load every node — there is no smaller set anyway.
 fn build_and_insert_call_edges(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     import_ctx: &ImportEdgeContext,
     is_incremental: bool,
 ) {
@@ -1669,7 +1669,7 @@ fn build_analysis_node_map(
 
 /// Convert FileSymbols AST nodes to FileAstBatch format for `ast::do_insert_ast_nodes`.
 fn build_ast_batches(
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     analysis_files: &HashSet<&str>,
 ) -> Vec<FileAstBatch> {
     let mut batches = Vec::new();
@@ -1698,7 +1698,7 @@ fn build_ast_batches(
 /// Write complexity metrics from parsed definitions to the `function_complexity` table.
 fn write_complexity(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     analysis_files: &HashSet<&str>,
     node_id_map: &HashMap<(String, String, u32), i64>,
 ) -> bool {
@@ -1777,7 +1777,7 @@ fn write_complexity(
 /// Write CFG blocks and edges from parsed definitions to DB tables.
 fn write_cfg(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     analysis_files: &HashSet<&str>,
     node_id_map: &HashMap<(String, String, u32), i64>,
 ) -> bool {
@@ -1882,7 +1882,7 @@ fn write_def_cfg(
 /// `makeNodeResolver` logic (prefer same-file match, fall back to global).
 fn write_dataflow(
     conn: &Connection,
-    file_symbols: &HashMap<String, FileSymbols>,
+    file_symbols: &BTreeMap<String, FileSymbols>,
     analysis_files: &HashSet<&str>,
 ) -> bool {
     let tx = match conn.unchecked_transaction() {
@@ -2050,7 +2050,7 @@ mod tests {
     use super::*;
     use crate::types::{Import, PathAliases};
 
-    fn make_import_ctx(file_symbols: &HashMap<String, FileSymbols>) -> ImportEdgeContext {
+    fn make_import_ctx(file_symbols: &BTreeMap<String, FileSymbols>) -> ImportEdgeContext {
         let mut batch_resolved = HashMap::new();
         batch_resolved.insert("/repo/driver.js|./service.js".to_string(), "service.js".to_string());
         ImportEdgeContext {
@@ -2089,7 +2089,7 @@ mod tests {
             receiver_type_name: None,
         });
 
-        let mut file_symbols = HashMap::new();
+        let mut file_symbols = BTreeMap::new();
         file_symbols.insert("service.js".to_string(), service);
         file_symbols.insert("driver.js".to_string(), driver);
         let import_ctx = make_import_ctx(&file_symbols);
@@ -2120,7 +2120,7 @@ mod tests {
             receiver_type_name: Some("Factory".to_string()),
         });
 
-        let mut file_symbols = HashMap::new();
+        let mut file_symbols = BTreeMap::new();
         file_symbols.insert("factory.js".to_string(), factory);
         file_symbols.insert("driver.js".to_string(), driver);
         let import_ctx = make_import_ctx(&file_symbols);
@@ -2151,7 +2151,7 @@ mod tests {
             receiver_type_name: None,
         });
 
-        let mut file_symbols = HashMap::new();
+        let mut file_symbols = BTreeMap::new();
         file_symbols.insert("service.js".to_string(), service);
         file_symbols.insert("driver.js".to_string(), driver);
         let import_ctx = make_import_ctx(&file_symbols);

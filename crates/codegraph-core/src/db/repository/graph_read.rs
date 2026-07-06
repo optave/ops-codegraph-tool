@@ -1675,8 +1675,15 @@ impl NativeDatabase {
             .map(|k| format!("'{k}'"))
             .collect::<Vec<_>>()
             .join(",");
+        // ORDER BY id: without an explicit order, SQLite's row order for a
+        // bare WHERE scan is unspecified — it happened to track physical/
+        // insertion order, which is only deterministic now that the build
+        // pipeline inserts nodes in a fixed (BTreeMap-sorted) order (#1734).
+        // Sorting explicitly here removes the dependency on that unspecified
+        // behavior so downstream consumers (e.g. community detection) build
+        // the same graph on every run regardless of how rows are stored.
         let sql = format!(
-            "SELECT id, name, kind, file FROM nodes WHERE kind IN ({kinds_sql})"
+            "SELECT id, name, kind, file FROM nodes WHERE kind IN ({kinds_sql}) ORDER BY id"
         );
         let mut stmt = conn
             .prepare_cached(&sql)
@@ -1701,7 +1708,8 @@ impl NativeDatabase {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare_cached(
-                "SELECT source_id, target_id, confidence FROM edges WHERE kind = 'calls'",
+                "SELECT source_id, target_id, confidence FROM edges WHERE kind = 'calls' \
+                 ORDER BY source_id, target_id",
             )
             .map_err(|e| napi::Error::from_reason(format!("get_call_edges prepare: {e}")))?;
         let rows = stmt
@@ -1721,8 +1729,10 @@ impl NativeDatabase {
     #[napi]
     pub fn get_file_nodes_all(&self) -> napi::Result<Vec<NativeFileNodeRow>> {
         let conn = self.conn()?;
+        // ORDER BY id — see the comment in get_callable_nodes for why an
+        // explicit order matters for build-to-build determinism (#1734).
         let mut stmt = conn
-            .prepare_cached("SELECT id, name, file FROM nodes WHERE kind = 'file'")
+            .prepare_cached("SELECT id, name, file FROM nodes WHERE kind = 'file' ORDER BY id")
             .map_err(|e| napi::Error::from_reason(format!("get_file_nodes_all prepare: {e}")))?;
         let rows = stmt
             .query_map([], |row| {
@@ -1743,7 +1753,8 @@ impl NativeDatabase {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare_cached(
-                "SELECT source_id, target_id FROM edges WHERE kind IN ('imports','imports-type')",
+                "SELECT source_id, target_id FROM edges WHERE kind IN ('imports','imports-type') \
+                 ORDER BY source_id, target_id",
             )
             .map_err(|e| napi::Error::from_reason(format!("get_import_edges prepare: {e}")))?;
         let rows = stmt

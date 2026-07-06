@@ -8,7 +8,7 @@ use crate::domain::graph::builder::barrel_resolution::{self, BarrelContext, Reex
 use crate::domain::graph::resolve;
 use crate::types::{FileSymbols, PathAliases};
 use rusqlite::Connection;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// A resolved reexport entry for a barrel file.
@@ -28,7 +28,7 @@ pub struct ImportEdgeContext {
     /// Set of files that are barrel-only (reexport count >= definition count).
     pub barrel_only_files: HashSet<String>,
     /// Parsed symbols per relative path.
-    pub file_symbols: HashMap<String, FileSymbols>,
+    pub file_symbols: BTreeMap<String, FileSymbols>,
     /// Root directory.
     pub root_dir: String,
     /// Path aliases.
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn barrel_detection() {
-        let mut file_symbols = HashMap::new();
+        let mut file_symbols = BTreeMap::new();
         // 1 def, 2 reexports → barrel
         file_symbols.insert(
             "src/index.ts".to_string(),

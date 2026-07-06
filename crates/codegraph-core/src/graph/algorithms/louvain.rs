@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::shared::constants::{
     DEFAULT_RANDOM_SEED, LOUVAIN_MAX_LEVELS, LOUVAIN_MAX_PASSES, LOUVAIN_MIN_GAIN,
@@ -48,9 +48,16 @@ pub fn louvain_communities(
 }
 
 /// Internal state for the Louvain multi-level loop.
+///
+/// `cur_edges` uses `BTreeMap` (not `HashMap`) so that iteration order is
+/// deterministic across process runs. Rust's default `HashMap` hasher is
+/// randomly seeded per-process (DoS resistance), so iterating a `HashMap`
+/// here would silently reorder the adjacency list built in
+/// `local_move_phase` on every run, changing which local optimum the greedy
+/// local-move phase converges to even with a fixed `rng_state` seed (#1734).
 struct LouvainState {
     cur_n: usize,
-    cur_edges: HashMap<(usize, usize), f64>,
+    cur_edges: BTreeMap<(usize, usize), f64>,
     cur_degree: Vec<f64>,
     original_community: Vec<usize>,
     rng_state: u32,
@@ -61,15 +68,17 @@ fn louvain_init(
     edges: &[GraphEdge],
     node_ids: &[String],
     seed: u32,
-) -> (HashMap<(usize, usize), f64>, f64, LouvainState) {
+) -> (BTreeMap<(usize, usize), f64>, f64, LouvainState) {
     let n = node_ids.len();
     let mut id_to_idx: HashMap<&str, usize> = HashMap::with_capacity(n);
     for (i, id) in node_ids.iter().enumerate() {
         id_to_idx.insert(id.as_str(), i);
     }
 
-    // Build undirected weighted edge list (deduplicate, merge parallel edges)
-    let mut edge_map: HashMap<(usize, usize), f64> = HashMap::new();
+    // Build undirected weighted edge list (deduplicate, merge parallel edges).
+    // BTreeMap keeps this deterministically ordered by (src, tgt) — see the
+    // `LouvainState.cur_edges` doc comment above for why this matters.
+    let mut edge_map: BTreeMap<(usize, usize), f64> = BTreeMap::new();
     for edge in edges {
         if let (Some(&src), Some(&tgt)) = (
             id_to_idx.get(edge.source.as_str()),
@@ -145,7 +154,12 @@ fn local_move_phase(
             let node_comm = level_comm[node];
             let node_deg = state.cur_degree[node];
 
-            let mut comm_w: HashMap<usize, f64> = HashMap::new();
+            // BTreeMap (not HashMap) so the best-move scan below visits
+            // candidate communities in a fixed, deterministic order —
+            // otherwise a genuine tie in `gain` would be broken by Rust's
+            // per-process-randomized HashMap iteration order instead of a
+            // reproducible rule (#1734).
+            let mut comm_w: BTreeMap<usize, f64> = BTreeMap::new();
             for &(neighbor, w) in &adj[node] {
                 *comm_w.entry(level_comm[neighbor]).or_insert(0.0) += w;
             }
@@ -216,7 +230,7 @@ fn aggregation_phase(
     }
 
     // Build coarse graph for next level
-    let mut coarse_edge_map: HashMap<(usize, usize), f64> = HashMap::new();
+    let mut coarse_edge_map: BTreeMap<(usize, usize), f64> = BTreeMap::new();
     for (&(src, tgt), &w) in &state.cur_edges {
         let cu = level_comm[src];
         let cv = level_comm[tgt];
@@ -241,7 +255,7 @@ fn aggregation_phase(
 
 /// Compute final modularity score: Q = sum_c [ L_c / m - gamma * (k_c / 2m)^2 ]
 fn compute_modularity(
-    edge_map: &HashMap<(usize, usize), f64>,
+    edge_map: &BTreeMap<(usize, usize), f64>,
     original_community: &[usize],
     total_weight: f64,
     resolution: f64,
@@ -397,5 +411,66 @@ mod tests {
             .collect();
         assert_eq!(map["a"], map["b"]);
         assert_eq!(map["b"], map["c"]);
+    }
+
+    /// Regression test for #1734: `codegraph communities --drift` produced
+    /// different modularity/community assignments across separate full
+    /// rebuilds of byte-identical source. Root cause: `local_move_phase`
+    /// accumulated per-candidate-community weights in a `HashMap`, whose
+    /// iteration order is randomized per-process — so a genuine tie in
+    /// modularity gain between candidate communities was broken by hashmap
+    /// bucket order instead of a reproducible rule, even with a fixed
+    /// `random_seed`. Fixed by switching `cur_edges`/`comm_w` to `BTreeMap`.
+    ///
+    /// This graph is symmetric by construction — three disjoint triangles
+    /// plus a bridge node connected with equal weight to one member of each
+    /// triangle — so moving the bridge node into any of the three triangles
+    /// yields the exact same modularity gain, forcing a genuine tie on every
+    /// run of the local-move phase.
+    #[test]
+    fn test_louvain_deterministic_across_repeated_calls_with_tie() {
+        let edges = vec![
+            edge("a1", "a2"),
+            edge("a2", "a3"),
+            edge("a3", "a1"),
+            edge("b1", "b2"),
+            edge("b2", "b3"),
+            edge("b3", "b1"),
+            edge("c1", "c2"),
+            edge("c2", "c3"),
+            edge("c3", "c1"),
+            edge("x", "a1"),
+            edge("x", "b1"),
+            edge("x", "c1"),
+        ];
+        let nodes: Vec<String> = vec!["a1", "a2", "a3", "b1", "b2", "b3", "c1", "c2", "c3", "x"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let mut snapshots: Vec<(String, f64)> = Vec::new();
+        for _ in 0..30 {
+            let result = louvain_communities(edges.clone(), nodes.clone(), Some(1.0), Some(42));
+            let mut pairs: Vec<String> = result
+                .assignments
+                .iter()
+                .map(|a| format!("{}:{}", a.node, a.community))
+                .collect();
+            pairs.sort();
+            snapshots.push((pairs.join(","), result.modularity));
+        }
+
+        let first = &snapshots[0];
+        for (i, snapshot) in snapshots.iter().enumerate().skip(1) {
+            assert_eq!(
+                snapshot.0, first.0,
+                "run {i} produced a different assignment than run 0 — \
+                 tie-breaking is not deterministic"
+            );
+            assert_eq!(
+                snapshot.1, first.1,
+                "run {i} produced a different modularity than run 0"
+            );
+        }
     }
 }
