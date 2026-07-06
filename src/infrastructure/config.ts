@@ -279,6 +279,34 @@ const _globalConfigCache = new Map<string, Record<string, unknown> | null>();
 // ── Global config file location ─────────────────────────────────────────
 
 /**
+ * Compute the platform-specific default global-config path, ignoring
+ * CODEGRAPH_USER_CONFIG and file existence — callers handle those separately.
+ * Shared by getDefaultUserConfigPath() and resolveUserConfigPath() (previously
+ * duplicated verbatim between the two — issue #1746).
+ *
+ * Priority:
+ * 1. $XDG_CONFIG_HOME/codegraph/config.json
+ * 2. %APPDATA%\codegraph\config.json  (Windows)
+ * 3. ~/.config/codegraph/config.json  (fallback; also the Windows fallback
+ *    when %APPDATA% is unset)
+ *
+ * @param home  Home directory to use for the fallback branches. Defaults to
+ *   os.homedir(); accepted as a parameter so a caller that already computed
+ *   it (e.g. to reuse for a legacy-path check) doesn't pay for a second call.
+ */
+function computePlatformDefaultConfigPath(home: string = os.homedir()): string {
+  const xdgConfig = process.env.XDG_CONFIG_HOME;
+  if (xdgConfig) return path.join(xdgConfig, 'codegraph', 'config.json');
+  if (process.platform === 'win32') {
+    const appdata = process.env.APPDATA;
+    return appdata
+      ? path.join(appdata, 'codegraph', 'config.json')
+      : path.join(home, '.config', 'codegraph', 'config.json');
+  }
+  return path.join(home, '.config', 'codegraph', 'config.json');
+}
+
+/**
  * Return the canonical path where a new global config file should be written.
  *
  * Uses the same priority logic as resolveUserConfigPath() but always returns a
@@ -294,17 +322,7 @@ const _globalConfigCache = new Map<string, Record<string, unknown> | null>();
 export function getDefaultUserConfigPath(): string {
   const envPath = process.env.CODEGRAPH_USER_CONFIG;
   if (envPath) return envPath;
-
-  const home = os.homedir();
-  const xdgConfig = process.env.XDG_CONFIG_HOME;
-  if (xdgConfig) return path.join(xdgConfig, 'codegraph', 'config.json');
-  if (process.platform === 'win32') {
-    const appdata = process.env.APPDATA;
-    return appdata
-      ? path.join(appdata, 'codegraph', 'config.json')
-      : path.join(home, '.config', 'codegraph', 'config.json');
-  }
-  return path.join(home, '.config', 'codegraph', 'config.json');
+  return computePlatformDefaultConfigPath();
 }
 
 /**
@@ -328,22 +346,7 @@ export function resolveUserConfigPath(): string | null {
   }
 
   const home = os.homedir();
-
-  // XDG_CONFIG_HOME takes priority on all platforms when explicitly set.
-  // Falls back to %APPDATA% on Windows, or ~/.config on Unix/macOS.
-  let platformDefault: string;
-  const xdgConfig = process.env.XDG_CONFIG_HOME;
-  if (xdgConfig) {
-    platformDefault = path.join(xdgConfig, 'codegraph', 'config.json');
-  } else if (process.platform === 'win32') {
-    const appdata = process.env.APPDATA;
-    platformDefault = appdata
-      ? path.join(appdata, 'codegraph', 'config.json')
-      : path.join(home, '.config', 'codegraph', 'config.json');
-  } else {
-    platformDefault = path.join(home, '.config', 'codegraph', 'config.json');
-  }
-
+  const platformDefault = computePlatformDefaultConfigPath(home);
   if (fs.existsSync(platformDefault)) return platformDefault;
 
   const legacyPath = path.join(home, '.codegraph', 'config.json');
