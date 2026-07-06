@@ -228,8 +228,13 @@ function runScenario(engine: EngineMode): void {
         // The edit never touches these functions' own source, so cyclomatic
         // must also be byte-for-byte identical to the pre-edit baseline.
         expect(incrSnap!.cyclomatic).toBe(beforeSnap!.cyclomatic);
+        // Same stability guarantee applies to cognitive/MI: the untouched
+        // functions' source never changes, so both must match the reference
+        // full rebuild AND the pre-edit baseline.
         expect(incrSnap!.cognitive).toBe(refSnap!.cognitive);
+        expect(incrSnap!.cognitive).toBe(beforeSnap!.cognitive);
         expect(incrSnap!.maintainabilityIndex).toBe(refSnap!.maintainabilityIndex);
+        expect(incrSnap!.maintainabilityIndex).toBe(beforeSnap!.maintainabilityIndex);
       }
     }, 60_000);
   });
