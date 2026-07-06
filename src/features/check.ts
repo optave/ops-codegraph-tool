@@ -74,6 +74,9 @@ function isDevNullTargetLine(line: string): boolean {
 class DiffLineTracker {
   private oldLineCursor = 0;
   private newLineCursor = 0;
+  /** End-exclusive old/new bounds declared by the current hunk's `@@ -a,b +c,d @@` header — see `insideHunk`. */
+  private oldHunkEnd = 0;
+  private newHunkEnd = 0;
   private removedRunStart: number | null = null;
   private removedRunEnd: number | null = null;
   private addedRunStart: number | null = null;
@@ -89,19 +92,40 @@ class DiffLineTracker {
    */
   private pendingRemovedText: string[] = [];
 
-  startHunk(oldStart: number, newStart: number): void {
+  startHunk(oldStart: number, oldCount: number, newStart: number, newCount: number): void {
     this.oldLineCursor = oldStart;
     this.newLineCursor = newStart;
+    this.oldHunkEnd = oldStart + oldCount;
+    this.newHunkEnd = newStart + newCount;
     this.pendingRemovedText = [];
   }
 
   /**
+   * True while either cursor is still short of the bounds declared by the
+   * most recent hunk header — i.e. while a hunk body is still being walked.
+   * False before the first hunk header of a file is seen, and again once
+   * both sides' declared line counts have been fully consumed.
+   *
+   * `parseDiffOutput` only attempts `--- `/`+++ b/` file-header matching
+   * while this is false. A hunk body line whose own content starts with
+   * `-- `/`++ ` (e.g. removing a Markdown horizontal rule `-- foo`) becomes
+   * `--- foo`/`+++ foo` once diff-prefixed — indistinguishable from a real
+   * file header by content alone — so position, not pattern, is what must
+   * disambiguate it. See issue #1761.
+   */
+  insideHunk(): boolean {
+    return this.oldLineCursor < this.oldHunkEnd || this.newLineCursor < this.newHunkEnd;
+  }
+
+  /**
    * Consumes one hunk body line, advancing the old- and new-side cursors as
-   * needed. Lines beginning with `--- `/`+++ ` (source-file headers) are
-   * already filtered out by the caller before a line ever reaches here, so a
-   * leading `-`/`+` unambiguously marks a removed/added line — even one
-   * whose own content starts with dashes or pluses (e.g. removing a line of
-   * literal text `-- foo`).
+   * needed. The caller only attempts `--- `/`+++ ` file-header matching while
+   * `insideHunk()` is false, so a body line that happens to start with one of
+   * those prefixes (the diff-prefixed form of a removed/added line whose own
+   * content starts with dashes or pluses, e.g. literal text `-- foo`) still
+   * reaches here as ordinary content instead of being misdetected as a
+   * header. A leading `-`/`+` therefore unambiguously marks a removed/added
+   * line regardless of what follows it.
    */
   consume(
     line: string,
@@ -197,44 +221,60 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
   const tracker = new DiffLineTracker();
 
   for (const line of diffOutput.split('\n')) {
-    if (isDevNullSourceLine(line)) {
-      prevIsDevNull = true;
-      continue;
-    }
-    if (isSourceFileHeaderLine(line)) {
-      prevIsDevNull = false;
-      continue;
-    }
-    const newFile = extractNewFileName(line);
-    if (newFile) {
-      if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges, changedEdits);
-      currentFile = newFile;
-      if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
-      if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
-      if (!changedEdits.has(currentFile)) changedEdits.set(currentFile, []);
-      if (prevIsDevNull) newFiles.add(currentFile);
-      prevIsDevNull = false;
-      continue;
-    }
-    if (isDevNullTargetLine(line)) {
-      // `+++ /dev/null` (file deletion) is not `b/`-prefixed, so
-      // extractNewFileName returned null above and this line would otherwise
-      // fall through to tracker.consume and be misread as an added source
-      // line under whichever file preceded this one in the diff. Flush and
-      // clear the file context instead — the deleted file's hunk body that
-      // follows has no corresponding DB entry to check against anyway (its
-      // nodes are purged from the graph), so there is nothing to track here.
-      if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges, changedEdits);
-      currentFile = null;
-      prevIsDevNull = false;
-      continue;
+    // File-header lines (`--- `/`+++ b/`/`+++ /dev/null`) only ever appear
+    // between hunks — before the first hunk of a file, or once the previous
+    // hunk's declared old/new line counts are fully consumed. Gating this
+    // whole block on `!insideHunk()` keeps a hunk-body line whose own
+    // content starts with `-- `/`++ ` (e.g. a Markdown horizontal rule) from
+    // being misdetected as a file header purely because of a text
+    // coincidence — position, not pattern, decides. See issue #1761.
+    if (!tracker.insideHunk()) {
+      if (isDevNullSourceLine(line)) {
+        prevIsDevNull = true;
+        continue;
+      }
+      if (isSourceFileHeaderLine(line)) {
+        prevIsDevNull = false;
+        continue;
+      }
+      const newFile = extractNewFileName(line);
+      if (newFile) {
+        if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges, changedEdits);
+        currentFile = newFile;
+        if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
+        if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
+        if (!changedEdits.has(currentFile)) changedEdits.set(currentFile, []);
+        if (prevIsDevNull) newFiles.add(currentFile);
+        prevIsDevNull = false;
+        continue;
+      }
+      if (isDevNullTargetLine(line)) {
+        // `+++ /dev/null` (file deletion) is not `b/`-prefixed, so
+        // extractNewFileName returned null above and this line would otherwise
+        // fall through to tracker.consume and be misread as an added source
+        // line under whichever file preceded this one in the diff. Flush and
+        // clear the file context instead — the deleted file's hunk body that
+        // follows has no corresponding DB entry to check against anyway (its
+        // nodes are purged from the graph), so there is nothing to track here.
+        if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges, changedEdits);
+        currentFile = null;
+        prevIsDevNull = false;
+        continue;
+      }
     }
     if (!currentFile) continue;
 
     const hunkMatch = line.match(HUNK_RE);
     if (hunkMatch) {
       tracker.flush(currentFile, oldRanges, changedRanges, changedEdits);
-      tracker.startHunk(parseInt(hunkMatch[1]!, 10), parseInt(hunkMatch[3]!, 10));
+      const oldCount = hunkMatch[2] === undefined ? 1 : parseInt(hunkMatch[2], 10);
+      const newCount = hunkMatch[4] === undefined ? 1 : parseInt(hunkMatch[4], 10);
+      tracker.startHunk(
+        parseInt(hunkMatch[1]!, 10),
+        oldCount,
+        parseInt(hunkMatch[3]!, 10),
+        newCount,
+      );
       continue;
     }
 

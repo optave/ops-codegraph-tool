@@ -211,13 +211,26 @@ describe('parseDiffOutput', () => {
   });
 
   test('handles multiple files', () => {
+    // Each hunk header's declared old/new line counts must be backed by a
+    // matching number of actual body lines — parseDiffOutput is
+    // position-aware (issue #1761) and treats a hunk as still "open" until
+    // its declared counts are consumed, so a header with no body would
+    // swallow the next file's `--- `/`+++ ` lines as hunk content instead of
+    // recognizing them.
     const diff = [
       '--- a/src/a.js',
       '+++ b/src/a.js',
       '@@ -5,2 +5,3 @@',
+      ' context a',
+      '-old a',
+      '+new a',
+      '+extra a',
       '--- a/src/b.js',
       '+++ b/src/b.js',
       '@@ -10,1 +10,2 @@',
+      '-old b',
+      '+new b',
+      '+extra b',
     ].join('\n');
 
     const { changedRanges } = parseDiffOutput(diff);
@@ -294,6 +307,69 @@ describe('parseDiffOutput', () => {
     expect(changedEdits.get('src/math.js')).toEqual([
       { start: 1, end: 2, addedText: ['line B', 'line B2'], removedText: ['line A', 'line A2'] },
     ]);
+  });
+
+  // ─── hunk-scoped file-header detection (issue #1761) ───────────────────
+
+  test('a removed line whose content starts with "-- " is treated as hunk content, not a file header', () => {
+    // A removed line whose original text is `-- horizontal rule` becomes the
+    // diff line `--- horizontal rule` once prefixed with the single-`-`
+    // removal marker — three dashes plus a space, indistinguishable from a
+    // `--- a/file` source header by content alone (confirmed against real
+    // `git diff` output on a fixture with this exact content). Without
+    // position-aware parsing this line is misdetected as a file header and
+    // silently dropped, desyncing the old-line cursor for the rest of the
+    // hunk.
+    const diff = [
+      '--- a/src/oldfile.md',
+      '+++ b/src/oldfile.md',
+      '@@ -10,4 +10,2 @@',
+      '-line A',
+      '--- horizontal rule',
+      ' context unchanged',
+      '-line D',
+      '+replacement',
+    ].join('\n');
+
+    const { oldRanges, changedRanges } = parseDiffOutput(diff);
+    // Both removed lines (old lines 10-11) form one contiguous run, and the
+    // trailing removed line correctly lands at old line 13 — after the
+    // untouched context line at 12 — rather than shifted down by one.
+    expect(oldRanges.get('src/oldfile.md')).toEqual([
+      { start: 10, end: 11 },
+      { start: 13, end: 13 },
+    ]);
+    expect(changedRanges.get('src/oldfile.md')).toEqual([{ start: 11, end: 11 }]);
+  });
+
+  test('an added line whose content starts with "++ b/" is treated as hunk content, not a new-file header', () => {
+    // Symmetric case: an added line whose original text is
+    // `++ b/some-file-path` becomes the diff line `+++ b/some-file-path`
+    // once prefixed with the single-`+` addition marker — indistinguishable
+    // from a `+++ b/<file>` new-file header by content alone (confirmed
+    // against real `git diff` output on a fixture with this exact content).
+    // Without position-aware parsing this line is misdetected as the start
+    // of a new file section, flushing the in-progress run under a phantom
+    // file key derived from the line's own content and misattributing every
+    // line that follows it in the hunk.
+    const diff = [
+      '--- a/src/real-file.md',
+      '+++ b/src/real-file.md',
+      '@@ -1,2 +1,4 @@',
+      ' context unchanged',
+      '-old line',
+      '+line A',
+      '+++ b/some-file-path',
+      '+line D',
+    ].join('\n');
+
+    const { changedRanges, oldRanges } = parseDiffOutput(diff);
+    // All three added lines (new lines 2-4) form one contiguous run under
+    // the real file, and no phantom "some-file-path" entry is created.
+    expect(changedRanges.get('src/real-file.md')).toEqual([{ start: 2, end: 4 }]);
+    expect(oldRanges.get('src/real-file.md')).toEqual([{ start: 2, end: 2 }]);
+    expect(changedRanges.has('some-file-path')).toBe(false);
+    expect(oldRanges.has('some-file-path')).toBe(false);
   });
 });
 
