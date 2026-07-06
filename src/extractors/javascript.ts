@@ -353,9 +353,11 @@ function dispatchQueryMatch(
     if (callfnInfo) calls.push(callfnInfo);
     calls.push(...extractCallbackReferenceCalls(c.callfn_node));
   } else if (c.callmem_node) {
-    // extractCallInfo → extractMemberExprCallInfo applies the plain-identifier guard for
-    // .call/.apply/.bind: when the object is a bare identifier (e.g. `fn.call(ctx)`),
-    // the call is emitted as static (no dynamic flag), matching the walk path and native engine.
+    // extractCallInfo → extractMemberExprCallInfo tags .call/.apply/.bind (e.g. `fn.call(ctx)`)
+    // as dynamic/reflection regardless of receiver shape, matching the walk path and native
+    // engine (#1778). The #1687 dedup-collision case — the same target already reached by a
+    // direct call from the same caller in the same scope — is resolved downstream in
+    // build-edges.ts's emitDirectCallEdgesForCall, not here.
     const callInfo = extractCallInfo(c.callmem_fn!, c.callmem_node);
     if (callInfo) calls.push(callInfo);
     const cbDef = extractCallbackDefinition(c.callmem_node, c.callmem_fn);
@@ -3357,16 +3359,18 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
     };
   }
 
-  // .call()/.apply()/.bind() — this-rebinding; the wrapped function is the real callee.
-  // When the object is a plain identifier (e.g. `f.call({})`), the target is statically
-  // known so we emit a static call (no dynamic flag).  This keeps parity with the native
-  // Rust engine, which also resolves these as dyn=0, and prevents the dynZeroEdgeRows
-  // upgrade path in emitDirectCallEdgesForCall from wrongly converting a dyn=0 edge
-  // (emitted by a prior direct `f()` call) to dyn=1.
-  // When the object is a member_expression (e.g. `obj.method.call({})`), we still mark
-  // it dynamic/reflection because the inner callee requires a second resolution hop.
+  // .call()/.apply()/.bind() — this-rebinding; the wrapped function is the real callee, but
+  // invoking it through .call/.apply/.bind is a genuinely reflective mechanism (a distinct
+  // invocation path from a plain `f()` call), so both identifier and member-expression
+  // receivers are tagged dynamic/reflection — matching the native Rust engine and preserving
+  // the informational value of the `reflection` DynamicKind (queryable via
+  // `codegraph roles --dynamic`; see ADR-002). This does NOT reintroduce #1687: that bug was
+  // a dedup-collision in build-edges.ts (a direct `f()` edge getting wrongly flipped to dyn=1
+  // by a later `f.call()` to the same target in the same scope), fixed narrowly at the
+  // edge-emission layer in emitDirectCallEdgesForCall rather than by suppressing the tag here.
   if (propText === 'call' || propText === 'apply' || propText === 'bind') {
-    if (obj && obj.type === 'identifier') return { name: obj.text, line: callLine };
+    if (obj && obj.type === 'identifier')
+      return { name: obj.text, line: callLine, dynamic: true, dynamicKind: 'reflection' };
     if (obj && obj.type === 'member_expression') {
       const innerProp = obj.childForFieldName('property');
       if (innerProp)

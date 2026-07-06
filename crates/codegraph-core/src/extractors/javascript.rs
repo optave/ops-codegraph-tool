@@ -4246,6 +4246,50 @@ mod tests {
         assert!(dynamic_calls.is_empty());
     }
 
+    // ── #1778: .call/.apply/.bind reflection tagging (parity pin) ───────────
+    //
+    // Pins the native extractor's classification of `.call/.apply/.bind` on both
+    // identifier and member-expression receivers as dynamic/reflection. This is
+    // the Option-A semantic from #1778: the WASM extractor previously stripped
+    // this tag for identifier receivers only, diverging from native. These tests
+    // guard against either engine's classification drifting again — the
+    // dedup-collision case that originally motivated the WASM regression (#1687)
+    // is a downstream build-edges.ts concern, not an extraction concern, so it is
+    // deliberately NOT re-tested here (see the JS-side pins in
+    // tests/integration for that).
+
+    #[test]
+    fn call_on_identifier_receiver_tags_reflection() {
+        let s = parse_js("function test(ctx) { greet.call(ctx, 'world'); }");
+        let c = s.calls.iter().find(|c| c.name == "greet").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+    }
+
+    #[test]
+    fn apply_on_identifier_receiver_tags_reflection() {
+        let s = parse_js("function test(ctx) { greet.apply(ctx, ['world']); }");
+        let c = s.calls.iter().find(|c| c.name == "greet").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+    }
+
+    #[test]
+    fn bind_on_identifier_receiver_tags_reflection() {
+        let s = parse_js("var bound = greet.bind(ctx);");
+        let c = s.calls.iter().find(|c| c.name == "greet").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+    }
+
+    #[test]
+    fn call_on_member_expression_receiver_tags_reflection() {
+        let s = parse_js("obj.method.call({});");
+        let c = s.calls.iter().find(|c| c.name == "method").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+    }
+
     // ── #1771: object-literal value-ref extraction ──────────────────────────
 
     #[test]

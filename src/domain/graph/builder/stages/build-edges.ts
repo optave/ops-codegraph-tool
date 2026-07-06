@@ -66,6 +66,18 @@ import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-
 type EdgeRowTuple = [number, number, string, number, number, string | null, string | null];
 //                   src    tgt    kind   conf   dyn   technique             dynamic_kind
 
+/**
+ * Tracks a dyn=0 direct-call edge row so a later dynamicKind-tagged call to the
+ * same (caller, target) pair can decide whether to upgrade it in-place — see
+ * {@link emitDirectCallEdgesForCall}. `line` is the source line of the call that
+ * produced the row, used to detect out-of-source-order collection artifacts
+ * (bare decorators processed after call-expression matches in the query path).
+ */
+interface DynZeroEdgeEntry {
+  idx: number;
+  line: number;
+}
+
 interface NodeIdStmt {
   get(name: string, kind: string, file: string, line: number): { id: number } | undefined;
 }
@@ -1395,8 +1407,12 @@ function resolveFallbackTargets(
  *   - If a pts edge already exists for this pair, upgrades it in-place to
  *     direct-call confidence and promotes to seenCallEdges.
  *   - If a dyn=0 edge already exists and the incoming call has an explicit
- *     dynamicKind (e.g. 'reflection' for bare decorators), upgrades the
- *     existing row to dyn=1 in-place so the semantic classification wins.
+ *     dynamicKind AND textually precedes the recorded dyn=0 call (e.g. a bare
+ *     decorator `@Log` reordered after `@Log()` by the query path's
+ *     query-then-walk collection — see buildFileCallEdges), upgrades the
+ *     existing row to dyn=1 in-place so the earlier-in-source classification
+ *     wins, matching what native's single-pass source-order walk produces
+ *     natively.
  *   - Otherwise records a new `calls` edge with `ts-native` technique.
  */
 function emitDirectCallEdgesForCall(
@@ -1405,11 +1421,12 @@ function emitDirectCallEdgesForCall(
   importedFrom: string | null | undefined,
   isDynamic: number,
   hasDynamicKind: boolean,
+  callLine: number,
   relPath: string,
   seenCallEdges: Set<string>,
   ptsEdgeRows: Map<string, number>,
   allEdgeRows: EdgeRowTuple[],
-  dynZeroEdgeRows?: Map<string, number>,
+  dynZeroEdgeRows?: Map<string, DynZeroEdgeEntry>,
 ): void {
   // Sort targets by confidence descending before emitting edges.
   // For multi-target calls with duplicate (source_id, target_id) pairs the
@@ -1432,14 +1449,30 @@ function emitDirectCallEdgesForCall(
     if (seenCallEdges.has(edgeKey)) {
       // Edge already emitted. If the incoming call carries an explicit semantic
       // dynamic classification (dynamicKind set — e.g. 'reflection' for bare
-      // decorators) and the existing edge was recorded with dyn=0, upgrade it
-      // in-place so the more specific classification wins.
-      // Generic dynamic=true without dynamicKind (alias/callback calls) does
-      // NOT override dyn=0 to avoid false positives on f.call/f.bind patterns.
+      // decorators or .call/.apply/.bind) and the existing edge was recorded
+      // with dyn=0, only upgrade it in-place when the incoming call's source
+      // line is EARLIER than the recorded dyn=0 call's line.
+      //
+      // Why line order, not just "hasDynamicKind": the query path collects
+      // calls in two phases — tree-sitter query matches (callfn_node/callmem_node,
+      // true source order) first, then a supplementary walk pass for constructs
+      // the query grammar can't capture (bare decorators, object-literal
+      // value-refs) appended AFTERWARD regardless of true position (#1683).
+      // A bare `@Log` at an earlier line can therefore reach this branch AFTER
+      // `@Log()` at a later line already recorded dyn=0 — upgrading is correct
+      // there because native's single-pass source-order walk would have seen
+      // `@Log` first and kept dyn=1.
+      //
+      // But `.call/.apply/.bind` calls (e.g. `f(); f.call({})`, #1687/#1778) are
+      // ordinary call_expressions collected in the SAME query phase as the
+      // direct call, so true source order is already preserved: when the
+      // dynamic-flavored call's line is LATER than the recorded dyn=0 call, it
+      // is genuinely a second, later reference to the same target — native's
+      // dedup (first-recorded-wins, no upgrade) drops it, so WASM must too.
       if (isDynamic === 1 && hasDynamicKind && dynZeroEdgeRows) {
-        const dynZeroIdx = dynZeroEdgeRows.get(edgeKey);
-        if (dynZeroIdx !== undefined) {
-          const row = allEdgeRows[dynZeroIdx];
+        const dynZeroEntry = dynZeroEdgeRows.get(edgeKey);
+        if (dynZeroEntry !== undefined && callLine < dynZeroEntry.line) {
+          const row = allEdgeRows[dynZeroEntry.idx];
           if (row) row[4] = 1;
           dynZeroEdgeRows.delete(edgeKey);
         }
@@ -1463,10 +1496,12 @@ function emitDirectCallEdgesForCall(
       seenCallEdges.add(edgeKey);
       const newIdx = allEdgeRows.length;
       allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic, 'ts-native', null]);
-      // Track dyn=0 edges so a later dyn=1+dynamicKind call for the same pair
-      // can upgrade them (e.g. bare decorator after call-expression decorator).
+      // Track dyn=0 edges (with their source line) so a later dyn=1+dynamicKind
+      // call for the same pair can decide whether to upgrade them — see the
+      // line-order comparison above (e.g. bare decorator reordered ahead of a
+      // call-expression decorator by the query path, #1683).
       if (isDynamic === 0 && dynZeroEdgeRows) {
-        dynZeroEdgeRows.set(edgeKey, newIdx);
+        dynZeroEdgeRows.set(edgeKey, { idx: newIdx, line: callLine });
       }
     }
   }
@@ -1736,11 +1771,13 @@ function buildFileCallEdges(
   // no longer tracked here.
   const ptsEdgeRows = new Map<string, number>();
 
-  // Tracks direct-call edges emitted with dyn=0 (edgeKey → allEdgeRows index).
-  // When a later call to the same target has dyn=1 (e.g. a bare decorator `@Log`
-  // processed after the call-expression `@Log()` in the query path), the existing
-  // dyn=0 row is upgraded in-place so the more specific dynamic classification wins.
-  const dynZeroEdgeRows = new Map<string, number>();
+  // Tracks direct-call edges emitted with dyn=0 (edgeKey → { row index, source line }).
+  // When a later call to the same target has dyn=1 and textually precedes the recorded
+  // call (e.g. a bare decorator `@Log` reordered after the call-expression `@Log()` by
+  // the query path, #1683), the existing dyn=0 row is upgraded in-place. See the line-order
+  // comparison in emitDirectCallEdgesForCall for why line order (not mere dynamicKind
+  // presence) gates the upgrade — this is also what keeps #1687/#1778 from regressing.
+  const dynZeroEdgeRows = new Map<string, DynZeroEdgeEntry>();
 
   // Pre-compute the set of names that appear as lhs in fnRefBindings so that
   // case (c) of the pts gate below only fires for names that are genuine
@@ -1773,6 +1810,7 @@ function buildFileCallEdges(
       importedFrom,
       isDynamic,
       !!call.dynamicKind,
+      call.line,
       relPath,
       seenCallEdges,
       ptsEdgeRows,

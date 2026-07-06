@@ -201,17 +201,22 @@ describe('JavaScript parser', () => {
     expect(symbols.imports[0].reexport).toBe(true);
   });
 
-  it('resolves .call()/.apply() on plain identifiers as static calls', () => {
-    // `fn.call(null, arg)` — plain-identifier receiver; target is statically known,
-    // so we emit a static call (dyn=0).  This keeps parity with the native Rust engine
-    // and prevents the dynZeroEdgeRows upgrade from wrongly promoting dyn=0 → dyn=1.
+  it('tags .call()/.apply() on plain identifiers as dynamic/reflection (#1778)', () => {
+    // `fn.call(null, arg)` — plain-identifier receiver; the wrapped function is the
+    // real callee, but invoking it via .call/.apply is a genuinely reflective
+    // mechanism, so it's tagged dynamic/reflection — matching the native Rust engine
+    // (Option A of #1778; the WASM extractor previously stripped this tag for
+    // identifier receivers only, to work around a dedup-collision bug now fixed
+    // narrowly in build-edges.ts's emitDirectCallEdgesForCall, see #1687/#1778).
     const symbols = parseJS(`fn.call(null, arg); obj.apply(undefined, args);`);
     const fnCall = symbols.calls.find((c) => c.name === 'fn');
     expect(fnCall).toBeDefined();
-    expect(fnCall.dynamic).toBeFalsy();
+    expect(fnCall.dynamic).toBe(true);
+    expect(fnCall.dynamicKind).toBe('reflection');
     const objCall = symbols.calls.find((c) => c.name === 'obj');
     expect(objCall).toBeDefined();
-    expect(objCall.dynamic).toBeFalsy();
+    expect(objCall.dynamic).toBe(true);
+    expect(objCall.dynamicKind).toBe('reflection');
   });
 
   it('captures receiver for method calls', () => {
@@ -688,15 +693,21 @@ describe('JavaScript parser', () => {
     expect(fnCall.receiver).toBeUndefined();
   });
 
-  it('emits static call for .call/.apply/.bind on plain identifier (#1687)', () => {
-    // `f.call({})` where f is a plain identifier — target is statically known;
-    // must emit dyn=0 (no dynamic flag) to match native Rust engine parity.
+  it('tags f.call({}) as dynamic/reflection even alongside a direct f() call (#1687/#1778)', () => {
+    // `f(); f.call({})` — at the PARSER level, each call site is classified on its
+    // own terms: the direct `f()` call is static, and `f.call({})` is tagged
+    // dynamic/reflection regardless of the sibling direct call, matching native.
+    // The #1687 dedup-collision (collapsing these two call sites into a single
+    // graph edge without letting the reflection tag wrongly flip an
+    // already-recorded dyn=0 edge) is a build-edges.ts concern, verified at the
+    // graph level in tests/integration/issue-1778-reflection-dynamic-kind-parity.test.ts
+    // — not here, since the parser has no visibility into sibling call sites.
     const symbols = parseJS(`const f = function () {}.bind({}); f(); f.call({});`);
     const fCallCalls = symbols.calls.filter((c) => c.name === 'f');
-    expect(fCallCalls.length).toBeGreaterThanOrEqual(1);
-    for (const c of fCallCalls) {
-      expect(c.dynamic).toBeFalsy(); // all f() / f.call({}) calls must be dyn=0
-    }
+    expect(fCallCalls.length).toBe(2);
+    expect(fCallCalls[0].dynamic).toBeFalsy(); // f() — direct call
+    expect(fCallCalls[1].dynamic).toBe(true); // f.call({}) — reflection
+    expect(fCallCalls[1].dynamicKind).toBe('reflection');
   });
 
   it('still emits dynamic/reflection for .call on member-expression object', () => {

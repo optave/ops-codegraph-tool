@@ -65,28 +65,31 @@ describe('dynamic call classification — dynamicKind and keyExpr fields', () =>
     expect(c?.dynamic).toBe(true);
   });
 
-  it('resolves fn.call(ctx) as a static call — no dynamic flag (#1687)', () => {
-    // `greet.call(ctx, 'world')` — plain-identifier receiver; target is statically known.
-    // We emit a static call (no dynamic, no dynamicKind) to match native Rust parity and
-    // prevent the dynZeroEdgeRows upgrade from promoting a prior dyn=0 edge to dyn=1.
+  it('tags fn.call(ctx) as reflection kind (#1778)', () => {
+    // `greet.call(ctx, 'world')` — plain-identifier receiver. The wrapped function
+    // is the real callee, but invoking it via .call is a genuinely reflective
+    // mechanism, so it's tagged dynamic/reflection — matching native Rust parity.
+    // (Option A of #1778: the dedup-collision bug this used to work around
+    // — #1687 — is now fixed narrowly at the build-edges.ts edge-emission layer
+    // instead of by suppressing this tag for every identifier receiver.)
     const out = parseJS(`
       function test(ctx) { greet.call(ctx, 'world'); }
     `);
     const c = out.calls.find((c) => c.name === 'greet');
     expect(c).toBeDefined();
-    expect(c?.dynamic).toBeFalsy();
-    expect(c?.dynamicKind).toBeUndefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBe(true);
   });
 
-  it('resolves fn.apply(ctx, args) as a static call — no dynamic flag (#1687)', () => {
-    // Same as .call(): plain-identifier receiver → static call.
+  it('tags fn.apply(ctx, args) as reflection kind (#1778)', () => {
+    // Same as .call(): plain-identifier receiver → dynamic/reflection.
     const out = parseJS(`
       function test(ctx) { greet.apply(ctx, ['world']); }
     `);
     const c = out.calls.find((c) => c.name === 'greet');
     expect(c).toBeDefined();
-    expect(c?.dynamic).toBeFalsy();
-    expect(c?.dynamicKind).toBeUndefined();
+    expect(c?.dynamicKind).toBe('reflection');
+    expect(c?.dynamic).toBe(true);
   });
 
   it('tags obj[a + b]() as unresolved-dynamic kind', () => {
