@@ -578,7 +578,13 @@ pub fn run_pipeline(
     // Build call edges using existing Rust edge_builder (internal path)
     // For now, call edges are built via the existing napi-exported function's
     // internal logic. We load nodes from DB and pass to the edge builder.
-    build_and_insert_call_edges(conn, &file_symbols, &import_ctx, !change_result.is_full_build);
+    build_and_insert_call_edges(
+        conn,
+        &file_symbols,
+        &import_ctx,
+        !change_result.is_full_build,
+        config.analysis.points_to_max_iterations,
+    );
 
     reconnect_saved_reverse_dep_edges(conn, &saved_reverse_dep_edges);
 
@@ -1517,11 +1523,15 @@ fn insert_call_edge_rows(conn: &Connection, edges: &[crate::domain::graph::build
 }
 
 /// Full builds always load every node — there is no smaller set anyway.
+///
+/// `max_iterations` caps the Phase 8.3 points-to solver's fixed-point loop —
+/// forwarded from `config.analysis.points_to_max_iterations` (issue #1753).
 fn build_and_insert_call_edges(
     conn: &Connection,
     file_symbols: &BTreeMap<String, FileSymbols>,
     import_ctx: &ImportEdgeContext,
     is_incremental: bool,
+    max_iterations: u32,
 ) {
     use crate::domain::graph::builder::stages::build_edges::*;
 
@@ -1619,7 +1629,7 @@ fn build_and_insert_call_edges(
         });
     }
 
-    let computed_edges = build_call_edges(file_entries, all_nodes, builtin_receivers);
+    let computed_edges = build_call_edges(file_entries, all_nodes, builtin_receivers, max_iterations);
     insert_call_edge_rows(conn, &computed_edges);
 }
 

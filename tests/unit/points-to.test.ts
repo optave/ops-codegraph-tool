@@ -417,3 +417,63 @@ describe('buildPointsToMap — object-rest parameter dispatch (Phase 8.3f)', () 
     }
   });
 });
+
+describe('buildPointsToMap — maxIterations cap (issue #1753)', () => {
+  // Builds an 8-hop alias chain a0=a1, a1=a2, ..., a6=a7, a7=handler, in this
+  // exact declaration order. buildCallSiteTypeMap processes constraints in
+  // array order on every pass, so only one hop propagates per iteration,
+  // moving from the tail of the array backward to the front — resolving a0
+  // requires exactly CHAIN_LENGTH (8) iterations.
+  const CHAIN_LENGTH = 8;
+  function buildChainBindings(): Array<{ lhs: string; rhs: string }> {
+    const fnRefBindings: Array<{ lhs: string; rhs: string }> = [];
+    for (let i = 0; i < CHAIN_LENGTH - 1; i++) {
+      fnRefBindings.push({ lhs: `a${i}`, rhs: `a${i + 1}` });
+    }
+    fnRefBindings.push({ lhs: `a${CHAIN_LENGTH - 1}`, rhs: 'handler' });
+    return fnRefBindings;
+  }
+
+  it('does not converge the chain when maxIterations is below the required depth', () => {
+    const pts = buildPointsToMap(
+      buildChainBindings(),
+      new Set(['handler']),
+      NO_IMPORTS,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      3, // well below CHAIN_LENGTH (8)
+    );
+    expect(resolveViaPointsTo('a0', pts)).toEqual([]);
+  });
+
+  it('fully converges the chain when maxIterations meets the required depth', () => {
+    const pts = buildPointsToMap(
+      buildChainBindings(),
+      new Set(['handler']),
+      NO_IMPORTS,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      CHAIN_LENGTH,
+    );
+    expect(resolveViaPointsTo('a0', pts)).toEqual(['handler']);
+  });
+
+  it('defaults to DEFAULTS.analysis.pointsToMaxIterations (50) when maxIterations is omitted', () => {
+    // The 8-hop chain converges comfortably under the default cap, confirming
+    // default behavior is unchanged now that maxIterations is configurable.
+    const pts = buildPointsToMap(buildChainBindings(), new Set(['handler']), NO_IMPORTS);
+    expect(resolveViaPointsTo('a0', pts)).toEqual(['handler']);
+  });
+});

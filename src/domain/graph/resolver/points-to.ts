@@ -19,6 +19,7 @@
  * that build-edges.ts already builds per file is the cross-module link — if
  * a variable aliases an imported name, resolveCallTargets follows it).
  */
+import { DEFAULTS } from '../../../infrastructure/config.js';
 import type {
   ArrayCallbackBinding,
   ArrayElemBinding,
@@ -31,14 +32,6 @@ import type {
 } from '../../../types.js';
 
 export type PointsToMap = Map<string, Set<string>>;
-
-/**
- * Maximum fixed-point iterations before bailing out (prevents divergence).
- * Mirrors `DEFAULTS.analysis.pointsToMaxIterations` in config.ts.
- * TODO(Phase 8.3): thread config through buildPointsToMap so this can be tuned
- * per-repo via `.codegraphrc.json` (tracked alongside typePropagationDepth).
- */
-const MAX_SOLVER_ITERATIONS = 50;
 
 /**
  * Seed the pts map from locally-defined functions, imported names, and
@@ -365,15 +358,16 @@ function appendAdvancedConstraints(
 
 /**
  * Run the fixed-point solver: propagate pts sets through constraints until
- * no new information flows (or MAX_SOLVER_ITERATIONS is reached).
+ * no new information flows (or `maxIterations` is reached).
  *
  * Mutates `pts` in place.
  */
 function buildCallSiteTypeMap(
   pts: PointsToMap,
   constraints: ReadonlyArray<{ lhs: string; rhsKey: string }>,
+  maxIterations: number,
 ): void {
-  for (let iter = 0; iter < MAX_SOLVER_ITERATIONS; iter++) {
+  for (let iter = 0; iter < maxIterations; iter++) {
     let changed = false;
     for (const { lhs, rhsKey } of constraints) {
       const rhsPts = pts.get(rhsKey);
@@ -410,6 +404,12 @@ function buildCallSiteTypeMap(
  * @param spreadArgBindings     - spread-argument bindings (Phase 8.3e)
  * @param forOfBindings         - for-of iteration variable bindings (Phase 8.3e)
  * @param arrayCallbackBindings - Array.from/callback bindings (Phase 8.3e)
+ * @param maxIterations         - fixed-point iteration cap before bailing out (prevents
+ *                                divergence). Defaults to `DEFAULTS.analysis.pointsToMaxIterations`;
+ *                                callers that already hold a resolved `CodegraphConfig` (e.g.
+ *                                `buildPointsToMapForFile` in `stages/build-edges.ts`) pass the
+ *                                user-configured value through explicitly. Mirrored by
+ *                                `MAX_SOLVER_ITERATIONS` in the native Rust solver (`stages/build_edges.rs`).
  */
 export function buildPointsToMap(
   fnRefBindings: readonly FnRefBinding[],
@@ -423,6 +423,7 @@ export function buildPointsToMap(
   arrayCallbackBindings?: readonly ArrayCallbackBinding[],
   objectRestParamBindings?: readonly ObjectRestParamBinding[],
   objectPropBindings?: readonly ObjectPropBinding[],
+  maxIterations: number = DEFAULTS.analysis.pointsToMaxIterations,
 ): PointsToMap {
   const { pts, constraints } = buildThisAssignmentMap(
     fnRefBindings,
@@ -447,7 +448,7 @@ export function buildPointsToMap(
 
   if (constraints.length === 0) return pts;
 
-  buildCallSiteTypeMap(pts, constraints);
+  buildCallSiteTypeMap(pts, constraints, maxIterations);
 
   return pts;
 }

@@ -1490,8 +1490,11 @@ export interface CodegraphConfig {
     typePropagationDepth: number;
     /**
      * Maximum fixed-point iterations for the Phase 8.3 points-to solver.
-     * @reserved — currently not wired to either solver; both use a hardcoded
-     * constant of 50.  See TODO in `src/infrastructure/config.ts`.
+     * Wired as the default `maxIterations` parameter of `buildPointsToMap()`
+     * in `src/domain/graph/resolver/points-to.ts`. The build pipeline (which
+     * already holds a resolved config) passes this value through explicitly
+     * to both the WASM solver and, via `native.buildCallEdges()` / the
+     * `BuildConfig` JSON payload, the native Rust solver in `stages/build_edges.rs`.
      */
     pointsToMaxIterations: number;
     /**
@@ -2276,7 +2279,12 @@ export interface NativeAddon {
     assignments: Array<{ node: string; community: number }>;
     modularity: number;
   };
-  buildCallEdges(files: unknown[], nodes: unknown[], builtinReceivers: string[]): unknown[];
+  buildCallEdges(
+    files: unknown[],
+    nodes: unknown[],
+    builtinReceivers: string[],
+    maxIterations: number,
+  ): unknown[];
   buildImportEdges?(
     files: unknown[],
     resolvedImports: unknown[],

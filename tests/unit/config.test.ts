@@ -272,6 +272,18 @@ describe('loadConfig', () => {
     expect(config.analysis.impactDepth).toBe(3);
     expect(config.analysis.auditDepth).toBe(3);
   });
+
+  it('loads a pointsToMaxIterations override from config (issue #1753)', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'pts-max-iter-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ analysis: { pointsToMaxIterations: 5 } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.analysis.pointsToMaxIterations).toBe(5);
+    // Sibling defaults preserved
+    expect(config.analysis.typePropagationDepth).toBe(3);
+  });
 });
 
 describe('mergeConfig', () => {

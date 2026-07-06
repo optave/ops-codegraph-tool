@@ -32,6 +32,10 @@ pub struct BuildConfig {
     /// Config-level path aliases (merged with tsconfig aliases).
     #[serde(default)]
     pub aliases: std::collections::HashMap<String, String>,
+
+    /// Analysis-tuning settings (points-to solver, etc.).
+    #[serde(default)]
+    pub analysis: AnalysisConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -64,6 +68,31 @@ fn default_true() -> bool {
 
 fn default_drift_threshold() -> f64 {
     0.1
+}
+
+/// Subset of `CodegraphConfig.analysis` relevant to the build pipeline.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisConfig {
+    /// Maximum fixed-point iterations for the Phase 8.3 points-to solver.
+    /// Mirrors `DEFAULTS.analysis.pointsToMaxIterations` in
+    /// `src/infrastructure/config.ts` and `MAX_SOLVER_ITERATIONS` in
+    /// `src/domain/graph/builder/stages/build_edges.rs`. Threaded to
+    /// `build_call_edges()` via `build_and_insert_call_edges()`.
+    #[serde(default = "default_points_to_max_iterations")]
+    pub points_to_max_iterations: u32,
+}
+
+impl Default for AnalysisConfig {
+    fn default() -> Self {
+        Self {
+            points_to_max_iterations: default_points_to_max_iterations(),
+        }
+    }
+}
+
+fn default_points_to_max_iterations() -> u32 {
+    50
 }
 
 /// Build options passed from the JS caller.
@@ -143,6 +172,8 @@ mod tests {
         assert!(config.include.is_empty());
         assert!(config.exclude.is_empty());
         assert!(config.build.incremental);
+        // Default mirrors DEFAULTS.analysis.pointsToMaxIterations in config.ts.
+        assert_eq!(config.analysis.points_to_max_iterations, 50);
     }
 
     #[test]
@@ -166,6 +197,18 @@ mod tests {
         assert!(!config.build.incremental);
         assert_eq!(config.build.drift_threshold, 0.2);
         assert_eq!(config.aliases.get("@/").unwrap(), "src/");
+        // analysis key omitted entirely — must still fall back to the default.
+        assert_eq!(config.analysis.points_to_max_iterations, 50);
+    }
+
+    #[test]
+    fn deserialize_analysis_override() {
+        // Mirrors the shape the JS side serializes via JSON.stringify(ctx.config)
+        // when a repo sets a non-default `analysis.pointsToMaxIterations` in
+        // .codegraphrc.json (issue #1753).
+        let json = r#"{"analysis": {"pointsToMaxIterations": 5}}"#;
+        let config: BuildConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.analysis.points_to_max_iterations, 5);
     }
 
     #[test]

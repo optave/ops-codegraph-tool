@@ -638,9 +638,12 @@ function buildCallEdgesNative(
     nativeFiles.push(buildNativeFileEntry(ctx, relPath, fileNodeRow.id, symbols, rootDir));
   }
 
-  const nativeEdges = native.buildCallEdges(nativeFiles, allNodes, [
-    ...BUILTIN_RECEIVERS,
-  ]) as NativeEdge[];
+  const nativeEdges = native.buildCallEdges(
+    nativeFiles,
+    allNodes,
+    [...BUILTIN_RECEIVERS],
+    ctx.config.analysis.pointsToMaxIterations,
+  ) as NativeEdge[];
   for (const e of nativeEdges) {
     allEdgeRows.push([
       e.sourceId,
@@ -929,7 +932,11 @@ function buildCallEdgesJS(
     }
 
     const seenCallEdges = new Set<string>();
-    const ptsMap = buildPointsToMapForFile(symbols, importedNames);
+    const ptsMap = buildPointsToMapForFile(
+      symbols,
+      importedNames,
+      ctx.config.analysis.pointsToMaxIterations,
+    );
     // Build the import-artifact name set: importedNames plus CJS require bindings.
     // Used only by resolveReceiverEdge to distinguish local definitions from CJS
     // import shadows — does NOT affect call-target resolution or DB edges (#1661).
@@ -1059,10 +1066,15 @@ function makeContextLookup(ctx: PipelineContext, getNodeIdStmt: NodeIdStmt): Cal
  * (`const Svc = MyService`) is an uncommon pattern that would require tracking
  * `new`-expression flows separately from the alias chain. That is left to Phase
  * 8.2 call-assignment propagation, which already handles constructor assignments.
+ *
+ * @param maxIterations - fixed-point solver iteration cap, forwarded to
+ *   `buildPointsToMap` (resolved from `ctx.config.analysis.pointsToMaxIterations`
+ *   by the caller, which already holds the pipeline's resolved config).
  */
 function buildPointsToMapForFile(
   symbols: ExtractorOutput,
   importedNames: Map<string, string>,
+  maxIterations: number,
 ): PointsToMap | null {
   const hasThisCallBindings = !!symbols.thisCallBindings?.length;
   if (
@@ -1108,6 +1120,7 @@ function buildPointsToMapForFile(
     symbols.arrayCallbackBindings,
     symbols.objectRestParamBindings,
     symbols.objectPropBindings,
+    maxIterations,
   );
 }
 

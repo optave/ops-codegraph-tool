@@ -182,11 +182,17 @@ impl<'a> EdgeContext<'a> {
 
 // ── Phase 8.3: points-to analysis ─────────────────────────────────────────
 
-/// Maximum fixed-point iterations for the pts solver.
-/// Mirrors `MAX_SOLVER_ITERATIONS` in `src/domain/graph/resolver/points-to.ts`.
-/// TODO: wire through `CodegraphConfig.analysis.pointsToMaxIterations` once
-/// config plumbing is in place (same pattern as `typePropagationDepth`).
-const MAX_SOLVER_ITERATIONS: usize = 50;
+/// Default maximum fixed-point iterations for the pts solver — mirrors
+/// `MAX_SOLVER_ITERATIONS` in `src/domain/graph/resolver/points-to.ts` and
+/// `DEFAULTS.analysis.pointsToMaxIterations` in `src/infrastructure/config.ts`.
+/// `build_call_edges()` now receives the resolved value as an explicit
+/// `max_iterations` parameter (threaded from `BuildConfig.analysis.points_to_max_iterations`
+/// on the native-first pipeline path, or from `ctx.config.analysis.pointsToMaxIterations`
+/// via the napi call on the JS-orchestrated per-stage path); production code no
+/// longer references this constant directly, so it is `#[cfg(test)]`-gated —
+/// it remains only as the fallback default used directly by unit tests below.
+#[cfg(test)]
+const MAX_SOLVER_ITERATIONS: u32 = 50;
 
 /// Per-file points-to binding inputs, borrowed from a `FileEdgeInput`.
 /// `fn_ref_bindings` must already include the `fn::this → ctx` conversions
@@ -208,11 +214,16 @@ struct PtsBindings<'a> {
 /// Seeds every locally-defined callable and every imported name as pointing
 /// to itself, generates inclusion constraints (`pts(lhs) ⊇ pts(rhsKey)`)
 /// from every binding kind, then solves by fixed-point iteration.
+///
+/// `max_iterations` caps the fixed-point loop below — resolved from
+/// `CodegraphConfig.analysis.pointsToMaxIterations` by the caller (mirrors
+/// the `maxIterations` parameter of the TS `buildPointsToMap`).
 fn build_points_to_map(
     bindings: &PtsBindings,
     def_names: &HashSet<&str>,
     imported_names: &HashMap<&str, &str>,
     definition_params: &HashMap<&str, Vec<&str>>,
+    max_iterations: u32,
 ) -> HashMap<String, HashSet<String>> {
     let mut pts: HashMap<String, HashSet<String>> = HashMap::new();
     for name in def_names {
@@ -346,7 +357,7 @@ fn build_points_to_map(
     }
 
     // Fixed-point iteration: propagate pts sets until no new information flows.
-    for _ in 0..MAX_SOLVER_ITERATIONS {
+    for _ in 0..max_iterations {
         let mut changed = false;
         for (lhs, rhs_key) in &constraints {
             let rhs_pts: Option<Vec<String>> = pts.get(rhs_key.as_str())
@@ -445,17 +456,22 @@ fn emit_pts_alias_edges<'a>(
 ///
 /// Mirrors the algorithm in builder.js `buildEdges` transaction (call edges
 /// portion). Import edges are handled separately in JS.
+///
+/// `max_iterations` caps the Phase 8.3 points-to solver's fixed-point loop —
+/// callers pass `ctx.config.analysis.pointsToMaxIterations` (resolved from
+/// `.codegraphrc.json`, defaulting to `DEFAULTS.analysis.pointsToMaxIterations`).
 #[napi]
 pub fn build_call_edges(
     files: Vec<FileEdgeInput>,
     all_nodes: Vec<NodeInfo>,
     builtin_receivers: Vec<String>,
+    max_iterations: u32,
 ) -> Vec<ComputedEdge> {
     let ctx = EdgeContext::new(&all_nodes, &builtin_receivers);
     let mut edges = Vec::new();
 
     for file_input in &files {
-        process_file(&ctx, file_input, &all_nodes, &mut edges);
+        process_file(&ctx, file_input, &all_nodes, &mut edges, max_iterations);
     }
 
     edges
@@ -512,6 +528,7 @@ fn build_type_map<'a>(file_input: &'a FileEdgeInput) -> HashMap<&'a str, (&'a st
 fn build_pts_map_for_file(
     file_input: &FileEdgeInput,
     imported_names: &HashMap<&str, &str>,
+    max_iterations: u32,
 ) -> Option<HashMap<String, HashSet<String>>> {
     let raw_fn_ref: &[FnRefBinding] = file_input.fn_ref_bindings.as_deref().unwrap_or(&[]);
     let this_calls: &[ThisCallBinding] = file_input.this_call_bindings.as_deref().unwrap_or(&[]);
@@ -568,13 +585,20 @@ fn build_pts_map_for_file(
         PtsBindings { fn_ref_bindings: &merged_fn_ref, ..bindings }
     };
 
-    Some(build_points_to_map(&final_bindings, &def_names, imported_names, &definition_params))
+    Some(build_points_to_map(
+        &final_bindings,
+        &def_names,
+        imported_names,
+        &definition_params,
+        max_iterations,
+    ))
 }
 
 /// Build all per-file lookup structures needed for edge emission.
 fn build_file_context<'a>(
     file_input: &'a FileEdgeInput,
     all_nodes: &'a [NodeInfo],
+    max_iterations: u32,
 ) -> FileContext<'a> {
     let rel_path = file_input.file.as_str();
     let imported_names: HashMap<&str, &str> = file_input
@@ -599,7 +623,7 @@ fn build_file_context<'a>(
             node_id,
         }
     }).collect();
-    let pts_map = build_pts_map_for_file(file_input, &imported_names);
+    let pts_map = build_pts_map_for_file(file_input, &imported_names, max_iterations);
     let raw_fn_ref: &[FnRefBinding] = file_input.fn_ref_bindings.as_deref().unwrap_or(&[]);
     // Case (c) flat-key gate set: lhs names from the *raw* fnRefBindings only
     // (thisCall conversions are scoped keys and never flat-matched).
@@ -732,8 +756,9 @@ fn process_file<'a>(
     file_input: &'a FileEdgeInput,
     all_nodes: &'a [NodeInfo],
     edges: &mut Vec<ComputedEdge>,
+    max_iterations: u32,
 ) {
-    let fc = build_file_context(file_input, all_nodes);
+    let fc = build_file_context(file_input, all_nodes, max_iterations);
 
     // Phase 8.3: tracks pts-resolved edges separately from seen_edges so that a
     // subsequent direct call to the same caller→target pair can upgrade confidence
@@ -2198,7 +2223,7 @@ mod call_edge_tests {
             vec![],
         )];
 
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
         assert!(
@@ -2239,7 +2264,7 @@ mod call_edge_tests {
         // same-file kind="function" node as an import artifact and falls through.
         file.imported_names = vec![ImportedName { name: "Calculator".to_string(), file: "utils.js".to_string(), imported: None }];
 
-        let edges = build_call_edges(vec![file], all_nodes, vec![]);
+        let edges = build_call_edges(vec![file], all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
         assert!(
@@ -2273,7 +2298,7 @@ mod call_edge_tests {
             vec![],
         )];
 
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
         assert!(
@@ -2301,7 +2326,7 @@ mod call_edge_tests {
             vec![type_map_entry("UserService.logger", "Logger", 1.0)],
             vec![],
         )];
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
         assert!(
             edges.iter().any(|e| e.kind == "calls" && e.source_id == 1 && e.target_id == 2),
             "expected calls edge UserService.create → Logger.error; got: {:?}",
@@ -2325,7 +2350,7 @@ mod call_edge_tests {
             vec![type_map_entry("useRest::eerest", "E4", 0.85)],
             vec![],
         )];
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
         assert!(
             edges.iter().any(|e| e.kind == "calls" && e.source_id == 1 && e.target_id == 2),
             "expected calls edge useRest → E4.e4 via rest-param key; got: {:?}",
@@ -2349,7 +2374,7 @@ mod call_edge_tests {
             vec![],
             vec![],
         )];
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
         assert!(
             !edges.iter().any(|e| e.kind == "calls" && e.source_id == 1 && e.target_id == 2),
             "bare call must not resolve to same-class sibling in a module-scoped language"
@@ -2372,7 +2397,7 @@ mod call_edge_tests {
             vec![],
             vec![],
         )];
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
         assert!(
             edges.iter().any(|e| e.kind == "calls" && e.source_id == 1 && e.target_id == 2),
             "bare sibling call must resolve in a class-scoped language; got: {:?}",
@@ -2397,7 +2422,7 @@ mod call_edge_tests {
             vec![],
             vec![],
         )];
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
         assert!(
             edges.iter().any(|e| e.kind == "calls" && e.source_id == 1 && e.target_id == 2),
             "expected Geo.Shape.describe → Shape.area via bare class segment; got: {:?}",
@@ -2423,7 +2448,7 @@ mod call_edge_tests {
             vec![type_map_entry("calc", "Calculator", 0.85)],
             vec![],
         )];
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
         let re = edges.iter().find(|e| e.kind == "receiver").expect("receiver edge");
         assert!(
             (re.confidence - 0.85).abs() < 1e-9,
@@ -2450,7 +2475,7 @@ mod call_edge_tests {
             vec![],
         )];
 
-        let edges = build_call_edges(files, all_nodes, vec![]);
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         let receiver_edge = edges.iter().find(|e| e.kind == "receiver");
         assert!(receiver_edge.is_some(), "expected receiver edge for direct class-name receiver");
@@ -2496,7 +2521,7 @@ mod call_edge_tests {
             arg_name: "target".to_string(),
         }]);
 
-        let edges = build_call_edges(vec![file], all_nodes, vec![]);
+        let edges = build_call_edges(vec![file], all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         assert!(
             edges.iter().any(|e| e.source_id == 1 && e.target_id == 2 && e.kind == "calls"),
@@ -2541,7 +2566,7 @@ mod call_edge_tests {
             this_arg: "handler".to_string(),
         }]);
 
-        let edges = build_call_edges(vec![file], all_nodes, vec![]);
+        let edges = build_call_edges(vec![file], all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         assert!(
             edges.iter().any(|e| e.source_id == 1 && e.target_id == 2 && e.kind == "calls"),
@@ -2587,7 +2612,7 @@ mod call_edge_tests {
             enclosing_func: "iterPlain".to_string(),
         }]);
 
-        let edges = build_call_edges(vec![file], all_nodes, vec![]);
+        let edges = build_call_edges(vec![file], all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         for target in [1u32, 2u32] {
             assert!(
@@ -2637,7 +2662,7 @@ mod call_edge_tests {
             value_name: "e4".to_string(),
         }]);
 
-        let edges = build_call_edges(vec![file], all_nodes, vec![]);
+        let edges = build_call_edges(vec![file], all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         assert!(
             edges.iter().any(|e| e.source_id == 1 && e.target_id == 2 && e.kind == "calls"),
@@ -2679,7 +2704,7 @@ mod call_edge_tests {
             start_index: 0,
         }]);
 
-        let edges = build_call_edges(vec![file], all_nodes, vec![]);
+        let edges = build_call_edges(vec![file], all_nodes, vec![], MAX_SOLVER_ITERATIONS);
 
         assert!(
             edges.iter().any(|e| e.source_id == 1 && e.target_id == 2 && e.kind == "calls"),
@@ -2690,6 +2715,68 @@ mod call_edge_tests {
             edges.iter().any(|e| e.source_id == 1 && e.target_id == 3 && e.kind == "calls"),
             "expected pts edge callAll→y; got: {:?}",
             edges.iter().map(|e| (e.source_id, e.target_id, &e.kind)).collect::<Vec<_>>()
+        );
+    }
+
+    /// Regression for issue #1753: the points-to solver's fixed-point loop must
+    /// honor the caller-supplied `max_iterations` rather than a hardcoded value.
+    /// Mirrors the equivalent TS-side test in `tests/unit/points-to.test.ts`.
+    ///
+    /// Builds an 8-hop alias chain `a0=a1, a1=a2, ..., a6=a7, a7=handler` in this
+    /// exact (declaration) order. `build_points_to_map` processes constraints in
+    /// array order each pass, so a single hop propagates per iteration, moving
+    /// from the tail of the array backward to the front — resolving `a0`
+    /// requires exactly `chain_len` (8) iterations.
+    #[test]
+    fn max_iterations_caps_alias_chain_convergence() {
+        let chain_len: u32 = 8;
+        let mut fn_ref_bindings: Vec<FnRefBinding> = (0..chain_len - 1)
+            .map(|i| FnRefBinding {
+                lhs: format!("a{i}"),
+                rhs: format!("a{}", i + 1),
+                rhs_receiver: None,
+            })
+            .collect();
+        fn_ref_bindings.push(FnRefBinding {
+            lhs: format!("a{}", chain_len - 1),
+            rhs: "handler".to_string(),
+            rhs_receiver: None,
+        });
+
+        let def_names: HashSet<&str> = ["handler"].into_iter().collect();
+        let imported_names: HashMap<&str, &str> = HashMap::new();
+        let definition_params: HashMap<&str, Vec<&str>> = HashMap::new();
+        let bindings = PtsBindings {
+            fn_ref_bindings: &fn_ref_bindings,
+            param_bindings: &[],
+            array_elem_bindings: &[],
+            spread_arg_bindings: &[],
+            for_of_bindings: &[],
+            array_callback_bindings: &[],
+            object_rest_param_bindings: &[],
+            object_prop_bindings: &[],
+        };
+
+        // A cap well below the chain length must not converge for a0.
+        let pts_low =
+            build_points_to_map(&bindings, &def_names, &imported_names, &definition_params, 3);
+        assert!(
+            resolve_via_points_to("a0", &pts_low).is_empty(),
+            "expected a0 to NOT resolve with max_iterations=3 (chain needs {chain_len})"
+        );
+
+        // A cap at the chain length must fully converge for a0.
+        let pts_high = build_points_to_map(
+            &bindings,
+            &def_names,
+            &imported_names,
+            &definition_params,
+            chain_len,
+        );
+        assert_eq!(
+            resolve_via_points_to("a0", &pts_high),
+            vec!["handler"],
+            "expected a0 to resolve to handler with max_iterations={chain_len}"
         );
     }
 }
