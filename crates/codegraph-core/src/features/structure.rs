@@ -154,11 +154,13 @@ fn find_neighbor_files(conn: &Connection, dir: &str) -> Vec<String> {
            JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
            WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file \
              AND n1.file >= ?1 AND n1.file < ?2 \
+             AND NOT (n2.file >= ?1 AND n2.file < ?2) \
          UNION \
          SELECT n1.file AS other FROM edges e \
            JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
            WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file \
-             AND n2.file >= ?1 AND n2.file < ?2",
+             AND n2.file >= ?1 AND n2.file < ?2 \
+             AND NOT (n1.file >= ?1 AND n1.file < ?2)",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
