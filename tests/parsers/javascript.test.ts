@@ -933,6 +933,39 @@ describe('JavaScript parser', () => {
       expect(symbols.calls.filter((c) => c.dynamic && c.name === 'someKey')).toHaveLength(0);
     });
 
+    it('emits Array.from mapFn (index 1) but not arrayLike (index 0)', () => {
+      // Regression guard for #1741 follow-up: `Array.from(arrayLike, mapFn)` is a
+      // well-known stdlib callback pattern (also every TypedArray.from), but the
+      // callback is the SECOND positional argument, not the first. Emitting
+      // `arrayLike` too would reintroduce the exact name-collision false-positive
+      // class #1741 fixes for the data argument; only `mapFn` should resolve.
+      const symbols = parseJS(`Array.from(arr, mapCallback);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapCallback', dynamic: true }),
+      );
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+    });
+
+    it('emits only the index-1 mapFn for Array.from with a thisArg (index 2)', () => {
+      // `Array.from(arrayLike, mapFn, thisArg)` — thisArg (index 2) is a `this`
+      // binding context, not a callback, and must not be emitted either.
+      const symbols = parseJS(`Array.from(arr, mapCallback, thisArg);`);
+      const dynamicNames = symbols.calls.filter((c) => c.dynamic).map((c) => c.name);
+      expect(dynamicNames).toEqual(['mapCallback']);
+    });
+
+    it('applies the same Array.from positional gate to TypedArray constructors', () => {
+      // Every TypedArray constructor (Uint8Array, Int32Array, etc.) mirrors
+      // Array.from's (arrayLike, mapFn, thisArg) signature; the gate is
+      // name-based on the property `from`, not receiver-typed, so it applies
+      // uniformly.
+      const symbols = parseJS(`Uint8Array.from(arr, mapCallback);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapCallback', dynamic: true }),
+      );
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+    });
+
     it('extracts callback in plain function calls like setTimeout', () => {
       const symbols = parseJS(`setTimeout(tick, 1000);`);
       expect(symbols.calls).toContainEqual(

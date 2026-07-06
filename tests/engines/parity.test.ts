@@ -211,6 +211,21 @@ router.get('/users/:id', authHandler);
 `,
     },
     {
+      // Regression guard for #1741 follow-up: native must apply the same
+      // positional (not just name-based) gate as WASM for Array.from-shaped
+      // callees. Without it, native either over-emits `arr`/`thisArg` (data
+      // args, reintroducing the name-collision FP class #1741 fixes) or
+      // under-emits `mapCallback` (a genuine, well-known stdlib callback
+      // reference), depending on which side of the bug it lands on.
+      name: 'JavaScript — Array.from positional callback gating must agree between engines',
+      file: 'array-from-callbacks.js',
+      code: `
+Array.from(arr, mapCallback);
+Array.from(arr, mapCallback, thisArg);
+Uint8Array.from(arr, mapCallback);
+`,
+    },
+    {
       name: 'TypeScript — destructured parameters',
       file: 'destruct.ts',
       code: `

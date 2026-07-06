@@ -178,6 +178,16 @@ arr.forEach(myNamedCallback);
 `,
   },
   {
+    // Regression guard for #1741 follow-up: Array.from's positional callback
+    // gate (index 1 only) must behave identically on both extraction paths.
+    name: 'Array.from positional callback gating (issue #1741 follow-up)',
+    file: 'test.js',
+    code: `
+Array.from(arr, mapCallback);
+Array.from(arr, mapCallback, thisArg);
+`,
+  },
+  {
     name: 'exported function and class declarations',
     file: 'test.js',
     code: `

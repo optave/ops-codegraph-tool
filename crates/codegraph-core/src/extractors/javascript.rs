@@ -2253,6 +2253,15 @@ fn extract_implements_depth(node: &Node, source: &[u8], result: &mut Vec<String>
 /// with receiver `user`, or a fabricated edge to an unrelated same-named
 /// function (issue #1741).
 ///
+/// Known gap: arbitrary user-defined higher-order functions (e.g.
+/// `processEach(users, fn: UserProcessor)`) are neither name-allowlisted nor
+/// position-mapped (see `positional_callback_arg_index`), so `processEach(users,
+/// logUser)` no longer emits a `logUser` reference from the caller.
+/// Recognizing these would require looking at the callee's own parameter type
+/// (is it function-shaped?) rather than its name — a resolver-level,
+/// cross-engine feature, not a small extension of this gate. Tracked as a
+/// follow-up.
+///
 /// Mirrors `CALLBACK_ACCEPTING_CALLEES` in `src/extractors/javascript.ts`.
 const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
     // Express / router / middleware
@@ -2285,6 +2294,34 @@ const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
 const HTTP_VERB_CALLEES: &[&str] = &[
     "get", "post", "put", "delete", "patch", "options", "head", "all",
 ];
+
+/// Callees whose callback argument sits at one specific positional index
+/// rather than "any position" (the assumption behind `CALLBACK_ACCEPTING_CALLEES`,
+/// needed for variadic Express/Router middleware chains like
+/// `app.get(path, mw1, mw2, handler)`).
+///
+/// `Array.from(arrayLike, mapFn, thisArg)` (also every TypedArray constructor,
+/// e.g. `Uint8Array.from`) is the motivating case: `arrayLike` (index 0) is
+/// plain data — treating it as a callback candidate would reintroduce the
+/// exact name-collision false-positive class issue #1741 fixes — while
+/// `mapFn` (index 1) is a genuine callback reference that should still
+/// resolve. A callee listed here is implicitly callback-accepting (no
+/// separate `CALLBACK_ACCEPTING_CALLEES` entry needed); only the arg at its
+/// listed index is eligible.
+///
+/// Name-based, not receiver-typed, so it can't distinguish `Array.from(x,
+/// mapFn)` from an unrelated `.from(x, y)` shaped differently (e.g.
+/// `Buffer.from(data, encoding)`) — that residual risk is far narrower than
+/// the unconditional-emission bug this gate fixes, so it's accepted rather
+/// than adding receiver-type tracking.
+///
+/// Mirrors `POSITIONAL_CALLBACK_ARG_INDEX` in `src/extractors/javascript.ts`.
+fn positional_callback_arg_index(callee_name: &str) -> Option<usize> {
+    match callee_name {
+        "from" => Some(1),
+        _ => None,
+    }
+}
 
 /// Extract the callee's final name (function identifier or member expression
 /// property) for callback-eligibility filtering. Returns `None` if the callee
@@ -2342,12 +2379,21 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
         }
     }
 
-    if !callback_args_allowed {
+    let positional_index = callee_name.and_then(positional_callback_arg_index);
+    if !callback_args_allowed && positional_index.is_none() {
         return;
     }
 
-    for i in 0..args.child_count() {
-        let Some(child) = args.child(i) else { continue };
+    for (arg_index, child) in iter_children(&args, PUNCTUATION_TOKENS).enumerate() {
+        // A positional entry restricts eligibility to its one designated
+        // index, regardless of what the generic (any-position) gate above
+        // decided.
+        if let Some(idx) = positional_index {
+            if arg_index != idx {
+                continue;
+            }
+        }
+
         match child.kind() {
             "identifier" => {
                 calls.push(Call {
@@ -4251,6 +4297,60 @@ mod tests {
         assert!(
             !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "someKey"),
             "cache.get(someKey) must not emit `someKey` as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn emits_array_from_mapfn_but_not_arraylike() {
+        // Regression guard for #1741 follow-up: `Array.from(arrayLike, mapFn)` is
+        // a well-known stdlib callback pattern (also every TypedArray.from), but
+        // the callback is the SECOND positional argument, not the first. Emitting
+        // `arrayLike` too would reintroduce the exact name-collision false-positive
+        // class #1741 fixes for the data argument; only `mapFn` should resolve.
+        let s = parse_js("Array.from(arr, mapCallback);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Array.from(arr, mapCallback) must emit mapCallback as dynamic call; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Array.from(arr, mapCallback) must not emit `arr` (index 0) as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn emits_only_index_one_for_array_from_with_this_arg() {
+        // `Array.from(arrayLike, mapFn, thisArg)` — thisArg (index 2) is a `this`
+        // binding context, not a callback, and must not be emitted either.
+        let s = parse_js("Array.from(arr, mapCallback, thisArg);");
+        let dynamic_names: Vec<&str> = s.calls.iter()
+            .filter(|c| c.dynamic == Some(true))
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(
+            dynamic_names, vec!["mapCallback"],
+            "only index-1 mapCallback should be dynamic; got: {:?}", s.calls,
+        );
+    }
+
+    #[test]
+    fn applies_array_from_positional_gate_to_typed_array_constructors() {
+        // Every TypedArray constructor (Uint8Array, Int32Array, etc.) mirrors
+        // Array.from's (arrayLike, mapFn, thisArg) signature; the gate is
+        // name-based on the property `from`, not receiver-typed, so it applies
+        // uniformly.
+        let s = parse_js("Uint8Array.from(arr, mapCallback);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Uint8Array.from(arr, mapCallback) must emit mapCallback; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Uint8Array.from(arr, mapCallback) must not emit `arr`; got: {:?}",
             s.calls,
         );
     }
