@@ -278,26 +278,19 @@ function storeNativeComplexityResults(
   }
 }
 
-/** Override a definition's cyclomatic complexity with a CFG-derived value and recompute MI. */
-function overrideCyclomaticFromCfg(def: Definition, cfgCyclomatic: number): void {
-  if (!def.complexity) return;
-  if (cfgCyclomatic <= 0) {
-    debug(`overrideCyclomaticFromCfg: skipping ${def.name} — cfgCyclomatic=${cfgCyclomatic}`);
-    return;
-  }
-  def.complexity.cyclomatic = cfgCyclomatic;
-  const { loc, halstead } = def.complexity;
-  const volume = halstead ? halstead.volume : 0;
-  const commentRatio = loc && loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-  def.complexity.maintainabilityIndex = computeMaintainabilityIndex(
-    volume,
-    cfgCyclomatic,
-    loc?.sloc ?? 0,
-    commentRatio,
-  );
-}
-
-/** Store native CFG results on definitions, matched by line number. */
+/**
+ * Store native CFG results on definitions, matched by line number.
+ *
+ * Intentionally does NOT touch `def.complexity.cyclomatic`: cyclomatic
+ * complexity is computed once, correctly, from the AST DFS walk (which
+ * counts short-circuit logical operators, optional chaining, and nested
+ * function bodies — see computeFunctionComplexity / compute_all_metrics).
+ * The CFG's block/edge count (E - N + 2) does NOT model any of those, so
+ * using it to overwrite the AST-derived cyclomatic silently corrupts the
+ * metric for any function using &&/||/??/?. or containing a closure
+ * (issue #1743) — CFG blocks/edges are stored here purely for CFG
+ * queries/visualization (`codegraph cfg`), not as a complexity source.
+ */
 function storeNativeCfgResults(results: NativeFunctionCfgResult[], defs: Definition[]): void {
   const byLine = indexNativeByLine(results);
 
@@ -311,48 +304,6 @@ function storeNativeCfgResults(results: NativeFunctionCfgResult[], defs: Definit
       const match = matchNativeResult(byLine.get(def.line), def.name);
       if (!match) continue;
       def.cfg = match.cfg;
-
-      // Override complexity cyclomatic with CFG-derived value
-      const { edges, blocks } = match.cfg;
-      if (edges && blocks) {
-        overrideCyclomaticFromCfg(def, edges.length - blocks.length + 2);
-      }
-    }
-  }
-}
-
-// ─── CFG cyclomatic reconciliation ──────────────────────────────────────
-
-/**
- * Apply CFG-derived cyclomatic override for definitions that already have both
- * `complexity` and `cfg` with blocks/edges but whose cyclomatic was never
- * overridden (e.g., native extractors provide both fields inline, so the
- * normal override path in storeNativeCfgResults / storeCfgResults is skipped).
- */
-/** Type guard for cfg objects with blocks and edges arrays. */
-function hasCfgBlocksAndEdges(cfg: unknown): cfg is { blocks: unknown[]; edges: unknown[] } {
-  return (
-    cfg != null &&
-    typeof cfg === 'object' &&
-    Array.isArray((cfg as { blocks?: unknown }).blocks) &&
-    Array.isArray((cfg as { edges?: unknown }).edges)
-  );
-}
-
-function reconcileCfgCyclomatic(fileSymbols: Map<string, ExtractorOutput>): void {
-  for (const [, symbols] of fileSymbols) {
-    const defs = symbols.definitions || [];
-    for (const def of defs) {
-      if (
-        (def.kind === 'function' || def.kind === 'method') &&
-        def.complexity &&
-        hasCfgBlocksAndEdges(def.cfg)
-      ) {
-        const cfgCyclomatic = Math.max(def.cfg.edges.length - def.cfg.blocks.length + 2, 1);
-        if (cfgCyclomatic !== def.complexity.cyclomatic) {
-          overrideCyclomaticFromCfg(def, cfgCyclomatic);
-        }
-      }
     }
   }
 }
@@ -610,6 +561,9 @@ function storeComplexityResults(results: WalkResults, defs: Definition[], langId
   }
 }
 
+// Note: intentionally does not touch def.complexity.cyclomatic — see the
+// docblock on storeNativeCfgResults for why the CFG's block/edge count must
+// never override the AST-derived cyclomatic complexity (issue #1743).
 function storeCfgResults(results: WalkResults, defs: Definition[]): void {
   const byLine = indexByLine((results.cfg || []) as CfgFuncResult[]);
   for (const def of defs) {
@@ -621,11 +575,6 @@ function storeCfgResults(results: WalkResults, defs: Definition[]): void {
       const cfgResult = matchResultToDef(byLine.get(def.line), def.name);
       if (!cfgResult) continue;
       def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
-
-      // Override complexity's cyclomatic with CFG-derived value (single source of truth)
-      if (cfgResult.cyclomatic != null) {
-        overrideCyclomaticFromCfg(def, cfgResult.cyclomatic);
-      }
     }
   }
 }
@@ -868,9 +817,6 @@ async function runFastPathIfApplicable(
   if (!allNativeDataComplete(fileSymbols, opts)) return false;
 
   debug('native full-analysis fast path: all data present, skipping WASM/visitor passes');
-  const doComplexity = opts.complexity !== false;
-  const doCfg = opts.cfg !== false;
-  if (doComplexity && doCfg) reconcileCfgCyclomatic(fileSymbols);
   await delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOpts, timing);
   return true;
 }
@@ -911,15 +857,6 @@ export async function runAnalyses(
   // _unifiedWalkMs is kept as a diagnostic cross-check (overlaps with the
   // per-phase timers above, not additive).
   timing._unifiedWalkMs = runUnifiedWalkPass(db, fileSymbols, extToLang, opts, timing);
-
-  // Reconcile: apply CFG-derived cyclomatic override for any definitions that have
-  // both precomputed complexity and CFG data but whose cyclomatic was never overridden.
-  // This closes a parity gap where native extractors provide both fields inline but
-  // the override step (storeNativeCfgResults / storeCfgResults) is skipped because
-  // detectNativeNeeds sees both as already present.
-  if (doComplexity && doCfg) {
-    reconcileCfgCyclomatic(fileSymbols);
-  }
 
   // Delegate to buildXxx functions for DB writes + native fallback
   await delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOpts, timing);
