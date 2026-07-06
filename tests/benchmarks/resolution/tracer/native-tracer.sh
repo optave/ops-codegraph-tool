@@ -385,13 +385,18 @@ thread_local! {
 pub fn trace_call(name: &str, file: &str) -> TraceGuard {
     TRACER.with(|t| {
         let mut t = t.borrow_mut();
-        if let Some(caller) = t.stack.last() {
-            let key = format!("{}@{}->{}@{}", caller.name, caller.file, name, file);
+        // Clone the caller's name/file out (rather than holding the &Frame
+        // borrow from t.stack.last() across the mutations below) so the
+        // subsequent t.seen / t.edges mutable accesses don't overlap with an
+        // outstanding immutable borrow of t.
+        let caller = t.stack.last().map(|f| (f.name.clone(), f.file.clone()));
+        if let Some((caller_name, caller_file)) = caller {
+            let key = format!("{}@{}->{}@{}", caller_name, caller_file, name, file);
             if !t.seen.contains(&key) {
                 t.seen.insert(key);
                 t.edges.push(Edge {
-                    source_name: caller.name.clone(),
-                    source_file: caller.file.clone(),
+                    source_name: caller_name,
+                    source_file: caller_file,
                     target_name: name.to_string(),
                     target_file: file.to_string(),
                 });
@@ -432,18 +437,26 @@ RSTRACE
     # Inject trace_call into every fn body, tracking impl blocks for qualnames.
     # Rust's Drop-guard RAII pattern means only entry needs injecting — the
     # guard's Drop impl fires trace_support's exit hook automatically.
+    # The context regex's leading optional group absorbs "Trait for " so group
+    # 2 always lands on the concrete type — plain `impl Type {` and trait impls
+    # `impl Trait for Type {` both must qualname as the type, not the trait
+    # (methods are defined per-type, and expected-edges.json's trait-dispatch
+    # entries name the implementing type, e.g. EmailValidator.validate).
     inject_trace_calls \
         "$TMP_DIR/src/*.rs" \
         "trace_support.rs" \
-        '^impl[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' 1 \
+        '^impl[[:space:]]+([A-Za-z_][A-Za-z0-9_]*[[:space:]]+for[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)' 2 \
         'fn[[:space:]]+([a-z_][a-z0-9_]*)' 1 \
         '' \
         raii \
         '        let _tg = crate::trace_support::trace_call("%s", "%s");'
 
     # Inject dump_trace() at end of main()
+    # The i\<newline>text form (rather than a GNU-only inline i\text) is required
+    # for BSD sed (macOS) to accept this — see #1759.
     sedi '/^fn main/,/^\}/ {
-        /^\}/ i\    crate::trace_support::dump_trace();
+        /^\}/ i\
+    crate::trace_support::dump_trace();
     }' "$TMP_DIR/src/main.rs"
 
     # Redirect eprintln/println in fixture code to stderr to keep stdout clean for JSON

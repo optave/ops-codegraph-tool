@@ -100,6 +100,76 @@
       "kind": "calls",
       "mode": "same-file",
       "notes": "Same-file associated function call (UserService::new)"
+    },
+    {
+      "source": { "name": "main", "file": "main.rs" },
+      "target": { "name": "build_service", "file": "service.rs" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Cross-module function call via use crate::service::build_service"
+    },
+    {
+      "source": { "name": "main", "file": "main.rs" },
+      "target": { "name": "UserService.add_user", "file": "service.rs" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "service.add_user() — service is typed as UserService (returned by build_service)"
+    },
+    {
+      "source": { "name": "main", "file": "main.rs" },
+      "target": { "name": "UserService.get_user", "file": "service.rs" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "service.get_user() — service is typed as UserService (returned by build_service)"
+    },
+    {
+      "source": { "name": "main", "file": "main.rs" },
+      "target": { "name": "User.display_name", "file": "models.rs" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "user.display_name() — user is typed as User (returned by UserService::get_user)"
+    },
+    {
+      "source": { "name": "main", "file": "main.rs" },
+      "target": { "name": "UserService.remove_user", "file": "service.rs" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "service.remove_user() — service is typed as UserService (returned by build_service)"
+    },
+    {
+      "source": { "name": "main", "file": "main.rs" },
+      "target": { "name": "direct_repo_access", "file": "main.rs" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Same-file private function call"
+    },
+    {
+      "source": { "name": "direct_repo_access", "file": "main.rs" },
+      "target": { "name": "UserRepository.new", "file": "repository.rs" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "UserRepository::new() — cross-module associated function call via use crate::repository::UserRepository"
+    },
+    {
+      "source": { "name": "direct_repo_access", "file": "main.rs" },
+      "target": { "name": "create_user", "file": "models.rs" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Cross-module function call via use crate::models::create_user"
+    },
+    {
+      "source": { "name": "direct_repo_access", "file": "main.rs" },
+      "target": { "name": "validate_all", "file": "validator.rs" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Cross-module function call via use crate::validator::validate_all"
+    },
+    {
+      "source": { "name": "direct_repo_access", "file": "main.rs" },
+      "target": { "name": "UserRepository.save", "file": "repository.rs" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.save() — repo is typed as UserRepository"
     }
   ]
 }

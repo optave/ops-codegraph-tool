@@ -1,4 +1,4 @@
-use crate::models::{create_user, User};
+use crate::models::{create_user, Repository, User};
 use crate::repository::{create_repository, UserRepository};
 use crate::validator::validate_all;
 
