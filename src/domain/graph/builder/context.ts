@@ -87,6 +87,16 @@ export class PipelineContext {
     tgtKind: string;
     tgtFile: string;
     tgtLine: number;
+    /**
+     * 1-based rank of the target (by ascending line) among nodes sharing its
+     * (name, kind) within `tgtFile`, computed at save time. Lets
+     * `reconnectReverseDepEdges` map an old target to its correct new node
+     * even when multiple distinct symbols in the file share the same name
+     * and kind (e.g. several object-literal `close() {}` methods) — see #1752.
+     */
+    tgtOrdinal: number;
+    /** Size of that (name, kind) sibling group at save time. */
+    tgtSiblingCount: number;
     edgeKind: string;
     confidence: number;
     dynamic: number;

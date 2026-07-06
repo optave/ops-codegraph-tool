@@ -378,6 +378,47 @@ function findReverseDependencies(
 }
 
 /**
+ * Computes each node's 1-based ordinal rank (by ascending line) among nodes
+ * sharing its (name, kind) within `file`, plus the sibling-group size, keyed
+ * by `name|kind|line`.
+ *
+ * A file can contain multiple distinct symbols with the identical name and
+ * kind — e.g. several object-literal `close() {}` methods returned from
+ * different functions in the same file. `(name, kind, file)` alone is not a
+ * unique identity for such symbols, so `reconnectReverseDepEdges` cannot
+ * safely tell them apart by nearest-line matching once unrelated code shifts
+ * the candidates unevenly (#1752). The ordinal recorded here — the target's
+ * rank among same-named siblings at save time — lets reconnection map an old
+ * target to its new node correctly as long as the sibling count is
+ * unchanged, regardless of how far the whole group has shifted.
+ */
+function computeNodeOrdinals(
+  db: BetterSqlite3Database,
+  file: string,
+): Map<string, { ordinal: number; siblingCount: number }> {
+  const result = new Map<string, { ordinal: number; siblingCount: number }>();
+  const rows = db.prepare('SELECT name, kind, line FROM nodes WHERE file = ?').all(file) as Array<{
+    name: string;
+    kind: string;
+    line: number;
+  }>;
+  const groups = new Map<string, number[]>();
+  for (const row of rows) {
+    const groupKey = `${row.name}|${row.kind}`;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey)!.push(row.line);
+  }
+  for (const [groupKey, lines] of groups) {
+    lines.sort((a, b) => a - b);
+    const siblingCount = lines.length;
+    lines.forEach((line, idx) => {
+      result.set(`${groupKey}|${line}`, { ordinal: idx + 1, siblingCount });
+    });
+  }
+  return result;
+}
+
+/**
  * Reconnects reverse-dep files to the changed files they depend on.
  *
  * Native path: purgeFilesData already deleted + rebuilt the affected edges in
@@ -422,6 +463,10 @@ function addReverseDeps(
     WHERE n_tgt.file = ? AND n_src.file != n_tgt.file
   `);
   for (const changedPath of changePaths) {
+    // Must be computed BEFORE this file's nodes are purged — captures the
+    // pre-purge sibling layout so reconnection can map old→new correctly
+    // even when several same-named/same-kind symbols exist in the file.
+    const ordinals = computeNodeOrdinals(db, changedPath);
     for (const row of saveEdgesStmt.all(changedPath) as Array<{
       source_id: number;
       tgt_name: string;
@@ -438,12 +483,17 @@ function addReverseDeps(
       // Skip edges whose source is also being purged — buildEdges will
       // re-create them with correct new IDs.
       if (changePathSet.has(row.src_file)) continue;
+      const { ordinal, siblingCount } = ordinals.get(
+        `${row.tgt_name}|${row.tgt_kind}|${row.tgt_line}`,
+      ) ?? { ordinal: 1, siblingCount: 1 };
       ctx.savedReverseDepEdges.push({
         sourceId: row.source_id,
         tgtName: row.tgt_name,
         tgtKind: row.tgt_kind,
         tgtFile: row.tgt_file,
         tgtLine: row.tgt_line,
+        tgtOrdinal: ordinal,
+        tgtSiblingCount: siblingCount,
         edgeKind: row.edge_kind,
         confidence: row.confidence,
         dynamic: row.dynamic,

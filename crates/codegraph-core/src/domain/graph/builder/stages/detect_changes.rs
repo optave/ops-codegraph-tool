@@ -369,6 +369,54 @@ pub struct SavedReverseDepEdge {
     pub edge_kind: String,
     pub confidence: f64,
     pub dynamic: i64,
+    /// 1-based rank of the target (by ascending line) among nodes sharing its
+    /// (name, kind) within `tgt_file`, computed at save time — see #1752.
+    pub tgt_ordinal: i64,
+    /// Size of that (name, kind) sibling group at save time.
+    pub tgt_sibling_count: i64,
+}
+
+/// Computes each node's 1-based ordinal rank (by ascending line) among nodes
+/// sharing its (name, kind) within `file`, plus the sibling-group size,
+/// keyed by `(name, kind, line)`.
+///
+/// A file can contain multiple distinct symbols with the identical name and
+/// kind — e.g. several object-literal `close() {}` methods returned from
+/// different functions in the same file. `(name, kind, file)` alone is not a
+/// unique identity for such symbols, so `reconnect_reverse_dep_edges` cannot
+/// safely tell them apart by nearest-line matching once unrelated code
+/// shifts the candidates unevenly (#1752). The ordinal recorded here — the
+/// target's rank among same-named siblings at save time — lets reconnection
+/// map an old target to its new node correctly as long as the sibling count
+/// is unchanged, regardless of how far the whole group has shifted.
+fn compute_ordinals(conn: &Connection, file: &str) -> HashMap<(String, String, i64), (i64, i64)> {
+    let mut by_group: HashMap<(String, String), Vec<i64>> = HashMap::new();
+    let mut result = HashMap::new();
+    let mut stmt = match conn.prepare("SELECT name, kind, line FROM nodes WHERE file = ?1") {
+        Ok(s) => s,
+        Err(_) => return result,
+    };
+    let rows = match stmt.query_map([file], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    }) {
+        Ok(r) => r,
+        Err(_) => return result,
+    };
+    for row in rows.flatten() {
+        by_group.entry((row.0, row.1)).or_default().push(row.2);
+    }
+    for ((name, kind), mut lines) in by_group {
+        lines.sort_unstable();
+        let sibling_count = lines.len() as i64;
+        for (idx, line) in lines.iter().enumerate() {
+            result.insert((name.clone(), kind.clone(), *line), (idx as i64 + 1, sibling_count));
+        }
+    }
+    result
 }
 
 /// Save edges from reverse-dep files → changed files BEFORE purge so they
@@ -403,6 +451,10 @@ pub fn save_reverse_dep_edges(
     };
 
     for changed in changed_paths {
+        // Must be computed BEFORE this file's nodes are purged — captures the
+        // pre-purge sibling layout so reconnection can map old→new correctly
+        // even when several same-named/same-kind symbols exist in the file.
+        let ordinals = compute_ordinals(conn, changed);
         let rows = match stmt.query_map([changed], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -425,6 +477,10 @@ pub fn save_reverse_dep_edges(
             if changed_set.contains(row.8.as_str()) {
                 continue;
             }
+            let (tgt_ordinal, tgt_sibling_count) = ordinals
+                .get(&(row.1.clone(), row.2.clone(), row.4))
+                .copied()
+                .unwrap_or((1, 1));
             saved.push(SavedReverseDepEdge {
                 source_id: row.0,
                 tgt_name: row.1,
@@ -434,18 +490,56 @@ pub fn save_reverse_dep_edges(
                 edge_kind: row.5,
                 confidence: row.6,
                 dynamic: row.7,
+                tgt_ordinal,
+                tgt_sibling_count,
             });
         }
     }
     saved
 }
 
+/// Picks the correct reconnect target among same-(name,kind,file) candidates
+/// (sorted by ascending line).
+///
+/// When only one candidate exists, it's an unambiguous match. When several
+/// exist (e.g. multiple object-literal `close() {}` methods in one file) and
+/// the sibling-group size is unchanged since save, the saved ordinal — the
+/// target's rank by line among its siblings at save time — reliably
+/// identifies the original target even though the whole group may have
+/// shifted by an arbitrary number of lines. Falls back to nearest-line only
+/// when the sibling count itself changed (a same-named sibling was added or
+/// removed), since the ordinal mapping can no longer be trusted — see #1752.
+fn pick_reconnect_target(
+    candidates: &[(i64, i64)],
+    tgt_ordinal: i64,
+    tgt_sibling_count: i64,
+    tgt_line: i64,
+) -> Option<i64> {
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        return Some(candidates[0].0);
+    }
+    if candidates.len() as i64 == tgt_sibling_count
+        && tgt_ordinal >= 1
+        && (tgt_ordinal as usize) <= candidates.len()
+    {
+        return Some(candidates[(tgt_ordinal - 1) as usize].0);
+    }
+    candidates
+        .iter()
+        .min_by_key(|(_, line)| (line - tgt_line).abs())
+        .map(|(id, _)| *id)
+}
+
 /// Reconnect saved reverse-dep edges to the new target node IDs.
 ///
 /// The source node ID is still valid (reverse-dep nodes were never purged).
-/// The target was deleted and re-inserted with a new ID — look it up by
-/// (name, kind, file) using nearest-line matching, and recreate the edge.
-/// Mirrors `reconnectReverseDepEdges` in `build-edges.ts`.
+/// The target was deleted and re-inserted with a new ID — look up all
+/// (name, kind, file) candidates and pick the one matching the saved ordinal
+/// (see `pick_reconnect_target`), then recreate the edge. Mirrors
+/// `reconnectReverseDepEdges` in `build-edges.ts`.
 ///
 /// Returns (reconnected, dropped) counts.
 pub fn reconnect_reverse_dep_edges(
@@ -463,9 +557,8 @@ pub fn reconnect_reverse_dep_edges(
     let mut reconnected = 0usize;
     let mut dropped = 0usize;
     {
-        let mut find_stmt = match tx.prepare(
-            "SELECT id FROM nodes WHERE name = ?1 AND kind = ?2 AND file = ?3 \
-             ORDER BY ABS(line - ?4) LIMIT 1",
+        let mut candidates_stmt = match tx.prepare(
+            "SELECT id, line FROM nodes WHERE name = ?1 AND kind = ?2 AND file = ?3 ORDER BY line",
         ) {
             Ok(s) => s,
             Err(_) => return (0, 0),
@@ -477,12 +570,41 @@ pub fn reconnect_reverse_dep_edges(
             Ok(s) => s,
             Err(_) => return (0, 0),
         };
+
+        // Cache candidate lists per (name, kind, file) group — many saved
+        // edges often share the same target (e.g. several callers of the
+        // same function), so this avoids re-querying per edge.
+        let mut candidates_cache: HashMap<(String, String, String), Vec<(i64, i64)>> =
+            HashMap::new();
+
         for s in saved {
-            match find_stmt.query_row(
-                rusqlite::params![&s.tgt_name, &s.tgt_kind, &s.tgt_file, s.tgt_line],
-                |row| row.get::<_, i64>(0),
+            let key = (s.tgt_name.clone(), s.tgt_kind.clone(), s.tgt_file.clone());
+            let candidates = match candidates_cache.entry(key) {
+                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    let mut rows: Vec<(i64, i64)> = Vec::new();
+                    if let Ok(mut rows_iter) = candidates_stmt
+                        .query(rusqlite::params![&s.tgt_name, &s.tgt_kind, &s.tgt_file])
+                    {
+                        while let Ok(Some(row)) = rows_iter.next() {
+                            if let (Ok(id), Ok(line)) =
+                                (row.get::<_, i64>(0), row.get::<_, i64>(1))
+                            {
+                                rows.push((id, line));
+                            }
+                        }
+                    }
+                    e.insert(rows)
+                }
+            };
+
+            match pick_reconnect_target(
+                candidates,
+                s.tgt_ordinal,
+                s.tgt_sibling_count,
+                s.tgt_line,
             ) {
-                Ok(new_id) => {
+                Some(new_id) => {
                     // INSERT OR IGNORE silently swallows duplicate-row constraint
                     // errors and returns Ok(0). Only count rows that actually
                     // inserted so the diagnostic counter isn't inflated by no-ops.
@@ -498,7 +620,7 @@ pub fn reconnect_reverse_dep_edges(
                         Err(_) => dropped += 1,
                     }
                 }
-                Err(_) => {
+                None => {
                     dropped += 1;
                 }
             }
@@ -827,5 +949,164 @@ mod tests {
         let all_files: Vec<String> = Vec::new();
         let removed = detect_removed_files(&existing, &all_files, "/project", None);
         assert_eq!(removed, vec!["src/deleted.ts"]);
+    }
+
+    // ── Reverse-dep edge reconnection (#1752) ───────────────────────────
+
+    #[test]
+    fn pick_reconnect_target_single_candidate_is_unambiguous() {
+        let candidates = vec![(42, 100)];
+        assert_eq!(pick_reconnect_target(&candidates, 1, 1, 999), Some(42));
+    }
+
+    #[test]
+    fn pick_reconnect_target_no_candidates_returns_none() {
+        let candidates: Vec<(i64, i64)> = vec![];
+        assert_eq!(pick_reconnect_target(&candidates, 1, 1, 100), None);
+    }
+
+    #[test]
+    fn pick_reconnect_target_uses_ordinal_when_sibling_count_matches() {
+        // Four same-named/same-kind siblings (e.g. four `close() {}` methods),
+        // shifted down by an insertion elsewhere in the file. The 3rd-ranked
+        // sibling (originally closest to line 433 in the pre-shift layout)
+        // must still resolve to the 3rd-ranked sibling post-shift (id 30,
+        // line 580), NOT to whichever candidate is nearest to the stale old
+        // line 433 (which would wrongly pick id 10 / line 433... except that
+        // id no longer exists post-purge; the point is nearest-*new*-line
+        // to the OLD reference can pick the wrong post-shift sibling once the
+        // group shifts unevenly).
+        let candidates = vec![(10, 178), (20, 461), (30, 500), (40, 580)];
+        // Saved ordinal=3 out of 4 siblings (matches count) → must pick the
+        // 3rd by line (id 30), regardless of how far tgt_line (the stale old
+        // reference, 433) now sits from any candidate.
+        let picked = pick_reconnect_target(&candidates, 3, 4, 433);
+        assert_eq!(picked, Some(30));
+    }
+
+    #[test]
+    fn pick_reconnect_target_falls_back_to_nearest_line_when_sibling_count_changed() {
+        // A sibling was added/removed since save — the ordinal mapping can no
+        // longer be trusted, so fall back to nearest-line (best effort, same
+        // as pre-#1752 behavior).
+        let candidates = vec![(10, 100), (20, 200), (30, 300)];
+        // Saved sibling_count=2 but now there are 3 candidates → mismatch.
+        let picked = pick_reconnect_target(&candidates, 2, 2, 195);
+        assert_eq!(picked, Some(20)); // nearest to 195 is line 200
+    }
+
+    /// Minimal in-memory schema covering only the columns `save_reverse_dep_edges`
+    /// / `reconnect_reverse_dep_edges` touch — not the full production migration set.
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                file TEXT NOT NULL,
+                line INTEGER,
+                UNIQUE(name, kind, file, line)
+            );
+            CREATE TABLE edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                confidence REAL DEFAULT 1.0,
+                dynamic INTEGER DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_node(conn: &Connection, name: &str, kind: &str, file: &str, line: i64) -> i64 {
+        conn.execute(
+            "INSERT INTO nodes (name, kind, file, line) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![name, kind, file, line],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn compute_ordinals_ranks_same_name_kind_siblings_by_line() {
+        let conn = test_conn();
+        insert_node(&conn, "close", "method", "src/db/connection.ts", 433);
+        insert_node(&conn, "close", "method", "src/db/connection.ts", 461);
+        insert_node(&conn, "close", "method", "src/db/connection.ts", 500);
+        insert_node(&conn, "close", "method", "src/db/connection.ts", 580);
+        // An unrelated, uniquely-named sibling must not pollute the group.
+        insert_node(&conn, "openDb", "function", "src/db/connection.ts", 161);
+
+        let ordinals = compute_ordinals(&conn, "src/db/connection.ts");
+        let key = |line: i64| ("close".to_string(), "method".to_string(), line);
+        assert_eq!(ordinals.get(&key(433)), Some(&(1, 4)));
+        assert_eq!(ordinals.get(&key(461)), Some(&(2, 4)));
+        assert_eq!(ordinals.get(&key(500)), Some(&(3, 4)));
+        assert_eq!(ordinals.get(&key(580)), Some(&(4, 4)));
+        assert_eq!(
+            ordinals.get(&("openDb".to_string(), "function".to_string(), 161)),
+            Some(&(1, 1))
+        );
+    }
+
+    /// End-to-end reproduction of #1752: a reverse-dep caller's edge to the
+    /// 3rd of four same-named `close` siblings must survive a purge+reinsert
+    /// cycle that shifts all four down uniformly (inserting a new, unrelated
+    /// function above them — exactly the real repro: "insert N lines above
+    /// several existing functions"). A uniform shift is already enough to
+    /// break the old nearest-*old*-line heuristic: once the whole group moves
+    /// far enough, the saved reference line (500) ends up numerically closest
+    /// to the wrong (lowest) candidate's new line rather than its own —
+    /// mirroring the real bug's `close@433` vs `close@580` divergence found
+    /// by replaying this repo's actual commit history.
+    #[test]
+    fn reconnect_survives_uniform_shift_of_same_named_siblings() {
+        let conn = test_conn();
+        let file = "src/db/connection.ts";
+
+        // Pre-edit layout: four `close` siblings.
+        insert_node(&conn, "close", "method", file, 433);
+        insert_node(&conn, "close", "method", file, 461);
+        let target_old_id = insert_node(&conn, "close", "method", file, 500);
+        insert_node(&conn, "close", "method", file, 580);
+        // External caller in a different (untouched) file.
+        let caller_id = insert_node(&conn, "triageData", "function", "src/features/triage.ts", 146);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 0.5, 0)",
+            rusqlite::params![caller_id, target_old_id],
+        )
+        .unwrap();
+
+        let saved = save_reverse_dep_edges(&conn, &[file.to_string()]);
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].tgt_ordinal, 3);
+        assert_eq!(saved[0].tgt_sibling_count, 4);
+
+        // Simulate purge_changed_files: delete the changed file's nodes/edges.
+        conn.execute("DELETE FROM edges WHERE target_id IN (SELECT id FROM nodes WHERE file = ?1)", [file]).unwrap();
+        conn.execute("DELETE FROM nodes WHERE file = ?1", [file]).unwrap();
+
+        // Re-insert: a new function was added above all four, shifting every
+        // sibling down by the same delta (147 lines) — the exact shape of the
+        // real #1752 repro (insert one helper above several functions).
+        insert_node(&conn, "close", "method", file, 433 + 147);
+        insert_node(&conn, "close", "method", file, 461 + 147);
+        let target_new_id = insert_node(&conn, "close", "method", file, 500 + 147);
+        insert_node(&conn, "close", "method", file, 580 + 147);
+
+        let (reconnected, dropped) = reconnect_reverse_dep_edges(&conn, &saved);
+        assert_eq!((reconnected, dropped), (1, 0));
+
+        let new_target: i64 = conn
+            .query_row(
+                "SELECT target_id FROM edges WHERE source_id = ?1",
+                [caller_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_target, target_new_id);
     }
 }

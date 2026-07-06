@@ -1976,32 +1976,85 @@ function applyEdgeTechniquesAfterNativeInsert(
 // ── Reverse-dep edge reconnection (#932, #933) ─────────────────────────
 
 /**
+ * Picks the correct reconnect target among same-(name,kind,file) candidates
+ * (sorted by ascending line).
+ *
+ * When only one candidate exists, it's an unambiguous match. When several
+ * exist (e.g. multiple object-literal `close() {}` methods in one file) and
+ * the sibling-group size is unchanged since save, the saved ordinal — the
+ * target's rank by line among its siblings at save time — reliably
+ * identifies the original target even though the whole group may have
+ * shifted by an arbitrary number of lines. Falls back to nearest-line only
+ * when the sibling count itself changed (a same-named sibling was added or
+ * removed), since the ordinal mapping can no longer be trusted — see #1752.
+ */
+function pickReconnectTarget(
+  candidates: Array<{ id: number; line: number }>,
+  tgtOrdinal: number,
+  tgtSiblingCount: number,
+  tgtLine: number,
+): number | null {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!.id;
+  if (candidates.length === tgtSiblingCount && tgtOrdinal >= 1 && tgtOrdinal <= candidates.length) {
+    return candidates[tgtOrdinal - 1]!.id;
+  }
+  let best = candidates[0]!;
+  let bestDist = Math.abs(best.line - tgtLine);
+  for (const c of candidates) {
+    const dist = Math.abs(c.line - tgtLine);
+    if (dist < bestDist) {
+      best = c;
+      bestDist = dist;
+    }
+  }
+  return best.id;
+}
+
+/**
  * Reconnect edges that were saved before changed-file purge.
  *
  * Each saved edge records: sourceId (still valid — reverse-dep nodes were not
- * purged) and target attributes (name, kind, file, line).  The target node was
- * deleted and re-inserted with a new ID by insertNodes.  We look up the new ID
- * by (name, kind, file) and re-create the edge.
+ * purged) and target attributes (name, kind, file, line, ordinal, sibling
+ * count). The target node was deleted and re-inserted with a new ID by
+ * insertNodes. We look up all (name, kind, file) candidates and pick the one
+ * matching the saved ordinal (see `pickReconnectTarget`), then re-create the
+ * edge.
  */
 function reconnectReverseDepEdges(ctx: PipelineContext): void {
   const { db } = ctx;
-  const findNodeStmt = db.prepare(
-    'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? ORDER BY ABS(line - ?) LIMIT 1',
+  const candidatesStmt = db.prepare(
+    'SELECT id, line FROM nodes WHERE name = ? AND kind = ? AND file = ? ORDER BY line',
   );
   const reconnectedRows: EdgeRowTuple[] = [];
   let dropped = 0;
 
+  // Cache candidate lists per (name, kind, file) group — many saved edges
+  // often share the same target (e.g. several callers of the same
+  // function), so this avoids re-querying per edge.
+  const candidatesCache = new Map<string, Array<{ id: number; line: number }>>();
+
   for (const saved of ctx.savedReverseDepEdges) {
-    const newTarget = findNodeStmt.get(
-      saved.tgtName,
-      saved.tgtKind,
-      saved.tgtFile,
+    const cacheKey = `${saved.tgtName}|${saved.tgtKind}|${saved.tgtFile}`;
+    let candidates = candidatesCache.get(cacheKey);
+    if (!candidates) {
+      candidates = candidatesStmt.all(saved.tgtName, saved.tgtKind, saved.tgtFile) as Array<{
+        id: number;
+        line: number;
+      }>;
+      candidatesCache.set(cacheKey, candidates);
+    }
+
+    const newId = pickReconnectTarget(
+      candidates,
+      saved.tgtOrdinal,
+      saved.tgtSiblingCount,
       saved.tgtLine,
-    ) as { id: number } | undefined;
-    if (newTarget) {
+    );
+    if (newId != null) {
       reconnectedRows.push([
         saved.sourceId,
-        newTarget.id,
+        newId,
         saved.edgeKind,
         saved.confidence,
         saved.dynamic,
