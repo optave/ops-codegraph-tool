@@ -255,8 +255,8 @@ describe('COMPLEXITY_RULES', () => {
     expect(COMPLEXITY_RULES.has('tsx')).toBe(true);
   });
 
-  it('supports all 10 languages, not hcl', () => {
-    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php']) {
+  it('supports all 11 languages, not hcl', () => {
+    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php', 'lua']) {
       expect(COMPLEXITY_RULES.has(lang)).toBe(true);
     }
     expect(COMPLEXITY_RULES.has('hcl')).toBe(false);
@@ -347,8 +347,8 @@ describe('HALSTEAD_RULES', () => {
     expect(HALSTEAD_RULES.has('tsx')).toBe(true);
   });
 
-  it('supports all 10 languages, not hcl', () => {
-    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php']) {
+  it('supports all 11 languages, not hcl', () => {
+    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php', 'lua']) {
       expect(HALSTEAD_RULES.has(lang)).toBe(true);
     }
     expect(HALSTEAD_RULES.has('hcl')).toBe(false);
@@ -946,6 +946,93 @@ describe('PHP complexity', () => {
       '<?php\nfunction f() {\n    # hash comment\n    // slash comment\n    return 1;\n}\n',
     );
     expect(l.commentLines).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─── Lua (#1782) ─────────────────────────────────────────────────────────
+
+describe('Lua complexity', () => {
+  const { analyze, halstead, loc } = makeHelpers('lua', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('local function add(a, b)\n  return a + b\nend\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      'local function check(x)\n  if x > 0 then\n    return true\n  end\n  return false\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/elseif/else chain', () => {
+    // elseif_statement/else_statement are flat siblings of if_statement
+    // (repeated `alternative:` fields), not nested — same shape as Python's
+    // elif_clause/else_clause.
+    const r = analyze(
+      'local function classify(x)\n  if x > 0 then\n    return "pos"\n  elseif x < 0 then\n    return "neg"\n  else\n    return "zero"\n  end\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'local function nested(x, y)\n  if x > 0 then\n    if y > 0 then\n      return true\n    end\n  end\n  return false\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('numeric for loop with condition', () => {
+    const r = analyze(
+      'local function search(arr, t)\n  for i = 1, #arr do\n    if arr[i] == t then\n      return true\n    end\n  end\n  return false\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('generic for-in loop', () => {
+    const r = analyze(
+      'local function search(t, target)\n  for k, v in pairs(t) do\n    if v == target then\n      return k\n    end\n  end\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('while loop', () => {
+    const r = analyze('local function countdown(n)\n  while n > 0 do\n    n = n - 1\n  end\nend\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('repeat/until loop', () => {
+    const r = analyze(
+      'local function countdown(n)\n  repeat\n    n = n - 1\n  until n <= 0\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('logical operators', () => {
+    const r = analyze(
+      'local function check(a, b)\n  if a and b then\n    return true\n  end\nend\n',
+    );
+    expect(r.cognitive).toBe(2);
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('method declaration (colon syntax) is recognized as a function', () => {
+    const r = analyze(
+      'local Obj = {}\nfunction Obj:method(x)\n  if x > 0 then\n    return x\n  end\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('local function add(a, b)\n  return a + b\nend\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+
+  it('LOC: -- comments detected', () => {
+    const l = loc('local function f()\n  -- comment\n  return 1\nend\n');
+    expect(l.commentLines).toBeGreaterThanOrEqual(1);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { DataflowRulesConfig } from '../../types.js';
+import type { ComplexityRules, DataflowRulesConfig, HalsteadRules } from '../../types.js';
 import { makeDataflowRules } from '../shared.js';
 
 // ─── Lua ──────────────────────────────────────────────────────────────────────
@@ -29,6 +29,118 @@ export const dataflowLua: DataflowRulesConfig = makeDataflowRules({
   memberObjectField: 'table',
   memberPropertyField: 'field',
 });
+
+// Lua's `if_statement` is flat, not nested: `elseif`/`else` are separate node
+// types (`elseif_statement`, `else_statement`) attached to the *same*
+// `if_statement` via repeated `alternative:` fields — confirmed by parsing
+// `if a then .. elseif b then .. else .. end` and inspecting the S-expression:
+// `(if_statement condition: (...) consequence: (...) alternative: (elseif_statement ...) alternative: (else_statement ...))`.
+// This is structurally identical to Python's elif_clause/else_clause pattern
+// (Pattern B), not JS's nested else_clause>if_statement (Pattern A) or Go's
+// alternative-field-holds-nested-if (Pattern C) — so elseViaAlternative: false
+// and neither elseif_statement nor else_statement is in nestingNodes (matching
+// how Python's elif_clause/else_clause are siblings of the primary if, not
+// separately-nested branches).
+//
+// binary_expression is Lua's single generic binary-op node (arithmetic,
+// comparison, concat, AND logical `and`/`or`) — same shared-type pattern as
+// Ruby's `binary` node. classifyLogicalOp/handleLogicalOperator only acts when
+// `node.child(1)` (the operator token) is in logicalOperators, so comparisons
+// and arithmetic on the same node type are correctly ignored.
+export const complexityLua: ComplexityRules = {
+  branchNodes: new Set([
+    'if_statement',
+    'elseif_statement',
+    'else_statement',
+    'for_statement',
+    'while_statement',
+    'repeat_statement',
+  ]),
+  caseNodes: new Set([]),
+  logicalOperators: new Set(['and', 'or']),
+  logicalNodeType: 'binary_expression',
+  optionalChainType: null,
+  nestingNodes: new Set(['if_statement', 'for_statement', 'while_statement', 'repeat_statement']),
+  functionNodes: new Set(['function_declaration']),
+  ifNodeType: 'if_statement',
+  elseNodeType: 'else_statement',
+  elifNodeType: 'elseif_statement',
+  elseViaAlternative: false,
+  switchLikeNodes: new Set([]),
+};
+
+// Member/method access (`dot_index_expression` `.`, `method_index_expression`
+// `:`) and invocation (`function_call`) are wrapper nodes without a dedicated
+// "call happened" token, so they're counted as compound operators — mirrors
+// Python's ['call', 'subscript', 'attribute']. The '.'/':' separator tokens are
+// ALSO in operatorLeafTypes (matching Python counting both 'attribute' and
+// '.'), so member access contributes two distinct operator kinds, consistent
+// with the existing per-language precedent.
+export const halsteadLua: HalsteadRules = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '//',
+    '%',
+    '^',
+    '#',
+    '..',
+    '==',
+    '~=',
+    '<=',
+    '>=',
+    '<',
+    '>',
+    '=',
+    'and',
+    'or',
+    'not',
+    '&',
+    '|',
+    '~',
+    '<<',
+    '>>',
+    '.',
+    ',',
+    ':',
+    '::',
+    ';',
+    'if',
+    'then',
+    'else',
+    'elseif',
+    'end',
+    'for',
+    'while',
+    'do',
+    'repeat',
+    'until',
+    'function',
+    'local',
+    'return',
+    'break',
+    'goto',
+    'in',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'number',
+    'string_content',
+    'true',
+    'false',
+    'nil',
+    '...',
+  ]),
+  compoundOperators: new Set([
+    'function_call',
+    'bracket_index_expression',
+    'dot_index_expression',
+    'method_index_expression',
+  ]),
+  skipTypes: new Set([]),
+};
 
 // ─── R ────────────────────────────────────────────────────────────────────────
 //

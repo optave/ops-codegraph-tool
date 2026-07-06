@@ -71,6 +71,7 @@ const COMMENT_PREFIXES = new Map<string, string[]>([
   ['python', ['#']],
   ['ruby', ['#']],
   ['php', ['//', '#', '/*', '*', '*/']],
+  ['lua', ['--']],
 ]);
 
 /**

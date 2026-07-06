@@ -427,6 +427,44 @@ pub static BASH_RULES: LangRules = LangRules {
     switch_like_nodes: &["case_statement"],
 };
 
+// Lua's `if_statement` is flat, not nested: `elseif`/`else` are separate node
+// kinds (`elseif_statement`, `else_statement`) attached to the *same*
+// `if_statement` via repeated `alternative:` fields — confirmed by parsing
+// `if a then .. elseif b then .. else .. end` with tree-sitter-lua and
+// inspecting the S-expression. Structurally identical to Python's
+// elif_clause/else_clause (Pattern B), not JS's nested else_clause>if_statement
+// (Pattern A) or Go's alternative-holds-nested-if (Pattern C) — so
+// else_via_alternative: false, and neither elseif_statement nor else_statement
+// is in nesting_nodes (they're siblings of the primary if, not separately
+// nested branches). Mirrors `complexityLua` in `src/ast-analysis/rules/b3.ts`.
+//
+// binary_expression is Lua's single generic binary-op node (arithmetic,
+// comparison, concat, AND logical `and`/`or`) — same shared-type pattern as
+// Ruby's `binary` node; handle_logical_op only fires when `node.child(1)` (the
+// operator token) is in logical_operators, so comparisons/arithmetic sharing
+// the same node kind are correctly ignored.
+pub static LUA_RULES: LangRules = LangRules {
+    branch_nodes: &[
+        "if_statement",
+        "elseif_statement",
+        "else_statement",
+        "for_statement",
+        "while_statement",
+        "repeat_statement",
+    ],
+    case_nodes: &[],
+    logical_operators: &["and", "or"],
+    logical_node_types: &["binary_expression"],
+    optional_chain_type: None,
+    nesting_nodes: &["if_statement", "for_statement", "while_statement", "repeat_statement"],
+    function_nodes: &["function_declaration"],
+    if_node_type: Some("if_statement"),
+    else_node_type: Some("else_statement"),
+    elif_node_type: Some("elseif_statement"),
+    else_via_alternative: false,
+    switch_like_nodes: &[],
+};
+
 /// Look up complexity rules by language ID (matches `COMPLEXITY_RULES` keys in JS).
 pub fn lang_rules(lang_id: &str) -> Option<&'static LangRules> {
     match lang_id {
@@ -444,6 +482,7 @@ pub fn lang_rules(lang_id: &str) -> Option<&'static LangRules> {
         "swift" => Some(&SWIFT_RULES),
         "scala" => Some(&SCALA_RULES),
         "bash" => Some(&BASH_RULES),
+        "lua" => Some(&LUA_RULES),
         _ => None,
     }
 }
@@ -1022,6 +1061,34 @@ pub static BASH_HALSTEAD: HalsteadRules = HalsteadRules {
     skip_types: &[],
 };
 
+// Member/method access (`dot_index_expression` `.`, `method_index_expression`
+// `:`) and invocation (`function_call`) are wrapper nodes without a dedicated
+// "call happened" token, so they're counted as compound operators — mirrors
+// Python's ["call", "subscript", "attribute"]. The '.'/':' separator tokens
+// are ALSO in operator_leaf_types (matching Python counting both "attribute"
+// and "."), so member access contributes two distinct operator kinds,
+// consistent with the other languages above. Mirrors `halsteadLua` in
+// `src/ast-analysis/rules/b3.ts`.
+pub static LUA_HALSTEAD: HalsteadRules = HalsteadRules {
+    operator_leaf_types: &[
+        "+", "-", "*", "/", "//", "%", "^", "#", "..",
+        "==", "~=", "<=", ">=", "<", ">", "=",
+        "and", "or", "not",
+        "&", "|", "~", "<<", ">>",
+        ".", ",", ":", "::", ";",
+        "if", "then", "else", "elseif", "end",
+        "for", "while", "do", "repeat", "until",
+        "function", "local", "return", "break", "goto", "in",
+    ],
+    operand_leaf_types: &[
+        "identifier", "number", "string_content", "true", "false", "nil", "...",
+    ],
+    compound_operators: &[
+        "function_call", "bracket_index_expression", "dot_index_expression", "method_index_expression",
+    ],
+    skip_types: &[],
+};
+
 /// Look up Halstead rules by language ID.
 pub fn halstead_rules(lang_id: &str) -> Option<&'static HalsteadRules> {
     match lang_id {
@@ -1039,6 +1106,7 @@ pub fn halstead_rules(lang_id: &str) -> Option<&'static HalsteadRules> {
         "swift" => Some(&SWIFT_HALSTEAD),
         "scala" => Some(&SCALA_HALSTEAD),
         "bash" => Some(&BASH_HALSTEAD),
+        "lua" => Some(&LUA_HALSTEAD),
         _ => None,
     }
 }
@@ -1056,6 +1124,7 @@ pub fn comment_prefixes(lang_id: &str) -> &'static [&'static str] {
         "swift" => &["//", "/*"],
         "scala" => &["//", "/*"],
         "bash" => &["#"],
+        "lua" => &["--"],
         _ => &["//", "/*", "*", "*/"],
     }
 }
@@ -1603,5 +1672,89 @@ mod tests {
         let m = compute_go("package main\nfunc f() {\n    for i := 0; i < 10; i++ {\n        println(i)\n    }\n}");
         assert_eq!(m.cognitive, 1);
         assert_eq!(m.cyclomatic, 2);
+    }
+
+    // ─── Lua tests (issue #1782) ────────────────────────────────────────────
+
+    fn compute_lua(code: &str) -> ComplexityMetrics {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_lua::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let func = find_first_function(&root, &LUA_RULES).expect("no function found");
+        compute_function_complexity(&func, &LUA_RULES)
+    }
+
+    #[test]
+    fn lua_empty_function() {
+        let m = compute_lua("local function f() end");
+        assert_eq!(m.cognitive, 0);
+        assert_eq!(m.cyclomatic, 1);
+        assert_eq!(m.max_nesting, 0);
+    }
+
+    #[test]
+    fn lua_single_if() {
+        let m = compute_lua("local function f(x)\n  if x > 0 then\n    return 1\n  end\nend");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn lua_if_elseif_else() {
+        // elseif_statement/else_statement are siblings of if_statement via
+        // repeated `alternative:` fields (Pattern B, like Python's elif/else).
+        let m = compute_lua(
+            "local function f(x)\n  if x > 0 then\n    return 1\n  elseif x < 0 then\n    return -1\n  else\n    return 0\n  end\nend",
+        );
+        // if: +1 cog, +1 cyc; elseif: +1 cog, +1 cyc; else: +1 cog
+        assert_eq!(m.cognitive, 3);
+        assert_eq!(m.cyclomatic, 3);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn lua_numeric_for_loop() {
+        let m = compute_lua("local function f()\n  for i = 1, 10 do\n    print(i)\n  end\nend");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn lua_while_loop() {
+        let m = compute_lua("local function f(n)\n  while n > 0 do\n    n = n - 1\n  end\nend");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn lua_repeat_until_loop() {
+        let m = compute_lua("local function f(n)\n  repeat\n    n = n - 1\n  until n <= 0\nend");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn lua_logical_operators() {
+        let m = compute_lua("local function f(a, b)\n  if a and b then\n    return 1\n  end\nend");
+        // if: +1 cog, +1 cyc; and: +1 cog, +1 cyc
+        assert_eq!(m.cognitive, 2);
+        assert_eq!(m.cyclomatic, 3);
+    }
+
+    #[test]
+    fn lua_nested_if() {
+        let m = compute_lua(
+            "local function f(x, y)\n  if x > 0 then\n    if y > 0 then\n      return 1\n    end\n  end\nend",
+        );
+        assert_eq!(m.cognitive, 3);
+        assert_eq!(m.cyclomatic, 3);
+        assert_eq!(m.max_nesting, 2);
     }
 }

@@ -31,6 +31,7 @@ export const COMPLEXITY_RULES: Map<string, ComplexityRules> = new Map([
   ['csharp', csharp.complexity],
   ['ruby', ruby.complexity],
   ['php', php.complexity],
+  ['lua', b3.complexityLua],
 ]);
 
 // ─── Halstead Rules ───────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ export const HALSTEAD_RULES: Map<string, HalsteadRules> = new Map([
   ['csharp', csharp.halstead],
   ['ruby', ruby.halstead],
   ['php', php.halstead],
+  ['lua', b3.halsteadLua],
 ]);
 
 // ─── CFG Rules ────────────────────────────────────────────────────────────
