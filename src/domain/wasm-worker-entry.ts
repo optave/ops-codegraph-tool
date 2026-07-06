@@ -516,22 +516,6 @@ function matchResultToDef<T extends { funcNode: TreeSitterNode }>(
   );
 }
 
-/** Override a definition's cyclomatic complexity with a CFG-derived value and recompute MI. */
-function overrideCyclomaticFromCfg(def: Definition, cfgCyclomatic: number): void {
-  if (!def.complexity) return;
-  if (cfgCyclomatic <= 0) return;
-  def.complexity.cyclomatic = cfgCyclomatic;
-  const { loc, halstead } = def.complexity;
-  const volume = halstead ? halstead.volume : 0;
-  const commentRatio = loc && loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-  def.complexity.maintainabilityIndex = computeMaintainabilityIndex(
-    volume,
-    cfgCyclomatic,
-    loc?.sloc ?? 0,
-    commentRatio,
-  );
-}
-
 function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
   const byLine = indexByLine((results.complexity || []) as ComplexityFuncResult[]);
   for (const def of defs) {
@@ -555,6 +539,11 @@ function storeComplexityResults(results: WalkResults, defs: Definition[], langId
   }
 }
 
+// Note: intentionally does not touch def.complexity.cyclomatic with the CFG's
+// block/edge count — the CFG doesn't model short-circuit logical operators,
+// optional chaining, or nested-function bodies the way the AST-derived
+// cyclomatic (storeComplexityResults, above) correctly does, so overriding it
+// silently corrupts the metric (issue #1743). Mirrors ast-analysis/engine.ts.
 function storeCfgResults(results: WalkResults, defs: Definition[]): void {
   const byLine = indexByLine((results.cfg || []) as CfgFuncResult[]);
   for (const def of defs) {
@@ -566,9 +555,6 @@ function storeCfgResults(results: WalkResults, defs: Definition[]): void {
       const cfgResult = matchResultToDef(byLine.get(def.line), def.name);
       if (!cfgResult) continue;
       def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
-      if (cfgResult.cyclomatic != null) {
-        overrideCyclomaticFromCfg(def, cfgResult.cyclomatic);
-      }
     }
   }
 }
