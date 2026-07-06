@@ -278,8 +278,11 @@ function resolveCustomDbPath(customPath: string): string {
       }
       return path.join(resolved, '.codegraph', 'graph.db');
     }
-  } catch {
+  } catch (e) {
     // Path doesn't exist yet — return as-is (e.g. a future custom DB path).
+    debug(
+      `findDbPath: statSync failed for ${resolved}, treating as non-existent: ${toErrorMessage(e)}`,
+    );
   }
   return resolved;
 }
