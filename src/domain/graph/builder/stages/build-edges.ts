@@ -56,6 +56,7 @@ import {
   CHA_TYPED_DISPATCH_CONFIDENCE,
   runChaPostPass,
 } from '../helpers.js';
+import { importNamePairs } from '../import-utils.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
