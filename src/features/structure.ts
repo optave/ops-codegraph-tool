@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { getBuildMeta, getNodeId, setBuildMeta, testFilterSQL } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
+import { getOrCreateChunkStmt } from '../shared/chunked-stmt-cache.js';
 import { getAncestorDirs, normalizePath } from '../shared/constants.js';
-import type { BetterSqlite3Database } from '../types.js';
+import type { BetterSqlite3Database, SqliteStatement as DbSqliteStatement } from '../types.js';
 
 // ─── Build-time helpers ───────────────────────────────────────────────
 
@@ -538,19 +539,17 @@ function batchUpdateRoles(
   resetFn: () => void,
 ): void {
   const ROLE_CHUNK = 500;
-  const roleStmtCache = new Map<number, SqliteStatement>();
+  const roleStmtCache = new Map<number, DbSqliteStatement>();
   db.transaction(() => {
     resetFn();
     for (const [role, ids] of idsByRole) {
       for (let i = 0; i < ids.length; i += ROLE_CHUNK) {
         const end = Math.min(i + ROLE_CHUNK, ids.length);
         const chunkSize = end - i;
-        let stmt = roleStmtCache.get(chunkSize);
-        if (!stmt) {
-          const placeholders = Array.from({ length: chunkSize }, () => '?').join(',');
-          stmt = db.prepare(`UPDATE nodes SET role = ? WHERE id IN (${placeholders})`);
-          roleStmtCache.set(chunkSize, stmt);
-        }
+        const stmt = getOrCreateChunkStmt(roleStmtCache, db, chunkSize, (n) => {
+          const placeholders = Array.from({ length: n }, () => '?').join(',');
+          return `UPDATE nodes SET role = ? WHERE id IN (${placeholders})`;
+        });
         const vals: unknown[] = [role];
         for (let j = i; j < end; j++) vals.push(ids[j]);
         stmt.run(...vals);
