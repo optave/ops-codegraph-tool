@@ -263,55 +263,67 @@ export function closeDbPairDeferred(pair: LockedDatabasePair): void {
   closeDbDeferred(pair.db);
 }
 
-export function findDbPath(customPath?: string): string {
-  if (customPath) {
-    const resolved = path.resolve(customPath);
-    // When a directory is passed (e.g. --db /path/to/repo), locate the DB
-    // inside it — matching the layout that `build` creates.
-    try {
-      if (fs.statSync(resolved).isDirectory()) {
-        // If the caller passed the .codegraph directory itself (e.g. --db /repo/.codegraph),
-        // use it directly to avoid double-appending .codegraph/.codegraph/graph.db.
-        if (path.basename(resolved) === '.codegraph') {
-          return path.join(resolved, 'graph.db');
-        }
-        return path.join(resolved, '.codegraph', 'graph.db');
-      }
-    } catch {
-      // Path doesn't exist yet — return as-is (e.g. a future custom DB path).
-    }
-    return resolved;
-  }
-  const rawCeiling = findRepoRoot();
-  // Normalize ceiling with realpathSync to resolve 8.3 short names (Windows
-  // RUNNER~1 → runneradmin) and symlinks (macOS /var → /private/var).
-  // findRepoRoot already applies realpathSync internally, but the git output
-  // may still contain short names on some Windows CI environments.
-  let ceiling: string | null;
-  if (rawCeiling) {
-    try {
-      ceiling = fs.realpathSync(rawCeiling);
-    } catch (e) {
-      debug(`realpathSync failed for ceiling "${rawCeiling}": ${toErrorMessage(e)}`);
-      ceiling = rawCeiling;
-    }
-  } else {
-    ceiling = null;
-  }
-  // Resolve symlinks (e.g. macOS /var → /private/var) so dir matches ceiling from git
-  let dir: string;
+/**
+ * Resolve an explicit `--db` path: when it points at a directory, locate the
+ * DB inside it — matching the layout that `build` creates.
+ */
+function resolveCustomDbPath(customPath: string): string {
+  const resolved = path.resolve(customPath);
   try {
-    dir = fs.realpathSync(process.cwd());
+    if (fs.statSync(resolved).isDirectory()) {
+      // If the caller passed the .codegraph directory itself (e.g. --db /repo/.codegraph),
+      // use it directly to avoid double-appending .codegraph/.codegraph/graph.db.
+      if (path.basename(resolved) === '.codegraph') {
+        return path.join(resolved, 'graph.db');
+      }
+      return path.join(resolved, '.codegraph', 'graph.db');
+    }
+  } catch {
+    // Path doesn't exist yet — return as-is (e.g. a future custom DB path).
+  }
+  return resolved;
+}
+
+/**
+ * Normalize the git ceiling with realpathSync to resolve 8.3 short names
+ * (Windows RUNNER~1 → runneradmin) and symlinks (macOS /var → /private/var).
+ * findRepoRoot already applies realpathSync internally, but the git output
+ * may still contain short names on some Windows CI environments.
+ */
+function resolveDbSearchCeiling(rawCeiling: string | null): string | null {
+  if (!rawCeiling) return null;
+  try {
+    return fs.realpathSync(rawCeiling);
+  } catch (e) {
+    debug(`realpathSync failed for ceiling "${rawCeiling}": ${toErrorMessage(e)}`);
+    return rawCeiling;
+  }
+}
+
+/** Resolve symlinks in cwd (e.g. macOS /var → /private/var) so dir matches ceiling from git. */
+function resolveDbSearchStartDir(): string {
+  try {
+    return fs.realpathSync(process.cwd());
   } catch (e) {
     debug(`realpathSync failed for cwd: ${toErrorMessage(e)}`);
-    dir = process.cwd();
+    return process.cwd();
   }
+}
+
+/**
+ * Walk up from `startDir` toward `ceiling` looking for an existing
+ * .codegraph/graph.db. Returns the found path, or null if the walk reaches
+ * the ceiling (or, when there's no ceiling, after checking only `startDir`)
+ * without finding one.
+ */
+function walkUpForDbPath(startDir: string, ceiling: string | null): string | null {
+  let dir = startDir;
   while (true) {
     const candidate = path.join(dir, '.codegraph', 'graph.db');
     if (fs.existsSync(candidate)) return candidate;
     if (ceiling && isSameDirectory(dir, ceiling)) {
       debug(`findDbPath: stopped at git ceiling ${ceiling}`);
-      break;
+      return null;
     }
     // Outside a git repo, cwd is the first (and only) directory we'll check.
     // Walking past it risks attaching to a stale .codegraph/ in an unrelated
@@ -319,12 +331,22 @@ export function findDbPath(customPath?: string): string {
     // or $HOME/.codegraph/ leaking into every scratch dir under $HOME.
     if (!ceiling) {
       debug(`findDbPath: no git ceiling, stopping at ${dir}`);
-      break;
+      return null;
     }
     const parent = path.dirname(dir);
-    if (parent === dir) break;
+    if (parent === dir) return null;
     dir = parent;
   }
+}
+
+export function findDbPath(customPath?: string): string {
+  if (customPath) {
+    return resolveCustomDbPath(customPath);
+  }
+  const ceiling = resolveDbSearchCeiling(findRepoRoot());
+  const startDir = resolveDbSearchStartDir();
+  const found = walkUpForDbPath(startDir, ceiling);
+  if (found) return found;
   const base = ceiling || process.cwd();
   return path.join(base, '.codegraph', 'graph.db');
 }
@@ -416,6 +438,58 @@ function openRepoNative(customDbPath?: string): { repo: Repository; close(): voi
   }
 }
 
+/** Validate and wrap an injected `opts.repo` Repository instance (no DB opened). */
+function wrapInjectedRepo(repo: Repository): { repo: Repository; close(): void } {
+  if (!(repo instanceof Repository)) {
+    throw new TypeError(
+      `openRepo: opts.repo must be a Repository instance, got ${Object.prototype.toString.call(repo)}`,
+    );
+  }
+  return { repo, close() {} };
+}
+
+/**
+ * Attempt the native rusqlite path (Phase 6.14) when the resolved engine
+ * allows it. Re-throws user-visible errors (DB not found, busy/locked) since
+ * falling back to better-sqlite3 wouldn't help; returns undefined for other
+ * native failures so the caller falls back to better-sqlite3.
+ */
+function tryOpenRepoNative(
+  customDbPath: string | undefined,
+  engine: 'native' | 'wasm' | 'auto',
+): { repo: Repository; close(): void } | undefined {
+  if (engine === 'wasm' || !isNativeAvailable()) return undefined;
+  try {
+    return openRepoNative(customDbPath);
+  } catch (e) {
+    // Re-throw user-visible errors (e.g. DB not found) — only silently
+    // fall back for native-engine failures (e.g. incompatible native binary).
+    if (e instanceof DbError) throw e;
+    // Re-throw locking/busy errors — falling back to better-sqlite3 would
+    // hit the same contention (and potentially hang without busy_timeout).
+    const msg = toErrorMessage(e);
+    if (/\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg)) {
+      throw new DbError(`Database is busy (another process may be writing): ${msg}`, {});
+    }
+    debug(`openRepo: native path failed, falling back to better-sqlite3: ${msg}`);
+    return undefined;
+  }
+}
+
+/** Open the better-sqlite3 fallback repo used when the native path is unavailable or opted out. */
+function openRepoSqliteFallback(
+  customDbPath: string | undefined,
+  busyTimeoutMs: number,
+): { repo: Repository; close(): void } {
+  const db = openReadonlyOrFail(customDbPath, busyTimeoutMs);
+  return {
+    repo: new SqliteRepository(db),
+    close() {
+      db.close();
+    },
+  };
+}
+
 /**
  * Open a Repository from either an injected instance or a DB path.
  *
@@ -429,43 +503,17 @@ export function openRepo(
   opts: { repo?: Repository; engine?: 'native' | 'wasm' | 'auto' } = {},
 ): { repo: Repository; close(): void } {
   if (opts.repo != null) {
-    if (!(opts.repo instanceof Repository)) {
-      throw new TypeError(
-        `openRepo: opts.repo must be a Repository instance, got ${Object.prototype.toString.call(opts.repo)}`,
-      );
-    }
-    return { repo: opts.repo, close() {} };
+    return wrapInjectedRepo(opts.repo);
   }
 
   // Respect explicit engine selection: opts.engine > config.build.engine > auto.
   // This ensures --engine wasm and benchmark workers bypass the native path.
   const { engine, busyTimeoutMs } = resolveDbSettings(customDbPath, opts.engine);
 
-  // Try native rusqlite path first (Phase 6.14)
-  if (engine !== 'wasm' && isNativeAvailable()) {
-    try {
-      return openRepoNative(customDbPath);
-    } catch (e) {
-      // Re-throw user-visible errors (e.g. DB not found) — only silently
-      // fall back for native-engine failures (e.g. incompatible native binary).
-      if (e instanceof DbError) throw e;
-      // Re-throw locking/busy errors — falling back to better-sqlite3 would
-      // hit the same contention (and potentially hang without busy_timeout).
-      const msg = toErrorMessage(e);
-      if (/\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg)) {
-        throw new DbError(`Database is busy (another process may be writing): ${msg}`, {});
-      }
-      debug(`openRepo: native path failed, falling back to better-sqlite3: ${msg}`);
-    }
-  }
+  const native = tryOpenRepoNative(customDbPath, engine);
+  if (native) return native;
 
-  const db = openReadonlyOrFail(customDbPath, busyTimeoutMs);
-  return {
-    repo: new SqliteRepository(db),
-    close() {
-      db.close();
-    },
-  };
+  return openRepoSqliteFallback(customDbPath, busyTimeoutMs);
 }
 
 /**
