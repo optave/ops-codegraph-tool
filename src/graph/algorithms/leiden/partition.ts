@@ -9,7 +9,7 @@
 
 import type { GraphAdapter } from './adapter.js';
 import { accumulateInternalEdgeWeights, accumulateNodeAggregates } from './aggregate-helpers.js';
-import { fget, iget, u8get } from './typed-array-helpers.js';
+import { fget, fgetOrZero, iget, u8get } from './typed-array-helpers.js';
 
 export interface CompactOptions {
   keepOldOrder?: boolean;
@@ -260,6 +260,46 @@ function computeDeltaModularityUndirected(
   return gain_remove + gain_add;
 }
 
+/**
+ * Directed delta-modularity edge-weight terms: in/out edge weight from `v` to
+ * `newC`/`oldC`, read via the shared bounds-checked `fgetOrZero` (see its
+ * doc comment for why `|| 0` is safe/redundant here but retained anyway).
+ */
+function computeDirectedEdgeWeightTerms(
+  s: PartitionState,
+  newC: number,
+  oldC: number,
+): { inFromNew: number; outToNew: number; inFromOld: number; outToOld: number } {
+  return {
+    inFromNew: fgetOrZero(s.inEdgeWeightFromCommunity, newC),
+    outToNew: fgetOrZero(s.outEdgeWeightToCommunity, newC),
+    inFromOld: fgetOrZero(s.inEdgeWeightFromCommunity, oldC),
+    outToOld: fgetOrZero(s.outEdgeWeightToCommunity, oldC),
+  };
+}
+
+/**
+ * Directed delta-modularity community-strength terms: total in/out strength
+ * of `newC`/`oldC`, read via the shared bounds-checked `fgetOrZero`.
+ */
+function computeDirectedStrengthTerms(
+  s: PartitionState,
+  newC: number,
+  oldC: number,
+): {
+  totalInStrengthNew: number;
+  totalOutStrengthNew: number;
+  totalInStrengthOld: number;
+  totalOutStrengthOld: number;
+} {
+  return {
+    totalInStrengthNew: fgetOrZero(s.communityTotalInStrength, newC),
+    totalOutStrengthNew: fgetOrZero(s.communityTotalOutStrength, newC),
+    totalInStrengthOld: fgetOrZero(s.communityTotalInStrength, oldC),
+    totalOutStrengthOld: fgetOrZero(s.communityTotalOutStrength, oldC),
+  };
+}
+
 function computeDeltaModularityDirected(
   s: PartitionState,
   v: number,
@@ -271,18 +311,13 @@ function computeDeltaModularityDirected(
   const totalEdgeWeight: number = s.graph.totalWeight;
   const strengthOutV: number = fget(s.graph.strengthOut, v);
   const strengthInV: number = fget(s.graph.strengthIn, v);
-  const inFromNew: number =
-    newC < s.inEdgeWeightFromCommunity.length ? fget(s.inEdgeWeightFromCommunity, newC) || 0 : 0;
-  const outToNew: number =
-    newC < s.outEdgeWeightToCommunity.length ? fget(s.outEdgeWeightToCommunity, newC) || 0 : 0;
-  const inFromOld: number = fget(s.inEdgeWeightFromCommunity, oldC) || 0;
-  const outToOld: number = fget(s.outEdgeWeightToCommunity, oldC) || 0;
-  const totalInStrengthNew: number =
-    newC < s.communityTotalInStrength.length ? fget(s.communityTotalInStrength, newC) : 0;
-  const totalOutStrengthNew: number =
-    newC < s.communityTotalOutStrength.length ? fget(s.communityTotalOutStrength, newC) : 0;
-  const totalInStrengthOld: number = fget(s.communityTotalInStrength, oldC);
-  const totalOutStrengthOld: number = fget(s.communityTotalOutStrength, oldC);
+  const { inFromNew, outToNew, inFromOld, outToOld } = computeDirectedEdgeWeightTerms(
+    s,
+    newC,
+    oldC,
+  );
+  const { totalInStrengthNew, totalOutStrengthNew, totalInStrengthOld, totalOutStrengthOld } =
+    computeDirectedStrengthTerms(s, newC, oldC);
   // Self-loop correction + constant term (see modularity.ts diffModularityDirected)
   const selfW: number = fget(s.graph.selfLoop, v) || 0;
   const deltaInternal: number =
