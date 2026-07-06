@@ -9,7 +9,7 @@
 
 import type { GraphAdapter } from './adapter.js';
 import { accumulateInternalEdgeWeights, accumulateNodeAggregates } from './aggregate-helpers.js';
-import { fget, fgetOrZero, iget, u8get } from './typed-array-helpers.js';
+import { fget, iget, u8get } from './typed-array-helpers.js';
 
 export interface CompactOptions {
   keepOldOrder?: boolean;
@@ -29,14 +29,10 @@ export interface Partition {
   resizeCommunities(newCount: number): void;
   initializeAggregates(): void;
   accumulateNeighborCommunityEdgeWeights(v: number): number;
-  getCandidateCommunityCount(): number;
   getCandidateCommunityAt(i: number): number;
   getNeighborEdgeWeightToCommunity(c: number): number;
   getOutEdgeWeightToCommunity(c: number): number;
   getInEdgeWeightFromCommunity(c: number): number;
-  deltaModularityUndirected(v: number, newC: number, gamma?: number): number;
-  deltaModularityDirected(v: number, newC: number, gamma?: number): number;
-  deltaCPM(v: number, newC: number, gamma?: number): number;
   moveNodeToCommunity(v: number, newC: number): boolean;
   compactCommunityIds(opts?: CompactOptions): void;
   getCommunityMembers(): number[][];
@@ -227,163 +223,6 @@ function accumulateNeighborWeights(s: PartitionState, v: number): number {
     }
   }
   return s.candidateCommunityCount;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Extracted: modularity delta computations                           */
-/* ------------------------------------------------------------------ */
-
-function computeDeltaModularityUndirected(
-  s: PartitionState,
-  v: number,
-  newC: number,
-  gamma: number = 1.0,
-): number {
-  const oldC: number = iget(s.nodeCommunity, v);
-  if (newC === oldC) return 0;
-  const twoM: number = s.graph.totalWeight;
-  const strengthV: number = fget(s.graph.strengthOut, v);
-  const weightToNew: number =
-    newC < s.neighborEdgeWeightToCommunity.length
-      ? fget(s.neighborEdgeWeightToCommunity, newC) || 0
-      : 0;
-  const weightToOld: number = fget(s.neighborEdgeWeightToCommunity, oldC) || 0;
-  const totalStrengthNew: number =
-    newC < s.communityTotalStrength.length ? fget(s.communityTotalStrength, newC) : 0;
-  const totalStrengthOld: number = fget(s.communityTotalStrength, oldC);
-  const gain_remove: number = -(
-    weightToOld / twoM -
-    (gamma * (strengthV * totalStrengthOld)) / (twoM * twoM)
-  );
-  const gain_add: number =
-    weightToNew / twoM - (gamma * (strengthV * totalStrengthNew)) / (twoM * twoM);
-  return gain_remove + gain_add;
-}
-
-/**
- * Directed delta-modularity edge-weight terms: in/out edge weight from `v` to
- * `newC`/`oldC`, read via the shared bounds-checked `fgetOrZero` (see its
- * doc comment for why `|| 0` is safe/redundant here but retained anyway).
- */
-function computeDirectedEdgeWeightTerms(
-  s: PartitionState,
-  newC: number,
-  oldC: number,
-): { inFromNew: number; outToNew: number; inFromOld: number; outToOld: number } {
-  return {
-    inFromNew: fgetOrZero(s.inEdgeWeightFromCommunity, newC),
-    outToNew: fgetOrZero(s.outEdgeWeightToCommunity, newC),
-    inFromOld: fgetOrZero(s.inEdgeWeightFromCommunity, oldC),
-    outToOld: fgetOrZero(s.outEdgeWeightToCommunity, oldC),
-  };
-}
-
-/**
- * Directed delta-modularity community-strength terms: total in/out strength
- * of `newC`/`oldC`, read via the shared bounds-checked `fgetOrZero`.
- */
-function computeDirectedStrengthTerms(
-  s: PartitionState,
-  newC: number,
-  oldC: number,
-): {
-  totalInStrengthNew: number;
-  totalOutStrengthNew: number;
-  totalInStrengthOld: number;
-  totalOutStrengthOld: number;
-} {
-  return {
-    totalInStrengthNew: fgetOrZero(s.communityTotalInStrength, newC),
-    totalOutStrengthNew: fgetOrZero(s.communityTotalOutStrength, newC),
-    totalInStrengthOld: fgetOrZero(s.communityTotalInStrength, oldC),
-    totalOutStrengthOld: fgetOrZero(s.communityTotalOutStrength, oldC),
-  };
-}
-
-function computeDeltaModularityDirected(
-  s: PartitionState,
-  v: number,
-  newC: number,
-  gamma: number = 1.0,
-): number {
-  const oldC: number = iget(s.nodeCommunity, v);
-  if (newC === oldC) return 0;
-  const totalEdgeWeight: number = s.graph.totalWeight;
-  const strengthOutV: number = fget(s.graph.strengthOut, v);
-  const strengthInV: number = fget(s.graph.strengthIn, v);
-  const { inFromNew, outToNew, inFromOld, outToOld } = computeDirectedEdgeWeightTerms(
-    s,
-    newC,
-    oldC,
-  );
-  const { totalInStrengthNew, totalOutStrengthNew, totalInStrengthOld, totalOutStrengthOld } =
-    computeDirectedStrengthTerms(s, newC, oldC);
-  // Self-loop correction + constant term (see modularity.ts diffModularityDirected)
-  const selfW: number = fget(s.graph.selfLoop, v) || 0;
-  const deltaInternal: number =
-    (inFromNew + outToNew - inFromOld - outToOld + 2 * selfW) / totalEdgeWeight;
-  const deltaExpected: number =
-    (gamma *
-      (strengthOutV * (totalInStrengthNew - totalInStrengthOld) +
-        strengthInV * (totalOutStrengthNew - totalOutStrengthOld) +
-        2 * strengthOutV * strengthInV)) /
-    (totalEdgeWeight * totalEdgeWeight);
-  return deltaInternal - deltaExpected;
-}
-
-/** computeCpmEdgeWeights — directed branch: in+out weight, plus self-loop correction. */
-function computeCpmEdgeWeightsDirected(
-  s: PartitionState,
-  v: number,
-  oldC: number,
-  newC: number,
-): { wOld: number; wNew: number; selfCorrection: number } {
-  const wOld: number =
-    (fget(s.outEdgeWeightToCommunity, oldC) || 0) + (fget(s.inEdgeWeightFromCommunity, oldC) || 0);
-  const wNew: number =
-    newC < s.outEdgeWeightToCommunity.length
-      ? (fget(s.outEdgeWeightToCommunity, newC) || 0) +
-        (fget(s.inEdgeWeightFromCommunity, newC) || 0)
-      : 0;
-  // Self-loop correction (see cpm.ts diffCPM)
-  const selfCorrection: number = 2 * (fget(s.graph.selfLoop, v) || 0);
-  return { wOld, wNew, selfCorrection };
-}
-
-/** computeCpmEdgeWeights — undirected branch: single neighbor-weight-to-community value. */
-function computeCpmEdgeWeightsUndirected(
-  s: PartitionState,
-  oldC: number,
-  newC: number,
-): { wOld: number; wNew: number; selfCorrection: number } {
-  const wOld: number = fget(s.neighborEdgeWeightToCommunity, oldC) || 0;
-  const wNew: number =
-    newC < s.neighborEdgeWeightToCommunity.length
-      ? fget(s.neighborEdgeWeightToCommunity, newC) || 0
-      : 0;
-  return { wOld, wNew, selfCorrection: 0 };
-}
-
-/** Directed/undirected edge-weight-to-community split used by computeDeltaCPM. */
-function computeCpmEdgeWeights(
-  s: PartitionState,
-  v: number,
-  oldC: number,
-  newC: number,
-): { wOld: number; wNew: number; selfCorrection: number } {
-  return s.graph.directed
-    ? computeCpmEdgeWeightsDirected(s, v, oldC, newC)
-    : computeCpmEdgeWeightsUndirected(s, oldC, newC);
-}
-
-function computeDeltaCPM(s: PartitionState, v: number, newC: number, gamma: number = 1.0): number {
-  const oldC: number = iget(s.nodeCommunity, v);
-  if (newC === oldC) return 0;
-  const { wOld: w_old, wNew: w_new, selfCorrection } = computeCpmEdgeWeights(s, v, oldC, newC);
-  const nodeSz: number = fget(s.graph.size, v) || 1;
-  const sizeOld: number = fget(s.communityTotalSize, oldC) || 0;
-  const sizeNew: number = newC < s.communityTotalSize.length ? fget(s.communityTotalSize, newC) : 0;
-  return w_new - w_old + selfCorrection - gamma * nodeSz * (sizeNew - sizeOld + nodeSz);
 }
 
 /* ------------------------------------------------------------------ */
@@ -594,17 +433,11 @@ export function makePartition(graph: GraphAdapter, options: MakePartitionOptions
     },
     initializeAggregates: () => initAggregates(s),
     accumulateNeighborCommunityEdgeWeights: (v: number) => accumulateNeighborWeights(s, v),
-    getCandidateCommunityCount: (): number => s.candidateCommunityCount,
     getCandidateCommunityAt: (i: number): number => iget(s.candidateCommunities, i),
     getNeighborEdgeWeightToCommunity: (c: number): number =>
       fget(s.neighborEdgeWeightToCommunity, c) || 0,
     getOutEdgeWeightToCommunity: (c: number): number => fget(s.outEdgeWeightToCommunity, c) || 0,
     getInEdgeWeightFromCommunity: (c: number): number => fget(s.inEdgeWeightFromCommunity, c) || 0,
-    deltaModularityUndirected: (v: number, newC: number, gamma?: number) =>
-      computeDeltaModularityUndirected(s, v, newC, gamma),
-    deltaModularityDirected: (v: number, newC: number, gamma?: number) =>
-      computeDeltaModularityDirected(s, v, newC, gamma),
-    deltaCPM: (v: number, newC: number, gamma?: number) => computeDeltaCPM(s, v, newC, gamma),
     moveNodeToCommunity: (v: number, newC: number) => moveNode(s, v, newC),
     compactCommunityIds: (opts?: CompactOptions) => compactIds(s, opts),
     getCommunityMembers(): number[][] {

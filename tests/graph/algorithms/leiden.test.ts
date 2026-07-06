@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { detectClusters } from '../../../src/graph/algorithms/leiden/index.js';
-import { fgetOrZero } from '../../../src/graph/algorithms/leiden/typed-array-helpers.js';
 import { CodeGraph } from '../../../src/graph/model.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -653,48 +652,18 @@ describe('community connectivity', () => {
   });
 });
 
-// ─── fgetOrZero (typed-array-helpers) ──────────────────────────────────
-//
-// Shared bounds-checked accessor extracted from computeDeltaModularityDirected
-// (issue #1755) to unify the "newC < arr.length ? fget(arr, newC) [|| 0] : 0"
-// pattern that previously appeared with an inconsistent `|| 0` across the
-// edge-weight-to-community arrays vs. the community-strength-total arrays.
-
-describe('fgetOrZero (typed-array-helpers)', () => {
-  it('returns the stored value for an in-bounds index', () => {
-    const a = new Float64Array([1, 2, 3]);
-    expect(fgetOrZero(a, 1)).toBe(2);
-  });
-
-  it('returns 0 for an index at or beyond the array length (not-yet-existing community)', () => {
-    const a = new Float64Array([1, 2, 3]);
-    expect(fgetOrZero(a, 3)).toBe(0);
-    expect(fgetOrZero(a, 100)).toBe(0);
-  });
-
-  it('returns a plain 0 for a legitimate zero entry, same as a bare bounds-checked read', () => {
-    const a = new Float64Array([0, 5]);
-    expect(fgetOrZero(a, 0)).toBe(0);
-  });
-
-  it('squashes a stray NaN to 0 (defense-in-depth guard; not reachable via current callers)', () => {
-    const a = new Float64Array([Number.NaN, 5]);
-    expect(Number.isNaN(fgetOrZero(a, 0))).toBe(false);
-    expect(fgetOrZero(a, 0)).toBe(0);
-  });
-});
-
 // ─── Directed modularity delta — exact regression values ───────────────
 //
 // Pins the exact quality()/community-assignment output of the two existing
-// "directed modularity" / "directed self-loops" fixtures above, computed
-// through computeDeltaModularityDirected's fgetOrZero-based reads (issue
-// #1755). These exact values were verified byte-for-byte identical against
-// the pre-refactor implementation (four independent bounds-check-and-`||0`
-// expressions) on this same seed. A future change that re-diverges the
-// `|| 0` handling between the edge-weight and community-strength array
-// families (or otherwise perturbs the delta-modularity formula) would shift
-// these floating-point values and fail this test.
+// "directed modularity" / "directed self-loops" fixtures above. These go
+// through the live directed-modularity delta path — diffModularityDirected
+// in modularity.ts, invoked via computeQualityGain (optimiser.ts) during the
+// Leiden local-move and refinement phases — not Partition's deltaModularityDirected
+// interface method, which issue #1770 found to be unreachable dead code (no
+// caller ever invokes partition.deltaModularityDirected(...)) and removed.
+// A future change that perturbs diffModularityDirected's formula or its
+// bounds-checked reads would shift these floating-point values and fail
+// this test.
 
 describe('directed modularity delta — exact regression', () => {
   it('matches the pinned quality/assignment for the two-triangle directed graph', () => {
