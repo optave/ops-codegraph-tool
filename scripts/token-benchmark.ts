@@ -261,6 +261,65 @@ async function runSession(mode, issue, nextjsDir) {
 const PERF_RUNS = 3;
 
 /**
+ * Run full-build and no-op-rebuild benchmarks for each available engine.
+ * Returns a map of engine name -> { fullBuildMs, noopRebuildMs }.
+ */
+async function runBuildBenchmarks(engines, dbPath, nextjsDir, buildGraph) {
+	const buildResults = {};
+	for (const engine of engines) {
+		console.error(`  Full build (${engine})...`);
+		const fullBuildMs = Math.round(
+			await timeMedian(async () => {
+				if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+				await buildGraph(nextjsDir, { engine, incremental: false });
+			}, PERF_RUNS),
+		);
+
+		// No-op rebuild
+		console.error(`  No-op rebuild (${engine})...`);
+		const noopRebuildMs = Math.round(
+			await timeMedian(() => buildGraph(nextjsDir, { engine, incremental: true }), PERF_RUNS),
+		);
+
+		buildResults[engine] = { fullBuildMs, noopRebuildMs };
+		console.error(`    full=${fullBuildMs}ms noop=${noopRebuildMs}ms`);
+	}
+	return buildResults;
+}
+
+/**
+ * Run fnDeps/fnImpact query benchmarks at depths 1/3/5 against `hubName`.
+ * Returns an empty object when there's no hub to query against.
+ */
+async function runQueryBenchmarks(hubName, dbPath, fnDepsData, fnImpactData) {
+	const queryResults = {};
+	if (!hubName) return queryResults;
+
+	console.error(`  Query target (hub): ${hubName}`);
+
+	for (const depth of [1, 3, 5]) {
+		// fnDeps
+		queryResults[`fnDeps_depth${depth}Ms`] = round1(
+			await timeMedian(() => fnDepsData(hubName, dbPath, { depth, noTests: true }), PERF_RUNS),
+		);
+
+		// fnImpact
+		queryResults[`fnImpact_depth${depth}Ms`] = round1(
+			await timeMedian(() => fnImpactData(hubName, dbPath, { depth, noTests: true }), PERF_RUNS),
+		);
+	}
+
+	console.error(
+		`    fnDeps: d1=${queryResults.fnDeps_depth1Ms}ms d3=${queryResults.fnDeps_depth3Ms}ms d5=${queryResults.fnDeps_depth5Ms}ms`,
+	);
+	console.error(
+		`    fnImpact: d1=${queryResults.fnImpact_depth1Ms}ms d3=${queryResults.fnImpact_depth3Ms}ms d5=${queryResults.fnImpact_depth5Ms}ms`,
+	);
+
+	return queryResults;
+}
+
+/**
  * Run build/query/stats benchmarks against the Next.js graph.
  * Reuses the same codegraph APIs as the existing benchmark scripts.
  */
@@ -298,25 +357,7 @@ async function runPerfBenchmarks(nextjsDir) {
 	if (!isNativeAvailable()) {
 		console.error('  Native engine not available — skipping native perf benchmark');
 	}
-	const buildResults = {};
-	for (const engine of engines) {
-		console.error(`  Full build (${engine})...`);
-		const fullBuildMs = Math.round(
-			await timeMedian(async () => {
-				if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-				await buildGraph(nextjsDir, { engine, incremental: false });
-			}, PERF_RUNS),
-		);
-
-		// No-op rebuild
-		console.error(`  No-op rebuild (${engine})...`);
-		const noopRebuildMs = Math.round(
-			await timeMedian(() => buildGraph(nextjsDir, { engine, incremental: true }), PERF_RUNS),
-		);
-
-		buildResults[engine] = { fullBuildMs, noopRebuildMs };
-		console.error(`    full=${fullBuildMs}ms noop=${noopRebuildMs}ms`);
-	}
+	const buildResults = await runBuildBenchmarks(engines, dbPath, nextjsDir, buildGraph);
 
 	// ── Stats ─────────────────────────────────────────────────────────
 	// Ensure we have a graph (rebuild with first available engine if needed)
@@ -352,30 +393,7 @@ async function runPerfBenchmarks(nextjsDir) {
 	db.close();
 
 	const hubName = hubRow?.name || null;
-	const queryResults = {};
-
-	if (hubName) {
-		console.error(`  Query target (hub): ${hubName}`);
-
-		for (const depth of [1, 3, 5]) {
-			// fnDeps
-			queryResults[`fnDeps_depth${depth}Ms`] = round1(
-				await timeMedian(() => fnDepsData(hubName, dbPath, { depth, noTests: true }), PERF_RUNS),
-			);
-
-			// fnImpact
-			queryResults[`fnImpact_depth${depth}Ms`] = round1(
-				await timeMedian(() => fnImpactData(hubName, dbPath, { depth, noTests: true }), PERF_RUNS),
-			);
-		}
-
-		console.error(
-			`    fnDeps: d1=${queryResults.fnDeps_depth1Ms}ms d3=${queryResults.fnDeps_depth3Ms}ms d5=${queryResults.fnDeps_depth5Ms}ms`,
-		);
-		console.error(
-			`    fnImpact: d1=${queryResults.fnImpact_depth1Ms}ms d3=${queryResults.fnImpact_depth3Ms}ms d5=${queryResults.fnImpact_depth5Ms}ms`,
-		);
-	}
+	const queryResults = await runQueryBenchmarks(hubName, dbPath, fnDepsData, fnImpactData);
 
 	return {
 		repo: 'vercel/next.js',
