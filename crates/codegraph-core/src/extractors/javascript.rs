@@ -1075,6 +1075,12 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "import_statement" => handle_import_stmt(node, source, symbols),
         "export_statement" => handle_export_stmt(node, source, symbols),
         "expression_statement" => handle_expr_stmt(node, source, symbols),
+        // #1771: dispatch-table-style object-literal property values
+        // (`{ resolve: someFunction }` / shorthand `{ someFunction }`).
+        "pair" => handle_object_literal_pair_value_ref(node, source, &mut symbols.calls),
+        "shorthand_property_identifier" => {
+            handle_object_literal_shorthand_value_ref(node, source, &mut symbols.calls)
+        }
         _ => {}
     }
 }
@@ -2438,6 +2444,62 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
             _ => {}
         }
     }
+}
+
+/// Collect a dynamic value-ref `Call` for an object-literal `pair` node whose
+/// value is a bare identifier — e.g. `{ resolve: someFunction }`, the
+/// "dispatch table" pattern (`{ matches, resolve }`-style handler arrays,
+/// issue #1771). Restricted to plain `identifier` values: call expressions,
+/// member expressions, and inline function/arrow values are handled by their
+/// own extraction paths (regular call resolution, `seed_objlit_type_map_entries`
+/// / `match_js_objlit_qualified_method_defs`) and must not be double-counted here.
+///
+/// Emitted unconditionally for every bare-identifier property value in the
+/// file — `dynamic_kind: "value-ref"` is resolved downstream (build_edges.rs)
+/// against function/method-kind targets ONLY, so plain data references
+/// (`{ name: SOME_CONSTANT }`) naturally fail to resolve into an edge rather
+/// than needing a structural allowlist gate here.
+///
+/// Mirrors `collectObjectLiteralValueRefCall` in `src/extractors/javascript.ts`.
+fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], calls: &mut Vec<Call>) {
+    let Some(value_n) = node.child_by_field_name("value") else { return };
+    if value_n.kind() != "identifier" {
+        return;
+    }
+    let text = node_text(&value_n, source);
+    if JS_BUILTIN_GLOBALS.contains(&text) {
+        return;
+    }
+    calls.push(Call {
+        name: text.to_string(),
+        line: start_line(&value_n),
+        dynamic: Some(true),
+        dynamic_kind: Some("value-ref".to_string()),
+        ..Default::default()
+    });
+}
+
+/// Collect a dynamic value-ref `Call` for an object-literal shorthand property
+/// (`{ someFunction }`) — semantically identical to `{ someFunction: someFunction }`.
+/// `shorthand_property_identifier` only appears inside object-literal
+/// EXPRESSIONS in this grammar (destructuring patterns use the distinct
+/// `shorthand_property_identifier_pattern` kind), so this can't misfire on
+/// destructuring targets.
+///
+/// Mirrors the walk path's `shorthand_property_identifier` handling in
+/// `src/extractors/javascript.ts`'s `runCollectorWalk` (issue #1771).
+fn handle_object_literal_shorthand_value_ref(node: &Node, source: &[u8], calls: &mut Vec<Call>) {
+    let text = node_text(node, source);
+    if JS_BUILTIN_GLOBALS.contains(&text) {
+        return;
+    }
+    calls.push(Call {
+        name: text.to_string(),
+        line: start_line(node),
+        dynamic: Some(true),
+        dynamic_kind: Some("value-ref".to_string()),
+        ..Default::default()
+    });
 }
 
 fn extract_destructured_bindings(
@@ -4169,6 +4231,83 @@ mod tests {
         let s = parse_js("app.get('/path', {key: 1}, [], 42);");
         let dynamic_calls: Vec<_> = s.calls.iter().filter(|c| c.dynamic == Some(true)).collect();
         assert!(dynamic_calls.is_empty());
+    }
+
+    // ── #1771: object-literal value-ref extraction ──────────────────────────
+
+    #[test]
+    fn extracts_value_ref_call_for_object_literal_property() {
+        let s = parse_js("const table = { resolve: resolveWrapperParam };");
+        let value_refs: Vec<_> = s
+            .calls
+            .iter()
+            .filter(|c| c.dynamic_kind.as_deref() == Some("value-ref"))
+            .collect();
+        assert!(value_refs.iter().any(|c| c.name == "resolveWrapperParam"));
+        assert!(value_refs.iter().all(|c| c.dynamic == Some(true)));
+    }
+
+    #[test]
+    fn extracts_value_ref_calls_for_every_handler_in_dispatch_table_array() {
+        // Mirrors this repo's own PARAM_NODE_HANDLERS pattern (issue #1771).
+        let s = parse_js(
+            "const HANDLERS = [\n\
+               { matches: isA, resolve: resolveA },\n\
+               { matches: isB, resolve: resolveB },\n\
+             ];",
+        );
+        let names: Vec<&str> = s
+            .calls
+            .iter()
+            .filter(|c| c.dynamic_kind.as_deref() == Some("value-ref"))
+            .map(|c| c.name.as_str())
+            .collect();
+        for expected in ["isA", "resolveA", "isB", "resolveB"] {
+            assert!(names.contains(&expected), "missing value-ref call for {}", expected);
+        }
+    }
+
+    #[test]
+    fn extracts_value_ref_call_for_shorthand_property() {
+        let s = parse_js("const table = { someFunction };");
+        let value_refs: Vec<_> = s
+            .calls
+            .iter()
+            .filter(|c| c.dynamic_kind.as_deref() == Some("value-ref"))
+            .collect();
+        assert!(value_refs.iter().any(|c| c.name == "someFunction"));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_call_expression_value() {
+        let s = parse_js("const table = { resolve: someFunction() };");
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_member_expression_value() {
+        let s = parse_js("const table = { resolve: obj.someFunction };");
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_inline_function_value() {
+        let s = parse_js("const table = { resolve: () => {}, other: function () {} };");
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_literal_or_data_shaped_values() {
+        let s = parse_js(
+            "const config = { name: 'literal', count: 42, active: true, empty: null, list: [1, 2] };",
+        );
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
+    }
+
+    #[test]
+    fn no_value_ref_call_for_builtin_globals() {
+        let s = parse_js("const table = { log: console, Ctor: Object };");
+        assert!(s.calls.iter().all(|c| c.dynamic_kind.as_deref() != Some("value-ref")));
     }
 
     #[test]

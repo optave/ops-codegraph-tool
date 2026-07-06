@@ -237,6 +237,17 @@ fn classify_node(
             // value references, not call sites, so no call edge is produced. We
             // require `fan_out > 0` as evidence that the function is non-trivial
             // (i.e. it calls something), ruling out truly inert dead helpers.
+            //
+            // NOTE (#1771): this used to also be the only thing rescuing functions
+            // referenced as object-literal property values (dispatch tables, e.g.
+            // `{ resolve: someFunction }`) — and only by coincidence, for whichever
+            // of those functions happened to have fan_out > 0 themselves. That
+            // pattern now gets a real `calls` edge (dynamic_kind "value-ref") at
+            // extraction time, so it no longer depends on this heuristic. Kept
+            // here as a fallback for value-reference shapes that still produce no
+            // edge at all — the logical-or default above, and others (ternary
+            // defaults, array-of-functions elements, default parameter values)
+            // that aren't extracted as edges yet.
             if kind == "function" && fan_out > 0 {
                 return "leaf";
             }

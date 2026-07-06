@@ -76,10 +76,19 @@ export type DynamicKind =
   | 'computed-key'        // obj[k]()          — resolvable iff k is a const literal, else flag
   | 'reflection'          // .call/.apply/.bind, getattr, Method.invoke, $obj->$m()
   | 'eval'               // eval(), new Function() — undecidable
-  | 'unresolved-dynamic'; // detected dynamic call we cannot resolve
+  | 'unresolved-dynamic' // detected dynamic call we cannot resolve
+  | 'value-ref';          // bare identifier used as an object-literal property value
+                          // (dispatch tables, e.g. `{ resolve: someFn }`) — resolvable
+                          // against function/method-kind targets only (#1771)
 ```
 
 `dynamic?: boolean` is kept to avoid churning every `call.dynamic ? 1 : 0` site.
+
+`value-ref` is Track A (resolvable) but deliberately **not** added to the flag-only
+sink-edge set: when the identifier doesn't resolve to a function/method (e.g. a
+plain data reference like `{ name: SOME_CONSTANT }`), that's the common case, not
+an undecidable dynamic call site — so it's silently dropped rather than flagged,
+unlike `eval`/`computed-key`/`unresolved-dynamic`.
 
 ### Sink edges reuse `kind='calls'`, not a new edge kind
 

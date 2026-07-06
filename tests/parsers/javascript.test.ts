@@ -1108,6 +1108,75 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('object-literal value-ref extraction (#1771)', () => {
+    it('extracts a value-ref call for a bare-identifier property value', () => {
+      const symbols = parseJS(`const table = { resolve: resolveWrapperParam };`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({
+          name: 'resolveWrapperParam',
+          dynamic: true,
+          dynamicKind: 'value-ref',
+        }),
+      );
+    });
+
+    it('extracts value-ref calls for every handler in a dispatch-table array', () => {
+      // Mirrors this repo's own PARAM_NODE_HANDLERS pattern (issue #1771):
+      // an array of `{ matches, resolve }` objects where `resolve` is a bare
+      // function identifier dispatched at runtime via `handler.resolve(...)`.
+      const symbols = parseJS(`
+        const HANDLERS = [
+          { matches: isA, resolve: resolveA },
+          { matches: isB, resolve: resolveB },
+          { matches: isC, resolve: resolveC },
+        ];
+      `);
+      for (const name of ['isA', 'resolveA', 'isB', 'resolveB', 'isC', 'resolveC']) {
+        expect(symbols.calls).toContainEqual(
+          expect.objectContaining({ name, dynamic: true, dynamicKind: 'value-ref' }),
+        );
+      }
+    });
+
+    it('extracts a value-ref call for a shorthand property', () => {
+      const symbols = parseJS(`const table = { someFunction };`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'someFunction', dynamic: true, dynamicKind: 'value-ref' }),
+      );
+    });
+
+    it('does not extract a value-ref call for a call-expression value', () => {
+      const symbols = parseJS(`const table = { resolve: someFunction() };`);
+      expect(symbols.calls).not.toContainEqual(
+        expect.objectContaining({ name: 'someFunction', dynamicKind: 'value-ref' }),
+      );
+    });
+
+    it('does not extract a value-ref call for a member-expression value', () => {
+      const symbols = parseJS(`const table = { resolve: obj.someFunction };`);
+      expect(symbols.calls).not.toContainEqual(
+        expect.objectContaining({ dynamicKind: 'value-ref', name: 'someFunction' }),
+      );
+    });
+
+    it('does not extract a value-ref call for an inline function/arrow value', () => {
+      const symbols = parseJS(`const table = { resolve: () => {}, other: function () {} };`);
+      expect(symbols.calls.filter((c) => c.dynamicKind === 'value-ref')).toHaveLength(0);
+    });
+
+    it('does not extract a value-ref call for literal or data-shaped values', () => {
+      const symbols = parseJS(`
+        const config = { name: 'literal', count: 42, active: true, empty: null, list: [1, 2] };
+      `);
+      expect(symbols.calls.filter((c) => c.dynamicKind === 'value-ref')).toHaveLength(0);
+    });
+
+    it('excludes builtin globals from value-ref extraction', () => {
+      const symbols = parseJS(`const table = { log: console, Ctor: Object };`);
+      expect(symbols.calls.filter((c) => c.dynamicKind === 'value-ref')).toHaveLength(0);
+    });
+  });
+
   describe('Phase 8.3f: object-destructuring rest parameter binding extraction', () => {
     function parseJS(code) {
       const parser = parsers.get('javascript');

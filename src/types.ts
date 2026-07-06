@@ -487,7 +487,8 @@ export type DynamicKind =
   | 'computed-key' // obj[k]()        — potentially resolvable via pts; else flagged
   | 'reflection' // .call/.apply/.bind / Reflect.* / callable-ref — resolved when target is in codebase; sink edge emitted if unresolved
   | 'eval' // eval() / new Function() — undecidable; always flagged
-  | 'unresolved-dynamic'; // any other detected dynamic pattern; flagged
+  | 'unresolved-dynamic' // any other detected dynamic pattern; flagged
+  | 'value-ref'; // bare identifier used as an object-literal property value (dispatch-table pattern, e.g. `{ resolve: someFn }`) — resolved only against function/method-kind targets; unresolved (e.g. plain data references) are dropped silently, NOT flagged
 
 /** A function/method call detected by an extractor. */
 export interface Call {

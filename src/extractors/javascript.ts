@@ -459,6 +459,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     objectPropBindings,
     newExpressions,
     definePropertyReceivers,
+    valueRefCalls: calls,
     imports,
     calls,
     thisCallBindings,
@@ -884,6 +885,7 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     objectPropBindings: ctx.objectPropBindings!,
     newExpressions,
     definePropertyReceivers,
+    valueRefCalls: ctx.calls,
     funcPropDefs: ctx.definitions,
   });
   ctx.newExpressions = newExpressions;
@@ -3138,6 +3140,32 @@ function collectObjectPropBindings(node: TreeSitterNode, bindings: ObjectPropBin
   }
 }
 
+/**
+ * Collect a dynamic value-ref `Call` for an object-literal `pair` node whose
+ * value is a bare identifier — e.g. `{ resolve: someFunction }`, the
+ * "dispatch table" pattern (`{ matches, resolve }`-style handler arrays,
+ * issue #1771). Restricted to plain `identifier` values: call expressions,
+ * member expressions, and inline function/arrow values are handled by their
+ * own extraction paths (regular call resolution, `extractObjectLiteralFunctions`)
+ * and must not be double-counted here.
+ *
+ * Emitted unconditionally for every bare-identifier property value in the
+ * file — `dynamicKind: 'value-ref'` is resolved downstream (build-edges.ts /
+ * incremental.ts) against function/method-kind targets ONLY, so plain data
+ * references (`{ name: SOME_CONSTANT }`) naturally fail to resolve into an
+ * edge rather than needing a structural allowlist gate here.
+ */
+function collectObjectLiteralValueRefCall(pairNode: TreeSitterNode, calls: Call[]): void {
+  const valueNode = pairNode.childForFieldName('value');
+  if (valueNode?.type !== 'identifier' || BUILTIN_GLOBALS.has(valueNode.text)) return;
+  calls.push({
+    name: valueNode.text,
+    line: nodeStartLine(valueNode),
+    dynamic: true,
+    dynamicKind: 'value-ref',
+  });
+}
+
 function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
   if (!objNode) return undefined;
   const t = objNode.type;
@@ -3687,6 +3715,15 @@ function collectThisCallAndBindings(
  *   (the walk path's walkJavaScriptNode covers those node types itself).
  * - `funcPropDefs` — walk path only (the query path captures `fn.method = …`
  *   assignments via the `assign_left`/`assign_right` query pattern).
+ *
+ * `valueRefCalls` is REQUIRED (unlike `calls`) — both paths route
+ * object-literal value-ref extraction through this single field, since
+ * neither `walkJavaScriptNode` (walk path) nor the compiled query patterns
+ * (query path) visit `pair`/`shorthand_property_identifier` nodes on their
+ * own (#1771). Both callers pass their own `calls` array here; it's a
+ * separate field from the optional `calls` above purely so this collector
+ * isn't accidentally gated off by the walk path's "don't double-collect
+ * call_expression" omission.
  */
 interface CollectorWalkTargets {
   definitions: Definition[];
@@ -3696,6 +3733,7 @@ interface CollectorWalkTargets {
   objectPropBindings: ObjectPropBinding[];
   newExpressions: string[];
   definePropertyReceivers: Map<string, string>;
+  valueRefCalls: Call[];
   imports?: Import[];
   calls?: Call[];
   thisCallBindings?: ThisCallBinding[];
@@ -3773,6 +3811,22 @@ function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTarget
         break;
       case 'class_static_block':
         if (targets.classMemberDefs) handleStaticBlock(node, targets.classMemberDefs);
+        break;
+      case 'pair':
+        // #1771: dispatch-table-style object-literal property values, e.g.
+        // `{ resolve: someFunction }`.
+        collectObjectLiteralValueRefCall(node, targets.valueRefCalls);
+        break;
+      case 'shorthand_property_identifier':
+        // #1771: shorthand form of the same pattern, e.g. `{ someFunction }`.
+        if (!BUILTIN_GLOBALS.has(node.text)) {
+          targets.valueRefCalls.push({
+            name: node.text,
+            line: nodeStartLine(node),
+            dynamic: true,
+            dynamicKind: 'value-ref',
+          });
+        }
         break;
     }
     for (let i = 0; i < node.childCount; i++) {
