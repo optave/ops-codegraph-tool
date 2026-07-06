@@ -184,6 +184,72 @@ describe('computeConfidenceJS', () => {
     expect(sameDir).toBeGreaterThan(siblingParent);
     expect(siblingParent).toBeGreaterThan(distant);
   });
+
+  // Regression tests for #1769: a fixed-depth "grandparent equality" check used
+  // to compare `dirname(dirname(callerFile))` to `dirname(dirname(targetFile))`,
+  // which only matched when both files sat at the *same* depth. A file in a
+  // subdirectory calling a method declared in its direct parent directory
+  // (e.g. `graph/algorithms/bfs.ts` calling `graph/model.ts`) was scored as
+  // maximally distant (0.3) purely because the two files were nested at
+  // different depths — well below the 0.5 threshold used by the call-edge
+  // resolver's typed-method lookup, silently dropping the call edge.
+  describe('directory-nesting distance (#1769)', () => {
+    it('scores a direct parent/child directory pair above the 0.5 resolver threshold', () => {
+      // caller one level deeper than target — the exact bfs.ts -> model.ts shape.
+      const conf = computeConfidenceJS(
+        'src/graph/algorithms/bfs.ts',
+        'src/graph/model.ts',
+        undefined,
+      );
+      expect(conf).toBeGreaterThanOrEqual(0.5);
+    });
+
+    it('is symmetric: target one level deeper than caller scores the same as the reverse', () => {
+      const callerDeeper = computeConfidenceJS(
+        'src/graph/algorithms/bfs.ts',
+        'src/graph/model.ts',
+        undefined,
+      );
+      const targetDeeper = computeConfidenceJS(
+        'src/graph/model.ts',
+        'src/graph/algorithms/bfs.ts',
+        undefined,
+      );
+      expect(targetDeeper).toBe(callerDeeper);
+    });
+
+    it('ranks direct parent/child nesting strictly between same-directory and sibling-directory', () => {
+      const sameDir = computeConfidenceJS('src/graph/a.ts', 'src/graph/b.ts', undefined);
+      const parentChild = computeConfidenceJS(
+        'src/graph/algorithms/bfs.ts',
+        'src/graph/model.ts',
+        undefined,
+      );
+      // True siblings: both one level below `src`, at equal depth.
+      const sibling = computeConfidenceJS('src/graph/a.ts', 'src/features/b.ts', undefined);
+      expect(sameDir).toBeGreaterThan(parentChild);
+      expect(parentChild).toBeGreaterThan(sibling);
+    });
+
+    it('scores a two-level-deep subdirectory calling into its grandparent at or above the sibling tier', () => {
+      // the graph/algorithms/leiden/*.ts -> graph/model.ts shape from #1769.
+      const conf = computeConfidenceJS(
+        'src/graph/algorithms/leiden/cpm.ts',
+        'src/graph/model.ts',
+        undefined,
+      );
+      expect(conf).toBeGreaterThanOrEqual(0.5);
+    });
+
+    it('still scores unrelated deeply-nested files as distant', () => {
+      const conf = computeConfidenceJS(
+        'src/graph/algorithms/leiden/cpm.ts',
+        'src/mcp/server.ts',
+        undefined,
+      );
+      expect(conf).toBeLessThan(0.5);
+    });
+  });
 });
 
 // ─── computeConfidence (public API, dispatches to native or JS) ─────

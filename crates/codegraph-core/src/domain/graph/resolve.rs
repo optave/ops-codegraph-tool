@@ -247,8 +247,42 @@ fn resolve_import_path_inner(
     relativize_to_root(&resolved.display().to_string().replace('\\', "/"), root_dir)
 }
 
+/// All ancestor directories of `dir`, starting with `dir` itself, walking up to the root.
+fn ancestor_chain(dir: &str) -> Vec<String> {
+    let mut chain = vec![dir.to_string()];
+    let mut cur = dir.to_string();
+    while let Some(parent) = Path::new(&cur).parent() {
+        let parent_str = parent.display().to_string();
+        chain.push(parent_str.clone());
+        cur = parent_str;
+    }
+    chain
+}
+
+/// Directory-tree distance between two directories: hops up from `a` to the
+/// nearest ancestor shared with `b`, plus hops down from there to `b`.
+///
+/// Symmetric and depth-independent — unlike a fixed-depth equality check
+/// (e.g. comparing the parent-of-parent of `a` to the parent-of-parent of
+/// `b`, as `compute_confidence` used to), this correctly scores both sibling
+/// directories (common parent) and direct ancestor/descendant directories
+/// (one nested inside the other) regardless of how deep either path is. The
+/// fixed-depth check only matched when both files sat at the *same* depth,
+/// so e.g. a file in `graph/algorithms/*.rs` calling a method declared in
+/// the shallower `graph/model.rs` was scored as maximally distant (issue #1769).
+fn directory_distance(a: &str, b: &str) -> usize {
+    let chain_a = ancestor_chain(a);
+    let chain_b = ancestor_chain(b);
+    for (i, dir_a) in chain_a.iter().enumerate() {
+        if let Some(j) = chain_b.iter().position(|dir_b| dir_b == dir_a) {
+            return i + j;
+        }
+    }
+    usize::MAX
+}
+
 /// Compute proximity-based confidence for call resolution.
-/// Mirrors `computeConfidence()` in builder.js.
+/// Mirrors `computeConfidence()` in resolve.ts.
 pub fn compute_confidence(
     caller_file: &str,
     target_file: &str,
@@ -275,24 +309,12 @@ pub fn compute_confidence(
         .map(|p| p.display().to_string())
         .unwrap_or_default();
 
-    if caller_dir == target_dir {
-        return 0.7;
+    match directory_distance(&caller_dir, &target_dir) {
+        0 => 0.7, // same directory
+        1 => 0.6, // direct parent/child directory
+        2 => 0.5, // sibling directories, or a grandparent/grandchild pair
+        _ => 0.3,
     }
-
-    let caller_parent = Path::new(&caller_dir)
-        .parent()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    let target_parent = Path::new(&target_dir)
-        .parent()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-
-    if caller_parent == target_parent {
-        return 0.5;
-    }
-
-    0.3
 }
 
 /// Batch resolve multiple imports (parallelized with rayon).
@@ -429,5 +451,85 @@ mod tests {
             Some(&known),
         );
         assert_eq!(result, "src/utils.ts");
+    }
+
+    // Regression tests for #1769: a fixed-depth "grandparent equality" check
+    // used to compare the parent of `caller_dir` to the parent of `target_dir`,
+    // which only matched when both files sat at the *same* depth. A file in a
+    // subdirectory calling a method declared in its direct parent directory
+    // (e.g. `graph/algorithms/bfs.rs` calling `graph/model.rs`) was scored as
+    // maximally distant (0.3) purely because the two files were nested at
+    // different depths — well below the 0.5 threshold used by the call-edge
+    // resolver's typed-method lookup, silently dropping the call edge.
+
+    #[test]
+    fn compute_confidence_scores_parent_child_dirs_above_resolver_threshold() {
+        let conf = compute_confidence("src/graph/algorithms/bfs.rs", "src/graph/model.rs", None);
+        assert!(conf >= 0.5, "expected >= 0.5, got {conf}");
+    }
+
+    #[test]
+    fn compute_confidence_is_symmetric_for_parent_child_dirs() {
+        let caller_deeper =
+            compute_confidence("src/graph/algorithms/bfs.rs", "src/graph/model.rs", None);
+        let target_deeper =
+            compute_confidence("src/graph/model.rs", "src/graph/algorithms/bfs.rs", None);
+        assert_eq!(caller_deeper, target_deeper);
+    }
+
+    #[test]
+    fn compute_confidence_ranks_parent_child_between_same_dir_and_sibling() {
+        let same_dir = compute_confidence("src/graph/a.rs", "src/graph/b.rs", None);
+        let parent_child =
+            compute_confidence("src/graph/algorithms/bfs.rs", "src/graph/model.rs", None);
+        // True siblings: both one level below `src`, at equal depth.
+        let sibling = compute_confidence("src/graph/a.rs", "src/features/b.rs", None);
+        assert!(same_dir > parent_child);
+        assert!(parent_child > sibling);
+    }
+
+    #[test]
+    fn compute_confidence_scores_two_level_nesting_at_or_above_sibling_tier() {
+        // the graph/algorithms/leiden/*.rs -> graph/model.rs shape from #1769.
+        let conf = compute_confidence(
+            "src/graph/algorithms/leiden/cpm.rs",
+            "src/graph/model.rs",
+            None,
+        );
+        assert!(conf >= 0.5, "expected >= 0.5, got {conf}");
+    }
+
+    #[test]
+    fn compute_confidence_still_scores_unrelated_deep_files_as_distant() {
+        let conf = compute_confidence(
+            "src/graph/algorithms/leiden/cpm.rs",
+            "src/mcp/server.rs",
+            None,
+        );
+        assert!(conf < 0.5, "expected < 0.5, got {conf}");
+    }
+
+    #[test]
+    fn directory_distance_same_dir_is_zero() {
+        assert_eq!(directory_distance("src/graph", "src/graph"), 0);
+    }
+
+    #[test]
+    fn directory_distance_direct_parent_child_is_one() {
+        assert_eq!(directory_distance("src/graph/algorithms", "src/graph"), 1);
+        assert_eq!(directory_distance("src/graph", "src/graph/algorithms"), 1);
+    }
+
+    #[test]
+    fn directory_distance_siblings_is_two() {
+        // Both dirs are one level below `src` — true siblings at equal depth.
+        assert_eq!(directory_distance("src/graph", "src/features"), 2);
+    }
+
+    #[test]
+    fn directory_distance_unequal_depth_non_siblings_is_three() {
+        // `algorithms` is nested inside `graph`, which is a sibling of `features` —
+        // not a direct sibling pair despite sharing the `src` ancestor.
+        assert_eq!(directory_distance("src/graph/algorithms", "src/features"), 3);
     }
 }
