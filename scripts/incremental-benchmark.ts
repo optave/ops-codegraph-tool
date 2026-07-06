@@ -16,7 +16,7 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
-import { median, round1, timeMedian } from './lib/bench-timing.js';
+import { round1, timeMedian, timeMedianWithValue } from './lib/bench-timing.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -87,13 +87,7 @@ if (!isWorker()) {
 		for (let i = 0; i < WARMUP_RUNS; i++) {
 			parentBatch(inputs, rootParent, null);
 		}
-		const timings = [];
-		for (let i = 0; i < RUNS; i++) {
-			const start = performance.now();
-			parentBatch(inputs, rootParent, null);
-			timings.push(performance.now() - start);
-		}
-		nativeBatchMs = round1(median(timings));
+		nativeBatchMs = round1(await timeMedian(() => parentBatch(inputs, rootParent, null), RUNS));
 		perImportNativeMs = inputs.length > 0 ? round1(nativeBatchMs / inputs.length) : 0;
 	}
 	for (let i = 0; i < WARMUP_RUNS; i++) {
@@ -101,15 +95,13 @@ if (!isWorker()) {
 			parentJS(fromFile, importSource, rootParent, null);
 		}
 	}
-	const jsTimings = [];
-	for (let i = 0; i < RUNS; i++) {
-		const start = performance.now();
-		for (const { fromFile, importSource } of inputs) {
-			parentJS(fromFile, importSource, rootParent, null);
-		}
-		jsTimings.push(performance.now() - start);
-	}
-	const jsFallbackMs = round1(median(jsTimings));
+	const jsFallbackMs = round1(
+		await timeMedian(() => {
+			for (const { fromFile, importSource } of inputs) {
+				parentJS(fromFile, importSource, rootParent, null);
+			}
+		}, RUNS),
+	);
 	const perImportJsMs = inputs.length > 0 ? round1(jsFallbackMs / inputs.length) : 0;
 
 	const resolve = { imports: inputs.length, nativeBatchMs, jsFallbackMs, perImportNativeMs, perImportJsMs };
@@ -217,17 +209,16 @@ try {
 		fs.writeFileSync(PROBE_FILE, original + `\n// warmup-${i}\n`);
 		await buildGraph(root, { ...BUILD_OPTS, incremental: true });
 	}
-	const oneFileRuns = [];
-	for (let i = 0; i < RUNS; i++) {
-		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
-		const start = performance.now();
-		const res = await buildGraph(root, { ...BUILD_OPTS, incremental: true });
-		oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
-	}
-	oneFileRuns.sort((a, b) => a.ms - b.ms);
-	const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
+	const medianRun = await timeMedianWithValue(
+		async () => {
+			const res = await buildGraph(root, { ...BUILD_OPTS, incremental: true });
+			return res?.phases || null;
+		},
+		RUNS,
+		(i) => fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`),
+	);
 	oneFileRebuildMs = Math.round(medianRun.ms);
-	oneFilePhases = medianRun.phases;
+	oneFilePhases = medianRun.value;
 } catch (err) {
 	console.error(`  [${engine}] 1-file rebuild failed: ${(err as Error).message}`);
 } finally {

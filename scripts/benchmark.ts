@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
-import { median, round1, timeMedian } from './lib/bench-timing.js';
+import { round1, timeMedian, timeMedianWithValue } from './lib/bench-timing.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -134,7 +134,7 @@ const buildTimeMs = performance.now() - buildStart;
 // query latency with NAPI/rusqlite/OS-page-cache init costs (~65ms on
 // macOS) and inflated growth from test-fixture files pulled in by new
 // native extractors. See #1113 for the methodology rationale.
-const queryTimeMs = benchQuery(fnDepsData, 'buildGraph', dbPath, { depth: 3, noTests: true });
+const queryTimeMs = await benchQuery(fnDepsData, 'buildGraph', dbPath, { depth: 3, noTests: true });
 
 const stats = statsData(dbPath);
 const totalFiles = stats.files.total;
@@ -168,17 +168,16 @@ try {
 		fs.writeFileSync(PROBE_FILE, original + `\n// warmup-${i}\n`);
 		await buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE });
 	}
-	const oneFileRuns = [];
-	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
-		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
-		const start = performance.now();
-		const res = await buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE });
-		oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
-	}
-	oneFileRuns.sort((a, b) => a.ms - b.ms);
-	const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
+	const medianRun = await timeMedianWithValue(
+		async () => {
+			const res = await buildGraph(root, { engine, incremental: true, exclude: BENCH_EXCLUDE });
+			return res?.phases || null;
+		},
+		INCREMENTAL_RUNS,
+		(i) => fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`),
+	);
 	oneFileRebuildMs = Math.round(medianRun.ms);
-	oneFilePhases = medianRun.phases;
+	oneFilePhases = medianRun.value;
 } catch (err) {
 	console.error(`  [${engine}] 1-file rebuild failed: ${(err as Error).message}`);
 } finally {
@@ -195,26 +194,26 @@ console.error(`  [${engine}] Benchmarking queries...`);
 const targets = workerTargets() || selectTargets();
 console.error(`    hub=${targets.hub}, leaf=${targets.leaf}`);
 
-function benchQuery(fn, ...args) {
+async function benchQuery(fn, ...args) {
 	// Warmup runs prime NAPI bindings, the rusqlite statement cache, and the
 	// OS page cache so the timed loop measures steady-state query latency
 	// rather than first-call init (~65ms on macOS). Each call site warms
 	// independently — methodology does not rely on call ordering elsewhere.
 	for (let i = 0; i < QUERY_WARMUP_RUNS; i++) fn(...args);
-	const timings = [];
-	for (let i = 0; i < QUERY_RUNS; i++) {
-		const start = performance.now();
-		fn(...args);
-		timings.push(performance.now() - start);
-	}
-	return round1(median(timings));
+	return round1(await timeMedian(() => fn(...args), QUERY_RUNS));
 }
 
 const queries = {
-	fnDepsMs: fnDepsData ? benchQuery(fnDepsData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
-	fnImpactMs: fnImpactData ? benchQuery(fnImpactData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
-	pathMs: pathData ? benchQuery(pathData, targets.hub, targets.leaf, dbPath, { noTests: true }) : null,
-	rolesMs: rolesData ? benchQuery(rolesData, dbPath, { noTests: true }) : null,
+	fnDepsMs: fnDepsData
+		? await benchQuery(fnDepsData, targets.hub, dbPath, { depth: 3, noTests: true })
+		: null,
+	fnImpactMs: fnImpactData
+		? await benchQuery(fnImpactData, targets.hub, dbPath, { depth: 3, noTests: true })
+		: null,
+	pathMs: pathData
+		? await benchQuery(pathData, targets.hub, targets.leaf, dbPath, { noTests: true })
+		: null,
+	rolesMs: rolesData ? await benchQuery(rolesData, dbPath, { noTests: true }) : null,
 };
 
 // Restore console.log for JSON output

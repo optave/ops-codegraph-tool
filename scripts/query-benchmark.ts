@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
-import { median, round1 } from './lib/bench-timing.js';
+import { round1, timeMedian } from './lib/bench-timing.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -169,19 +169,15 @@ function selectTargets() {
 	}
 }
 
-function benchDepths(fn, name, depths) {
+async function benchDepths(fn, name, depths) {
 	const result = {};
 	for (const depth of depths) {
 		for (let i = 0; i < WARMUP_RUNS; i++) {
 			fn(name, dbPath, { depth, noTests: true });
 		}
-		const timings = [];
-		for (let i = 0; i < RUNS; i++) {
-			const start = performance.now();
-			fn(name, dbPath, { depth, noTests: true });
-			timings.push(performance.now() - start);
-		}
-		result[`depth${depth}Ms`] = round1(median(timings));
+		result[`depth${depth}Ms`] = round1(
+			await timeMedian(() => fn(name, dbPath, { depth, noTests: true }), RUNS),
+		);
 	}
 	return result;
 }
@@ -201,7 +197,7 @@ function resolveDbFile(rootDir: string, dbFile: string): string | null {
 	return null;
 }
 
-function benchDiffImpact(hubName) {
+async function benchDiffImpact(hubName) {
 	const db = new Database(dbPath, { readonly: true });
 	const row = db
 		.prepare(`SELECT file FROM nodes WHERE name = ? LIMIT 1`)
@@ -224,16 +220,15 @@ function benchDiffImpact(hubName) {
 		fs.writeFileSync(hubFile, original + '\n// benchmark-probe\n');
 		execFileSync('git', ['add', hubFile], { cwd: root, stdio: 'pipe' });
 
-		const timings = [];
 		let lastResult = null;
-		for (let i = 0; i < RUNS; i++) {
-			const start = performance.now();
-			lastResult = diffImpactData(dbPath, { staged: true, depth: 3, noTests: true });
-			timings.push(performance.now() - start);
-		}
+		const latencyMs = round1(
+			await timeMedian(() => {
+				lastResult = diffImpactData(dbPath, { staged: true, depth: 3, noTests: true });
+			}, RUNS),
+		);
 
 		return {
-			latencyMs: round1(median(timings)),
+			latencyMs,
 			affectedFunctions: lastResult?.affectedFunctions?.length || 0,
 			affectedFiles: lastResult?.affectedFiles?.length || 0,
 		};
@@ -253,15 +248,15 @@ console.error(`Targets: hub=${targets.hub}, mid=${targets.mid}, leaf=${targets.l
 const fnDeps = {};
 const fnImpact = {};
 
-fnDeps.depth1Ms = benchDepths(fnDepsData, targets.hub, [1]).depth1Ms;
-fnDeps.depth3Ms = benchDepths(fnDepsData, targets.hub, [3]).depth3Ms;
-fnDeps.depth5Ms = benchDepths(fnDepsData, targets.hub, [5]).depth5Ms;
+fnDeps.depth1Ms = (await benchDepths(fnDepsData, targets.hub, [1])).depth1Ms;
+fnDeps.depth3Ms = (await benchDepths(fnDepsData, targets.hub, [3])).depth3Ms;
+fnDeps.depth5Ms = (await benchDepths(fnDepsData, targets.hub, [5])).depth5Ms;
 
-fnImpact.depth1Ms = benchDepths(fnImpactData, targets.hub, [1]).depth1Ms;
-fnImpact.depth3Ms = benchDepths(fnImpactData, targets.hub, [3]).depth3Ms;
-fnImpact.depth5Ms = benchDepths(fnImpactData, targets.hub, [5]).depth5Ms;
+fnImpact.depth1Ms = (await benchDepths(fnImpactData, targets.hub, [1])).depth1Ms;
+fnImpact.depth3Ms = (await benchDepths(fnImpactData, targets.hub, [3])).depth3Ms;
+fnImpact.depth5Ms = (await benchDepths(fnImpactData, targets.hub, [5])).depth5Ms;
 
-const diffImpact = benchDiffImpact(targets.hub);
+const diffImpact = await benchDiffImpact(targets.hub);
 
 // Restore console.log for JSON output
 console.log = origLog;
