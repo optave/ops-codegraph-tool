@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const execFileSyncSpy = vi.hoisted(() => vi.fn());
 
@@ -20,10 +20,16 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 import { _resetRepoRootCache } from '../../src/db/connection.js';
+import type { LockedDatabase } from '../../src/db/index.js';
 import {
+  acquireAdvisoryLock,
   closeDb,
+  closeDbDeferred,
+  closeDbPair,
+  closeDbPairDeferred,
   findDbPath,
   findRepoRoot,
+  flushDeferredClose,
   getBuildMeta,
   initSchema,
   MIGRATIONS,
@@ -31,6 +37,7 @@ import {
   openReadonlyOrFail,
   setBuildMeta,
 } from '../../src/db/index.js';
+import type { NativeDatabase } from '../../src/types.js';
 
 let tmpDir: string;
 
@@ -123,6 +130,177 @@ describe('openDb', () => {
     expect(fs.readFileSync(lockPath, 'utf-8').trim()).toBe(String(process.pid));
     closeDb(db);
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+});
+
+// ── closeDbPair / closeDbPairDeferred / closeDbDeferred (#1751) ────────────
+// These pair-close helpers only ever call `.close()` on whatever db/nativeDb
+// handles they're given — they never open a DB themselves — so lightweight
+// mock handles are enough to exercise close ordering and deferral timing.
+// (Contrast with openReadonlyWithNative-leak.test.ts, which needs a real
+// handle because that regression is about *opening*, not closing.)
+
+/** Resolves once the event loop has drained the `setImmediate` queue, i.e.
+ * after any close scheduled via `closeDbDeferred`'s own `setImmediate`. */
+function tick(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function makeFakeDb(lockPath?: string): {
+  db: LockedDatabase;
+  close: ReturnType<typeof vi.fn>;
+} {
+  const close = vi.fn();
+  const db = { close, __lockPath: lockPath } as unknown as LockedDatabase;
+  return { db, close };
+}
+
+function makeFakeNativeDb(): { nativeDb: NativeDatabase; close: ReturnType<typeof vi.fn> } {
+  const close = vi.fn();
+  const nativeDb = { close } as unknown as NativeDatabase;
+  return { nativeDb, close };
+}
+
+describe('closeDbPair', () => {
+  it('closes the native handle before the better-sqlite3 handle', () => {
+    const order: string[] = [];
+    const { db, close: dbClose } = makeFakeDb();
+    const { nativeDb, close: nativeClose } = makeFakeNativeDb();
+    dbClose.mockImplementation(() => order.push('db'));
+    nativeClose.mockImplementation(() => order.push('native'));
+
+    closeDbPair({ db, nativeDb });
+
+    expect(order).toEqual(['native', 'db']);
+  });
+
+  it('still closes the better-sqlite3 handle when the native close throws', () => {
+    const { db, close: dbClose } = makeFakeDb();
+    const { nativeDb, close: nativeClose } = makeFakeNativeDb();
+    nativeClose.mockImplementation(() => {
+      throw new Error('native close boom');
+    });
+
+    expect(() => closeDbPair({ db, nativeDb })).not.toThrow();
+
+    expect(nativeClose).toHaveBeenCalledTimes(1);
+    expect(dbClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the better-sqlite3 handle when there is no native handle', () => {
+    const { db, close: dbClose } = makeFakeDb();
+
+    closeDbPair({ db });
+
+    expect(dbClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('closeDbPairDeferred', () => {
+  // Drain anything left in connection.ts's module-private deferred-close
+  // queue so state can't leak into a later test.
+  afterEach(async () => {
+    flushDeferredClose();
+    await tick();
+  });
+
+  it('closes the native handle immediately, synchronously within the call', () => {
+    const { db } = makeFakeDb();
+    const { nativeDb, close: nativeClose } = makeFakeNativeDb();
+
+    closeDbPairDeferred({ db, nativeDb });
+
+    expect(nativeClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers the better-sqlite3 close to the next tick instead of closing synchronously', async () => {
+    const { db, close: dbClose } = makeFakeDb();
+    const { nativeDb } = makeFakeNativeDb();
+
+    closeDbPairDeferred({ db, nativeDb });
+    expect(dbClose).not.toHaveBeenCalled();
+
+    await tick();
+
+    expect(dbClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('still defers the better-sqlite3 close when the native close throws', async () => {
+    const { db, close: dbClose } = makeFakeDb();
+    const { nativeDb, close: nativeClose } = makeFakeNativeDb();
+    nativeClose.mockImplementation(() => {
+      throw new Error('native close boom');
+    });
+
+    expect(() => closeDbPairDeferred({ db, nativeDb })).not.toThrow();
+    expect(dbClose).not.toHaveBeenCalled();
+
+    await tick();
+
+    expect(dbClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('closeDbDeferred', () => {
+  afterEach(async () => {
+    flushDeferredClose();
+    await tick();
+  });
+
+  it('releases the advisory lock synchronously while deferring the actual handle close', async () => {
+    const dbPath = path.join(tmpDir, 'deferred-close-lock.db');
+    acquireAdvisoryLock(dbPath);
+    const lockPath = `${dbPath}.lock`;
+    expect(fs.existsSync(lockPath)).toBe(true);
+
+    const { db, close } = makeFakeDb(lockPath);
+
+    closeDbDeferred(db);
+
+    // Lock release + clearing __lockPath happen synchronously, within the call.
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(db.__lockPath).toBeUndefined();
+    // The handle itself is not closed yet — that's deferred to the next tick.
+    expect(close).not.toHaveBeenCalled();
+
+    await tick();
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the handle on the next tick when nothing flushes it early', async () => {
+    const { db, close } = makeFakeDb();
+
+    closeDbDeferred(db);
+    expect(close).not.toHaveBeenCalled();
+
+    await tick();
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('flushDeferredClose() closes the handle synchronously when called before the next tick', async () => {
+    const { db, close } = makeFakeDb();
+
+    closeDbDeferred(db);
+    expect(close).not.toHaveBeenCalled();
+
+    flushDeferredClose();
+    expect(close).toHaveBeenCalledTimes(1);
+
+    // The setImmediate callback scheduled by closeDbDeferred must notice the
+    // handle was already removed + closed by the flush, and must not close
+    // it a second time.
+    await tick();
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not attempt a lock release when the handle has no advisory lock path', () => {
+    const { db } = makeFakeDb();
+
+    expect(() => closeDbDeferred(db)).not.toThrow();
+    expect(db.__lockPath).toBeUndefined();
   });
 });
 
