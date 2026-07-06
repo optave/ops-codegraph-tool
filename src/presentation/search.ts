@@ -1,8 +1,8 @@
-import { warn } from '../../../infrastructure/logger.js';
-import { hybridSearchData } from './hybrid.js';
-import { ftsSearchData } from './keyword.js';
-import type { SemanticSearchOpts } from './semantic.js';
-import { multiSearchData, searchData } from './semantic.js';
+import { hybridSearchData } from '../domain/search/search/hybrid.js';
+import { ftsSearchData } from '../domain/search/search/keyword.js';
+import type { SemanticSearchOpts } from '../domain/search/search/semantic.js';
+import { multiSearchData, searchData } from '../domain/search/search/semantic.js';
+import { warn } from '../infrastructure/logger.js';
 
 interface SearchOpts extends SemanticSearchOpts {
   mode?: 'hybrid' | 'semantic' | 'keyword';

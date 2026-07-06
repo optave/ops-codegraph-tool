@@ -1,5 +1,5 @@
 import { collectFile } from '../../db/query-builder.js';
-import { search } from '../../domain/search/index.js';
+import { search } from '../../presentation/search.js';
 import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
