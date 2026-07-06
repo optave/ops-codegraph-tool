@@ -24,15 +24,35 @@ if [ -z "$FILE_PATH" ]; then
   exit 0
 fi
 
-# Only rebuild for source files codegraph tracks
-# Skip docs, configs, test fixtures, and non-code files
-case "$FILE_PATH" in
-  *.js|*.ts|*.tsx|*.jsx|*.py|*.go|*.rs|*.java|*.cs|*.php|*.rb|*.tf|*.hcl)
-    ;;
-  *)
-    exit 0
-    ;;
-esac
+PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+
+# Only rebuild for source files codegraph tracks.
+# Skip docs, configs, test fixtures, and non-code files.
+#
+# The real allowlist is EXTENSIONS (src/shared/constants.ts), derived from
+# LANGUAGE_REGISTRY (src/domain/parser.ts) — the single source of truth for
+# every language codegraph parses. `npm run build` snapshots it to
+# dist/hook-extensions.txt (see scripts/gen-hook-extensions.mjs) so this
+# hook can do a fast native bash/grep check on every Edit/Write instead of
+# spawning a second Node process, or hand-copying the list, on every edit.
+#
+# The case statement below is only a fallback for before the first build
+# (no dist/hook-extensions.txt yet). tests/unit/hook-extensions.test.ts
+# fails if it ever drifts behind EXTENSIONS — keep it updated when
+# LANGUAGE_REGISTRY gains a new extension.
+EXT=".${FILE_PATH##*.}"
+GENERATED_EXT_LIST="$PROJECT_DIR/dist/hook-extensions.txt"
+if [ -f "$GENERATED_EXT_LIST" ]; then
+  grep -qxF "$EXT" "$GENERATED_EXT_LIST" || exit 0
+else
+  case "$EXT" in
+    .R|.bash|.c|.cc|.cjs|.clj|.cljc|.cljs|.cpp|.cs|.cu|.cuh|.cxx|.dart|.erl|.ex|.exs|.fs|.fsi|.fsx|.gemspec|.gleam|.go|.groovy|.gvy|.h|.hcl|.hpp|.hrl|.hs|.java|.jl|.js|.jsx|.kt|.kts|.lua|.m|.mjs|.ml|.mli|.php|.phtml|.py|.pyi|.r|.rake|.rb|.rs|.scala|.sh|.sol|.sv|.swift|.tf|.ts|.tsx|.v|.zig)
+      ;;
+    *)
+      exit 0
+      ;;
+  esac
+fi
 
 # Skip test fixtures — they're copied to tmp dirs anyway
 if echo "$FILE_PATH" | grep -qE '(fixtures|__fixtures__|testdata)/'; then
@@ -40,7 +60,6 @@ if echo "$FILE_PATH" | grep -qE '(fixtures|__fixtures__|testdata)/'; then
 fi
 
 # Guard: codegraph DB must exist (project has been built at least once)
-PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 DB_PATH="$PROJECT_DIR/.codegraph/graph.db"
 if [ ! -f "$DB_PATH" ]; then
   exit 0

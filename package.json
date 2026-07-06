@@ -79,7 +79,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').writeFileSync('dist/index.cjs',require('fs').readFileSync('src/index.cjs','utf8').replaceAll('./index.ts','./index.js'))\"",
+    "build": "tsc && node -e \"require('fs').writeFileSync('dist/index.cjs',require('fs').readFileSync('src/index.cjs','utf8').replaceAll('./index.ts','./index.js'))\" && node scripts/gen-hook-extensions.mjs",
     "build:wasm": "node scripts/node-ts.js scripts/build-wasm.ts",
     "typecheck": "tsc --noEmit",
     "verify-imports": "node scripts/node-ts.js scripts/verify-imports.ts",
