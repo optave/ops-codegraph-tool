@@ -45,6 +45,8 @@ codegraph check --staged --cycles --blast-radius 30 --boundaries -T --json
 
 This checks: manifesto rules, new cycle introduction, blast radius threshold, and architecture boundary violations. Exit code 0 = pass, 1 = fail.
 
+The `blast-radius` predicate is call-graph-shape-aware: a touched function's absolute transitive-caller count only counts toward the threshold if the diff actually changed that function's own declaration line or the set of call targets referenced in its body. A function whose body changed without touching a call expression or its own signature (e.g. an inline literal replaced by a named constant) is exempt even with a high absolute caller count — that fan-in is pre-existing risk already accepted by the codebase, not risk this diff introduced. This is the authoritative blast-radius pass/fail — see Step 8.
+
 Also run detailed impact analysis:
 
 ```bash
@@ -302,9 +304,9 @@ Advisory — prevents jumping ahead and creating conflicts.
 
 ## Step 8 — Blast radius check
 
-From diff-impact results:
-- Transitive blast radius > 30 → FAIL
-- Transitive blast radius > 15 → WARN
+The FAIL/PASS decision comes from Step 1's `codegraph check --staged --blast-radius 30` predicate — do not re-derive it from diff-impact's raw numbers, which are absolute transitive-caller counts and are NOT shape-aware:
+- Step 1's `blast-radius` predicate failed → FAIL (a touched function's own call graph shape genuinely changed and its transitive callers exceed 30)
+- Step 1's `blast-radius` predicate passed but a changed function's raw `transitiveCallers` (from diff-impact) > 15 → WARN (worth a second look even though not gating — this may include functions Step 1 exempted as pre-existing fan-in)
 - Historically coupled file NOT staged? → WARN ("consider also updating X")
 
 ---
