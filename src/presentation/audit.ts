@@ -2,6 +2,7 @@ import { kindIcon } from '../domain/queries.js';
 import { auditData } from '../features/audit.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 import type { AuditFunctionEntry, AuditResult, CodegraphConfig } from '../types.js';
+import { renderImpactLevels } from './impact-levels.js';
 
 interface AuditOpts {
   json?: boolean;
@@ -62,12 +63,12 @@ function renderThresholdBreaches(fn: AuditFunctionEntry): void {
   }
 }
 
-/** Render the transitive-dependent impact summary, one line per BFS level. */
+/** Render the transitive-dependent impact summary, one block per BFS level. */
 function renderImpactSection(fn: AuditFunctionEntry): void {
   console.log(`\n  Impact: ${fn.impact.totalDependents} transitive dependent(s)`);
-  for (const [level, nodes] of Object.entries(fn.impact.levels)) {
-    console.log(`    Level ${level}: ${nodes.map((n) => n.name).join(', ')}`);
-  }
+  // No "0 found" message here -- the count above already conveys it, matching this
+  // file's other sections (e.g. renderCallRefs), which print nothing when empty.
+  renderImpactLevels(fn.impact.levels, { emptyMessage: null });
 }
 
 /** Render a labeled list of call references (used for both "Calls" and "Called by"). */
