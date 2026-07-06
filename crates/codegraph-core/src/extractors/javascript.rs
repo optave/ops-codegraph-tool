@@ -3031,14 +3031,29 @@ fn find_parent_class_no_fn_boundary(node: &Node, source: &[u8]) -> Option<String
     None
 }
 
+/// Wrapper node kinds that can sit between a dynamic `import()` call and its
+/// enclosing `variable_declarator` without changing which value gets bound —
+/// `await`, redundant parentheses, and TypeScript `as` casts. Real-world call
+/// sites often combine several of these, e.g.
+/// `const { X } = (await import('./mod.js')) as { X: Fn }` nests
+/// await_expression → parenthesized_expression → as_expression before
+/// reaching the declarator (#1781).
+const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] =
+    &["await_expression", "parenthesized_expression", "as_expression"];
+
 /// Extract named bindings from a dynamic `import()` call expression.
-/// Handles: `const { a, b } = await import(...)` and `const mod = await import(...)`
+/// Handles: `const { a, b } = await import(...)`, `const mod = await import(...)`,
+/// and casts/parens wrapping the awaited call, e.g.
+/// `const { a } = (await import(...)) as { a: Fn }`.
 fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> {
-    // Walk up: call_expression → await_expression? → variable_declarator
+    // Walk up through any combination/nesting of await/parenthesized/as-cast
+    // wrappers to reach the variable_declarator.
     let mut current = call_node.parent();
-    if let Some(parent) = current {
-        if parent.kind() == "await_expression" {
+    while let Some(parent) = current {
+        if DYNAMIC_IMPORT_WRAPPER_KINDS.contains(&parent.kind()) {
             current = parent.parent();
+        } else {
+            break;
         }
     }
     let declarator = match current {
@@ -4198,6 +4213,47 @@ mod tests {
         assert_eq!(dyn_imports.len(), 1);
         assert!(dyn_imports[0].names.contains(&"foo".to_string()));
         assert!(!dyn_imports[0].names.contains(&"nested".to_string()));
+    }
+
+    // Regression tests for #1781: `codegraph exports` failed to credit consumers
+    // reached via `const { X } = (await import('./mod.js')) as {...}` — the
+    // walk-up from the import() call to its enclosing variable_declarator only
+    // skipped a single optional await_expression, so the extra
+    // parenthesized_expression / as_expression layers introduced by wrapping
+    // parens and a TS type-assertion caused name extraction to bail out with
+    // an empty list, exactly as if the destructured names couldn't be
+    // determined at all.
+
+    #[test]
+    fn finds_dynamic_import_with_parenthesized_destructuring() {
+        let s = parse_ts("const { a, b } = (await import('./foo.js'));");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_as_cast_destructuring() {
+        let s = parse_ts("const { a, b } = await import('./foo.js') as { a: Fn; b: Fn };");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_parenthesized_as_cast_destructuring() {
+        // Exact repro shape from #1781 (native-orchestrator.ts):
+        // `const { X, Y } = (await import('../mod.js')) as { X: Fn; Y: Fn };`
+        let s = parse_ts(
+            "const { buildDataflowVerticesFromMap, buildDataflowEdges } = (await import('../../../../features/dataflow.js')) as { buildDataflowVerticesFromMap: Fn; buildDataflowEdges: Fn };",
+        );
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "../../../../features/dataflow.js");
+        assert!(dyn_imports[0].names.contains(&"buildDataflowVerticesFromMap".to_string()));
+        assert!(dyn_imports[0].names.contains(&"buildDataflowEdges".to_string()));
     }
 
     #[test]

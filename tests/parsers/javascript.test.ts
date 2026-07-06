@@ -176,6 +176,67 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('dynamic import() destructuring through parens/as-cast wrappers (#1781)', () => {
+    function parseTS(code) {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.ts');
+    }
+
+    // Before the fix, extractDynamicImportNames walked up from the import()
+    // call through at most one optional await_expression before requiring the
+    // immediate parent to be a variable_declarator. Wrapping the awaited call
+    // in redundant parens and/or a TS `as {...}` cast — exactly the pattern
+    // used throughout native-orchestrator.ts — inserted extra
+    // parenthesized_expression/as_expression layers that broke the walk-up,
+    // so `names` came back empty and the destructured bindings never got
+    // credited as real consumers of the target module's exports (#1781).
+
+    it('extracts destructured names from a bare dynamic import (no wrapper)', () => {
+      const symbols = parseJS(`const { a, b } = await import('./foo.js');`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'b']);
+      expect(symbols.imports[0].dynamicImport).toBe(true);
+    });
+
+    it('extracts destructured names when the awaited import is wrapped in redundant parens', () => {
+      const symbols = parseTS(`const { a, b } = (await import('./foo.js'));`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'b']);
+    });
+
+    it('extracts destructured names through a TypeScript `as {...}` type assertion (no parens)', () => {
+      const symbols = parseTS(`const { a, b } = await import('./foo.js') as { a: Fn; b: Fn };`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'b']);
+    });
+
+    it('extracts destructured names through parens + `as`-cast combined (exact repro shape)', () => {
+      // Matches native-orchestrator.ts's actual production pattern:
+      //   const { X, Y } = (await import('./mod.js')) as { X: Fn; Y: Fn };
+      const symbols = parseTS(`
+        const { buildDataflowVerticesFromMap, buildDataflowEdges } =
+          (await import('../../../../features/dataflow.js')) as {
+            buildDataflowVerticesFromMap: (db: unknown) => number;
+            buildDataflowEdges: (db: unknown) => Promise<void>;
+          };
+      `);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].source).toBe('../../../../features/dataflow.js');
+      expect(symbols.imports[0].names).toEqual([
+        'buildDataflowVerticesFromMap',
+        'buildDataflowEdges',
+      ]);
+      expect(symbols.imports[0].dynamicImport).toBe(true);
+    });
+
+    it('still extracts a single namespace-style binding through parens + as-cast', () => {
+      const symbols = parseTS(`const mod = (await import('./foo.js')) as { a: number };`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['mod']);
+    });
+  });
+
   it('extracts call expressions', () => {
     const symbols = parseJS(`import { foo } from './bar'; foo(); baz();`);
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'foo' }));

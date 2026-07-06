@@ -4047,21 +4047,40 @@ function extractImportNames(
 }
 
 /**
+ * Wrapper node types that can sit between a dynamic `import()` call and its
+ * enclosing `variable_declarator` without changing which value gets bound —
+ * `await`, redundant parentheses, and TypeScript `as` casts. Real-world
+ * dynamic-import call sites often combine several of these, e.g.
+ * `const { X } = (await import('./mod.js')) as { X: Fn }` nests
+ * await_expression → parenthesized_expression → as_expression before
+ * reaching the declarator (#1781).
+ */
+const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
+  'await_expression',
+  'parenthesized_expression',
+  'as_expression',
+]);
+
+/**
  * Extract destructured names from a dynamic import() call expression.
  *
  * Handles:
- *   const { a, b } = await import('./foo.js')   → ['a', 'b']
- *   const mod = await import('./foo.js')         → ['mod']
- *   import('./foo.js')                           → [] (no names extractable)
+ *   const { a, b } = await import('./foo.js')                    → ['a', 'b']
+ *   const mod = await import('./foo.js')                          → ['mod']
+ *   const { a } = (await import('./foo.js')) as { a: Fn }         → ['a']
+ *   import('./foo.js')                                            → [] (no names extractable)
  *
- * Walks up the AST from the call_expression to find the enclosing
+ * Walks up the AST from the call_expression — through any nesting of
+ * await/parenthesized/as-cast wrappers — to find the enclosing
  * variable_declarator and reads the name/object_pattern.
  */
 function extractDynamicImportNames(callNode: TreeSitterNode): string[] {
-  // Walk up: call_expression → await_expression → variable_declarator
+  // Walk up through await_expression / parenthesized_expression / as_expression
+  // wrappers, in any combination or order, to reach the variable_declarator.
   let current = callNode.parent;
-  // Skip await_expression wrapper if present
-  if (current && current.type === 'await_expression') current = current.parent;
+  while (current && DYNAMIC_IMPORT_WRAPPER_TYPES.has(current.type)) {
+    current = current.parent;
+  }
   // We should now be at a variable_declarator (or not, if standalone import())
   if (current?.type !== 'variable_declarator') return [];
 
