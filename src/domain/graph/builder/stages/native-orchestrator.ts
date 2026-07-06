@@ -1835,6 +1835,38 @@ async function backfillNativeDroppedFiles(
 }
 
 /**
+ * One-hop reverse dependents of `files`: files with an edge whose TARGET is a
+ * node inside one of `files`. The Rust incremental pipeline's own reverse-dep
+ * cascade (`reconnect_reverse_dep_edges` in detect_changes.rs) re-creates
+ * edges FROM these files INTO the changed files whenever the changed files'
+ * nodes are purged + reinserted with new IDs — without ever writing
+ * `technique` — so `backfillEdgeTechniquesAfterNativeOrchestrator` must reach
+ * them too, not just `changedFiles` itself (#1744). Mirrors the one-hop
+ * `findReverseDeps` query in `builder/incremental.ts`.
+ *
+ * Chunked to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older
+ * builds).
+ */
+function findOneHopReverseDepFiles(db: BetterSqlite3Database, files: readonly string[]): string[] {
+  const found = new Set<string>();
+  const CHUNK_SIZE = 500;
+  for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+    const chunk = files.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT n_src.file AS file FROM edges e
+         JOIN nodes n_src ON e.source_id = n_src.id
+         JOIN nodes n_tgt ON e.target_id = n_tgt.id
+         WHERE n_tgt.file IN (${placeholders}) AND n_src.kind != 'directory'`,
+      )
+      .all(...chunk) as Array<{ file: string }>;
+    for (const r of rows) found.add(r.file);
+  }
+  return [...found];
+}
+
+/**
  * Backfill the `technique` column on `calls` edges written by the native Rust
  * orchestrator, which does not write the column itself.  Also lifts any
  * resolved ts-native edge whose confidence is below TS_NATIVE_CONFIDENCE_FLOOR
@@ -1842,8 +1874,9 @@ async function backfillNativeDroppedFiles(
  * reflected in the call-confidence metric.
  *
  * For full builds, all `calls` edges in the DB are new so a global UPDATE is
- * correct.  For incremental builds, only changed-file source nodes are updated
- * to avoid overwriting previously-set technique values on unchanged edges.
+ * correct.  For incremental builds, only changed-file source nodes — plus
+ * their one-hop reverse dependents (#1744) — are updated to avoid overwriting
+ * previously-set technique values on unchanged edges.
  */
 function backfillEdgeTechniquesAfterNativeOrchestrator(
   db: BetterSqlite3Database,
@@ -1868,12 +1901,18 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
     ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR);
     return;
   }
-  // Incremental: scope to source nodes whose file is one of the changed files.
+  // Incremental: scope to source nodes whose file is one of the changed files,
+  // plus one-hop reverse dependents — callers whose outgoing edges into a
+  // changed file were reconnected by Rust's own cascade and so also carry a
+  // fresh, untagged technique value (#1744).
+  const scopeFiles = [
+    ...new Set([...changedFiles, ...findOneHopReverseDepFiles(db, changedFiles)]),
+  ];
   // Chunk to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
   const CHUNK_SIZE = 500;
   const tx = db.transaction(() => {
-    for (let i = 0; i < changedFiles.length; i += CHUNK_SIZE) {
-      const chunk = changedFiles.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < scopeFiles.length; i += CHUNK_SIZE) {
+      const chunk = scopeFiles.slice(i, i + CHUNK_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
       db.prepare(
         `UPDATE edges SET technique = 'ts-native'

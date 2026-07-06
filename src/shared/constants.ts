@@ -56,9 +56,10 @@ export const EXTENSIONS: ArrayCompatSet<string> = withArrayCompat(new Set(SUPPOR
  * (confidence = 0.0) are intentionally excluded and must remain at 0.0 so
  * they stay below DEFAULT_MIN_CONFIDENCE and never surface in normal queries.
  *
- * Used in `build-edges.ts` (in-memory + `applyEdgeTechniquesAfterNativeInsert`)
- * and `native-orchestrator.ts` (`backfillEdgeTechniquesAfterNativeOrchestrator`).
- * Centralised here so all three insertion paths apply the same value.
+ * Used in `build-edges.ts` (in-memory + `applyEdgeTechniquesAfterNativeInsert`),
+ * `native-orchestrator.ts` (`backfillEdgeTechniquesAfterNativeOrchestrator`),
+ * and `incremental.ts` (`backfillIncrementalEdgeTechniques`, #1744).
+ * Centralised here so all insertion paths apply the same value.
  */
 export const TS_NATIVE_CONFIDENCE_FLOOR = 0.5;
 

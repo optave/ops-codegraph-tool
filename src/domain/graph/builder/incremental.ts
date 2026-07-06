@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { bulkNodeIdsByFile, purgeFileData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
-import { normalizePath } from '../../../shared/constants.js';
+import { normalizePath, TS_NATIVE_CONFIDENCE_FLOOR } from '../../../shared/constants.js';
 import type {
   BetterSqlite3Database,
   EngineOpts,
@@ -795,6 +795,66 @@ function buildCallEdges(
   return edgesAdded;
 }
 
+// ── technique backfill (#1744) ──────────────────────────────────────────
+
+/**
+ * Backfill `technique = 'ts-native'` on `calls` edges just written by
+ * `buildCallEdges`/`emitIncrementalCallEdges` above, which insert edges via
+ * `stmts.insertEdge.run(...)` without ever setting `technique`, leaving it
+ * NULL.
+ *
+ * `'ts-native'` is not an engine marker — it is the resolution-technique
+ * label the full-build paths apply to every directly name/type-resolved
+ * `calls` edge, in both the WASM/JS pipeline (`emitDirectCallEdgesForCall` in
+ * stages/build-edges.ts) and the native pipeline (`buildCallEdgesNative`,
+ * same file), as opposed to `'points-to'` (alias/pts fallback) or `'cha'` /
+ * `'super-dispatch'` (virtual-dispatch expansion). `incremental.ts`'s call
+ * resolution (`resolveCallTargets` + the same-class/defineProperty
+ * fallbacks in `applyThisReceiverFallbacks`) implements only that same
+ * direct-resolution cascade — it has no pts or CHA/RTA post-pass of its own
+ * — so every edge it emits is the direct-resolution case and always
+ * belongs under `'ts-native'`, regardless of which engine parsed the file.
+ *
+ * Mirrors `applyEdgeTechniquesAfterNativeInsert` (full-build JS pipeline,
+ * stages/build-edges.ts) and `backfillEdgeTechniquesAfterNativeOrchestrator`
+ * (stages/native-orchestrator.ts): scope to the just-rebuilt files' source
+ * nodes, backfill NULL technique to 'ts-native', then lift any resulting
+ * ts-native edge below the confidence floor up to it — so a `calls` edge's
+ * `technique` (and, transitively, its confidence floor) no longer depends on
+ * whether it was last touched by a full build or a single-file watch rebuild.
+ *
+ * Scoped to `touchedFiles` (the rebuilt file + any reverse-dep cascade
+ * files), not a full-table scan. Chunked to stay within SQLite's
+ * SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds).
+ */
+function backfillIncrementalEdgeTechniques(
+  db: BetterSqlite3Database,
+  touchedFiles: readonly string[],
+): void {
+  if (touchedFiles.length === 0) return;
+  const CHUNK_SIZE = 500;
+  const tx = db.transaction(() => {
+    for (let i = 0; i < touchedFiles.length; i += CHUNK_SIZE) {
+      const chunk = touchedFiles.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE edges SET technique = 'ts-native'
+         WHERE kind = 'calls' AND technique IS NULL
+           AND source_id IN (SELECT id FROM nodes WHERE file IN (${placeholders}))`,
+      ).run(...chunk);
+      // Lift resolved ts-native edges below the confidence floor for this
+      // chunk, matching the floor lift the full-build native paths apply.
+      db.prepare(
+        `UPDATE edges SET confidence = ?
+         WHERE kind = 'calls' AND technique = 'ts-native'
+           AND confidence > 0 AND confidence < ?
+           AND source_id IN (SELECT id FROM nodes WHERE file IN (${placeholders}))`,
+      ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR, ...chunk);
+    }
+  });
+  tx();
+}
+
 // ── Main entry point ────────────────────────────────────────────────────
 
 /** Build the "this file was deleted" result returned by `rebuildFile`. */
@@ -1017,6 +1077,13 @@ export async function rebuildFile(
     cache,
   );
   edgesAdded += cascadeEdges;
+
+  // Backfill technique='ts-native' (and the confidence floor) for this
+  // rebuild's calls edges — buildCallEdges above inserts edges without a
+  // technique value, unlike a full rebuild of either engine, which always
+  // tags directly-resolved calls edges 'ts-native' (#1744).
+  backfillIncrementalEdgeTechniques(db, [relPath, ...reverseDeps]);
+
   // Include pre-deletion edge counts from reverse deps so the net delta
   // (edgesAdded - edgesBefore) is correct even when the cascade re-inserts
   // their edges unchanged.
