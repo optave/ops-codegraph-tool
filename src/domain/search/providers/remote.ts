@@ -197,7 +197,16 @@ export async function embedRemote(
       batchNumber,
     );
 
-    const json = (await response.json()) as OpenAIEmbeddingResponse;
+    let json: OpenAIEmbeddingResponse;
+    try {
+      json = (await response.json()) as OpenAIEmbeddingResponse;
+    } catch (err: unknown) {
+      throw new EngineError(
+        `Remote embedding endpoint ${url} returned a response that could not be parsed as JSON: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        { cause: err instanceof Error ? err : undefined },
+      );
+    }
     const mapped = mapRemoteEmbeddingResponse(json, batch, url, dim);
     dim = mapped.dim;
     results.push(...mapped.vectors);

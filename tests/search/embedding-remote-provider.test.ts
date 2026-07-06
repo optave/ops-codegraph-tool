@@ -154,6 +154,16 @@ describe('embedRemote', () => {
     );
   });
 
+  it('throws EngineError instead of a raw SyntaxError when the response body is not valid JSON', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('<html><body>Bad Gateway</body></html>', { status: 200 }),
+    );
+    await expect(embedRemote(['a'], { baseUrl: 'http://x', model: 'm' })).rejects.toMatchObject({
+      name: 'EngineError',
+      message: expect.stringContaining('could not be parsed as JSON'),
+    });
+  });
+
   it('throws EngineError when the response shape does not match the input length', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ data: [{ embedding: [1], index: 0 }] }), { status: 200 }),
