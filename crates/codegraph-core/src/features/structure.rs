@@ -181,14 +181,22 @@ fn find_neighbor_files(conn: &Connection, dir: &str) -> Vec<String> {
 ///
 /// This recomputes metrics for the ancestor directories of the files that
 /// changed in this build (added, removed, or modified), PLUS any directory
-/// reachable from them via a live cross-directory import edge — a changed
-/// file that gains (or loses) an import into a sibling package shifts that
-/// package's fan-in/fan-out/cohesion even though none of its own files were
-/// touched. One level of expansion only (mirrors the neighbour-expansion
-/// `classifyNodeRolesIncremental`/`do_classify_incremental` already does for
-/// role classification) — bounded by (changed files × path depth) rather
-/// than the size of the repo, so it stays cheap enough to run
-/// unconditionally alongside the fast path.
+/// reachable from the touched files' *immediate* (most specific) directory
+/// via a live cross-directory import edge — a changed file that gains (or
+/// loses) an import into a sibling package shifts that package's
+/// fan-in/fan-out/cohesion even though none of its own files were touched.
+///
+/// The neighbor-discovery step is seeded only from each touched file's
+/// leaf directory, not from every ancestor up to root — `find_neighbor_files`
+/// is bounded by the number of import edges crossing ONE directory's
+/// boundary, which for a broad, near-root "container" directory (e.g. `src`,
+/// which transitively contains most of the repo) is effectively the size of
+/// the whole codebase, not "path depth". Seeding from every ancestor turned
+/// a single touched file into 50+ affected directories on this repo's own
+/// `src/` tree — a measured 70-90ms hit on the "1-file rebuild" benchmark
+/// (#1738 follow-up). Ancestor rollup (ancestors' own aggregates still get
+/// recomputed) is unaffected; only the expensive cross-directory neighbor
+/// lookup is scoped down.
 ///
 /// Removed files need no edge/node cleanup of their own — the purge step
 /// already deleted their nodes and every edge referencing them (including
@@ -211,8 +219,12 @@ pub fn refresh_affected_directory_metrics(
         return;
     }
 
-    let seed_dirs: Vec<String> = affected_dirs.iter().cloned().collect();
-    for dir in &seed_dirs {
+    // Seed neighbor-discovery from each touched file's own leaf directory
+    // only — NOT every entry in `affected_dirs` (which includes the full
+    // ancestor chain up to root). See the function doc comment: expanding
+    // from a broad ancestor like `src` is effectively repo-wide.
+    let leaf_dirs: HashSet<String> = touched.iter().filter_map(|f| parent_dir(f)).collect();
+    for dir in &leaf_dirs {
         let neighbor_files = find_neighbor_files(conn, dir);
         for ancestor in get_ancestor_dirs(&neighbor_files) {
             affected_dirs.insert(ancestor);

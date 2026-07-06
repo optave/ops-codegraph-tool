@@ -264,13 +264,22 @@ function updateChangedFileMetrics(ctx: PipelineContext, changedFiles: string[]):
  *
  * This recomputes metrics for the ancestor directories of the files that
  * changed in this build (added, removed, or modified), PLUS any directory
- * reachable from them via a live cross-directory import edge — a changed
- * file that gains (or loses) an import into a sibling package shifts that
- * package's fan-in/fan-out/cohesion even though none of its own files were
- * touched. One level of expansion only (mirrors the neighbour-expansion
- * `classifyNodeRolesIncremental` already does for role classification) —
- * bounded by (changed files × path depth) rather than the size of the repo,
- * so it stays cheap enough to run unconditionally alongside the fast path.
+ * reachable from the touched files' *immediate* (most specific) directory
+ * via a live cross-directory import edge — a changed file that gains (or
+ * loses) an import into a sibling package shifts that package's
+ * fan-in/fan-out/cohesion even though none of its own files were touched.
+ *
+ * The neighbor-discovery step is seeded only from each touched file's leaf
+ * directory, not from every ancestor up to root — the neighbor query is
+ * bounded by the number of import edges crossing ONE directory's boundary,
+ * which for a broad, near-root "container" directory (e.g. `src`, which
+ * transitively contains most of the repo) is effectively the size of the
+ * whole codebase, not "path depth". Seeding from every ancestor turned a
+ * single touched file into 50+ affected directories on this repo's own
+ * `src/` tree — a measured 70-90ms hit on the "1-file rebuild" benchmark
+ * (#1738 follow-up, mirrors the same fix in structure.rs). Ancestor rollup
+ * (ancestors' own aggregates still get recomputed) is unaffected; only the
+ * expensive cross-directory neighbor lookup is scoped down.
  *
  * Removed files need no edge/node cleanup of their own — `purgeFilesData`
  * already deleted their nodes and every edge referencing them (including
@@ -307,7 +316,16 @@ function refreshAffectedDirectoryMetrics(
       WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file
         AND n2.file >= @lo AND n2.file < @hi
   `);
-  for (const dir of [...affectedDirs]) {
+  // Seed neighbor-discovery from each touched file's own leaf directory
+  // only — NOT every entry in `affectedDirs` (which includes the full
+  // ancestor chain up to root). See the function doc comment: expanding
+  // from a broad ancestor like `src` is effectively repo-wide.
+  const leafDirs = new Set<string>();
+  for (const f of [...changedFiles, ...removedFiles]) {
+    const d = normalizePath(path.dirname(f));
+    if (d && d !== '.') leafDirs.add(d);
+  }
+  for (const dir of leafDirs) {
     const otherFiles = neighborFiles.all({ lo: `${dir}/`, hi: `${dir}0` }) as Array<{
       other: string;
     }>;
