@@ -49,14 +49,7 @@ esac
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Portable sed -i (GNU vs BSD)
-sedi() {
-    if sed --version 2>/dev/null | grep -q GNU; then
-        sed -i "$@"
-    else
-        sed -i '' "$@"
-    fi
-}
+source "$(dirname "${BASH_SOURCE[0]}")/tracer-common.sh"
 
 # Copy fixture files
 case "$LANG" in
@@ -147,34 +140,19 @@ case "$LANG" in
             [[ "$base" == "CallTracer.java" ]] && continue
             # Add CallTracer.traceCall() after method opening braces
             # Match lines like: public void method(...) {
-            # Use portable sed -i: GNU sed uses -i alone, BSD sed (macOS) requires -i ''
             # The first sed pass matches all method/constructor opening braces,
             # so a second pass is unnecessary (it would double-inject traceCall).
-            if sed --version 2>/dev/null | grep -q GNU; then
-                sed -i -E '/\)\s*\{$/{
-                    /class |interface /!{
-                        a\        CallTracer.traceCall();
-                    }
-                }' "$javafile"
-            else
-                sed -i '' -E '/\)\s*\{$/{
-                    /class |interface /!{
-                        a\        CallTracer.traceCall();
-                    }
-                }' "$javafile"
-            fi
+            sedi -E '/\)\s*\{$/{
+                /class |interface /!{
+                    a\        CallTracer.traceCall();
+                }
+            }' "$javafile"
         done
 
         # Add dump call at end of main
-        if sed --version 2>/dev/null | grep -q GNU; then
-            sed -i '/public static void main/,/\}/ {
-                /^\s*\}/ i\        CallTracer.dump();
-            }' "$TMP_DIR/Main.java" 2>/dev/null || true
-        else
-            sed -i '' '/public static void main/,/\}/ {
-                /^\s*\}/ i\        CallTracer.dump();
-            }' "$TMP_DIR/Main.java" 2>/dev/null || true
-        fi
+        sedi '/public static void main/,/\}/ {
+            /^\s*\}/ i\        CallTracer.dump();
+        }' "$TMP_DIR/Main.java" 2>/dev/null || true
 
         # Compile and run
         cd "$TMP_DIR"
