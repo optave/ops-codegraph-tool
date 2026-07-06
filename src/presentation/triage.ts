@@ -42,7 +42,7 @@ export function triage(customDbPath: string | undefined, opts: TriageOpts = {}):
     summary: TriageSummary;
   };
 
-  if (outputResult(data as unknown as Record<string, unknown>, 'items', opts)) return;
+  if (outputResult(data, 'items', opts)) return;
 
   if (data.items.length === 0) {
     if (data.summary.total === 0) {

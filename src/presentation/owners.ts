@@ -43,7 +43,7 @@ interface OwnersResult {
 
 export function owners(customDbPath: string | undefined, opts: OwnersOpts = {}): void {
   const data = ownersData(customDbPath, opts as any) as OwnersResult;
-  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
+  if (outputResult(data, null, opts)) return;
 
   if (!data.codeownersFile) {
     console.log('No CODEOWNERS file found.');

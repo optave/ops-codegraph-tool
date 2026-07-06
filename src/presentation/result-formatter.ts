@@ -132,17 +132,18 @@ export interface OutputOpts {
   display?: DisplayOpts;
 }
 
-export function outputResult(
-  data: Record<string, any>,
-  field: string | null,
-  opts: OutputOpts,
-): boolean {
+export function outputResult(data: object, field: string | null, opts: OutputOpts): boolean {
+  // The formatting helpers below need key/index access (NDJSON field pluck, CSV/table
+  // flattening). Callers only ever hand off a concrete result shape for serialization,
+  // so the cast lives here once instead of as a defensive `as unknown as Record<...>`
+  // at every call site.
+  const record = data as Record<string, unknown>;
   if (opts.ndjson) {
     if (field === null) {
       // No field key — emit the whole object as a single NDJSON line
       console.log(JSON.stringify(data));
     } else {
-      printNdjson(data, field);
+      printNdjson(record, field);
     }
     return true;
   }
@@ -151,11 +152,11 @@ export function outputResult(
     return true;
   }
   if (opts.csv) {
-    return printCsv(data, field) !== false;
+    return printCsv(record, field) !== false;
   }
   if (opts.table) {
     const displayOpts = opts.display ?? (loadConfig() as { display: DisplayOpts }).display;
-    return printAutoTable(data, field, displayOpts) !== false;
+    return printAutoTable(record, field, displayOpts) !== false;
   }
   return false;
 }

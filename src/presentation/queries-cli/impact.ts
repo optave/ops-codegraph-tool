@@ -126,7 +126,7 @@ interface OutputOpts {
 
 export function fileDeps(file: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = fileDepsData(file, customDbPath, opts) as unknown as FileDepsData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No file matching "${file}" in graph`);
@@ -181,7 +181,7 @@ function printFnDepsTransitive(transitiveCallers: Record<string, SymbolRef[]>): 
 
 export function fnDeps(name: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = fnDepsData(name, customDbPath, opts) as unknown as FnDepsData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No function/method/class matching "${name}"`);
@@ -202,7 +202,7 @@ export function fnDeps(name: string, customDbPath: string, opts: OutputOpts = {}
 
 export function impactAnalysis(file: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = impactAnalysisData(file, customDbPath, opts) as unknown as ImpactData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'sources', opts)) return;
+  if (outputResult(data, 'sources', opts)) return;
 
   if (data.sources.length === 0) {
     console.log(`No file matching "${file}" in graph`);
@@ -231,7 +231,7 @@ export function impactAnalysis(file: string, customDbPath: string, opts: OutputO
 
 export function fnImpact(name: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = fnImpactData(name, customDbPath, opts) as unknown as FnImpactData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No function/method/class matching "${name}"`);
@@ -302,7 +302,7 @@ export function diffImpact(customDbPath: string, opts: OutputOpts = {}): void {
   }
   const data = diffImpactData(customDbPath, opts) as unknown as DiffImpactData;
   if (opts.format === 'json') opts = { ...opts, json: true };
-  if (outputResult(data as unknown as Record<string, unknown>, 'affectedFunctions', opts)) return;
+  if (outputResult(data, 'affectedFunctions', opts)) return;
 
   if (data.error) {
     console.log(data.error);
