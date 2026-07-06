@@ -1296,8 +1296,15 @@ function extractObjectLiteralFunctions(
       const keyNode = child.childForFieldName('key');
       const valueNode = child.childForFieldName('value');
       if (!keyNode || !valueNode) continue;
+      // Computed string-literal keys (e.g. `['foo']: fn`) are unwrapped the same way as
+      // method_definition's name field; non-string computed keys (e.g. `[Symbol.iterator]: fn`)
+      // resolve to '' and are skipped below, mirroring the method_definition branch.
       const keyName =
-        keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+        keyNode.type === 'string'
+          ? keyNode.text.replace(/^['"]|['"]$/g, '')
+          : keyNode.type === 'computed_property_name'
+            ? resolveComputedKeyName(keyNode)
+            : keyNode.text;
       if (!keyName) continue;
       if (
         valueNode.type === 'arrow_function' ||
@@ -2073,18 +2080,27 @@ function pushFnDeclContext(funcStack: string[], node: TreeSitterNode): boolean {
 }
 
 /**
+ * Unwrap a `computed_property_name` node (e.g. `['foo']`) to its inner string-literal text
+ * with quotes stripped, or '' when the computed key isn't a plain string literal (e.g.
+ * `[Symbol.iterator]`, `[x]`) — there's no statically resolvable name in that case.
+ */
+function resolveComputedKeyName(nameNode: TreeSitterNode): string {
+  const inner = nameNode.child(1);
+  if (!inner || (inner.type !== 'string' && inner.type !== 'string_fragment')) {
+    // Non-string computed key — no resolvable name.
+    return '';
+  }
+  return inner.text.replace(/^['"]|['"]$/g, '');
+}
+
+/**
  * Resolve the raw method name from a method_definition's name field, unwrapping
  * computed_property_name string literals (e.g. `['foo']() {}` -> 'foo'). Returns ''
  * for non-string computed keys (no resolvable name).
  */
 function resolveMethodDefinitionName(nameNode: TreeSitterNode): string {
   if (nameNode.type !== 'computed_property_name') return nameNode.text;
-  const inner = nameNode.child(1);
-  if (!inner || (inner.type !== 'string' && inner.type !== 'string_fragment')) {
-    // Non-string computed key — skip adding to funcStack (no resolvable name).
-    return '';
-  }
-  return inner.text.replace(/^['"]|['"]$/g, '');
+  return resolveComputedKeyName(nameNode);
 }
 
 /**

@@ -512,12 +512,10 @@ fn extract_object_literal_functions(
             "pair" => {
                 let Some(key_n) = child.child_by_field_name("key") else { continue };
                 let Some(val_n) = child.child_by_field_name("value") else { continue };
-                let key = if key_n.kind() == "string" {
-                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                } else {
-                    Some(node_text(&key_n, source).to_string())
-                };
-                let Some(key) = key else { continue };
+                // Use resolve_pair_key_name to strip brackets from computed string keys
+                // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]),
+                // mirroring resolve_method_def_name below.
+                let Some(key) = resolve_pair_key_name(&key_n, source) else { continue };
                 let qualified = format!("{}.{}", var_name, key);
                 match val_n.kind() {
                     "arrow_function" | "function_expression" | "function" => {
@@ -722,12 +720,10 @@ fn match_js_objlit_qualified_method_defs(
                     if !matches!(val_n.kind(), "arrow_function" | "function_expression" | "function") {
                         continue;
                     }
-                    let key = if key_n.kind() == "string" {
-                        extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                    } else {
-                        Some(node_text(&key_n, source).to_string())
-                    };
-                    let Some(key) = key else { continue };
+                    // Use resolve_pair_key_name to strip brackets from computed string keys
+                    // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]),
+                    // mirroring the const path in extract_object_literal_functions above.
+                    let Some(key) = resolve_pair_key_name(&key_n, source) else { continue };
                     let qualified = format!("{}.{}", var_name, key);
                     symbols.definitions.push(Definition {
                         name: qualified,
@@ -1140,6 +1136,27 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+/// Unwrap a `computed_property_name` node (e.g. `['foo']`) to its inner string-literal text
+/// with quotes stripped, or `None` when the computed key isn't a plain string literal (e.g.
+/// `[Symbol.iterator]`, `[x]`) — there's no statically resolvable name in that case.
+fn resolve_computed_key_name(computed_node: &Node, source: &[u8]) -> Option<String> {
+    // child(0)='[', child(1)=inner expression, child(2)=']'
+    let inner = computed_node.child(1)?;
+    match inner.kind() {
+        "string" => {
+            let s = extract_string_fragment(&inner, source).unwrap_or("");
+            if s.is_empty() { return None; }
+            Some(s.to_string())
+        }
+        "string_fragment" => {
+            let s = node_text(&inner, source);
+            if s.is_empty() { return None; }
+            Some(s.to_string())
+        }
+        _ => None, // non-string computed key — skip
+    }
+}
+
 /// Extract the plain method name from a `method_definition` node.
 ///
 /// For computed property names (`['methodName']`), strips brackets and quotes from
@@ -1149,23 +1166,24 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 fn resolve_method_def_name(node: &Node, source: &[u8]) -> Option<String> {
     let name_node = node.child_by_field_name("name")?;
     if name_node.kind() == "computed_property_name" {
-        // child(0)='[', child(1)=string literal, child(2)=']'
-        let inner = name_node.child(1)?;
-        match inner.kind() {
-            "string" => {
-                let s = extract_string_fragment(&inner, source).unwrap_or("");
-                if s.is_empty() { return None; }
-                Some(s.to_string())
-            }
-            "string_fragment" => {
-                let s = node_text(&inner, source);
-                if s.is_empty() { return None; }
-                Some(s.to_string())
-            }
-            _ => None, // non-string computed key — skip
-        }
+        resolve_computed_key_name(&name_node, source)
     } else {
         Some(node_text(&name_node, source).to_string())
+    }
+}
+
+/// Resolve an object-literal `pair` node's key field to its plain string form.
+///
+/// Mirrors `resolve_method_def_name`'s computed-key handling so `{ ['foo']: () => {} }` and
+/// `{ ['foo']() {} }` resolve identically: quoted string keys have their quotes stripped,
+/// computed string-literal keys (`['foo']`) are unwrapped, and non-string computed keys
+/// (e.g. `[Symbol.iterator]`) return `None` (no resolvable name — caller skips the pair)
+/// rather than falling back to the raw bracket/quote source text.
+fn resolve_pair_key_name(key_n: &Node, source: &[u8]) -> Option<String> {
+    match key_n.kind() {
+        "string" => extract_string_fragment(key_n, source).map(|s| s.to_string()),
+        "computed_property_name" => resolve_computed_key_name(key_n, source),
+        _ => Some(node_text(key_n, source).to_string()),
     }
 }
 
@@ -4900,6 +4918,63 @@ mod tests {
         let tm_f = s.type_map.iter().find(|e| e.name == "o1.f");
         assert!(tm_f.is_some(), "typeMap o1.f missing");
         assert_eq!(tm_f.unwrap().type_name, "f");
+    }
+
+    /// Issue #1764: a computed string-literal pair key (`['foo']: () => {}`) must resolve to
+    /// the plain qualified name `obj.foo`, not the raw bracket/quote text `obj.['foo']` — the
+    /// same unwrapping `resolve_method_def_name` already applies to method_definition keys.
+    #[test]
+    fn computed_string_literal_pair_key_resolves_to_plain_name() {
+        let s = parse_js(
+            "const obj = {\n\
+               ['foo']: () => { return 1; },\n\
+               bar: () => { return 2; },\n\
+             };\n\
+             obj.foo();\n\
+             obj.bar();",
+        );
+        let names: Vec<_> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"obj.foo"), "expected 'obj.foo'; got: {:?}", names);
+        assert!(names.contains(&"obj.bar"), "expected 'obj.bar'; got: {:?}", names);
+        assert!(
+            !names.iter().any(|n| n.contains('[')),
+            "no definition name should retain the bracketed/quoted form; got: {:?}",
+            names
+        );
+    }
+
+    /// Issue #1764: a non-string computed pair key (`[Symbol.iterator]: () => {}`) has no
+    /// statically resolvable name — the pair must be skipped entirely, mirroring
+    /// method_definition's existing precedent for the same computed-key shape.
+    #[test]
+    fn non_string_computed_pair_key_is_skipped() {
+        let s = parse_js(
+            "const obj = {\n\
+               [Symbol.iterator]: () => { return 1; },\n\
+               bar: () => { return 2; },\n\
+             };",
+        );
+        let names: Vec<_> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(
+            !names.iter().any(|n| n.contains("iterator")),
+            "non-string computed key must not produce a definition; got: {:?}",
+            names
+        );
+        assert!(names.contains(&"obj.bar"), "expected 'obj.bar'; got: {:?}", names);
+    }
+
+    /// Issue #1764: the same computed-key unwrapping must apply to `let`/`var` object literals
+    /// (match_js_objlit_qualified_method_defs), not just `const` (extract_object_literal_functions).
+    #[test]
+    fn computed_string_literal_pair_key_resolves_for_let_and_var() {
+        let s = parse_js(
+            "let obj2 = { ['computedLet']: () => {}, plain: () => {} };\n\
+             var obj3 = { ['computedVar']: () => {} };",
+        );
+        let names: Vec<_> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"obj2.computedLet"), "expected 'obj2.computedLet'; got: {:?}", names);
+        assert!(names.contains(&"obj2.plain"), "expected 'obj2.plain'; got: {:?}", names);
+        assert!(names.contains(&"obj3.computedVar"), "expected 'obj3.computedVar'; got: {:?}", names);
     }
 
     /// Issue #1551: `let` and `var` object-literal declarations must seed composite typeMap keys

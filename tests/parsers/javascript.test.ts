@@ -1527,6 +1527,62 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('computed pair key extraction (#1764)', () => {
+    it('extracts a computed string-literal pair key as a plain qualified name', () => {
+      // `{ ['foo']: () => {} }` — computed_property_name wrapping a string literal must be
+      // unwrapped the same way as method_definition's name field (resolveComputedKeyName),
+      // not left as the raw bracket/quote text `obj.['foo']`.
+      const symbols = parseJS(
+        `const obj = { ['foo']: () => { return 1; }, bar: () => { return 2; } };`,
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'obj.foo', kind: 'function' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'obj.bar', kind: 'function' }),
+      );
+    });
+
+    it('does not use the bracketed/quoted form in the stored pair definition name', () => {
+      const symbols = parseJS(`const obj = { ['foo']: () => {} };`);
+      const def = symbols.definitions.find((d) => d.name.includes('['));
+      expect(def).toBeUndefined();
+    });
+
+    it('skips a non-string computed pair key (Symbol.iterator) instead of emitting garbage', () => {
+      // Mirrors method_definition's precedent ('does not extract non-string computed key'):
+      // there's no statically resolvable name, so the pair is skipped entirely rather than
+      // falling back to raw source text like `obj.[Symbol.iterator]`.
+      const symbols = parseJS(`const obj = { [Symbol.iterator]: () => {}, bar: () => {} };`);
+      const def = symbols.definitions.find((d) => d.name.includes('iterator'));
+      expect(def).toBeUndefined();
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'obj.bar', kind: 'function' }),
+      );
+    });
+
+    it('skips a variable computed pair key instead of emitting garbage', () => {
+      const symbols = parseJS(`const key = 'foo'; const obj = { [key]: () => {}, bar: () => {} };`);
+      expect(symbols.definitions).not.toContainEqual(
+        expect.objectContaining({ name: expect.stringContaining('[key]') }),
+      );
+      expect(symbols.definitions).not.toContainEqual(expect.objectContaining({ name: 'obj.key' }));
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'obj.bar', kind: 'function' }),
+      );
+    });
+
+    it('extracts a computed string-literal pair key for let/var object literals', () => {
+      const symbols = parseJS(`let x15 = { ['computedLet']: () => {}, plain: () => {} };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'x15.computedLet', kind: 'function' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'x15.plain', kind: 'function' }),
+      );
+    });
+  });
+
   describe('class expression inside function extraction (#1471)', () => {
     it('extracts named class expression returned from a function', () => {
       const symbols = parseJS(
