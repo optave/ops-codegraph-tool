@@ -148,18 +148,21 @@ fn local_move_phase(
     }
 
     let mut any_moved = false;
+    // BTreeMap (not HashMap) so the best-move scan below visits candidate
+    // communities in a fixed, deterministic order — otherwise a genuine tie
+    // in `gain` would be broken by Rust's per-process-randomized HashMap
+    // iteration order instead of a reproducible rule (#1734). Hoisted out of
+    // the node loop and cleared per-iteration instead of reallocated, since
+    // `cur_n * LOUVAIN_MAX_PASSES` fresh allocations would otherwise show up
+    // on very high-degree hub nodes.
+    let mut comm_w: BTreeMap<usize, f64> = BTreeMap::new();
     for _pass in 0..LOUVAIN_MAX_PASSES {
         let mut pass_moved = false;
         for &node in &order {
             let node_comm = level_comm[node];
             let node_deg = state.cur_degree[node];
 
-            // BTreeMap (not HashMap) so the best-move scan below visits
-            // candidate communities in a fixed, deterministic order —
-            // otherwise a genuine tie in `gain` would be broken by Rust's
-            // per-process-randomized HashMap iteration order instead of a
-            // reproducible rule (#1734).
-            let mut comm_w: BTreeMap<usize, f64> = BTreeMap::new();
+            comm_w.clear();
             for &(neighbor, w) in &adj[node] {
                 *comm_w.entry(level_comm[neighbor]).or_insert(0.0) += w;
             }
