@@ -300,14 +300,22 @@ interface SignatureResult {
   violations: SignatureViolation[];
 }
 
+/**
+ * `db` reflects the current working-tree (post-change) file content, so
+ * `nodes.line` values are in new-file coordinates. `changedRanges` must be
+ * in the same coordinate space — i.e. `diff.changedRanges`, not
+ * `diff.oldRanges` (which is pre-change/old-file and would only line up
+ * with `db` by coincidence once a hunk changes the file's total line
+ * count). See issues #1732 and #1737.
+ */
 export function checkNoSignatureChanges(
   db: BetterSqlite3Database,
-  oldRanges: Map<string, DiffRange[]>,
+  changedRanges: Map<string, DiffRange[]>,
   noTests: boolean,
 ): SignatureResult {
   const violations: SignatureViolation[] = [];
 
-  for (const [file, ranges] of oldRanges) {
+  for (const [file, ranges] of changedRanges) {
     if (ranges.length === 0) continue;
     if (noTests && isTestFile(file)) continue;
 
@@ -491,7 +499,7 @@ function runPredicates(
   if (flags.enableSignatures) {
     predicates.push({
       name: 'signatures',
-      ...checkNoSignatureChanges(db, diff.oldRanges, noTests),
+      ...checkNoSignatureChanges(db, diff.changedRanges, noTests),
     });
   }
   if (flags.enableBoundaries) {

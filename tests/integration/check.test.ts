@@ -281,23 +281,23 @@ describe('checkMaxBlastRadius', () => {
 describe('checkNoSignatureChanges', () => {
   test('passes for body-only changes', () => {
     // add is at line 1. Changing lines 3-5 (body only) should pass
-    const oldRanges = new Map([['src/math.js', [{ start: 3, end: 5 }]]]);
-    const result = checkNoSignatureChanges(db, oldRanges, false);
+    const changedRanges = new Map([['src/math.js', [{ start: 3, end: 5 }]]]);
+    const result = checkNoSignatureChanges(db, changedRanges, false);
     expect(result.passed).toBe(true);
   });
 
   test('fails when declaration line is in a changed hunk', () => {
     // add is at line 1. Changing lines 1-2 (includes declaration) should fail
-    const oldRanges = new Map([['src/math.js', [{ start: 1, end: 2 }]]]);
-    const result = checkNoSignatureChanges(db, oldRanges, false);
+    const changedRanges = new Map([['src/math.js', [{ start: 1, end: 2 }]]]);
+    const result = checkNoSignatureChanges(db, changedRanges, false);
     expect(result.passed).toBe(false);
     expect(result.violations.length).toBeGreaterThanOrEqual(1);
     expect(result.violations[0].name).toBe('add');
   });
 
   test('skips test files when noTests is true', () => {
-    const oldRanges = new Map([['tests/math.test.js', [{ start: 1, end: 5 }]]]);
-    const result = checkNoSignatureChanges(db, oldRanges, true);
+    const changedRanges = new Map([['tests/math.test.js', [{ start: 1, end: 5 }]]]);
+    const result = checkNoSignatureChanges(db, changedRanges, true);
     expect(result.passed).toBe(true);
   });
 
@@ -306,15 +306,15 @@ describe('checkNoSignatureChanges', () => {
     // exact "adopt shared helper, drop the file-local duplicate" pattern
     // grind performs — must not trip this check: every caller of a
     // private helper lives in the same file and is already part of the diff.
-    const oldRanges = new Map([['src/math.js', [{ start: 14, end: 16 }]]]);
-    const result = checkNoSignatureChanges(db, oldRanges, false);
+    const changedRanges = new Map([['src/math.js', [{ start: 14, end: 16 }]]]);
+    const result = checkNoSignatureChanges(db, changedRanges, false);
     expect(result.passed).toBe(true);
   });
 
   test('still flags an exported symbol even when a private symbol shares the file', () => {
     // Sanity check that the exported-only filter doesn't accidentally
     // suppress real violations on exported declarations in the same file.
-    const oldRanges = new Map([
+    const changedRanges = new Map([
       [
         'src/math.js',
         [
@@ -323,7 +323,7 @@ describe('checkNoSignatureChanges', () => {
         ],
       ],
     ]);
-    const result = checkNoSignatureChanges(db, oldRanges, false);
+    const result = checkNoSignatureChanges(db, changedRanges, false);
     expect(result.passed).toBe(false);
     expect(result.violations.map((v) => v.name)).toEqual(['add']);
   });
@@ -348,11 +348,84 @@ describe('checkNoSignatureChanges', () => {
       ' }', // context, old line 9
     ].join('\n');
 
-    const { oldRanges } = parseDiffOutput(diff);
+    const { oldRanges, changedRanges } = parseDiffOutput(diff);
+    // parseDiffOutput's old-side tracking is still verified directly here...
     expect(oldRanges.get('src/math.js')).toEqual([{ start: 6, end: 6 }]);
 
-    const result = checkNoSignatureChanges(db, oldRanges, false);
+    // ...but checkNoSignatureChanges itself is driven by changedRanges
+    // (new-file coordinates). This hunk has no added lines, so there is
+    // nothing to compare against and multiply is correctly left alone.
+    const result = checkNoSignatureChanges(db, changedRanges, false);
     expect(result.passed).toBe(true);
+  });
+
+  test('regression: coordinate-space mismatch does not falsely flag an untouched function after a shifting deletion (issues #1732, #1737)', () => {
+    // Real-world repro shape: an exported function sits right after an
+    // 11-line block that gets deleted outright. The db reflects the
+    // POST-change file (the block is gone, the function shifted up 11
+    // lines), while the diff's old-side range still spans the pre-change
+    // line numbers. Before the fix, checkNoSignatureChanges was wired to
+    // `oldRanges`, so the function's new (post-change) line would
+    // coincidentally fall inside the old hunk's numeric range and get
+    // falsely flagged, even though its body is byte-for-byte identical.
+    insertNode(db, 'isPidAlive', 'function', 'src/coordshift.js', 2, 4, 1);
+
+    const diff = [
+      '--- a/src/coordshift.js',
+      '+++ b/src/coordshift.js',
+      '@@ -2,11 +1,0 @@',
+      '-function helperToRemove() {',
+      '-  return 1;',
+      '-}',
+      '-',
+      '-function alsoUnused() {',
+      '-  return 2;',
+      '-}',
+      '-',
+      '-function oneMoreUnused() {',
+      '-  return 3;',
+      '-}',
+    ].join('\n');
+
+    const parsed = parseDiffOutput(diff);
+    // Pure deletion: the old side covers exactly the 11 removed lines; the
+    // new side has nothing added, so changedRanges is empty for this file.
+    expect(parsed.oldRanges.get('src/coordshift.js')).toEqual([{ start: 2, end: 12 }]);
+    expect(parsed.changedRanges.get('src/coordshift.js')).toEqual([]);
+
+    // Prove the regression is real: had the call site still passed
+    // oldRanges, isPidAlive's post-change line (2) falls inside the old
+    // range [2, 12] and would be wrongly flagged.
+    const buggyResult = checkNoSignatureChanges(db, parsed.oldRanges, false);
+    expect(buggyResult.passed).toBe(false);
+    expect(buggyResult.violations.map((v) => v.name)).toContain('isPidAlive');
+
+    // The fix: changedRanges is empty for a pure deletion, so there is
+    // nothing to compare against and isPidAlive is correctly left alone.
+    const fixedResult = checkNoSignatureChanges(db, parsed.changedRanges, false);
+    expect(fixedResult.passed).toBe(true);
+  });
+
+  test('a genuinely touched exported function IS flagged via changedRanges (issues #1732, #1737)', () => {
+    // Complements the untouched-function case above: when a hunk actually
+    // replaces a declaration line, the post-change db line falls inside
+    // the *new*-side range and must still be flagged.
+    insertNode(db, 'someExportedFn', 'function', 'src/coordshift2.js', 1, 3, 1);
+
+    const diff = [
+      '--- a/src/coordshift2.js',
+      '+++ b/src/coordshift2.js',
+      '@@ -1,1 +1,1 @@',
+      '-function someExportedFn() {',
+      '+function someExportedFn(extra) {',
+    ].join('\n');
+
+    const { changedRanges } = parseDiffOutput(diff);
+    expect(changedRanges.get('src/coordshift2.js')).toEqual([{ start: 1, end: 1 }]);
+
+    const result = checkNoSignatureChanges(db, changedRanges, false);
+    expect(result.passed).toBe(false);
+    expect(result.violations.map((v) => v.name)).toContain('someExportedFn');
   });
 });
 
