@@ -438,6 +438,16 @@ function openRepoNative(customDbPath?: string): { repo: Repository; close(): voi
   }
 }
 
+/**
+ * True when an error message indicates the SQLite database is busy or locked
+ * (SQLITE_BUSY/SQLITE_LOCKED). Shared by openRepo()'s and
+ * openReadonlyWithNative()'s native-path catch blocks so the two call sites
+ * can't drift.
+ */
+function isBusyOrLockedError(msg: string): boolean {
+  return /\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg);
+}
+
 /** Validate and wrap an injected `opts.repo` Repository instance (no DB opened). */
 function wrapInjectedRepo(repo: Repository): { repo: Repository; close(): void } {
   if (!(repo instanceof Repository)) {
@@ -468,7 +478,7 @@ function tryOpenRepoNative(
     // Re-throw locking/busy errors — falling back to better-sqlite3 would
     // hit the same contention (and potentially hang without busy_timeout).
     const msg = toErrorMessage(e);
-    if (/\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg)) {
+    if (isBusyOrLockedError(msg)) {
       throw new DbError(`Database is busy (another process may be writing): ${msg}`, {});
     }
     debug(`openRepo: native path failed, falling back to better-sqlite3: ${msg}`);
@@ -553,7 +563,7 @@ export function openReadonlyWithNative(
       nativeDb = native.NativeDatabase.openReadonly(dbPath);
     } catch (e) {
       const msg = toErrorMessage(e);
-      if (/\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg)) {
+      if (isBusyOrLockedError(msg)) {
         debug(`openReadonlyWithNative: native path busy, skipping native DB: ${msg}`);
       } else {
         debug(`openReadonlyWithNative: native path failed: ${msg}`);
