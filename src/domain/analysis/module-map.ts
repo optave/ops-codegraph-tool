@@ -1,5 +1,10 @@
 import path from 'node:path';
-import { openReadonlyOrFail, openReadonlyWithNative, testFilterSQL } from '../../db/index.js';
+import {
+  openReadonlyOrFail,
+  openReadonlyWithNative,
+  resolveBusyTimeoutMs,
+  testFilterSQL,
+} from '../../db/index.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
@@ -307,7 +312,7 @@ function getComplexitySummary(db: BetterSqlite3Database, testFilter: string) {
 // ---------------------------------------------------------------------------
 
 export function moduleMapData(customDbPath: string, limit = 20, opts: { noTests?: boolean } = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
 

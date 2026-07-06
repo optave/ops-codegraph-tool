@@ -4,7 +4,7 @@ import path from 'node:path';
 import { findDbPath, openReadonlyOrFail } from '../db/index.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { findCycles } from '../domain/graph/cycles.js';
-import { loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../types.js';
 import { matchOwners, parseCodeowners } from './owners.js';
@@ -718,15 +718,23 @@ function makeEmptyCheck(): CheckResult {
 }
 
 export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}): CheckResult {
-  const db = openReadonlyOrFail(customDbPath);
+  // Resolve repoRoot + config before opening the DB so config.db.busyTimeoutMs
+  // can be threaded through to openReadonlyOrFail() (mirrors resolveDbSettings()'s
+  // ordering in db/connection.ts — loadConfig can throw, and an already-open
+  // handle at that point would never be closed). repoRoot only depends on
+  // findDbPath(), not on the DB actually existing, so this reorder is safe.
+  const dbPath = findDbPath(customDbPath);
+  const repoRoot = path.resolve(path.dirname(dbPath), '..');
+  const config = opts.config || loadConfig(repoRoot);
+  const db = openReadonlyOrFail(
+    customDbPath,
+    config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
+  );
 
   try {
-    const dbPath = findDbPath(customDbPath);
-    const repoRoot = path.resolve(path.dirname(dbPath), '..');
     const noTests = opts.noTests || false;
     const maxDepth = opts.depth || 3;
 
-    const config = opts.config || loadConfig(repoRoot);
     const flags = resolveCheckFlags(opts, config);
 
     const gitRoot = findGitRoot(repoRoot);

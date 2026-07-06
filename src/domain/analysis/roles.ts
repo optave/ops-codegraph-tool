@@ -1,4 +1,4 @@
-import { openReadonlyOrFail } from '../../db/index.js';
+import { openReadonlyOrFail, resolveBusyTimeoutMs } from '../../db/index.js';
 import { buildFileConditionSQL } from '../../db/query-builder.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { DEAD_ROLE_PREFIX } from '../../shared/kinds.js';
@@ -13,7 +13,7 @@ export interface DynamicCallCount {
 
 /** Return a count of flagged dynamic call sink edges, grouped by kind. */
 export function dynamicCallsData(customDbPath: string): DynamicCallCount[] {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     return db
       .prepare(
@@ -39,7 +39,7 @@ export function rolesData(
     offset?: number;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
     const filterRole = opts.role || null;

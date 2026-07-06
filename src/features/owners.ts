@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { findDbPath, openReadonlyOrFail } from '../db/index.js';
+import { findDbPath, openReadonlyOrFail, resolveBusyTimeoutMs } from '../db/index.js';
 import { normalizeFileFilter } from '../db/query-builder.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 
@@ -320,7 +320,7 @@ function buildOwnersSummary(
 }
 
 export function ownersData(customDbPath?: string, opts: OwnersDataOpts = {}): OwnersDataResult {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');

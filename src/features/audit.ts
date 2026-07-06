@@ -3,7 +3,7 @@ import { openReadonlyOrFail } from '../db/index.js';
 import { normalizeFileFilter } from '../db/query-builder.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { explainData } from '../domain/queries.js';
-import { loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { toErrorMessage } from '../shared/errors.js';
@@ -170,7 +170,10 @@ export function auditData(
   }
 
   // 2. Open DB for enrichment
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(
+    customDbPath,
+    config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
+  );
   const thresholds = resolveThresholds(customDbPath, opts.config);
 
   let functions: AuditFunctionEntry[];

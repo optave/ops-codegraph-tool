@@ -1,7 +1,7 @@
 import { openReadonlyOrFail } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { findCycles } from '../domain/graph/cycles.js';
-import { loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { BetterSqlite3Database, CodegraphConfig, ThresholdRule } from '../types.js';
@@ -469,10 +469,17 @@ export function manifestoData(
   customDbPath?: string,
   opts: ManifestoOpts = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  // Resolve config before opening the DB so config.db.busyTimeoutMs can be
+  // threaded through to openReadonlyOrFail() (mirrors resolveDbSettings()'s
+  // ordering in db/connection.ts — loadConfig can throw, and an already-open
+  // handle at that point would never be closed).
+  const config = opts.config || loadConfig(process.cwd());
+  const db = openReadonlyOrFail(
+    customDbPath,
+    config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
+  );
 
   try {
-    const config = opts.config || loadConfig(process.cwd());
     const rules = resolveRules(
       config.manifesto?.rules as unknown as Record<string, Partial<ThresholdRule>>,
     );

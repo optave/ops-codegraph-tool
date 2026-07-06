@@ -15,6 +15,7 @@ export {
   openReadonlyWithNative,
   openRepo,
   releaseAdvisoryLock,
+  resolveBusyTimeoutMs,
 } from './connection.js';
 export { getBuildMeta, initSchema, MIGRATIONS, setBuildMeta } from './migrations.js';
 export {

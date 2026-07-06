@@ -1,5 +1,5 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
-import { loadConfig } from '../../../infrastructure/config.js';
+import { DEFAULTS, loadConfig } from '../../../infrastructure/config.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../../../types.js';
 import { hasFtsIndex } from '../stores/fts5.js';
 import { ftsSearchData } from './keyword.js';
@@ -184,7 +184,10 @@ export async function hybridSearchData(
   const k = opts.rrfK ?? searchCfg.rrfK ?? 60;
   const topK = (opts.limit ?? searchCfg.topK ?? 15) * 5;
 
-  const checkDb = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
+  const checkDb = openReadonlyOrFail(
+    customDbPath,
+    config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
+  ) as BetterSqlite3Database;
   const ftsAvailable = hasFtsIndex(checkDb);
   checkDb.close();
   if (!ftsAvailable) return null;

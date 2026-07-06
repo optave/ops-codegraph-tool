@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { openReadonlyOrFail } from '../../db/index.js';
+import { openReadonlyOrFail, resolveBusyTimeoutMs } from '../../db/index.js';
 import { getEmbeddingMeta } from '../../db/repository/embeddings.js';
 import {
   buildEmbeddings,
@@ -13,7 +13,7 @@ import type { CommandDefinition } from '../types.js';
 
 function resolveStickyModel(dbPath: string | undefined): string | null {
   try {
-    const db = openReadonlyOrFail(dbPath);
+    const db = openReadonlyOrFail(dbPath, resolveBusyTimeoutMs(dbPath));
     try {
       const storedName = getEmbeddingMeta(db, 'model');
       if (!storedName) return null;

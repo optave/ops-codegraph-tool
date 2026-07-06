@@ -1,4 +1,4 @@
-import { openReadonlyOrFail } from '../../../db/index.js';
+import { openReadonlyOrFail, resolveBusyTimeoutMs } from '../../../db/index.js';
 import { buildFileConditionSQL } from '../../../db/query-builder.js';
 import { getEmbeddingCount, getEmbeddingMeta } from '../../../db/repository/embeddings.js';
 import { info } from '../../../infrastructure/logger.js';
@@ -43,7 +43,10 @@ export function prepareSearch(
   customDbPath: string | undefined,
   opts: PrepareSearchOpts = {},
 ): PreparedSearch | null {
-  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
+  const db = openReadonlyOrFail(
+    customDbPath,
+    resolveBusyTimeoutMs(customDbPath),
+  ) as BetterSqlite3Database;
 
   try {
     const count = getEmbeddingCount(db);

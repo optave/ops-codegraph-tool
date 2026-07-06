@@ -8,7 +8,7 @@ import {
 import { buildExtensionSet } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createAstStoreVisitor } from '../ast-analysis/visitors/ast-store-visitor.js';
-import { bulkNodeIdsByFile, openReadonlyOrFail } from '../db/index.js';
+import { bulkNodeIdsByFile, openReadonlyOrFail, resolveBusyTimeoutMs } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { debug } from '../infrastructure/logger.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
@@ -304,7 +304,7 @@ export function astQueryData(
     limit: number;
   };
 } {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   const { kind, file, noTests, limit, offset } = opts;
 
   let where = 'WHERE 1=1';

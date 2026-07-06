@@ -7,8 +7,13 @@
  * role classification).
  */
 
-import { openReadonlyOrFail, openReadonlyWithNative, testFilterSQL } from '../db/index.js';
-import { loadConfig } from '../infrastructure/config.js';
+import {
+  openReadonlyOrFail,
+  openReadonlyWithNative,
+  resolveBusyTimeoutMs,
+  testFilterSQL,
+} from '../db/index.js';
+import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { normalizePath } from '../shared/constants.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -138,7 +143,7 @@ export function structureData(
   suppressed?: number;
   warning?: string;
 } {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const rawDir = opts.directory || null;
     const filterDir = rawDir && normalizePath(rawDir) !== '.' ? rawDir : null;
@@ -376,9 +381,16 @@ export function moduleBoundariesData(
   }[];
   count: number;
 } {
-  const db = openReadonlyOrFail(customDbPath);
+  // Resolve config before opening the DB so config.db.busyTimeoutMs can be
+  // threaded through to openReadonlyOrFail() (mirrors resolveDbSettings()'s
+  // ordering in db/connection.ts — loadConfig can throw, and an already-open
+  // handle at that point would never be closed).
+  const config = opts.config || loadConfig();
+  const db = openReadonlyOrFail(
+    customDbPath,
+    config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
+  );
   try {
-    const config = opts.config || loadConfig();
     const threshold =
       opts.threshold ??
       (config as unknown as { structure?: { cohesionThreshold?: number } }).structure

@@ -18,7 +18,12 @@ import {
 } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createDataflowVisitor } from '../ast-analysis/visitors/dataflow-visitor.js';
-import { hasDataflowTable, openReadonlyOrFail, openReadonlyWithNative } from '../db/index.js';
+import {
+  hasDataflowTable,
+  openReadonlyOrFail,
+  openReadonlyWithNative,
+  resolveBusyTimeoutMs,
+} from '../db/index.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -1531,7 +1536,7 @@ export function dataflowPathData(
     offset?: number;
   } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
     const maxDepth = opts.maxDepth || 10;
@@ -1632,7 +1637,7 @@ export function dataflowImpactData(
     offset?: number;
   } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const maxDepth = opts.depth || 5;
     const noTests = opts.noTests || false;

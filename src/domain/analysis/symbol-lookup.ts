@@ -13,6 +13,7 @@ import {
   listFunctionNodes,
   openReadonlyOrFail,
   Repository,
+  resolveBusyTimeoutMs,
 } from '../../db/index.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
@@ -95,7 +96,7 @@ export function queryNameData(
   customDbPath: string,
   opts: { noTests?: boolean; limit?: number; offset?: number } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
     let nodes = db.prepare(`SELECT * FROM nodes WHERE name LIKE ?`).all(`%${name}%`) as NodeRow[];
@@ -195,7 +196,7 @@ export function whereData(
   customDbPath: string,
   opts: { noTests?: boolean; file?: boolean; limit?: number; offset?: number } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
     const fileMode = opts.file || false;
@@ -219,7 +220,7 @@ export function listFunctionsData(
     offset?: number;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
 
@@ -241,7 +242,7 @@ export function childrenData(
   customDbPath: string,
   opts: { noTests?: boolean; file?: string; kind?: string; limit?: number; offset?: number } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
 

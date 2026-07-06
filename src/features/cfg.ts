@@ -15,6 +15,7 @@ import {
   getFunctionNodeId,
   hasCfgTables,
   openReadonlyOrFail,
+  resolveBusyTimeoutMs,
 } from '../db/index.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -609,7 +610,7 @@ export function cfgData(
   customDbPath: string | undefined,
   opts: CfgOpts = {},
 ): CfgDataResult {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     const noTests = opts.noTests || false;
 

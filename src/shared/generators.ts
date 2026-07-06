@@ -1,4 +1,4 @@
-import { iterateFunctionNodes, openReadonlyOrFail } from '../db/index.js';
+import { iterateFunctionNodes, openReadonlyOrFail, resolveBusyTimeoutMs } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import type { BetterSqlite3Database, NodeRow } from '../types.js';
@@ -26,7 +26,10 @@ export function* iterListFunctions(
   customDbPath?: string,
   opts: IterListOpts = {},
 ): Generator<ListFunctionResult> {
-  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
+  const db = openReadonlyOrFail(
+    customDbPath,
+    resolveBusyTimeoutMs(customDbPath),
+  ) as BetterSqlite3Database;
   try {
     const noTests = opts.noTests || false;
 
@@ -68,7 +71,10 @@ interface IterRolesOpts {
  * Generator: stream role-classified symbols one-by-one.
  */
 export function* iterRoles(customDbPath?: string, opts: IterRolesOpts = {}): Generator<RoleResult> {
-  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
+  const db = openReadonlyOrFail(
+    customDbPath,
+    resolveBusyTimeoutMs(customDbPath),
+  ) as BetterSqlite3Database;
   try {
     const noTests = opts.noTests || false;
     const conditions = ['role IS NOT NULL'];
@@ -133,7 +139,10 @@ export function* iterWhere(
   customDbPath?: string,
   opts: IterWhereOpts = {},
 ): Generator<WhereResult> {
-  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
+  const db = openReadonlyOrFail(
+    customDbPath,
+    resolveBusyTimeoutMs(customDbPath),
+  ) as BetterSqlite3Database;
   try {
     const noTests = opts.noTests || false;
     const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');

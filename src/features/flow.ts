@@ -5,7 +5,7 @@
  * framework entry points (routes, commands, events) through their call chains.
  */
 
-import { openReadonlyOrFail } from '../db/index.js';
+import { openReadonlyOrFail, resolveBusyTimeoutMs } from '../db/index.js';
 import { CORE_SYMBOL_KINDS, findMatchingNodes } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { toSymbolRef } from '../shared/normalize.js';
@@ -33,7 +33,7 @@ export function listEntryPointsData(
   dbPath?: string,
   opts: { noTests?: boolean; limit?: number; offset?: number } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(dbPath);
+  const db = openReadonlyOrFail(dbPath, resolveBusyTimeoutMs(dbPath));
   try {
     const noTests = opts.noTests || false;
 
@@ -255,7 +255,7 @@ export function flowData(
     offset?: number;
   } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(dbPath);
+  const db = openReadonlyOrFail(dbPath, resolveBusyTimeoutMs(dbPath));
   try {
     const maxDepth = opts.depth || 10;
     const noTests = opts.noTests || false;

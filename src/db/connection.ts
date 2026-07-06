@@ -387,6 +387,18 @@ interface ResolvedDbSettings {
 }
 
 /**
+ * Derive the project rootDir from a possibly-custom DB path, for loadConfig().
+ * Using findDbPath (not path.resolve(customDbPath)) ensures directory inputs like
+ * --db /path/to/repo are normalised to .codegraph/graph.db before we strip two levels.
+ * Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
+ * Shared by resolveDbSettings() and resolveBusyTimeoutMs() so rootDir derivation can't drift.
+ */
+function deriveRootDirFromDbPath(customDbPath: string | undefined): string | undefined {
+  const resolvedDbPath = customDbPath ? findDbPath(customDbPath) : undefined;
+  return resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
+}
+
+/**
  * Resolve the effective engine for DB access (explicit opts.engine > config.build.engine >
  * 'auto') alongside config.db.busyTimeoutMs, in a single loadConfig() call.
  * Derives rootDir from the resolved DB path so loadConfig reads the right project config.
@@ -400,18 +412,29 @@ function resolveDbSettings(
   customDbPath: string | undefined,
   engineOpt: 'native' | 'wasm' | 'auto' | undefined,
 ): ResolvedDbSettings {
-  // Using findDbPath (not path.resolve(customDbPath)) ensures directory inputs like
-  // --db /path/to/repo are normalised to .codegraph/graph.db before we strip two levels.
-  // Convention: resolvedDbPath = <rootDir>/.codegraph/graph.db
-  const resolvedDbPath = customDbPath ? findDbPath(customDbPath) : undefined;
-  const rootDir = resolvedDbPath ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
-  const config = loadConfig(rootDir);
+  const config = loadConfig(deriveRootDirFromDbPath(customDbPath));
   // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
   // so this covers both the env-var path and the .codegraphrc.json config-file path.
   return {
     engine: engineOpt ?? config.build.engine ?? 'auto',
     busyTimeoutMs: config.db.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
   };
+}
+
+/**
+ * Resolve config.db.busyTimeoutMs alone, for the ad-hoc read-only query call
+ * sites (features/*, domain/analysis/*, domain/search/*) that call
+ * openReadonlyOrFail() directly and don't need engine selection. Shares
+ * rootDir derivation with resolveDbSettings() so the two can't drift.
+ *
+ * MUST be called before opening any DB handle, for the same reason as
+ * resolveDbSettings(): loadConfig can throw (e.g. ConfigError via
+ * resolveSecrets on a malformed llm.apiKeyCommand config), and an
+ * already-open handle at that point would never be closed.
+ */
+export function resolveBusyTimeoutMs(customDbPath?: string): number {
+  const config = loadConfig(deriveRootDirFromDbPath(customDbPath));
+  return config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
 }
 
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */

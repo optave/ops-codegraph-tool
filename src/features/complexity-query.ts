@@ -285,6 +285,7 @@ function resolveComplexityQueryOptions(opts: ComplexityQueryOpts): {
   noTests: boolean;
   aboveThreshold: boolean;
   thresholds: any;
+  busyTimeoutMs: number;
 } {
   const config = opts.config || loadConfig(process.cwd());
   return {
@@ -292,6 +293,7 @@ function resolveComplexityQueryOptions(opts: ComplexityQueryOpts): {
     noTests: opts.noTests || false,
     aboveThreshold: opts.aboveThreshold || false,
     thresholds: config.manifesto?.rules || DEFAULTS.manifesto.rules,
+    busyTimeoutMs: config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
   };
 }
 
@@ -320,10 +322,13 @@ export function complexityData(
   customDbPath?: string,
   opts: ComplexityQueryOpts = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  // Resolve config (and thus busyTimeoutMs) before opening the DB — mirrors
+  // resolveDbSettings()'s ordering in db/connection.ts, since loadConfig can
+  // throw and an already-open handle at that point would never be closed.
+  const { sort, noTests, aboveThreshold, thresholds, busyTimeoutMs } =
+    resolveComplexityQueryOptions(opts);
+  const db = openReadonlyOrFail(customDbPath, busyTimeoutMs);
   try {
-    const { sort, noTests, aboveThreshold, thresholds } = resolveComplexityQueryOptions(opts);
-
     const { where, params } = buildComplexityWhere({
       noTests,
       target: opts.target || null,

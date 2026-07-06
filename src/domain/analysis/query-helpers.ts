@@ -1,4 +1,9 @@
-import { openReadonlyOrFail, openRepo, type Repository } from '../../db/index.js';
+import {
+  openReadonlyOrFail,
+  openRepo,
+  type Repository,
+  resolveBusyTimeoutMs,
+} from '../../db/index.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../../types.js';
 
@@ -11,7 +16,7 @@ export function withReadonlyDb<T>(
   customDbPath: string | undefined,
   fn: (db: BetterSqlite3Database) => T,
 ): T {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   try {
     return fn(db);
   } finally {

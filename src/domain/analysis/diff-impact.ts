@@ -6,7 +6,7 @@ import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { evaluateBoundaries } from '../../features/boundaries.js';
 import { coChangeForFiles } from '../../features/cochange.js';
 import { ownersForFiles } from '../../features/owners.js';
-import { loadConfig } from '../../infrastructure/config.js';
+import { DEFAULTS, loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { paginateResult } from '../../shared/paginate.js';
@@ -269,10 +269,17 @@ export function diffImpactData(
     config?: any;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
+  // Resolve config before opening the DB so config.db.busyTimeoutMs can be
+  // threaded through to openReadonlyOrFail() (mirrors resolveDbSettings()'s
+  // ordering in db/connection.ts — loadConfig can throw, and an already-open
+  // handle at that point would never be closed).
+  const config = opts.config || loadConfig();
+  const db = openReadonlyOrFail(
+    customDbPath,
+    config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
+  );
   try {
     const noTests = opts.noTests || false;
-    const config = opts.config || loadConfig();
     const maxDepth = opts.depth || config.analysis?.impactDepth || 3;
 
     const dbPath = findDbPath(customDbPath);

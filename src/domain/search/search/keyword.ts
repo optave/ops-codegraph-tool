@@ -1,4 +1,4 @@
-import { openReadonlyOrFail } from '../../../db/index.js';
+import { openReadonlyOrFail, resolveBusyTimeoutMs } from '../../../db/index.js';
 import { buildFileConditionSQL } from '../../../db/query-builder.js';
 import type { BetterSqlite3Database } from '../../../types.js';
 import { normalizeSymbol } from '../../queries.js';
@@ -41,7 +41,10 @@ export function ftsSearchData(
 ): FtsSearchResult | null {
   const limit = opts.limit || 15;
 
-  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
+  const db = openReadonlyOrFail(
+    customDbPath,
+    resolveBusyTimeoutMs(customDbPath),
+  ) as BetterSqlite3Database;
 
   try {
     if (!hasFtsIndex(db)) {

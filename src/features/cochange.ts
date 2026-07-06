@@ -8,7 +8,14 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { closeDb, findDbPath, initSchema, openDb, openReadonlyOrFail } from '../db/index.js';
+import {
+  closeDb,
+  findDbPath,
+  initSchema,
+  openDb,
+  openReadonlyOrFail,
+  resolveBusyTimeoutMs,
+} from '../db/index.js';
 import { DEFAULTS } from '../infrastructure/config.js';
 import { debug, warn } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -407,7 +414,7 @@ export function coChangeData(
   customDbPath?: string,
   opts: { limit?: number; minJaccard?: number; noTests?: boolean; offset?: number } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   const limit = opts.limit || 20;
   const minJaccard = opts.minJaccard ?? DEFAULTS.coChange.minJaccard;
   const noTests = opts.noTests || false;
@@ -479,7 +486,7 @@ export function coChangeTopData(
   customDbPath?: string,
   opts: { limit?: number; minJaccard?: number; noTests?: boolean; offset?: number } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
   const limit = opts.limit || 20;
   const minJaccard = opts.minJaccard ?? DEFAULTS.coChange.minJaccard;
   const noTests = opts.noTests || false;

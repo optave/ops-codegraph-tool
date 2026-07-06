@@ -1,4 +1,4 @@
-import { openReadonlyOrFail } from '../../db/index.js';
+import { openReadonlyOrFail, resolveBusyTimeoutMs } from '../../db/index.js';
 import type { BetterSqlite3Database } from '../../types.js';
 
 /**
@@ -8,6 +8,6 @@ export function openGraph(opts: { db?: string } = {}): {
   db: BetterSqlite3Database;
   close: () => void;
 } {
-  const db = openReadonlyOrFail(opts.db);
+  const db = openReadonlyOrFail(opts.db, resolveBusyTimeoutMs(opts.db));
   return { db, close: () => db.close() };
 }
