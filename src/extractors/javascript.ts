@@ -3378,15 +3378,21 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
 
 /**
  * Callee names that idiomatically accept callback references. Used to gate
- * member_expression args in {@link extractCallbackReferenceCalls}: arguments
- * like `user.id` are only emitted as dynamic callback calls when the callee
- * is a known callback-accepting API (router/middleware, promises, array
- * methods, event emitters, scheduling APIs). This avoids false positives
- * from plain property reads passed as data, e.g. `store.set(user.id, user)`.
+ * both identifier and member_expression args in
+ * {@link extractCallbackReferenceCalls}: arguments are only emitted as
+ * dynamic callback calls when the callee is a known callback-accepting API
+ * (router/middleware, promises, array methods, event emitters, scheduling
+ * APIs). This avoids false positives from plain values passed as data, e.g.
+ * `store.set(user.id, user)` or `findMergeCandidates(communities)`.
  *
- * Identifier args (e.g. `router.use(handleToken)`) are always emitted — the
- * collateral damage of dropping them is larger than the FP risk, since plain
- * identifier data args rarely collide with real function names.
+ * Identifier args used to be exempted from this gate on the theory that
+ * plain identifier data args rarely collide with real function names — but
+ * issue #1741 found a concrete counter-example (`analyzeDrift(communities,
+ * communityDirs)` colliding with the unrelated `communities` CLI command),
+ * which the global-fallback resolver then bound into a fabricated call edge
+ * (and, transitively, a phantom cycle). Gating identifiers the same way
+ * removes that FP class while still preserving legitimate callback-by-
+ * reference patterns like `arr.forEach(myCallback)`.
  */
 const CALLBACK_ACCEPTING_CALLEES: ReadonlySet<string> = new Set([
   // Express / router / middleware
@@ -3463,6 +3469,36 @@ const HTTP_VERB_CALLEES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Callees whose callback argument sits at one specific positional index
+ * rather than "any position" (the assumption behind {@link CALLBACK_ACCEPTING_CALLEES},
+ * needed for variadic Express/Router middleware chains like
+ * `app.get(path, mw1, mw2, handler)`).
+ *
+ * `Array.from(arrayLike, mapFn, thisArg)` (also `Int8Array.from`, `Uint8Array.from`,
+ * etc. — every TypedArray constructor mirrors the same signature) is the
+ * motivating case: `arrayLike` (index 0) is plain data — treating it as a
+ * callback candidate would reintroduce the exact name-collision false-positive
+ * class issue #1741 fixes — while `mapFn` (index 1) is a genuine callback
+ * reference that should still resolve. A callee listed here is implicitly
+ * callback-accepting (no separate {@link CALLBACK_ACCEPTING_CALLEES} entry
+ * needed); only the arg at its listed index is eligible.
+ *
+ * Invariant: this map and {@link CALLBACK_ACCEPTING_CALLEES} must stay
+ * disjoint. A callee name present in both would have its any-position intent
+ * silently narrowed to the single listed index (positional wins — see the
+ * gate in {@link extractCallbackReferenceCalls}), with no error or warning.
+ *
+ * This is name-based, not receiver-typed (consistent with the rest of this
+ * gate), so it can't distinguish `Array.from(x, mapFn)` from an unrelated
+ * `.from(x, y)` on some other object shaped differently — e.g. `Buffer.from(data,
+ * encoding)`, where `encoding` is conventionally a string but could in principle
+ * be a colliding identifier. That residual risk is far narrower than the
+ * unconditional-emission bug this gate fixes, so it's accepted rather than
+ * adding receiver-type tracking here.
+ */
+const POSITIONAL_CALLBACK_ARG_INDEX: ReadonlyMap<string, number> = new Map([['from', 1]]);
+
+/**
  * Extract the callee's final name (function identifier or member expression
  * property) for callback-eligibility filtering. Returns null if the callee
  * shape is not analyzable (e.g. computed subscripts, IIFEs).
@@ -3505,21 +3541,33 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  * `app.use(auth.validate)` yields a call to validate with receiver auth.
  * Skips literals, objects, arrays, anonymous functions, and call expressions (already handled).
  *
- * To avoid false positives where plain property reads are passed as data
- * (e.g. `store.set(user.id, user)` — `user.id` is a value, not a callback),
- * member_expression args are only emitted when the callee is in
- * {@link CALLBACK_ACCEPTING_CALLEES}. Identifier args are always emitted.
+ * To avoid false positives where plain values are passed as data (e.g.
+ * `store.set(user.id, user)` — `user.id` is a value, not a callback; or
+ * `findMergeCandidates(communities)` — `communities` is a data argument, not
+ * a callback), both identifier and member_expression args are only emitted
+ * when the callee is in {@link CALLBACK_ACCEPTING_CALLEES}, or the argument
+ * sits at the specific index a {@link POSITIONAL_CALLBACK_ARG_INDEX} entry
+ * designates (e.g. `Array.from(arrayLike, mapFn)` — only index 1 is eligible;
+ * `arrayLike` at index 0 stays ungated data).
  *
  * HTTP-verb callees (`get`, `post`, `put`, `delete`, `patch`, `options`,
  * `head`, `all`) double as Map/cache/repository method names, so their
- * member-expr args are only emitted when the first argument is a string
- * literal route path — matching Express/router shape and skipping
- * `cache.get(user.id)`-style calls.
+ * args are only emitted when the first argument is a string literal route
+ * path — matching Express/router shape and skipping `cache.get(user.id)`-style
+ * calls.
  *
  * `.call()` / `.apply()` / `.bind()` — the first arg is the `this` context (not a callback of
  * the enclosing function) and subsequent args flow into the delegated function's parameters.
  * Emitting them here would produce false-positive edges from the *calling* function.
  * This-rebinding (fn::this → ctx) is handled separately by extractThisCallBindingsWalk.
+ *
+ * Known gap: arbitrary user-defined higher-order functions (e.g.
+ * `processEach(users, fn: UserProcessor)`) are neither name-allowlisted nor
+ * position-mapped, so `processEach(users, logUser)` no longer emits a
+ * `logUser` reference from the caller. Recognizing these would require
+ * looking at the callee's own parameter type (is it function-shaped?) rather
+ * than its name — a resolver-level, cross-engine feature, not a small
+ * extension of this name/position gate. Tracked as a follow-up.
  */
 function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
@@ -3532,24 +3580,36 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   // This-rebinding (fn::this → ctx) is handled separately by extractThisCallBindingsWalk.
   if (calleeName === 'call' || calleeName === 'apply' || calleeName === 'bind') return [];
 
-  let memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
-  if (memberExprArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
+  let callbackArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
+  if (callbackArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
     // HTTP verbs require a string-literal route path to be treated as a
     // callback-accepting API; otherwise `cache.get(user.id)` etc. would
     // still emit `id` as a dynamic call.
-    memberExprArgsAllowed = firstArgIsStringLiteral(args);
+    callbackArgsAllowed = firstArgIsStringLiteral(args);
   }
+
+  const positionalIndex =
+    calleeName !== null ? POSITIONAL_CALLBACK_ARG_INDEX.get(calleeName) : undefined;
+  if (!callbackArgsAllowed && positionalIndex === undefined) return [];
 
   const result: Call[] = [];
   const callLine = nodeStartLine(callNode);
+  let argIndex = -1;
 
   for (let i = 0; i < args.childCount; i++) {
     const child = args.child(i);
     if (!child) continue;
+    const t = child.type;
+    if (t === '(' || t === ')' || t === ',') continue;
+    argIndex++;
 
-    if (child.type === 'identifier') {
+    // A positional entry restricts eligibility to its one designated index,
+    // regardless of what the generic (any-position) gate above decided.
+    if (positionalIndex !== undefined && argIndex !== positionalIndex) continue;
+
+    if (t === 'identifier') {
       result.push({ name: child.text, line: callLine, dynamic: true });
-    } else if (child.type === 'member_expression' && memberExprArgsAllowed) {
+    } else if (t === 'member_expression') {
       const prop = child.childForFieldName('property');
       const obj = child.childForFieldName('object');
       if (prop) {

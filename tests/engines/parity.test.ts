@@ -190,6 +190,42 @@ emitter?.on('tick', handlers.fn);
 `,
     },
     {
+      // Regression guard for #1741: native must gate IDENTIFIER args by
+      // CALLBACK_ACCEPTING_CALLEES the same way it already gates
+      // member_expression args. Without the gate, native (like WASM used to)
+      // over-emits dynamic calls for identifier args of non-allowlisted
+      // callees (e.g. `findMergeCandidates(communities)` → bogus call to
+      // `communities`), which the global-fallback resolver can then bind to
+      // an unrelated same-named function elsewhere in the repo.
+      //   1. non-allowlisted callee → drop identifier arg
+      //   2. cache/Map .get         → drop (HTTP verb without string-literal path)
+      //   3. array .forEach         → keep (always-allowlisted callback API)
+      //   4. router HTTP route      → keep (HTTP verb WITH string-literal path)
+      name: 'JavaScript — identifier-arg callback gating must agree between engines',
+      file: 'identifier-callbacks.js',
+      code: `
+findMergeCandidates(communities);
+cache.get(someKey);
+arr.forEach(myNamedCallback);
+router.get('/users/:id', authHandler);
+`,
+    },
+    {
+      // Regression guard for #1741 follow-up: native must apply the same
+      // positional (not just name-based) gate as WASM for Array.from-shaped
+      // callees. Without it, native either over-emits `arr`/`thisArg` (data
+      // args, reintroducing the name-collision FP class #1741 fixes) or
+      // under-emits `mapCallback` (a genuine, well-known stdlib callback
+      // reference), depending on which side of the bug it lands on.
+      name: 'JavaScript — Array.from positional callback gating must agree between engines',
+      file: 'array-from-callbacks.js',
+      code: `
+Array.from(arr, mapCallback);
+Array.from(arr, mapCallback, thisArg);
+Uint8Array.from(arr, mapCallback);
+`,
+    },
+    {
       name: 'TypeScript — destructured parameters',
       file: 'destruct.ts',
       code: `

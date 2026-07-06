@@ -155,6 +155,14 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
   //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
+  //   #1741 (identifier-arg callback gating) intentionally drops 3 callback-mode edges
+  //   (runCallbackDemo -> logUser/upperUser/hasEmail in callbacks.ts — bare identifiers
+  //   passed to the project-defined higher-order functions processEach/filterThen, which
+  //   aren't and can't be in a name allowlist). Actual recall is now 44/47 (93.6%), still
+  //   well above this floor — the 3 edges stay in expected-edges.json because they're real,
+  //   decidable facts, not fabricated ones. Recognizing them needs the callee's own parameter
+  //   type (function-shaped?), not its name; tracked as a follow-up (#1845) rather than
+  //   expanding the name/position gate in #1741.
   typescript: { precision: 0.85, recall: 0.72 },
   tsx: { precision: 0.85, recall: 0.8 },
   // TODO: raise thresholds once bash call resolution is implemented

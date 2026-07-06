@@ -163,6 +163,31 @@ emitter.on('error', handleError);
 `,
   },
   {
+    // Regression guard for #1741: identifier args must be gated by
+    // CALLBACK_ACCEPTING_CALLEES the same way as member_expression args on
+    // BOTH extraction paths. `findMergeCandidates(communities)` is a plain
+    // data argument (non-allowlisted callee) and must not appear as a
+    // dynamic call on either path; `arr.forEach(myNamedCallback)` is a
+    // genuine callback reference (allowlisted callee) and must appear on
+    // both.
+    name: 'identifier-arg callback gating (issue #1741)',
+    file: 'test.js',
+    code: `
+findMergeCandidates(communities);
+arr.forEach(myNamedCallback);
+`,
+  },
+  {
+    // Regression guard for #1741 follow-up: Array.from's positional callback
+    // gate (index 1 only) must behave identically on both extraction paths.
+    name: 'Array.from positional callback gating (issue #1741 follow-up)',
+    file: 'test.js',
+    code: `
+Array.from(arr, mapCallback);
+Array.from(arr, mapCallback, thisArg);
+`,
+  },
+  {
     name: 'exported function and class declarations',
     file: 'test.js',
     code: `

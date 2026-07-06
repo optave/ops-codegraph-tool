@@ -2245,12 +2245,22 @@ fn extract_implements_depth(node: &Node, source: &[u8], result: &mut Vec<String>
     }
 }
 
-/// Callee names that idiomatically accept callback references. Member-expression
-/// args (e.g. `auth.validate`) are only emitted as dynamic callback calls when
-/// the callee is in this set; otherwise plain property reads passed as data
-/// (`store.set(user.id, user)`) would emit spurious `id` calls with receiver
-/// `user`. Identifier args are always emitted — collateral damage from dropping
-/// them outweighs the FP risk for plain identifier data args.
+/// Callee names that idiomatically accept callback references. Both identifier
+/// (e.g. `handleToken`) and member-expression (e.g. `auth.validate`) args are
+/// only emitted as dynamic callback calls when the callee is in this set;
+/// otherwise plain values passed as data (`store.set(user.id, user)`,
+/// `findMergeCandidates(communities)`) would emit spurious calls — e.g. `id`
+/// with receiver `user`, or a fabricated edge to an unrelated same-named
+/// function (issue #1741).
+///
+/// Known gap: arbitrary user-defined higher-order functions (e.g.
+/// `processEach(users, fn: UserProcessor)`) are neither name-allowlisted nor
+/// position-mapped (see `positional_callback_arg_index`), so `processEach(users,
+/// logUser)` no longer emits a `logUser` reference from the caller.
+/// Recognizing these would require looking at the callee's own parameter type
+/// (is it function-shaped?) rather than its name — a resolver-level,
+/// cross-engine feature, not a small extension of this gate. Tracked as a
+/// follow-up.
 ///
 /// Mirrors `CALLBACK_ACCEPTING_CALLEES` in `src/extractors/javascript.ts`.
 const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
@@ -2284,6 +2294,39 @@ const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
 const HTTP_VERB_CALLEES: &[&str] = &[
     "get", "post", "put", "delete", "patch", "options", "head", "all",
 ];
+
+/// Callees whose callback argument sits at one specific positional index
+/// rather than "any position" (the assumption behind `CALLBACK_ACCEPTING_CALLEES`,
+/// needed for variadic Express/Router middleware chains like
+/// `app.get(path, mw1, mw2, handler)`).
+///
+/// `Array.from(arrayLike, mapFn, thisArg)` (also every TypedArray constructor,
+/// e.g. `Uint8Array.from`) is the motivating case: `arrayLike` (index 0) is
+/// plain data — treating it as a callback candidate would reintroduce the
+/// exact name-collision false-positive class issue #1741 fixes — while
+/// `mapFn` (index 1) is a genuine callback reference that should still
+/// resolve. A callee listed here is implicitly callback-accepting (no
+/// separate `CALLBACK_ACCEPTING_CALLEES` entry needed); only the arg at its
+/// listed index is eligible.
+///
+/// Invariant: this map and `CALLBACK_ACCEPTING_CALLEES` must stay disjoint.
+/// A callee name present in both would have its any-position intent silently
+/// narrowed to the single listed index (positional wins — see the gate in
+/// `extract_callback_reference_calls`), with no error or warning.
+///
+/// Name-based, not receiver-typed, so it can't distinguish `Array.from(x,
+/// mapFn)` from an unrelated `.from(x, y)` shaped differently (e.g.
+/// `Buffer.from(data, encoding)`) — that residual risk is far narrower than
+/// the unconditional-emission bug this gate fixes, so it's accepted rather
+/// than adding receiver-type tracking.
+///
+/// Mirrors `POSITIONAL_CALLBACK_ARG_INDEX` in `src/extractors/javascript.ts`.
+fn positional_callback_arg_index(callee_name: &str) -> Option<usize> {
+    match callee_name {
+        "from" => Some(1),
+        _ => None,
+    }
+}
 
 /// Extract the callee's final name (function identifier or member expression
 /// property) for callback-eligibility filtering. Returns `None` if the callee
@@ -2327,22 +2370,35 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
     if matches!(callee_name, Some("call") | Some("apply") | Some("bind")) {
         return;
     }
-    let mut member_expr_args_allowed = callee_name
+    let mut callback_args_allowed = callee_name
         .map(|n| CALLBACK_ACCEPTING_CALLEES.contains(&n))
         .unwrap_or(false);
-    if member_expr_args_allowed {
+    if callback_args_allowed {
         if let Some(name) = callee_name {
             if HTTP_VERB_CALLEES.contains(&name) {
                 // HTTP verbs require a string-literal route path to be treated as a
                 // callback-accepting API; otherwise `cache.get(user.id)` etc. would
                 // still emit `id` as a dynamic call.
-                member_expr_args_allowed = first_arg_is_string_literal(&args);
+                callback_args_allowed = first_arg_is_string_literal(&args);
             }
         }
     }
 
-    for i in 0..args.child_count() {
-        let Some(child) = args.child(i) else { continue };
+    let positional_index = callee_name.and_then(positional_callback_arg_index);
+    if !callback_args_allowed && positional_index.is_none() {
+        return;
+    }
+
+    for (arg_index, child) in iter_children(&args, PUNCTUATION_TOKENS).enumerate() {
+        // A positional entry restricts eligibility to its one designated
+        // index, regardless of what the generic (any-position) gate above
+        // decided.
+        if let Some(idx) = positional_index {
+            if arg_index != idx {
+                continue;
+            }
+        }
+
         match child.kind() {
             "identifier" => {
                 calls.push(Call {
@@ -2353,7 +2409,7 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
                     ..Default::default()
                 });
             }
-            "member_expression" if member_expr_args_allowed => {
+            "member_expression" => {
                 if let Some(prop) = child.child_by_field_name("property") {
                     let receiver = child.child_by_field_name("object")
                         .map(|obj| extract_receiver_name(&obj, source));
@@ -4193,6 +4249,148 @@ mod tests {
             .find(|c| c.dynamic == Some(true) && c.name == "fn");
         assert!(cb.is_some(), "optional-chain callee must still gate by allowlist");
         assert_eq!(cb.unwrap().receiver.as_deref(), Some("handlers"));
+    }
+
+    #[test]
+    fn no_identifier_callback_for_non_allowlisted_callee_issue_1741() {
+        // Regression guard for #1741: `findMergeCandidates(communities)` and
+        // `analyzeDrift(communities, communityDirs)` pass `communities` as a
+        // plain DATA argument, not a callback reference. Neither
+        // `findMergeCandidates` nor `analyzeDrift` is a callback-accepting
+        // callee, so identifier args must be gated exactly like
+        // member_expression args — otherwise the global-fallback resolver
+        // can bind the identifier to an unrelated same-named function
+        // elsewhere in the repo, fabricating a call edge (and, transitively,
+        // a phantom cycle — see codegraph's own src/features/communities.ts
+        // vs src/presentation/communities.ts).
+        let s = parse_js("findMergeCandidates(communities);");
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "communities"),
+            "findMergeCandidates non-allowlisted callee must not emit `communities` as dynamic call; got: {:?}",
+            s.calls,
+        );
+
+        let s2 = parse_js("analyzeDrift(communities, communityDirs);");
+        assert!(
+            !s2.calls.iter().any(|c| c.dynamic == Some(true)),
+            "analyzeDrift non-allowlisted callee must not emit any dynamic calls; got: {:?}",
+            s2.calls,
+        );
+    }
+
+    #[test]
+    fn emits_identifier_callback_for_allowlisted_callee_issue_1741() {
+        // Positive companion to the #1741 fix: identifier args passed to a
+        // genuine callback-accepting callee must still be resolved, e.g.
+        // `arr.forEach(myNamedCallback)` — the exact pattern the original
+        // "identifier args are always emitted" trade-off existed to preserve.
+        let s = parse_js("arr.forEach(myNamedCallback);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "myNamedCallback"),
+            "arr.forEach must still emit myNamedCallback as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn no_identifier_callback_for_cache_or_map_get() {
+        // Identifier-arg counterpart to `no_member_expr_callback_for_cache_or_map_get`:
+        // `cache.get(someKey)` shares the verb name `get` with Express routes
+        // but has no string-literal route path first arg, so the identifier
+        // arg must not be emitted as a dynamic call either.
+        let s = parse_js("cache.get(someKey);");
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "someKey"),
+            "cache.get(someKey) must not emit `someKey` as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn emits_array_from_mapfn_but_not_arraylike() {
+        // Regression guard for #1741 follow-up: `Array.from(arrayLike, mapFn)` is
+        // a well-known stdlib callback pattern (also every TypedArray.from), but
+        // the callback is the SECOND positional argument, not the first. Emitting
+        // `arrayLike` too would reintroduce the exact name-collision false-positive
+        // class #1741 fixes for the data argument; only `mapFn` should resolve.
+        let s = parse_js("Array.from(arr, mapCallback);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Array.from(arr, mapCallback) must emit mapCallback as dynamic call; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Array.from(arr, mapCallback) must not emit `arr` (index 0) as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn emits_only_index_one_for_array_from_with_this_arg() {
+        // `Array.from(arrayLike, mapFn, thisArg)` — thisArg (index 2) is a `this`
+        // binding context, not a callback, and must not be emitted either.
+        let s = parse_js("Array.from(arr, mapCallback, thisArg);");
+        let dynamic_names: Vec<&str> = s.calls.iter()
+            .filter(|c| c.dynamic == Some(true))
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(
+            dynamic_names, vec!["mapCallback"],
+            "only index-1 mapCallback should be dynamic; got: {:?}", s.calls,
+        );
+    }
+
+    #[test]
+    fn applies_array_from_positional_gate_to_typed_array_constructors() {
+        // Every TypedArray constructor (Uint8Array, Int32Array, etc.) mirrors
+        // Array.from's (arrayLike, mapFn, thisArg) signature; the gate is
+        // name-based on the property `from`, not receiver-typed, so it applies
+        // uniformly.
+        let s = parse_js("Uint8Array.from(arr, mapCallback);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Uint8Array.from(arr, mapCallback) must emit mapCallback; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Uint8Array.from(arr, mapCallback) must not emit `arr`; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn applies_array_from_positional_gate_to_member_expression_args_too() {
+        // Mirrors the TS test of the same intent: the old member_expression
+        // guard was an explicit `&& memberExprArgsAllowed` inline check; the
+        // positional restructuring moved that responsibility to the shared
+        // early-return above the loop. `Array.from(arr, obj.mapper)` exercises
+        // that a member_expression at the positional index (1) is still
+        // emitted with its receiver, while one at index 0 is not.
+        let s = parse_js("Array.from(arr, obj.mapper);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapper" && c.receiver.as_deref() == Some("obj")),
+            "Array.from(arr, obj.mapper) must emit mapper with receiver obj; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Array.from(arr, obj.mapper) must not emit `arr` (index 0); got: {:?}",
+            s.calls,
+        );
+
+        let s2 = parse_js("Array.from(obj.arrayLike, mapCallback);");
+        assert!(
+            !s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arrayLike"),
+            "Array.from(obj.arrayLike, mapCallback) must not emit `arrayLike` (index 0); got: {:?}",
+            s2.calls,
+        );
+        assert!(
+            s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Array.from(obj.arrayLike, mapCallback) must emit mapCallback; got: {:?}",
+            s2.calls,
+        );
     }
 
     #[test]

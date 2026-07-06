@@ -896,6 +896,97 @@ describe('JavaScript parser', () => {
       );
     });
 
+    it('does not treat identifier args as callbacks for non-allowlisted callees (issue #1741)', () => {
+      // Regression guard for #1741: `findMergeCandidates(communities)` and
+      // `analyzeDrift(communities, communityDirs)` pass `communities` as a
+      // plain DATA argument, not a callback reference. `findMergeCandidates`
+      // and `analyzeDrift` are not callback-accepting callees, so identifier
+      // args must be gated exactly like member_expression args — otherwise
+      // the global-fallback resolver can bind the identifier to an unrelated
+      // same-named function elsewhere in the repo, fabricating a call edge
+      // (and, transitively, a phantom cycle — see codegraph's own
+      // src/features/communities.ts vs src/presentation/communities.ts).
+      const symbols = parseJS(`findMergeCandidates(communities);`);
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'communities')).toHaveLength(0);
+
+      const symbols2 = parseJS(`analyzeDrift(communities, communityDirs);`);
+      expect(symbols2.calls.filter((c) => c.dynamic)).toHaveLength(0);
+    });
+
+    it('still emits identifier args for allowlisted callees (regression guard)', () => {
+      // Positive companion to the #1741 fix: identifier args passed to a
+      // genuine callback-accepting callee must still be resolved, e.g.
+      // `arr.forEach(myNamedCallback)` — the exact pattern the original
+      // "identifier args are always emitted" trade-off existed to preserve.
+      const symbols = parseJS(`arr.forEach(myNamedCallback);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'myNamedCallback', dynamic: true }),
+      );
+    });
+
+    it('does not treat identifier args to cache/Map .get/.put as callback-accepting (HTTP-verb guard)', () => {
+      // Identifier-arg counterpart to the existing member-expression HTTP-verb
+      // guard: `cache.get(someKey)` shares the verb name `get` with Express
+      // routes but has no string-literal route path first arg, so the
+      // identifier arg must not be emitted as a dynamic call either.
+      const symbols = parseJS(`cache.get(someKey);`);
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'someKey')).toHaveLength(0);
+    });
+
+    it('emits Array.from mapFn (index 1) but not arrayLike (index 0)', () => {
+      // Regression guard for #1741 follow-up: `Array.from(arrayLike, mapFn)` is a
+      // well-known stdlib callback pattern (also every TypedArray.from), but the
+      // callback is the SECOND positional argument, not the first. Emitting
+      // `arrayLike` too would reintroduce the exact name-collision false-positive
+      // class #1741 fixes for the data argument; only `mapFn` should resolve.
+      const symbols = parseJS(`Array.from(arr, mapCallback);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapCallback', dynamic: true }),
+      );
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+    });
+
+    it('emits only the index-1 mapFn for Array.from with a thisArg (index 2)', () => {
+      // `Array.from(arrayLike, mapFn, thisArg)` — thisArg (index 2) is a `this`
+      // binding context, not a callback, and must not be emitted either.
+      const symbols = parseJS(`Array.from(arr, mapCallback, thisArg);`);
+      const dynamicNames = symbols.calls.filter((c) => c.dynamic).map((c) => c.name);
+      expect(dynamicNames).toEqual(['mapCallback']);
+    });
+
+    it('applies the same Array.from positional gate to TypedArray constructors', () => {
+      // Every TypedArray constructor (Uint8Array, Int32Array, etc.) mirrors
+      // Array.from's (arrayLike, mapFn, thisArg) signature; the gate is
+      // name-based on the property `from`, not receiver-typed, so it applies
+      // uniformly.
+      const symbols = parseJS(`Uint8Array.from(arr, mapCallback);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapCallback', dynamic: true }),
+      );
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+    });
+
+    it('applies the Array.from positional gate to member_expression args too', () => {
+      // Greptile follow-up: the old member_expression guard was an explicit
+      // `&& memberExprArgsAllowed` inline check; the positional restructuring
+      // moved that responsibility to the shared early-return above the loop.
+      // `Array.from(arr, obj.mapper)` exercises that a member_expression at
+      // the positional index (1) is still emitted with its receiver, while
+      // one at index 0 is not — guarding against a future refactor that
+      // re-adds an inline guard on member_expression only.
+      const symbols = parseJS(`Array.from(arr, obj.mapper);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapper', receiver: 'obj', dynamic: true }),
+      );
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+
+      const symbols2 = parseJS(`Array.from(obj.arrayLike, mapCallback);`);
+      expect(symbols2.calls.filter((c) => c.dynamic && c.name === 'arrayLike')).toHaveLength(0);
+      expect(symbols2.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapCallback', dynamic: true }),
+      );
+    });
+
     it('extracts callback in plain function calls like setTimeout', () => {
       const symbols = parseJS(`setTimeout(tick, 1000);`);
       expect(symbols.calls).toContainEqual(
