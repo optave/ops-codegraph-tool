@@ -65,11 +65,24 @@ function discoverTests(): string[] {
  *
  * Note: more1 was moved to the pts-javascript fixture set in #1383 and is
  * no longer part of jelly-micro.
+ *
+ * `classes` lowered 6/31 → 5/31 by #1741: `f4(x) { return x(f1); }` /
+ * `f4(f4)` only matched Jelly's `f4 -> f1` ground truth because the
+ * pre-#1741 extractor emitted a dynamic call for *every* bare identifier
+ * argument (here, `f1` in `x(f1)`), with no gating on the callee. `x` is an
+ * unresolvable parameter call — syntactically indistinguishable from a
+ * plain data argument like `findMergeCandidates(communities)` — so
+ * recognizing this specific edge would require points-to/interprocedural
+ * analysis (tracking that `f4(f4)` aliases `x` to `f4`, which recursively
+ * aliases to `f1`), not a local callee-name gate. #1741 gates identifier
+ * args on CALLBACK_ACCEPTING_CALLEES the same way member_expression args
+ * already are, trading this one coincidental match for eliminating a class
+ * of fabricated cross-file call edges (and phantom cycles).
  */
 const RECALL_FLOORS: Record<string, number> = {
   accessors3: 1.0, // 1/1
   arguments: 1.0, // 1/1
-  classes: 0.19, // 6/31
+  classes: 0.16, // 5/31 (was 6/31 — see #1741 note above)
   defineProperty: 0.5, // 3/6
   fun: 1.0, // 4/4
   generators: 1.0, // 9/9

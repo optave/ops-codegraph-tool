@@ -2245,12 +2245,13 @@ fn extract_implements_depth(node: &Node, source: &[u8], result: &mut Vec<String>
     }
 }
 
-/// Callee names that idiomatically accept callback references. Member-expression
-/// args (e.g. `auth.validate`) are only emitted as dynamic callback calls when
-/// the callee is in this set; otherwise plain property reads passed as data
-/// (`store.set(user.id, user)`) would emit spurious `id` calls with receiver
-/// `user`. Identifier args are always emitted — collateral damage from dropping
-/// them outweighs the FP risk for plain identifier data args.
+/// Callee names that idiomatically accept callback references. Both identifier
+/// (e.g. `handleToken`) and member-expression (e.g. `auth.validate`) args are
+/// only emitted as dynamic callback calls when the callee is in this set;
+/// otherwise plain values passed as data (`store.set(user.id, user)`,
+/// `findMergeCandidates(communities)`) would emit spurious calls — e.g. `id`
+/// with receiver `user`, or a fabricated edge to an unrelated same-named
+/// function (issue #1741).
 ///
 /// Mirrors `CALLBACK_ACCEPTING_CALLEES` in `src/extractors/javascript.ts`.
 const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
@@ -2327,18 +2328,22 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
     if matches!(callee_name, Some("call") | Some("apply") | Some("bind")) {
         return;
     }
-    let mut member_expr_args_allowed = callee_name
+    let mut callback_args_allowed = callee_name
         .map(|n| CALLBACK_ACCEPTING_CALLEES.contains(&n))
         .unwrap_or(false);
-    if member_expr_args_allowed {
+    if callback_args_allowed {
         if let Some(name) = callee_name {
             if HTTP_VERB_CALLEES.contains(&name) {
                 // HTTP verbs require a string-literal route path to be treated as a
                 // callback-accepting API; otherwise `cache.get(user.id)` etc. would
                 // still emit `id` as a dynamic call.
-                member_expr_args_allowed = first_arg_is_string_literal(&args);
+                callback_args_allowed = first_arg_is_string_literal(&args);
             }
         }
+    }
+
+    if !callback_args_allowed {
+        return;
     }
 
     for i in 0..args.child_count() {
@@ -2353,7 +2358,7 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
                     ..Default::default()
                 });
             }
-            "member_expression" if member_expr_args_allowed => {
+            "member_expression" => {
                 if let Some(prop) = child.child_by_field_name("property") {
                     let receiver = child.child_by_field_name("object")
                         .map(|obj| extract_receiver_name(&obj, source));
@@ -4193,6 +4198,61 @@ mod tests {
             .find(|c| c.dynamic == Some(true) && c.name == "fn");
         assert!(cb.is_some(), "optional-chain callee must still gate by allowlist");
         assert_eq!(cb.unwrap().receiver.as_deref(), Some("handlers"));
+    }
+
+    #[test]
+    fn no_identifier_callback_for_non_allowlisted_callee_issue_1741() {
+        // Regression guard for #1741: `findMergeCandidates(communities)` and
+        // `analyzeDrift(communities, communityDirs)` pass `communities` as a
+        // plain DATA argument, not a callback reference. Neither
+        // `findMergeCandidates` nor `analyzeDrift` is a callback-accepting
+        // callee, so identifier args must be gated exactly like
+        // member_expression args — otherwise the global-fallback resolver
+        // can bind the identifier to an unrelated same-named function
+        // elsewhere in the repo, fabricating a call edge (and, transitively,
+        // a phantom cycle — see codegraph's own src/features/communities.ts
+        // vs src/presentation/communities.ts).
+        let s = parse_js("findMergeCandidates(communities);");
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "communities"),
+            "findMergeCandidates non-allowlisted callee must not emit `communities` as dynamic call; got: {:?}",
+            s.calls,
+        );
+
+        let s2 = parse_js("analyzeDrift(communities, communityDirs);");
+        assert!(
+            !s2.calls.iter().any(|c| c.dynamic == Some(true)),
+            "analyzeDrift non-allowlisted callee must not emit any dynamic calls; got: {:?}",
+            s2.calls,
+        );
+    }
+
+    #[test]
+    fn emits_identifier_callback_for_allowlisted_callee_issue_1741() {
+        // Positive companion to the #1741 fix: identifier args passed to a
+        // genuine callback-accepting callee must still be resolved, e.g.
+        // `arr.forEach(myNamedCallback)` — the exact pattern the original
+        // "identifier args are always emitted" trade-off existed to preserve.
+        let s = parse_js("arr.forEach(myNamedCallback);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "myNamedCallback"),
+            "arr.forEach must still emit myNamedCallback as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn no_identifier_callback_for_cache_or_map_get() {
+        // Identifier-arg counterpart to `no_member_expr_callback_for_cache_or_map_get`:
+        // `cache.get(someKey)` shares the verb name `get` with Express routes
+        // but has no string-literal route path first arg, so the identifier
+        // arg must not be emitted as a dynamic call either.
+        let s = parse_js("cache.get(someKey);");
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "someKey"),
+            "cache.get(someKey) must not emit `someKey` as dynamic call; got: {:?}",
+            s.calls,
+        );
     }
 
     #[test]

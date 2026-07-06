@@ -3378,15 +3378,21 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
 
 /**
  * Callee names that idiomatically accept callback references. Used to gate
- * member_expression args in {@link extractCallbackReferenceCalls}: arguments
- * like `user.id` are only emitted as dynamic callback calls when the callee
- * is a known callback-accepting API (router/middleware, promises, array
- * methods, event emitters, scheduling APIs). This avoids false positives
- * from plain property reads passed as data, e.g. `store.set(user.id, user)`.
+ * both identifier and member_expression args in
+ * {@link extractCallbackReferenceCalls}: arguments are only emitted as
+ * dynamic callback calls when the callee is a known callback-accepting API
+ * (router/middleware, promises, array methods, event emitters, scheduling
+ * APIs). This avoids false positives from plain values passed as data, e.g.
+ * `store.set(user.id, user)` or `findMergeCandidates(communities)`.
  *
- * Identifier args (e.g. `router.use(handleToken)`) are always emitted — the
- * collateral damage of dropping them is larger than the FP risk, since plain
- * identifier data args rarely collide with real function names.
+ * Identifier args used to be exempted from this gate on the theory that
+ * plain identifier data args rarely collide with real function names — but
+ * issue #1741 found a concrete counter-example (`analyzeDrift(communities,
+ * communityDirs)` colliding with the unrelated `communities` CLI command),
+ * which the global-fallback resolver then bound into a fabricated call edge
+ * (and, transitively, a phantom cycle). Gating identifiers the same way
+ * removes that FP class while still preserving legitimate callback-by-
+ * reference patterns like `arr.forEach(myCallback)`.
  */
 const CALLBACK_ACCEPTING_CALLEES: ReadonlySet<string> = new Set([
   // Express / router / middleware
@@ -3505,16 +3511,17 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  * `app.use(auth.validate)` yields a call to validate with receiver auth.
  * Skips literals, objects, arrays, anonymous functions, and call expressions (already handled).
  *
- * To avoid false positives where plain property reads are passed as data
- * (e.g. `store.set(user.id, user)` — `user.id` is a value, not a callback),
- * member_expression args are only emitted when the callee is in
- * {@link CALLBACK_ACCEPTING_CALLEES}. Identifier args are always emitted.
+ * To avoid false positives where plain values are passed as data (e.g.
+ * `store.set(user.id, user)` — `user.id` is a value, not a callback; or
+ * `findMergeCandidates(communities)` — `communities` is a data argument, not
+ * a callback), both identifier and member_expression args are only emitted
+ * when the callee is in {@link CALLBACK_ACCEPTING_CALLEES}.
  *
  * HTTP-verb callees (`get`, `post`, `put`, `delete`, `patch`, `options`,
  * `head`, `all`) double as Map/cache/repository method names, so their
- * member-expr args are only emitted when the first argument is a string
- * literal route path — matching Express/router shape and skipping
- * `cache.get(user.id)`-style calls.
+ * args are only emitted when the first argument is a string literal route
+ * path — matching Express/router shape and skipping `cache.get(user.id)`-style
+ * calls.
  *
  * `.call()` / `.apply()` / `.bind()` — the first arg is the `this` context (not a callback of
  * the enclosing function) and subsequent args flow into the delegated function's parameters.
@@ -3532,13 +3539,15 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   // This-rebinding (fn::this → ctx) is handled separately by extractThisCallBindingsWalk.
   if (calleeName === 'call' || calleeName === 'apply' || calleeName === 'bind') return [];
 
-  let memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
-  if (memberExprArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
+  let callbackArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
+  if (callbackArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
     // HTTP verbs require a string-literal route path to be treated as a
     // callback-accepting API; otherwise `cache.get(user.id)` etc. would
     // still emit `id` as a dynamic call.
-    memberExprArgsAllowed = firstArgIsStringLiteral(args);
+    callbackArgsAllowed = firstArgIsStringLiteral(args);
   }
+
+  if (!callbackArgsAllowed) return [];
 
   const result: Call[] = [];
   const callLine = nodeStartLine(callNode);
@@ -3549,7 +3558,7 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 
     if (child.type === 'identifier') {
       result.push({ name: child.text, line: callLine, dynamic: true });
-    } else if (child.type === 'member_expression' && memberExprArgsAllowed) {
+    } else if (child.type === 'member_expression') {
       const prop = child.childForFieldName('property');
       const obj = child.childForFieldName('object');
       if (prop) {

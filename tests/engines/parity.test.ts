@@ -190,6 +190,27 @@ emitter?.on('tick', handlers.fn);
 `,
     },
     {
+      // Regression guard for #1741: native must gate IDENTIFIER args by
+      // CALLBACK_ACCEPTING_CALLEES the same way it already gates
+      // member_expression args. Without the gate, native (like WASM used to)
+      // over-emits dynamic calls for identifier args of non-allowlisted
+      // callees (e.g. `findMergeCandidates(communities)` → bogus call to
+      // `communities`), which the global-fallback resolver can then bind to
+      // an unrelated same-named function elsewhere in the repo.
+      //   1. non-allowlisted callee → drop identifier arg
+      //   2. cache/Map .get         → drop (HTTP verb without string-literal path)
+      //   3. array .forEach         → keep (always-allowlisted callback API)
+      //   4. router HTTP route      → keep (HTTP verb WITH string-literal path)
+      name: 'JavaScript — identifier-arg callback gating must agree between engines',
+      file: 'identifier-callbacks.js',
+      code: `
+findMergeCandidates(communities);
+cache.get(someKey);
+arr.forEach(myNamedCallback);
+router.get('/users/:id', authHandler);
+`,
+    },
+    {
       name: 'TypeScript — destructured parameters',
       file: 'destruct.ts',
       code: `
