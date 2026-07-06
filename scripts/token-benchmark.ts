@@ -520,10 +520,14 @@ function writePartialResults(results, totalIssues) {
 		aggregate: computeAggregate(results),
 		perfBenchmarks: null,
 	};
-	fs.writeFileSync(PARTIAL_RESULTS_PATH, JSON.stringify(partialOutput, null, 2));
-	console.error(
-		`  Partial results written to ${PARTIAL_RESULTS_PATH} (${results.length}/${totalIssues} issues)`,
-	);
+	try {
+		fs.writeFileSync(PARTIAL_RESULTS_PATH, JSON.stringify(partialOutput, null, 2));
+		console.error(
+			`  Partial results written to ${PARTIAL_RESULTS_PATH} (${results.length}/${totalIssues} issues)`,
+		);
+	} catch (err) {
+		console.error(`  Warning: could not write partial results — ${err.message}`);
+	}
 }
 
 async function main() {
