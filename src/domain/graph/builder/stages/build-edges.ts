@@ -11,6 +11,7 @@ import { setTypeMapEntry } from '../../../../extractors/helpers.js';
 import { PROPAGATION_HOP_PENALTY } from '../../../../extractors/javascript.js';
 import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
+import { getOrCreatePerDbChunkStmt } from '../../../../shared/chunked-stmt-cache.js';
 import { TS_NATIVE_CONFIDENCE_FLOOR } from '../../../../shared/constants.js';
 import type {
   ArrayCallbackBinding,
@@ -30,6 +31,7 @@ import type {
   ObjectRestParamBinding,
   ParamBinding,
   SpreadArgBinding,
+  SqliteStatement,
   ThisCallBinding,
   TypeMapEntry,
 } from '../../../../types.js';
@@ -1911,6 +1913,19 @@ function buildClassHierarchyEdges(
 
 // ── Native bulk-insert technique back-fill ──────────────────────────────
 
+// Chunk-size-keyed statement caches for the technique/confidence backfill
+// UPDATEs below, scoped per db like the batchInsertEdges/batchInsertNodes
+// caches in builder/helpers.ts. Persisted across calls (not just loop
+// iterations) because applyEdgeTechniquesAfterNativeInsert can run twice
+// within a single buildEdges() invocation against the same db — once from
+// insertNativeBulkEdges, once from reconnectReverseDepEdges — so caching
+// per-call would still recompile on the second call (#1768).
+const techniqueBackfillStmtCache = new WeakMap<
+  BetterSqlite3Database,
+  Map<number, SqliteStatement>
+>();
+const confidenceFloorStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
+
 /**
  * After native bulkInsertEdges (which does not write the technique column),
  * apply technique values from the in-memory row array back to the DB, and lift
@@ -1947,17 +1962,27 @@ function applyEdgeTechniquesAfterNativeInsert(
     }
     for (let i = 0; i < sourceIds.length; i += CHUNK_SIZE) {
       const chunk = sourceIds.slice(i, i + CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(',');
-      db.prepare(
-        `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${placeholders})`,
-      ).run(...chunk);
+      const chunkSize = chunk.length;
+      const techniqueStmt = getOrCreatePerDbChunkStmt(
+        techniqueBackfillStmtCache,
+        db,
+        chunkSize,
+        (n) =>
+          `UPDATE edges SET technique = 'ts-native' WHERE kind = 'calls' AND technique IS NULL AND source_id IN (${Array.from({ length: n }, () => '?').join(',')})`,
+      );
+      techniqueStmt.run(...chunk);
       // Lift resolved ts-native edges below the confidence floor for this chunk.
-      db.prepare(
-        `UPDATE edges SET confidence = ?
+      const confidenceStmt = getOrCreatePerDbChunkStmt(
+        confidenceFloorStmtCache,
+        db,
+        chunkSize,
+        (n) =>
+          `UPDATE edges SET confidence = ?
          WHERE kind = 'calls' AND technique = 'ts-native'
            AND confidence > 0 AND confidence < ?
-           AND source_id IN (${placeholders})`,
-      ).run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR, ...chunk);
+           AND source_id IN (${Array.from({ length: n }, () => '?').join(',')})`,
+      );
+      confidenceStmt.run(TS_NATIVE_CONFIDENCE_FLOOR, TS_NATIVE_CONFIDENCE_FLOOR, ...chunk);
     }
     // Back-fill dynamic_kind for flagged sink edges emitted by the native engine.
     // Native bulkInsertEdges uses INSERT OR IGNORE and does not write dynamic_kind, so
