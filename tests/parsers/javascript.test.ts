@@ -966,6 +966,27 @@ describe('JavaScript parser', () => {
       expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
     });
 
+    it('applies the Array.from positional gate to member_expression args too', () => {
+      // Greptile follow-up: the old member_expression guard was an explicit
+      // `&& memberExprArgsAllowed` inline check; the positional restructuring
+      // moved that responsibility to the shared early-return above the loop.
+      // `Array.from(arr, obj.mapper)` exercises that a member_expression at
+      // the positional index (1) is still emitted with its receiver, while
+      // one at index 0 is not — guarding against a future refactor that
+      // re-adds an inline guard on member_expression only.
+      const symbols = parseJS(`Array.from(arr, obj.mapper);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapper', receiver: 'obj', dynamic: true }),
+      );
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+
+      const symbols2 = parseJS(`Array.from(obj.arrayLike, mapCallback);`);
+      expect(symbols2.calls.filter((c) => c.dynamic && c.name === 'arrayLike')).toHaveLength(0);
+      expect(symbols2.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapCallback', dynamic: true }),
+      );
+    });
+
     it('extracts callback in plain function calls like setTimeout', () => {
       const symbols = parseJS(`setTimeout(tick, 1000);`);
       expect(symbols.calls).toContainEqual(
