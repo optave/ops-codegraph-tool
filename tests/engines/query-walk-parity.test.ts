@@ -173,6 +173,24 @@ export class Server {
 `,
   },
   {
+    // Regression guard for #1728: `export const …` must be recognized as an
+    // export regardless of the initializer's shape (bare literal, new-expression,
+    // object-literal-with-methods, arrow function) — both extraction paths must
+    // agree on the resulting (name, kind, line) exports entries.
+    name: 'exported const declarations of varying initializer shapes',
+    file: 'test.js',
+    code: `
+export const MAX_WALK_DEPTH = 200;
+export const PUNCTUATION_TOKENS = new Set([',', ';']);
+export const add = (a, b) => a + b;
+export const command = {
+  name: 'info',
+  execute(args, opts, ctx) {},
+};
+const INTERNAL = 'not exported';
+`,
+  },
+  {
     name: 'dynamic call patterns (.call/.apply)',
     file: 'test.js',
     code: `

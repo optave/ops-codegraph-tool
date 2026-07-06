@@ -15,6 +15,7 @@ import type {
 } from '../../types.js';
 import { buildFileConditionSQL, NodeQuery } from '../query-builder.js';
 import { cachedStmt } from './cached-stmt.js';
+import { findCrossFileCallTargets } from './edges.js';
 
 // ─── Query-builder based lookups (moved from src/db/repository.js) ─────
 
@@ -177,6 +178,66 @@ export function findNodesByFile(db: BetterSqlite3Database, file: string): NodeRo
     db,
     "SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line",
   ).all(file);
+}
+
+/** Cache the schema probe for the `exported` column per db handle. */
+const _hasExportedColCache: WeakMap<BetterSqlite3Database, boolean> = new WeakMap();
+
+const _findExportedNodesByFileStmt: StmtCache<NodeRow> = new WeakMap();
+
+/**
+ * Detect whether this DB's `nodes` table has the `exported` column populated
+ * (older DBs built before it existed fall back to a cross-file-calls
+ * heuristic). Cached per db handle to avoid re-probing on every call.
+ */
+function hasExportedColumn(db: BetterSqlite3Database): boolean {
+  if (_hasExportedColCache.has(db)) return _hasExportedColCache.get(db)!;
+  let has = false;
+  try {
+    db.prepare('SELECT exported FROM nodes LIMIT 0').raw(true);
+    has = true;
+  } catch {
+    /* older DB predates the exported column */
+  }
+  _hasExportedColCache.set(db, has);
+  return has;
+}
+
+/**
+ * Find nodes in `file` that are part of its exported surface.
+ *
+ * Prefers the `exported = 1` column — set by the extractor at build time from
+ * the file's actual `export` statements, the authoritative "was this
+ * declared as exported" signal — and only falls back to
+ * `findCrossFileCallTargets` (symbols targeted by a cross-file `calls` edge)
+ * for DBs built before the column existed.
+ *
+ * Shared by `codegraph exports` and `codegraph where --file` so both commands
+ * agree on what "exported" means; before this was extracted, `where --file`
+ * used the cross-file-calls heuristic unconditionally, which misses any
+ * exported symbol that's only ever read as a value (not called) from another
+ * file — e.g. an exported constant used in a comparison (#1728).
+ *
+ * `knownSymbols`, if passed, is used in place of a fresh `findNodesByFile`
+ * call for the legacy-DB fallback path — callers that already fetched the
+ * file's symbols (e.g. to build their own result shape) can pass them in to
+ * avoid running the same query twice.
+ */
+export function findExportedNodesByFile(
+  db: BetterSqlite3Database,
+  file: string,
+  knownSymbols?: NodeRow[],
+): NodeRow[] {
+  if (hasExportedColumn(db)) {
+    return cachedStmt(
+      _findExportedNodesByFileStmt,
+      db,
+      "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
+    ).all(file);
+  }
+  const symbols = knownSymbols ?? findNodesByFile(db, file);
+  const exportedIds = findCrossFileCallTargets(db, file);
+  return symbols.filter((s) => exportedIds.has(s.id));
 }
 
 /**

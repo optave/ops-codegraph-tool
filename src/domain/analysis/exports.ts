@@ -1,12 +1,11 @@
 import path from 'node:path';
 import {
-  findCrossFileCallTargets,
   findDbPath,
+  findExportedNodesByFile,
   findFileNodes,
   findNodesByFile,
 } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
-import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import {
   createFileLinesReader,
@@ -17,10 +16,6 @@ import { paginateResult } from '../../shared/paginate.js';
 import type { BetterSqlite3Database, NodeRow, StmtCache } from '../../types.js';
 import { resolveAnalysisOpts, withReadonlyDb } from './query-helpers.js';
 
-/** Cache the schema probe for the `exported` column per db handle. */
-const _hasExportedColCache: WeakMap<BetterSqlite3Database, boolean> = new WeakMap();
-
-const _exportedNodesStmtCache: StmtCache<NodeRow> = new WeakMap();
 const _consumersStmtCache: StmtCache<{ name: string; file: string; line: number }> = new WeakMap();
 const _reexportsFromStmtCache: StmtCache<{ file: string }> = new WeakMap();
 const _reexportsToStmtCache: StmtCache<{ file: string }> = new WeakMap();
@@ -104,8 +99,6 @@ function collectReexportedSymbols(
   db: BetterSqlite3Database,
   fileNodeId: number,
   reexportsToStmt: ReturnType<BetterSqlite3Database['prepare']>,
-  exportedNodesStmt: ReturnType<BetterSqlite3Database['prepare']> | null,
-  hasExportedCol: boolean,
   getFileLines: (file: string) => string[] | null,
   buildSymbolResult: (s: NodeRow, fileLines: string[] | null) => any,
 ) {
@@ -113,14 +106,7 @@ function collectReexportedSymbols(
   const reexportedSymbols: Array<ReturnType<typeof buildSymbolResult> & { originFile: string }> =
     [];
   for (const reexTarget of reexportTargets) {
-    let targetExported: NodeRow[];
-    if (hasExportedCol) {
-      targetExported = exportedNodesStmt!.all(reexTarget.file) as NodeRow[];
-    } else {
-      const targetSymbols = findNodesByFile(db, reexTarget.file) as NodeRow[];
-      const exportedIds = findCrossFileCallTargets(db, reexTarget.file) as Set<number>;
-      targetExported = targetSymbols.filter((s) => exportedIds.has(s.id));
-    }
+    const targetExported = findExportedNodesByFile(db, reexTarget.file);
     for (const s of targetExported) {
       reexportedSymbols.push({
         ...buildSymbolResult(s, getFileLines(reexTarget.file)),
@@ -142,28 +128,6 @@ function exportsFileImpl(
   const fileNodes = findFileNodes(db, `%${target}%`) as NodeRow[];
   if (fileNodes.length === 0) return [];
 
-  // Detect whether exported column exists (cached per db handle)
-  let hasExportedCol: boolean;
-  if (_hasExportedColCache.has(db)) {
-    hasExportedCol = _hasExportedColCache.get(db)!;
-  } else {
-    hasExportedCol = false;
-    try {
-      db.prepare('SELECT exported FROM nodes LIMIT 0').raw(true);
-      hasExportedCol = true;
-    } catch (e: unknown) {
-      debug(`exported column not available, using fallback: ${(e as Error).message}`);
-    }
-    _hasExportedColCache.set(db, hasExportedCol);
-  }
-
-  const exportedNodesStmt = hasExportedCol
-    ? cachedStmt(
-        _exportedNodesStmtCache,
-        db,
-        "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
-      )
-    : null;
   // Consumers include real call/construct edges plus `imports-type` edges —
   // the symbol-level edge emitted for `import type { X }` statements (source
   // is the importing *file* node, since the import statement references the
@@ -199,15 +163,7 @@ function exportsFileImpl(
   return fileNodes.map((fn) => {
     const symbols = findNodesByFile(db, fn.file) as NodeRow[];
 
-    let exported: NodeRow[];
-    if (hasExportedCol) {
-      // Use the exported column populated during build
-      exported = exportedNodesStmt!.all(fn.file) as NodeRow[];
-    } else {
-      // Fallback: symbols that have incoming calls from other files
-      const exportedIds = findCrossFileCallTargets(db, fn.file) as Set<number>;
-      exported = symbols.filter((s) => exportedIds.has(s.id));
-    }
+    const exported = findExportedNodesByFile(db, fn.file, symbols);
     const internalCount = symbols.length - exported.length;
 
     const buildSymbolResult = (s: NodeRow, fileLines: string[] | null) => {
@@ -244,8 +200,6 @@ function exportsFileImpl(
       db,
       fn.id,
       reexportsToStmt,
-      exportedNodesStmt,
-      hasExportedCol,
       getFileLines,
       buildSymbolResult,
     );

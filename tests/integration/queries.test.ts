@@ -84,6 +84,14 @@ beforeAll(() => {
   const formatResponse = insertNode(db, 'formatResponse', 'function', 'utils.js', 1);
   const preAuthenticate = insertNode(db, 'preAuthenticate', 'function', 'utils.js', 10);
 
+  // Exported constant with zero incoming edges of any kind — regression fixture
+  // for #1728: "exported" must reflect the DB's exported=1 column (set by the
+  // extractor from the source's `export` keyword), not "has an incoming
+  // cross-file `calls` edge." A value-only export like this is never the
+  // target of a calls edge, so a cross-file-calls heuristic incorrectly
+  // omitted it from `where --file`'s exported list.
+  const apiVersion = insertNode(db, 'API_VERSION', 'constant', 'middleware.js', 1);
+
   // Test file + function
   const fTest = insertNode(db, 'auth.test.js', 'file', 'auth.test.js', 0);
   const testAuth = insertNode(db, 'testAuthenticate', 'function', 'auth.test.js', 5);
@@ -125,7 +133,14 @@ beforeAll(() => {
 
   // Mark exported symbols (those declared as exports in source)
   const markExported = db.prepare('UPDATE nodes SET exported = 1 WHERE id = ?');
-  for (const id of [authenticate, validateToken, authMiddleware, formatResponse, preAuthenticate]) {
+  for (const id of [
+    authenticate,
+    validateToken,
+    authMiddleware,
+    formatResponse,
+    preAuthenticate,
+    apiVersion,
+  ]) {
     markExported.run(id);
   }
 
@@ -767,8 +782,14 @@ describe('whereData', () => {
   test('file: exported list', () => {
     const data = whereData('middleware.js', dbPath, { file: true });
     const r = data.results[0];
-    // authMiddleware is called from routes.js (cross-file)
+    // authMiddleware has exported=1 in the DB (and, incidentally, is also
+    // called from routes.js — but presence in `exported` must not depend on
+    // that; see the next assertion).
     expect(r.exported).toContain('authMiddleware');
+    // API_VERSION has exported=1 but no incoming edges of any kind (#1728):
+    // "exported" reflects the DB's exported=1 column, not "has an incoming
+    // cross-file `calls` edge" — a value-only export is never call-targeted.
+    expect(r.exported).toContain('API_VERSION');
   });
 
   test('file: empty for unknown', () => {

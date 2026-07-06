@@ -1482,4 +1482,67 @@ describe('JavaScript parser', () => {
       );
     });
   });
+
+  describe('export-list detection for `export const/let/var …` (#1728)', () => {
+    it('lists named exported function/class declarations (refactor regression guard)', () => {
+      const symbols = parseJS(`export function greet() {}\nexport class Widget {}`);
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'greet', kind: 'function' }),
+      );
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'Widget', kind: 'class' }),
+      );
+    });
+
+    it('lists an exported const with a bare numeric-literal initializer (repro 1)', () => {
+      const symbols = parseJS(`export const MAX_WALK_DEPTH = 200;`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'MAX_WALK_DEPTH', kind: 'constant', line: 1 }),
+      );
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'MAX_WALK_DEPTH', kind: 'constant', line: 1 }),
+      );
+    });
+
+    it('lists an exported const initialized with new Set(...) (sibling regression guard)', () => {
+      const symbols = parseJS(`export const PUNCTUATION_TOKENS = new Set([',', ';']);`);
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'PUNCTUATION_TOKENS', kind: 'constant', line: 1 }),
+      );
+    });
+
+    it('lists an exported object-literal-with-methods const, without independently exporting its methods (repro 2)', () => {
+      const symbols = parseJS(
+        `export const command = {\n  name: 'info',\n  execute(args, opts, ctx) {},\n};`,
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'command', kind: 'constant', line: 1 }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'command.execute', kind: 'function' }),
+      );
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'command', kind: 'constant', line: 1 }),
+      );
+      // Qualified child methods aren't independently listed as exports — mirrors
+      // how `Foo.method` isn't exported when only `export class Foo` is (only the
+      // top-level declared name is; see the class-method exported=0 convention).
+      expect(symbols.exports.some((e) => e.name === 'command.execute')).toBe(false);
+    });
+
+    it('lists an exported arrow-function const with kind "function"', () => {
+      const symbols = parseJS(`export const add = (a, b) => a + b;`);
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'add', kind: 'function', line: 1 }),
+      );
+    });
+
+    it('does not list a non-exported const', () => {
+      const symbols = parseJS(`const INTERNAL = 42;`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'INTERNAL', kind: 'constant' }),
+      );
+      expect(symbols.exports.some((e) => e.name === 'INTERNAL')).toBe(false);
+    });
+  });
 });

@@ -39,6 +39,7 @@ export {
   findCallers,
   findCrossFileCallTargets,
   findDistinctCallers,
+  findExportedNodesByFile,
   findFileNodes,
   findImplementors,
   findImportDependents,
