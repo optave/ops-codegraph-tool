@@ -163,7 +163,7 @@ function exportsFileImpl(
   return fileNodes.map((fn) => {
     const symbols = findNodesByFile(db, fn.file) as NodeRow[];
 
-    const exported = findExportedNodesByFile(db, fn.file);
+    const exported = findExportedNodesByFile(db, fn.file, symbols);
     const internalCount = symbols.length - exported.length;
 
     const buildSymbolResult = (s: NodeRow, fileLines: string[] | null) => {
