@@ -77,9 +77,12 @@ export type DynamicKind =
   | 'reflection'          // .call/.apply/.bind, getattr, Method.invoke, $obj->$m()
   | 'eval'               // eval(), new Function() — undecidable
   | 'unresolved-dynamic' // detected dynamic call we cannot resolve
-  | 'value-ref';          // bare identifier used as an object-literal property value
-                          // (dispatch tables, e.g. `{ resolve: someFn }`) — resolvable
-                          // against function/method-kind targets only (#1771)
+  | 'value-ref';          // bare identifier used as a value reference, not a call site —
+                          // object-literal property value (dispatch tables, e.g.
+                          // `{ resolve: someFn }`, #1771) or assignment to a Lua
+                          // global/builtin identifier (e.g. `require = tracedRequire`,
+                          // #1776) — resolvable against function/method-kind targets
+                          // only
 ```
 
 `dynamic?: boolean` is kept to avoid churning every `call.dynamic ? 1 : 0` site.
@@ -89,6 +92,18 @@ sink-edge set: when the identifier doesn't resolve to a function/method (e.g. a
 plain data reference like `{ name: SOME_CONSTANT }`), that's the common case, not
 an undecidable dynamic call site — so it's silently dropped rather than flagged,
 unlike `eval`/`computed-key`/`unresolved-dynamic`.
+
+`value-ref` is deliberately syntax-position-agnostic: any bare identifier that
+names a known function/method and appears somewhere other than a call site
+qualifies, regardless of which language or grammar shape produced it.
+Object-literal property values (#1771) and Lua assignment to a
+global/builtin identifier (#1776, `require = tracedRequire` — a builtin name
+isn't a locally-scoped variable that alias/points-to resolution could ever
+observe, so this is the narrow, language-specific case where a plain
+reference edge is the correct substitute for real alias tracking) are two
+independent extraction sites feeding the same resolution/filtering logic
+downstream; new languages/positions can add a third without touching
+`build-edges.ts` / `incremental.ts` / `build_edges.rs` again.
 
 ### Sink edges reuse `kind='calls'`, not a new edge kind
 
