@@ -2,6 +2,11 @@ import { kindIcon } from '../domain/queries.js';
 import { auditData } from '../features/audit.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 import type { AuditFunctionEntry, AuditResult, CodegraphConfig } from '../types.js';
+import {
+  renderCallRefsSection,
+  renderNoCallEdgesFallback,
+  renderRelatedTestsSection,
+} from './call-ref-sections.js';
 import { renderImpactLevels } from './impact-levels.js';
 
 interface AuditOpts {
@@ -16,9 +21,6 @@ interface AuditOpts {
   depth?: number;
   config?: CodegraphConfig;
 }
-
-/** A caller/callee reference as rendered under the "Calls"/"Called by" sections. */
-type CallRef = AuditFunctionEntry['callees'][number];
 
 /** Render health metrics for a single audit function. */
 function renderHealthMetrics(fn: AuditFunctionEntry): void {
@@ -66,27 +68,9 @@ function renderThresholdBreaches(fn: AuditFunctionEntry): void {
 /** Render the transitive-dependent impact summary, one block per BFS level. */
 function renderImpactSection(fn: AuditFunctionEntry): void {
   console.log(`\n  Impact: ${fn.impact.totalDependents} transitive dependent(s)`);
-  // No "0 found" message here -- the count above already conveys it, matching this
-  // file's other sections (e.g. renderCallRefs), which print nothing when empty.
+  // No "0 found" message here -- the count above already conveys it, matching the
+  // shared call-ref-sections helpers below, which print nothing when empty.
   renderImpactLevels(fn.impact.levels, { emptyMessage: null });
-}
-
-/** Render a labeled list of call references (used for both "Calls" and "Called by"). */
-function renderCallRefs(label: string, refs: CallRef[]): void {
-  if (refs.length === 0) return;
-  console.log(`\n  ${label} (${refs.length}):`);
-  for (const c of refs) {
-    console.log(`    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
-  }
-}
-
-/** Render the related-test-file list for an audited function. */
-function renderRelatedTests(fn: AuditFunctionEntry): void {
-  if (fn.relatedTests.length === 0) return;
-  console.log(`\n  Tests (${fn.relatedTests.length}):`);
-  for (const t of fn.relatedTests) {
-    console.log(`    ${t.file}`);
-  }
 }
 
 /** Render a single audited function with all its sections. */
@@ -95,9 +79,10 @@ function renderAuditFunction(fn: AuditFunctionEntry): void {
   renderHealthMetrics(fn);
   renderThresholdBreaches(fn);
   renderImpactSection(fn);
-  renderCallRefs('Calls', fn.callees);
-  renderCallRefs('Called by', fn.callers);
-  renderRelatedTests(fn);
+  renderCallRefsSection('Calls', fn.callees);
+  renderCallRefsSection('Called by', fn.callers);
+  renderRelatedTestsSection(fn.relatedTests);
+  renderNoCallEdgesFallback(fn.callees.length, fn.callers.length);
 
   console.log();
 }

@@ -9,6 +9,11 @@ import {
   whereData,
 } from '../../domain/queries.js';
 import { outputResult } from '../../infrastructure/result-formatter.js';
+import {
+  renderCallRefsSection,
+  renderNoCallEdgesFallback,
+  renderRelatedTestsSection,
+} from '../call-ref-sections.js';
 
 interface SymbolRef {
   kind: string;
@@ -477,31 +482,10 @@ function renderExplainComplexity(
 }
 
 function renderExplainEdges(r: FunctionExplainResult, indent: string): void {
-  if (r.callees.length > 0) {
-    console.log(`\n${indent}  Calls (${r.callees.length}):`);
-    for (const c of r.callees) {
-      console.log(`${indent}    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
-    }
-  }
-
-  if (r.callers.length > 0) {
-    console.log(`\n${indent}  Called by (${r.callers.length}):`);
-    for (const c of r.callers) {
-      console.log(`${indent}    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
-    }
-  }
-
-  if (r.relatedTests.length > 0) {
-    const label = r.relatedTests.length === 1 ? 'file' : 'files';
-    console.log(`\n${indent}  Tests (${r.relatedTests.length} ${label}):`);
-    for (const t of r.relatedTests) {
-      console.log(`${indent}    ${t.file}`);
-    }
-  }
-
-  if (r.callees.length === 0 && r.callers.length === 0) {
-    console.log(`${indent}  (no call edges found -- may be invoked dynamically or via re-exports)`);
-  }
+  renderCallRefsSection('Calls', r.callees, { indent });
+  renderCallRefsSection('Called by', r.callers, { indent });
+  renderRelatedTestsSection(r.relatedTests, { indent });
+  renderNoCallEdgesFallback(r.callees.length, r.callers.length, { indent });
 }
 
 function renderFunctionExplain(r: FunctionExplainResult, indent = ''): void {
