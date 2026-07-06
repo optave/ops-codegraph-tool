@@ -306,15 +306,17 @@ function refreshAffectedDirectoryMetrics(
   // either direction — the cross-directory neighbours whose own fan-in/out
   // may have shifted even though none of their files changed.
   const neighborFiles = db.prepare(`
-    SELECT n2.file AS other FROM edges e 
+    SELECT n2.file AS other FROM edges e
       JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
       WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file
         AND n1.file >= @lo AND n1.file < @hi
+        AND NOT (n2.file >= @lo AND n2.file < @hi)
     UNION
     SELECT n1.file AS other FROM edges e
       JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
       WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file
         AND n2.file >= @lo AND n2.file < @hi
+        AND NOT (n1.file >= @lo AND n1.file < @hi)
   `);
   // Seed neighbor-discovery from each touched file's own leaf directory
   // only — NOT every entry in `affectedDirs` (which includes the full
@@ -396,7 +398,7 @@ function refreshAffectedDirectoryMetrics(
       insertDirNode.run(dir, 'directory', dir, 0, null);
     }
 
-    // Wire dir -> parent-dir contains edges for the chain.
+    // Wire parent-dir -> child-dir contains edges for the chain.
     for (const dir of affectedDirs) {
       const parent = normalizePath(path.dirname(dir));
       if (!parent || parent === '.' || parent === dir) continue;
