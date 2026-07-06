@@ -240,3 +240,80 @@ describe('exportsData', () => {
     expect(data.totalReexportedUnused).toBe(0);
   });
 });
+
+// ─── import type / type-only consumer crediting (#1724) ──────────────────
+//
+// Regression coverage for: interfaces/types that are only ever consumed via
+// `import type { X }` (never called/constructed) were reported as zero-
+// consumer dead exports, even though the builder already emits a
+// symbol-level `imports-type` edge (source = importing file node, target =
+// the specific imported symbol) for exactly this case. `codegraph deps`
+// already surfaced the file-level import correctly; `exportsData`'s
+// per-symbol consumer query only looked at `kind = 'calls'` and missed it.
+
+describe('exportsData — import type consumer crediting (#1724)', () => {
+  let tmpDir2: string, dbPath2: string;
+
+  beforeAll(() => {
+    tmpDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-exports-typeonly-'));
+    fs.mkdirSync(path.join(tmpDir2, '.codegraph'));
+    dbPath2 = path.join(tmpDir2, '.codegraph', 'graph.db');
+
+    const db = new Database(dbPath2);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+
+    // File nodes
+    insertNode(db, 'types.ts', 'file', 'types.ts', 0);
+    const fConsumer = insertNode(db, 'consumer.ts', 'file', 'consumer.ts', 0);
+
+    // Interface exported from types.ts, referenced elsewhere only via a type
+    // annotation (never called/constructed).
+    const configIface = insertNode(db, 'Config', 'interface', 'types.ts', 1);
+    // Interface exported from types.ts, genuinely never referenced anywhere.
+    const unusedIface = insertNode(db, 'Unused', 'interface', 'types.ts', 10);
+
+    const markExported = db.prepare('UPDATE nodes SET exported = 1 WHERE id = ?');
+    markExported.run(configIface);
+    markExported.run(unusedIface);
+
+    // consumer.ts does `import type { Config } from './types'`. The builder
+    // emits the symbol-level edge with the importing *file* as source (see
+    // emitTypeOnlySymbolEdges in domain/graph/builder/stages/build-edges.ts
+    // and incremental.ts) since the import statement — not a specific
+    // function — is what references the type.
+    insertEdge(db, fConsumer, configIface, 'imports-type');
+
+    db.close();
+  });
+
+  afterAll(() => {
+    if (tmpDir2) fs.rmSync(tmpDir2, { recursive: true, force: true });
+  });
+
+  test('interface consumed only via `import type` is credited with a consumer', () => {
+    const data = exportsData('types.ts', dbPath2);
+    const config = data.results.find((r) => r.name === 'Config');
+    expect(config).toBeDefined();
+    expect(config.consumerCount).toBe(1);
+    expect(config.consumers.length).toBe(1);
+    expect(config.consumers[0].file).toBe('consumer.ts');
+    // imports-type edges source from the importing *file* node, not a
+    // function — so name/line carry file-level values, not a call site.
+    expect(config.consumers[0].name).toBe('consumer.ts');
+    expect(config.consumers[0].line).toBe(0);
+  });
+
+  test('interface consumed only via `import type` is excluded from --unused', () => {
+    const data = exportsData('types.ts', dbPath2, { unused: true });
+    expect(data.results.find((r) => r.name === 'Config')).toBeUndefined();
+  });
+
+  test('interface with no references anywhere is still classified unused', () => {
+    const data = exportsData('types.ts', dbPath2, { unused: true });
+    const unused = data.results.find((r) => r.name === 'Unused');
+    expect(unused).toBeDefined();
+    expect(unused.consumerCount).toBe(0);
+    expect(unused.consumers).toEqual([]);
+  });
+});

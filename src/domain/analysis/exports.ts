@@ -164,11 +164,24 @@ function exportsFileImpl(
         "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
       )
     : null;
+  // Consumers include real call/construct edges plus `imports-type` edges —
+  // the symbol-level edge emitted for `import type { X }` statements (source
+  // is the importing *file* node, since the import statement references the
+  // type rather than a specific function). Without this, interfaces/types
+  // that are only ever used as type annotations are misclassified as dead
+  // exports even though `codegraph deps` already reports the importing file
+  // via this same edge (#1724).
+  //
+  // `extends`/`implements` edges are deliberately NOT included here: they are
+  // resolved by symbol name only, with no file/import scoping (see
+  // buildClassHierarchyEdges), so they can link same-named declarations
+  // across unrelated files — crediting them as consumers would surface false
+  // positives instead of fixing false negatives.
   const consumersStmt = cachedStmt(
     _consumersStmtCache,
     db,
     `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
+         WHERE e.target_id = ? AND e.kind IN ('calls', 'imports-type')`,
   );
   const reexportsFromStmt = cachedStmt(
     _reexportsFromStmtCache,
