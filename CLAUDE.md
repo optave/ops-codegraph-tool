@@ -74,6 +74,7 @@ npm run test:coverage            # Coverage report
 npx vitest run tests/parsers/javascript.test.ts   # Single test file
 npx vitest run -t "finds cycles"                  # Single test by name
 npm run build:wasm               # Rebuild WASM grammars from devDeps (built automatically on npm install)
+npm run doctor                   # Check this worktree for a stale native binary / missing WASM grammars (runs automatically via pretest)
 ```
 
 **Linter/Formatter:** [Biome](https://biomejs.dev/) — config in `biome.json`, scoped to `src/` and `tests/`.
@@ -103,6 +104,7 @@ Source is TypeScript in `src/`, compiled via `tsup`. The Rust native engine live
 | `shared/paginate.ts` | Pagination helpers for bounded query results |
 | **`infrastructure/`** | **Platform and I/O plumbing** |
 | `infrastructure/config.ts` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
+| `infrastructure/doctor.ts` | Environment health checks — stale `better-sqlite3` native ABI, incomplete `grammars/`; see `npm run doctor` |
 | `infrastructure/logger.ts` | Structured logging (`warn`, `debug`, `info`, `error`) |
 | `infrastructure/native.ts` | Native napi-rs addon loader with WASM fallback |
 | `infrastructure/registry.ts` | Global repo registry (`~/.codegraph/registry.json`) for multi-repo MCP |
