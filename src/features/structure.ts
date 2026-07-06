@@ -816,6 +816,15 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
 
   // Mark symbols as exported when their files are targets of reexports edges
   // from production-reachable barrels (traces through multi-level chains) (#837)
+  //
+  // `method` is excluded (#1780): a `reexports` edge only ever concerns
+  // top-level module bindings (functions, classes, types, constants, ...) — a
+  // class/interface method can never be an independently re-exportable
+  // binding on its own, so inheriting "exported" status from a co-located
+  // top-level re-export is a category error. Without this exclusion, e.g. an
+  // abstract base class's zero-fan-in method declarations were promoted to
+  // `entry` merely because some other symbol in the same file was re-exported
+  // through a barrel.
   const reexportExported = db
     .prepare(
       `WITH RECURSIVE prod_reachable(file_id) AS (
@@ -839,7 +848,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
         WHERE e.kind = 'reexports'
           AND e.source_id IN (SELECT file_id FROM prod_reachable)
       )
-      AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')`,
+      AND n.kind NOT IN ('file', 'directory', 'parameter', 'property', 'method')`,
     )
     .all() as { id: number }[];
   for (const r of reexportExported) exportedIds.add(r.id);
@@ -1004,6 +1013,7 @@ function classifyNodeRolesIncremental(
 
   // 3b. Mark symbols as exported when their files are targets of reexports edges
   // from production-reachable barrels (traces through multi-level chains) (#837)
+  // `method` is excluded (#1780) — see classifyNodeRolesFull for rationale.
   const reexportExported = db
     .prepare(
       `WITH RECURSIVE prod_reachable(file_id) AS (
@@ -1027,7 +1037,7 @@ function classifyNodeRolesIncremental(
         WHERE e.kind = 'reexports'
           AND e.source_id IN (SELECT file_id FROM prod_reachable)
       )
-      AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')
+      AND n.kind NOT IN ('file', 'directory', 'parameter', 'property', 'method')
       AND n.file IN (${placeholders})`,
     )
     .all(...allAffectedFiles) as { id: number }[];

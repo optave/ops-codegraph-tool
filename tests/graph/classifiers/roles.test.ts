@@ -6,8 +6,10 @@ describe('classifyRoles', () => {
     expect(classifyRoles([]).size).toBe(0);
   });
 
-  it('classifies entry nodes (no fan-in, exported)', () => {
-    const nodes = [{ id: '1', name: 'init', fanIn: 0, fanOut: 3, isExported: true }];
+  it('classifies entry nodes (no fan-in, exported, function kind)', () => {
+    const nodes = [
+      { id: '1', name: 'init', kind: 'function', fanIn: 0, fanOut: 3, isExported: true },
+    ];
     const roles = classifyRoles(nodes);
     expect(roles.get('1')).toBe('entry');
   });
@@ -627,5 +629,141 @@ describe('classifyRoles', () => {
     ];
     const roles = classifyRoles(nodes);
     expect(roles.get('2')).toBe('dead-unresolved');
+  });
+
+  // ── entry role requires function/method kind (#1780) ───────────────
+
+  it('classifies an exported interface with zero fan-in as leaf, not entry', () => {
+    // Mirrors the #1780 repro: `interface ParsedUserConfig { ... }` in
+    // src/infrastructure/config.ts. Even if the symbol were exported, an
+    // interface is a data-shape declaration, never a callable entry point.
+    const nodes = [
+      {
+        id: '1',
+        name: 'ParsedUserConfig',
+        kind: 'interface',
+        file: 'src/infrastructure/config.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+  });
+
+  it('classifies an exported constant with zero fan-in as leaf, not entry', () => {
+    // Mirrors the #1780 repro: module-level `const BUILD_HASH_KEYS = [...]`.
+    // A constant can never be an invoked entry point regardless of export status.
+    const nodes = [
+      {
+        id: '1',
+        name: 'BUILD_HASH_KEYS',
+        kind: 'constant',
+        file: 'src/infrastructure/config.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+  });
+
+  it('classifies an exported class with zero fan-in as leaf, not entry', () => {
+    // A class declaration itself is instantiated via `new`, not "invoked" the
+    // way a CLI command handler or API function is — not a real entry point.
+    const nodes = [
+      {
+        id: '1',
+        name: 'Widget',
+        kind: 'class',
+        file: 'src/widget.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+  });
+
+  it('classifies an exported type alias with zero fan-in as leaf, not entry', () => {
+    const nodes = [
+      {
+        id: '1',
+        name: 'WorkspaceEntry',
+        kind: 'type',
+        file: 'src/infrastructure/config.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+  });
+
+  it('still classifies an exported function with zero fan-in as entry (no over-correction)', () => {
+    // Genuine entry points (CLI handlers, MCP tool handlers, ESM loader hooks)
+    // are, by definition, called from outside the codebase, so zero in-repo
+    // fan-in is expected and correct for them — the fix must not lose this.
+    const nodes = [
+      {
+        id: '1',
+        name: 'handler',
+        kind: 'function',
+        file: 'src/mcp/tools/audit.ts',
+        fanIn: 0,
+        fanOut: 4,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('entry');
+  });
+
+  it('still classifies an exported method with zero fan-in as entry (no over-correction)', () => {
+    const nodes = [
+      {
+        id: '1',
+        name: 'run',
+        kind: 'method',
+        file: 'src/cli/commands/custom.ts',
+        fanIn: 0,
+        fanOut: 2,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('entry');
+  });
+
+  it('classifies a non-exported interface with zero fan-in the same as an exported one (leaf, active siblings)', () => {
+    // Whether or not the interface itself is exported, it's still not a
+    // callable entry point — both must land on the same non-entry path.
+    const nodes = [
+      {
+        id: '1',
+        name: 'ConsentResolutionResult',
+        kind: 'interface',
+        file: 'src/infrastructure/config.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+        hasActiveFileSiblings: true,
+      },
+      {
+        id: '2',
+        name: 'loadConfig',
+        kind: 'function',
+        file: 'src/infrastructure/config.ts',
+        fanIn: 5,
+        fanOut: 3,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
   });
 });

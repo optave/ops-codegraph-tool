@@ -235,7 +235,43 @@ describe('classifyNodeRoles', () => {
 
     classifyNodeRoles(db);
     const role = db.prepare("SELECT role FROM nodes WHERE name = 'MyOpts'").get();
-    // Should be entry (exported, fan-in 0), not dead-unresolved
+    // Should be leaf (exported, fan-in 0), not dead-unresolved. An interface is a
+    // data-shape declaration, never a callable entry point, so exported+zero-fanin
+    // interfaces land on `leaf` rather than `entry` (#1780) — but #1583's original
+    // guarantee (never `dead-*`) still holds.
+    expect(role.role).toBe('leaf');
+  });
+
+  it('classifies exported constant with no callers as leaf, not entry (#1780)', () => {
+    // A module-level constant is a data value, never a callable entry point,
+    // regardless of its exported=1 flag.
+    db.prepare('INSERT INTO nodes (name, kind, file, line, exported) VALUES (?, ?, ?, ?, ?)').run(
+      'DEFAULT_OPTIONS',
+      'constant',
+      'src/helpers.ts',
+      5,
+      1,
+    );
+
+    classifyNodeRoles(db);
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'DEFAULT_OPTIONS'").get();
+    expect(role.role).toBe('leaf');
+  });
+
+  it('still classifies an exported function with no callers as entry (#1780 no over-correction)', () => {
+    // A genuinely exported, callable function with zero fan-in is exactly what
+    // `entry` is meant to capture — e.g. a public API function invoked only by
+    // external consumers of the package. The kind-gate fix must not lose this.
+    db.prepare('INSERT INTO nodes (name, kind, file, line, exported) VALUES (?, ?, ?, ?, ?)').run(
+      'publicApiFn',
+      'function',
+      'src/helpers.ts',
+      40,
+      1,
+    );
+
+    classifyNodeRoles(db);
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'publicApiFn'").get();
     expect(role.role).toBe('entry');
   });
 
@@ -364,7 +400,7 @@ describe('classifyNodeRoles', () => {
 
   it('incremental path: does not classify exported interface as dead when used only as same-file type annotation (#1583)', () => {
     // Exercises classifyNodeRolesIncremental (triggered by passing changedFiles).
-    // An exported=1 interface with no cross-file edges must be promoted to entry,
+    // An exported=1 interface with no cross-file edges must be promoted to leaf,
     // not dead-unresolved, on the incremental path just as on the full path.
     db.prepare('INSERT INTO nodes (name, kind, file, line, exported) VALUES (?, ?, ?, ?, ?)').run(
       'IncrementalOpts',
@@ -377,8 +413,9 @@ describe('classifyNodeRoles', () => {
     // Pass the file as the changed-files list to trigger the incremental path.
     classifyNodeRoles(db, ['src/helpers.ts']);
     const role = db.prepare("SELECT role FROM nodes WHERE name = 'IncrementalOpts'").get();
-    // Should be entry (exported, fan-in 0), not dead-unresolved
-    expect(role.role).toBe('entry');
+    // Should be leaf (exported, fan-in 0), not dead-unresolved or entry — an
+    // interface is a data-shape declaration, never a callable entry point (#1780).
+    expect(role.role).toBe('leaf');
   });
 
   // ── Parameters and interface members are not dead-code targets (#1723) ──

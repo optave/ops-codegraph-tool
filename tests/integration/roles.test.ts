@@ -115,6 +115,9 @@ describe('barrel re-export role classification', () => {
     const _helperFn = insertNode(db, 'helperFn', 'function', 'src/inspect.ts', 30);
     const _appMain = insertNode(db, 'appMain', 'function', 'src/app.ts', 1);
     const testFn = insertNode(db, 'testQueryName', 'function', 'tests/inspect.test.ts', 1);
+    // A class-method-kind member (e.g. an abstract base-class method) in the same
+    // re-exported file, with no callers and no outgoing calls (#1780).
+    const _abstractHelper = insertNode(db, 'abstractHelper', 'method', 'src/inspect.ts', 50);
 
     // Barrel re-exports inspect.ts
     insertEdge(db, fBarrel, fInspect, 'reexports');
@@ -155,6 +158,20 @@ describe('barrel re-export role classification', () => {
     // helperFn has 0 callers — but it's in a re-exported file, so isExported = true
     // With fanIn=0 and isExported=true → entry (exported but uncalled)
     expect(helperResult!.role).toBe('entry');
+  });
+
+  test('method-kind member in a re-exported file does not inherit exported status (#1780)', () => {
+    // A `reexports` edge only ever concerns top-level module bindings — a class
+    // method can never be an independently re-exportable binding on its own, so
+    // it must not inherit "exported" status merely because a sibling top-level
+    // symbol (helperFn/queryName) in the same file is re-exported through the
+    // barrel. Before the fix, this method landed on `entry` the same way
+    // `helperFn` incorrectly did; it must now fall through to normal dead-code
+    // classification instead (no callers, no outgoing calls → dead-unresolved).
+    const data = rolesData(barrelDbPath);
+    const methodResult = data.symbols.find((s) => s.name === 'abstractHelper');
+    expect(methodResult).toBeDefined();
+    expect(methodResult!.role).toBe('dead-unresolved');
   });
 });
 

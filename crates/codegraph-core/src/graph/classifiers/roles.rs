@@ -256,7 +256,20 @@ fn classify_node(
     }
 
     if fan_in == 0 && is_exported {
-        return "entry";
+        // Exported, zero fan-in. A genuine entry point (CLI command handler,
+        // exported API function called from outside the codebase, ESM loader
+        // hook, MCP tool handler, etc.) is always a function or method. Every
+        // other exported kind (interface/type/constant/class) is a live,
+        // intentional part of the public surface — but a data shape or config
+        // value, not something invoked from outside the codebase — so it's
+        // `leaf`: never `dead-*` (#1583) and never `entry` (#1780), regardless
+        // of whether the file has other active siblings. Mirrors JS
+        // `classifyNodeRole`.
+        return if kind == "function" || kind == "method" {
+            "entry"
+        } else {
+            "leaf"
+        };
     }
 
     // Test-only: has callers but all are in test files
@@ -403,6 +416,15 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     //     (e.g. index.ts re-exports from internal.ts which re-exports from core.ts).
     // Then: any symbol whose file is a reexport target of a prod-reachable barrel
     // is considered exported (prevents false dead-code classification).
+    //
+    // `method` is excluded (#1780): a `reexports` edge only ever concerns
+    // top-level module bindings (functions, classes, types, constants, ...) —
+    // a class/interface method can never be an independently re-exportable
+    // binding on its own, so inheriting "exported" status from a co-located
+    // top-level re-export is a category error. Without this exclusion, e.g. an
+    // abstract base class's zero-fan-in method declarations were promoted to
+    // `entry` merely because some other symbol in the same file was re-exported
+    // through a barrel.
     {
         let sql = format!(
             "WITH RECURSIVE prod_reachable(file_id) AS (
@@ -426,7 +448,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
                 WHERE e.kind = 'reexports'
                   AND e.source_id IN (SELECT file_id FROM prod_reachable)
               )
-              AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')",
+              AND n.kind NOT IN ('file', 'directory', 'parameter', 'property', 'method')",
             test_file_filter_col("src.file")
         );
         let mut stmt = tx.prepare(&sql)?;
@@ -810,6 +832,7 @@ pub(crate) fn do_classify_incremental(
     // from production-reachable barrels (traces through multi-level chains) (#837).
     // Same recursive CTE logic as the full-classify path (step 3b), but scoped
     // to affected files only via the additional `AND n.file IN (...)` filter.
+    // `method` is excluded (#1780) — see the full-classify path for rationale.
     {
         let reexport_sql = format!(
             "WITH RECURSIVE prod_reachable(file_id) AS (
@@ -833,7 +856,7 @@ pub(crate) fn do_classify_incremental(
                 WHERE e.kind = 'reexports'
                   AND e.source_id IN (SELECT file_id FROM prod_reachable)
               )
-              AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')
+              AND n.kind NOT IN ('file', 'directory', 'parameter', 'property', 'method')
               AND n.file IN ({})",
             test_file_filter_col("src.file"),
             affected_ph

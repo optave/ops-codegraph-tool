@@ -21,6 +21,13 @@
  * `isTypeDeclarationMember` and classified `leaf` unconditionally — they can
  * never gain inbound call edges by construction, so call-graph reachability
  * doesn't apply to them either (#1723).
+ *
+ * `entry` requires `kind IN ('function', 'method')` (plus the framework-prefix/
+ * Commander-dispatch shortcuts, which are already kind-appropriate by
+ * construction). An exported interface/type/constant/class with zero fan-in is
+ * a data-shape declaration or config value — never invoked from outside the
+ * codebase — so it can't be a real entry point; it's classified `leaf` instead
+ * of inheriting `entry` merely from being exported (#1780).
  */
 
 import type { DeadSubRole, Role } from '../../types.js';
@@ -281,7 +288,14 @@ function classifyNodeRole(
       }
       return classifyUnreferencedNode(node);
     }
-    return 'entry';
+    // Exported, zero fan-in. A genuine entry point (CLI command handler, exported
+    // API function called from outside the codebase, ESM loader hook, MCP tool
+    // handler, etc.) is always a function or method. Every other exported kind
+    // (interface/type/constant/class) is a live, intentional part of the public
+    // surface — but a data shape or config value, not something invoked from
+    // outside the codebase — so it's `leaf`: never `dead-*` (#1583) and never
+    // `entry` (#1780), regardless of whether the file has other active siblings.
+    return node.kind === 'function' || node.kind === 'method' ? 'entry' : 'leaf';
   }
 
   const hasProdFanIn = typeof node.productionFanIn === 'number';
