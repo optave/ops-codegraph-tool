@@ -29,6 +29,7 @@ import {
   resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
 import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
+import { importNamePairs } from './import-utils.js';
 
 // ── Local types ─────────────────────────────────────────────────────────
 
@@ -209,8 +210,22 @@ function rebuildReverseDepEdges(
     aliases,
     skipBarrel ? null : db,
   );
-  const importedNames = buildImportedNamesMap(symbols, rootDir, depRelPath, aliases, db);
-  edgesAdded += buildCallEdges(db, stmts, depRelPath, symbols, fileNodeRow, importedNames);
+  const { importedNames, importedOriginalNames } = buildImportedNamesMap(
+    symbols,
+    rootDir,
+    depRelPath,
+    aliases,
+    db,
+  );
+  edgesAdded += buildCallEdges(
+    db,
+    stmts,
+    depRelPath,
+    symbols,
+    fileNodeRow,
+    importedNames,
+    importedOriginalNames,
+  );
   edgesAdded += buildClassHierarchyEdges(stmts, depRelPath, symbols);
   return edgesAdded;
 }
@@ -318,9 +333,8 @@ function resolveBarrelImportEdges(
   let edgesAdded = 0;
   if (!isBarrelFile(db, resolvedPath)) return edgesAdded;
   const resolvedSources = new Set<string>();
-  for (const name of imp.names) {
-    const cleanName = name.replace(/^\*\s+as\s+/, '');
-    const actualSource = resolveBarrelTarget(db, resolvedPath, cleanName);
+  for (const { original } of importNamePairs(imp)) {
+    const actualSource = resolveBarrelTarget(db, resolvedPath, original);
     if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
       resolvedSources.add(actualSource);
       const actualRow = stmts.getNodeId.get(actualSource, 'file', actualSource, 0);
@@ -343,14 +357,13 @@ function emitTypeOnlySymbolEdges(
   fileNodeId: number,
 ): number {
   let edgesAdded = 0;
-  for (const name of imp.names) {
-    const cleanName = name.replace(/^\*\s+as\s+/, '');
+  for (const { original } of importNamePairs(imp)) {
     let targetFile = resolvedPath;
     if (db && isBarrelFile(db, resolvedPath)) {
-      const actual = resolveBarrelTarget(db, resolvedPath, cleanName);
+      const actual = resolveBarrelTarget(db, resolvedPath, original);
       if (actual) targetFile = actual;
     }
-    const candidates = stmts.findNodeInFile.all(cleanName, targetFile) as Array<{
+    const candidates = stmts.findNodeInFile.all(original, targetFile) as Array<{
       id: number;
       file: string;
     }>;
@@ -413,14 +426,23 @@ function buildImportEdges(
   return edgesAdded;
 }
 
+/**
+ * Mirrors the full-build `buildImportedNamesMap` in build-edges.ts: maps each
+ * locally-bound import name to its defining file (`importedNames`), plus, for
+ * renamed specifiers (`import { X as Y }`), the *original* exported name
+ * (`importedOriginalNames`, keyed by local name Y). Barrel tracing and the
+ * downstream target-file symbol lookup must use the original name — the
+ * renamed local alias only exists in the importing file (#1730).
+ */
 function buildImportedNamesMap(
   symbols: ExtractorOutput,
   rootDir: string,
   relPath: string,
   aliases: PathAliases,
   db: BetterSqlite3Database,
-): Map<string, string> {
+): { importedNames: Map<string, string>; importedOriginalNames: Map<string, string> } {
   const importedNames = new Map<string, string>();
+  const importedOriginalNames = new Map<string, string>();
   for (const imp of symbols.imports) {
     const resolvedPath = resolveImportPath(
       path.join(rootDir, relPath),
@@ -428,21 +450,21 @@ function buildImportedNamesMap(
       rootDir,
       aliases,
     );
-    for (const name of imp.names) {
-      const cleanName = name.replace(/^\*\s+as\s+/, '');
+    for (const { local, original } of importNamePairs(imp)) {
       // Mirror full-build's `buildImportedNamesMap`: follow barrel re-exports so
       // `importedNames` maps to the *defining* file, not the barrel. This ensures
       // `computeConfidence` gets `importedFrom === targetFile` and returns 1.0
       // instead of the cross-directory fallback (0.3).
       let targetFile = resolvedPath;
       if (isBarrelFile(db, resolvedPath)) {
-        const actual = resolveBarrelTarget(db, resolvedPath, cleanName);
+        const actual = resolveBarrelTarget(db, resolvedPath, original);
         if (actual) targetFile = actual;
       }
-      importedNames.set(cleanName, targetFile);
+      importedNames.set(local, targetFile);
+      if (original !== local) importedOriginalNames.set(local, original);
     }
   }
-  return importedNames;
+  return { importedNames, importedOriginalNames };
 }
 
 // ── Class hierarchy edges ───────────────────────────────────────────────
@@ -690,6 +712,7 @@ function buildCallEdges(
   symbols: ExtractorOutput,
   fileNodeRow: { id: number },
   importedNames: Map<string, string>,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): number {
   const typeMap = buildIncrementalTypeMap(symbols);
   const seenCallEdges = new Set<string>();
@@ -707,6 +730,7 @@ function buildCallEdges(
       importedNames,
       typeMap,
       caller.callerName,
+      importedOriginalNames,
     );
 
     const targets = applyThisReceiverFallbacks(
@@ -773,8 +797,22 @@ function rebuildEdgesForTargetFile(
   let edgesAdded = buildContainmentEdges(db, stmts, relPath, symbols);
   edgesAdded += rebuildDirContainment(db, stmts, relPath);
   edgesAdded += buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeRow.id, aliases, db);
-  const importedNames = buildImportedNamesMap(symbols, rootDir, relPath, aliases, db);
-  edgesAdded += buildCallEdges(db, stmts, relPath, symbols, fileNodeRow, importedNames);
+  const { importedNames, importedOriginalNames } = buildImportedNamesMap(
+    symbols,
+    rootDir,
+    relPath,
+    aliases,
+    db,
+  );
+  edgesAdded += buildCallEdges(
+    db,
+    stmts,
+    relPath,
+    symbols,
+    fileNodeRow,
+    importedNames,
+    importedOriginalNames,
+  );
   edgesAdded += buildClassHierarchyEdges(stmts, relPath, symbols);
   return edgesAdded;
 }

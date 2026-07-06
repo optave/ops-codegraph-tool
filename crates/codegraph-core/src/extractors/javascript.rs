@@ -1672,10 +1672,14 @@ fn handle_import_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(source_node) = source_node {
         let mod_path = node_text(&source_node, source)
             .replace(&['\'', '"'][..], "");
-        let names = extract_import_names(node, source);
+        let mut renamed_imports = Vec::new();
+        let names = extract_import_names_with_renames(node, source, &mut renamed_imports);
         let mut imp = Import::new(mod_path, names, start_line(node));
         if is_type_only {
             imp.type_only = Some(true);
+        }
+        if !renamed_imports.is_empty() {
+            imp.renamed_imports = Some(renamed_imports);
         }
         symbols.imports.push(imp);
     }
@@ -2972,20 +2976,80 @@ fn extract_rest_identifier(rest_node: &Node, source: &[u8], names: &mut Vec<Stri
 
 fn extract_import_names(node: &Node, source: &[u8]) -> Vec<String> {
     let mut names = Vec::new();
-    scan_import_names(node, source, &mut names);
+    let mut renamed = Vec::new();
+    scan_import_names(node, source, &mut names, &mut renamed);
     names
 }
 
-fn scan_import_names(node: &Node, source: &[u8], names: &mut Vec<String>) {
-    scan_import_names_depth(node, source, names, 0);
+/// Extract import names and collect `{ local, imported }` pairs for
+/// `import_specifier` nodes that rename a binding (`import { X as Y }`).
+/// Mirrors `extractImportNames`'s `renamedOut` parameter in
+/// src/extractors/javascript.ts (#1730).
+fn extract_import_names_with_renames(
+    node: &Node,
+    source: &[u8],
+    renamed_out: &mut Vec<RenamedImport>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    scan_import_names(node, source, &mut names, renamed_out);
+    names
 }
 
-fn scan_import_names_depth(node: &Node, source: &[u8], names: &mut Vec<String>, depth: usize) {
+fn scan_import_names(
+    node: &Node,
+    source: &[u8],
+    names: &mut Vec<String>,
+    renamed_out: &mut Vec<RenamedImport>,
+) {
+    scan_import_names_depth(node, source, names, renamed_out, 0);
+}
+
+/// Grammar note (see tree-sitter-javascript): for `import_specifier`, the
+/// `name` field is *always* present — it holds the name as declared by the
+/// source module. `alias` is only present for `X as Y` and holds the *local*
+/// binding actually referenced by call sites in this file. Preferring `name`
+/// unconditionally (as this function used to, and as the `export_specifier`
+/// branch below still deliberately does — see its comment) silently drops the
+/// local alias for every renamed import: call sites use `Y`, not `X` (#1730).
+fn scan_import_names_depth(
+    node: &Node,
+    source: &[u8],
+    names: &mut Vec<String>,
+    renamed_out: &mut Vec<RenamedImport>,
+    depth: usize,
+) {
     if depth >= MAX_WALK_DEPTH {
         return;
     }
     match node.kind() {
-        "import_specifier" | "export_specifier" => {
+        "import_specifier" => {
+            let source_name_node = node.child_by_field_name("name");
+            let alias_node = node.child_by_field_name("alias");
+            let local_node = alias_node.or(source_name_node);
+            if let Some(local_node) = local_node {
+                names.push(node_text(&local_node, source).to_string());
+                if let (Some(alias), Some(source_name)) = (alias_node, source_name_node) {
+                    let alias_text = node_text(&alias, source);
+                    let source_text = node_text(&source_name, source);
+                    if alias_text != source_text {
+                        renamed_out.push(RenamedImport {
+                            local: alias_text.to_string(),
+                            imported: source_text.to_string(),
+                        });
+                    }
+                }
+            } else {
+                names.push(node_text(node, source).to_string());
+            }
+        }
+        "export_specifier" => {
+            // export_specifier's `name` is the local declaration being (re-)exported;
+            // `alias` is the external name it's exposed as. Barrel/reexport tracing
+            // keys off the *original* declaration name, so this branch is
+            // deliberately left picking `name` first — do not unify with the
+            // import_specifier branch above. Rename-aware barrel tracing for
+            // `export { X as Y } from …` is a distinct, separate gap (#1730
+            // investigation).
             let name_node = node
                 .child_by_field_name("name")
                 .or_else(|| node.child_by_field_name("alias"));
@@ -3009,7 +3073,7 @@ fn scan_import_names_depth(node: &Node, source: &[u8], names: &mut Vec<String>, 
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            scan_import_names_depth(&child, source, names, depth + 1);
+            scan_import_names_depth(&child, source, names, renamed_out, depth + 1);
         }
     }
 }
@@ -3657,6 +3721,30 @@ mod tests {
         assert_eq!(s.imports.len(), 1);
         assert_eq!(s.imports[0].source, "fs");
         assert_eq!(s.imports[0].names, vec!["readFile"]);
+    }
+
+    /// Regression test for #1730: `import { X as Y }` must record the *local*
+    /// binding (Y) in `names` — that's what call sites reference — plus the
+    /// `{ local: Y, imported: X }` pair in `renamed_imports` so call-edge
+    /// resolution can recover the original exported name X.
+    #[test]
+    fn renamed_import_records_local_name_and_rename_pair() {
+        let s = parse_js("import { collectFiles as collectFilesUtil } from './helpers';");
+        assert_eq!(s.imports.len(), 1);
+        assert_eq!(s.imports[0].names, vec!["collectFilesUtil"]);
+        let renamed = s.imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated for a renamed specifier");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "collectFilesUtil");
+        assert_eq!(renamed[0].imported, "collectFiles");
+    }
+
+    #[test]
+    fn non_renamed_import_has_no_renamed_imports() {
+        let s = parse_js("import { readFile } from 'fs';");
+        assert!(s.imports[0].renamed_imports.is_none());
     }
 
     #[test]

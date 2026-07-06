@@ -311,12 +311,14 @@ function handleImportCapture(c: Record<string, TreeSitterNode>, imports: Import[
   const impNode = c.imp_node!;
   const isTypeOnly = impNode.text.startsWith('import type');
   const modPath = c.imp_source!.text.replace(/['"]/g, '');
-  const names = extractImportNames(impNode);
+  const renamedImports: Array<{ local: string; imported: string }> = [];
+  const names = extractImportNames(impNode, renamedImports);
   imports.push({
     source: modPath,
     names,
     line: nodeStartLine(impNode),
     typeOnly: isTypeOnly,
+    ...(renamedImports.length > 0 ? { renamedImports } : {}),
   });
 }
 
@@ -1478,12 +1480,14 @@ function handleImportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const source = node.childForFieldName('source') || findChild(node, 'string');
   if (source) {
     const modPath = source.text.replace(/['"]/g, '');
-    const names = extractImportNames(node);
+    const renamedImports: Array<{ local: string; imported: string }> = [];
+    const names = extractImportNames(node, renamedImports);
     ctx.imports.push({
       source: modPath,
       names,
       line: nodeStartLine(node),
       typeOnly: isTypeOnly,
+      ...(renamedImports.length > 0 ? { renamedImports } : {}),
     });
   }
 }
@@ -3843,10 +3847,45 @@ function findParentClass(node: TreeSitterNode): string | null {
   return findParentNode(node, JS_CLASS_TYPES);
 }
 
-function extractImportNames(node: TreeSitterNode): string[] {
+/**
+ * Extract the local binding names introduced by an import/export statement.
+ *
+ * `renamedOut`, when passed, collects `{ local, imported }` pairs for
+ * `import_specifier` nodes that rename a binding (`import { X as Y }`).
+ *
+ * Grammar note (see tree-sitter-javascript): for `import_specifier`, the
+ * `name` field is *always* present — it holds the name as declared by the
+ * source module. `alias` is only present for `X as Y` and holds the *local*
+ * binding actually referenced by call sites in this file. Preferring `name`
+ * unconditionally (as this function used to, and as the `export_specifier`
+ * branch below still deliberately does — see its comment) silently drops the
+ * local alias for every renamed import: call sites use `Y`, not `X` (#1730).
+ */
+function extractImportNames(
+  node: TreeSitterNode,
+  renamedOut?: Array<{ local: string; imported: string }>,
+): string[] {
   const names: string[] = [];
   function scan(n: TreeSitterNode): void {
-    if (n.type === 'import_specifier' || n.type === 'export_specifier') {
+    if (n.type === 'import_specifier') {
+      const sourceNameNode = n.childForFieldName('name');
+      const aliasNode = n.childForFieldName('alias');
+      const localNode = aliasNode || sourceNameNode;
+      if (localNode) {
+        names.push(localNode.text);
+        if (aliasNode && sourceNameNode && aliasNode.text !== sourceNameNode.text) {
+          renamedOut?.push({ local: aliasNode.text, imported: sourceNameNode.text });
+        }
+      } else {
+        names.push(n.text);
+      }
+    } else if (n.type === 'export_specifier') {
+      // export_specifier's `name` is the local declaration being (re-)exported;
+      // `alias` is the external name it's exposed as. Barrel/reexport tracing
+      // (resolveBarrelExport) keys off the *original* declaration name, so this
+      // branch is deliberately left picking `name` first — do not unify with
+      // the import_specifier branch above. Rename-aware barrel tracing for
+      // `export { X as Y } from …` is a distinct, separate gap (#1730 investigation).
       const nameNode = n.childForFieldName('name') || n.childForFieldName('alias');
       if (nameNode) names.push(nameNode.text);
       else names.push(n.text);

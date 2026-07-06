@@ -510,6 +510,17 @@ export interface Import {
   reexport?: boolean;
   wildcardReexport?: boolean;
   dynamicImport?: boolean;
+  /**
+   * For `import { X as Y }` specifiers: the local binding name (Y) mapped to
+   * the original name exported by the source module (X). `names` always
+   * carries the local (post-rename) binding — this field lets call-edge
+   * resolution recover the *original* symbol name to look up in the imported
+   * file when a call site uses the local alias (#1730). Only populated for
+   * specifiers that actually rename a binding; entries where local === source
+   * name are omitted. Not populated for `export { X as Y } from …` reexports
+   * — barrel/reexport tracing is a distinct mechanism (see resolveBarrelExport).
+   */
+  renamedImports?: Array<{ local: string; imported: string }>;
   // Language-specific flags (mutually exclusive at runtime)
   pythonImport?: boolean;
   goImport?: boolean;

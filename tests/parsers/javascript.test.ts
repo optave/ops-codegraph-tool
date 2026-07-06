@@ -130,6 +130,52 @@ describe('JavaScript parser', () => {
     expect(symbols.imports[0].names).toContain('bar');
   });
 
+  // Regression coverage for #1730: `import { X as Y }` must record the local
+  // binding (Y) — what call sites actually reference — in `names`, plus the
+  // `{ local, imported }` rename pair so call-edge resolution can recover the
+  // original exported symbol (X) when a call site uses the local alias.
+  describe('renamed import specifiers (#1730)', () => {
+    it('records the local alias, not the source name, in imports[].names', () => {
+      const symbols = parseJS(`import { collectFiles as collectFilesUtil } from './helpers';`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['collectFilesUtil']);
+    });
+
+    it('records the local -> original rename pair in renamedImports', () => {
+      const symbols = parseJS(`import { collectFiles as collectFilesUtil } from './helpers';`);
+      expect(symbols.imports[0].renamedImports).toEqual([
+        { local: 'collectFilesUtil', imported: 'collectFiles' },
+      ]);
+    });
+
+    it('does not set renamedImports for non-renamed specifiers', () => {
+      const symbols = parseJS(`import { foo, bar } from './baz';`);
+      expect(symbols.imports[0].renamedImports).toBeUndefined();
+    });
+
+    it('handles a mix of renamed and non-renamed specifiers in one statement', () => {
+      const symbols = parseJS(
+        `import { foo, collectFiles as collectFilesUtil, bar } from './mixed';`,
+      );
+      expect(symbols.imports[0].names).toEqual(['foo', 'collectFilesUtil', 'bar']);
+      expect(symbols.imports[0].renamedImports).toEqual([
+        { local: 'collectFilesUtil', imported: 'collectFiles' },
+      ]);
+    });
+
+    it('does not apply rename tracking to export_specifier (reexport) statements', () => {
+      // export_specifier semantics differ (name = local declaration being
+      // re-exported, alias = external name) — barrel/reexport tracing keys off
+      // the original declaration name, so this is intentionally left as-is.
+      // See resolveBarrelExport / issues filed from the #1730 investigation.
+      const symbols = parseJS(`export { collectFiles as friendlyName } from './helpers';`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].reexport).toBe(true);
+      expect(symbols.imports[0].names).toEqual(['collectFiles']);
+      expect(symbols.imports[0].renamedImports).toBeUndefined();
+    });
+  });
+
   it('extracts call expressions', () => {
     const symbols = parseJS(`import { foo } from './bar'; foo(); baz();`);
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'foo' }));

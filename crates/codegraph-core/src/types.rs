@@ -114,6 +114,16 @@ pub struct Call {
     pub key_expr: Option<String>,
 }
 
+/// `import { X as Y }`: the local binding name (Y) paired with the original
+/// name exported by the source module (X). Mirrors TS `Import.renamedImports`.
+/// See `Import.renamed_imports` for why this is needed (#1730).
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenamedImport {
+    pub local: String,
+    pub imported: String,
+}
+
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Import {
@@ -125,6 +135,15 @@ pub struct Import {
     pub reexport: Option<bool>,
     #[napi(js_name = "wildcardReexport")]
     pub wildcard_reexport: Option<bool>,
+    /// For `import { X as Y }` specifiers: the local binding name (Y) mapped to
+    /// the original name exported by the source module (X). `names` always
+    /// carries the local (post-rename) binding — this field lets call-edge
+    /// resolution recover the *original* symbol name to look up in the
+    /// imported file when a call site uses the local alias (#1730). Only
+    /// populated for specifiers that actually rename a binding. Mirrors TS
+    /// `Import.renamedImports`.
+    #[napi(js_name = "renamedImports")]
+    pub renamed_imports: Option<Vec<RenamedImport>>,
     // Language-specific flags
     #[napi(js_name = "pythonImport")]
     pub python_import: Option<bool>,
@@ -168,6 +187,7 @@ impl Import {
             type_only: None,
             reexport: None,
             wildcard_reexport: None,
+            renamed_imports: None,
             python_import: None,
             go_import: None,
             rust_use: None,
