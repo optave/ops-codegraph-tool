@@ -14,6 +14,7 @@ import {
   isModuleScopedLanguage,
   resolveByGlobal,
   resolveByReceiver,
+  unwrapTypeEntry,
 } from '../resolver/strategy.js';
 
 // ── Public interface ─────────────────────────────────────────────────────
@@ -58,6 +59,49 @@ export function resolveSameClassQualifiedMethod(
   return lookup
     .byNameAndFile(`${className}.${callName}`, relPath)
     .filter((n) => n.kind === 'method');
+}
+
+/**
+ * Shared by both the full-build (build-edges.ts, including its native-engine
+ * post-pass) and incremental (incremental.ts) `Object.defineProperty` accessor
+ * fallback: when a function is registered as a getter/setter via
+ * `Object.defineProperty(obj, "bar", { get: getter })`, calls to `this.X()`
+ * inside `getter` resolve against `obj` (this === obj when the accessor is
+ * invoked).
+ *
+ * `definePropertyReceivers` maps the getter/setter's own name (`callerName`)
+ * to the receiver variable name (`obj`). Resolution:
+ *   1. Look up `obj`'s type in the typeMap and try the qualified `Type.X`
+ *      method in the same file.
+ *   2. Otherwise, fall back to any same-file definition named `X` — handles
+ *      plain object literals where the method isn't qualified (e.g.
+ *      `const obj = { baz() {} }` defines `baz` directly).
+ *
+ * The fallback tier (2) is restricted to `function`/`method` kinds: a
+ * getter/setter's implementation is always callable code, so an unfiltered
+ * lookup could otherwise match an unrelated same-named class or variable in
+ * the same file (issue #1766). Tier (1) is intentionally left unfiltered,
+ * matching its pre-existing behaviour on all three call sites.
+ */
+export function resolveDefinePropertyAccessorTarget(
+  callName: string,
+  callerName: string,
+  relPath: string,
+  typeMap: Map<string, unknown>,
+  lookup: CallNodeLookup,
+  definePropertyReceivers: ReadonlyMap<string, string>,
+): Array<{ id: number; file: string; kind?: string }> {
+  const receiverVarName = definePropertyReceivers.get(callerName);
+  if (!receiverVarName) return [];
+
+  const typeName = unwrapTypeEntry(typeMap.get(receiverVarName));
+  if (typeName) {
+    const qualified = lookup.byNameAndFile(`${typeName}.${callName}`, relPath);
+    if (qualified.length > 0) return [...qualified];
+  }
+  return lookup
+    .byNameAndFile(callName, relPath)
+    .filter((n) => n.kind === 'function' || n.kind === 'method');
 }
 
 // ── Shared resolution functions ──────────────────────────────────────────

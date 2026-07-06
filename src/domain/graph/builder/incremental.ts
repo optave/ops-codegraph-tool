@@ -27,6 +27,7 @@ import {
   findCaller,
   isModuleScopedLanguage,
   resolveCallTargets,
+  resolveDefinePropertyAccessorTarget,
   resolveReceiverEdge,
   resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
@@ -617,42 +618,6 @@ function buildIncrementalTypeMap(symbols: ExtractorOutput): Map<string, unknown>
 }
 
 /**
- * Strategy 2 — Object.defineProperty accessor fallback.
- * When a function is registered as a getter/setter via
- * `Object.defineProperty(obj, "bar", { get: getter })`, calls to `this.X()`
- * inside `getter` resolve against `obj`. Looks up the receiver var in the
- * typeMap for its type, then falls back to any same-file definition named
- * `callName` with function or method kind.
- */
-function resolveDefinePropertyTarget(
-  callName: string,
-  callerName: string,
-  relPath: string,
-  typeMap: Map<string, unknown>,
-  lookup: CallNodeLookup,
-  definePropertyReceivers: Map<string, string>,
-): Array<{ id: number; file: string; kind?: string }> {
-  const receiverVarName = definePropertyReceivers.get(callerName);
-  if (!receiverVarName) return [];
-
-  const typeEntry = typeMap.get(receiverVarName);
-  const typeName = typeEntry
-    ? typeof typeEntry === 'string'
-      ? typeEntry
-      : (typeEntry as { type?: string }).type
-    : null;
-  if (typeName) {
-    const qualified = lookup.byNameAndFile(`${typeName}.${callName}`, relPath);
-    if (qualified.length > 0) return [...qualified];
-  }
-  // Narrow to function/method kinds only to avoid matching unrelated
-  // variables or classes that share a name in the same file.
-  return lookup
-    .byNameAndFile(callName, relPath)
-    .filter((n) => n.kind === 'function' || n.kind === 'method');
-}
-
-/**
  * Apply fallback resolution strategies for a single call site when the
  * primary resolveCallTargets pass returned no targets.
  *
@@ -694,9 +659,11 @@ function applyCallFallbacks(
     if (s2.length > 0) return s2;
   }
 
-  // Strategy 3: Object.defineProperty accessor fallback.
+  // Strategy 3: Object.defineProperty accessor fallback. Shared with the
+  // full-build path (stages/build-edges.ts) via call-resolver.ts so both
+  // paths apply the same function/method kind filter (issue #1766).
   if (call.receiver === 'this' && callerName != null && definePropertyReceivers) {
-    return resolveDefinePropertyTarget(
+    return resolveDefinePropertyAccessorTarget(
       call.name,
       callerName,
       relPath,

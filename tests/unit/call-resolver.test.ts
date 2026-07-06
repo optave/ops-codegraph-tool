@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import type { CallNodeLookup } from '../../src/domain/graph/builder/call-resolver.js';
 import {
   resolveByMethodOrGlobal,
+  resolveDefinePropertyAccessorTarget,
   resolveReceiverEdge,
 } from '../../src/domain/graph/builder/call-resolver.js';
 
@@ -286,5 +287,104 @@ describe('resolveReceiverEdge — local function constructor blocks global class
     // globalClass.kind='class' IS in RECEIVER_KINDS → edge to id=2
     expect(result).not.toBeNull();
     expect(result?.receiverId).toBe(2);
+  });
+});
+
+// ── resolveDefinePropertyAccessorTarget ───────────────────────────────────
+
+/**
+ * Regression tests for #1766: the full-build path's `Object.defineProperty`
+ * accessor fallback (`resolveDefinePropertyAccessorFallback` in
+ * stages/build-edges.ts, plus its native-engine post-pass) and the incremental
+ * path's (`applyCallFallbacks` in incremental.ts) used to diverge in their
+ * final same-file fallback tier: full-build returned ANY same-file node named
+ * `call.name` (unfiltered by kind), while incremental filtered to
+ * function/method kinds only. Both paths now share this single function.
+ *
+ * A getter/setter registered via Object.defineProperty always dispatches to
+ * callable code — never a class or variable — so an unrelated same-named
+ * class or variable declared in the same file must never win. (In a full
+ * pipeline run this same-file collision is normally already caught upstream
+ * by resolveCallTargets's own unqualified lookup before this fallback is
+ * ever reached; these tests exercise the fallback directly to pin down its
+ * standalone kind-filtering contract regardless of caller.)
+ */
+describe('resolveDefinePropertyAccessorTarget — kind filter parity (#1766)', () => {
+  const receivers = new Map([['getter', 'obj']]);
+
+  it('resolves to the function, ignoring an unrelated same-named class in the same file', () => {
+    const fn = { id: 1, file: 'a.js', kind: 'function' };
+    const unrelatedClass = { id: 2, file: 'a.js', kind: 'class' };
+    const lookup = makeReceiverLookup({ 'bar:a.js': [unrelatedClass, fn] }, {});
+    const result = resolveDefinePropertyAccessorTarget(
+      'bar',
+      'getter',
+      'a.js',
+      new Map(), // no typeMap entry for 'obj' — plain object literal, not a typed instance
+      lookup,
+      receivers,
+    );
+    expect(result).toEqual([fn]);
+  });
+
+  it('resolves to a method, ignoring an unrelated same-named variable in the same file', () => {
+    const method = { id: 3, file: 'a.js', kind: 'method' };
+    const unrelatedVar = { id: 4, file: 'a.js', kind: 'variable' };
+    const lookup = makeReceiverLookup({ 'bar:a.js': [unrelatedVar, method] }, {});
+    const result = resolveDefinePropertyAccessorTarget(
+      'bar',
+      'getter',
+      'a.js',
+      new Map(),
+      lookup,
+      receivers,
+    );
+    expect(result).toEqual([method]);
+  });
+
+  it('returns nothing when only a same-named class/variable exists (no function/method)', () => {
+    const unrelatedClass = { id: 5, file: 'a.js', kind: 'class' };
+    const lookup = makeReceiverLookup({ 'bar:a.js': [unrelatedClass] }, {});
+    const result = resolveDefinePropertyAccessorTarget(
+      'bar',
+      'getter',
+      'a.js',
+      new Map(),
+      lookup,
+      receivers,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when callerName has no entry in definePropertyReceivers', () => {
+    const fn = { id: 6, file: 'a.js', kind: 'function' };
+    const lookup = makeReceiverLookup({ 'bar:a.js': [fn] }, {});
+    const result = resolveDefinePropertyAccessorTarget(
+      'bar',
+      'unregisteredGetter',
+      'a.js',
+      new Map(),
+      lookup,
+      receivers,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('prefers the typeName-qualified method when the receiver has a resolvable type', () => {
+    const qualifiedMethod = { id: 7, file: 'a.js', kind: 'method' };
+    const bareFn = { id: 8, file: 'a.js', kind: 'function' };
+    const lookup = makeReceiverLookup(
+      { 'Registry.bar:a.js': [qualifiedMethod], 'bar:a.js': [bareFn] },
+      {},
+    );
+    const result = resolveDefinePropertyAccessorTarget(
+      'bar',
+      'getter',
+      'a.js',
+      new Map([['obj', 'Registry']]),
+      lookup,
+      receivers,
+    );
+    expect(result).toEqual([qualifiedMethod]);
   });
 });

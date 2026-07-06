@@ -43,6 +43,7 @@ import {
   findCaller,
   isModuleScopedLanguage,
   resolveCallTargets,
+  resolveDefinePropertyAccessorTarget,
   resolveReceiverEdge,
   resolveSameClassQualifiedMethod,
 } from '../call-resolver.js';
@@ -720,22 +721,16 @@ function buildDefinePropertyPostPass(
       );
       if (directTargets.length > 0) continue;
 
-      // Resolve via receiver type
-      let targets: ReadonlyArray<{ id: number; file: string }> = [];
-      const typeEntry = typeMap.get(receiverVarName);
-      const typeName = typeEntry
-        ? typeof typeEntry === 'string'
-          ? typeEntry
-          : (typeEntry as { type?: string }).type
-        : null;
-      if (typeName) {
-        const qualifiedName = `${typeName}.${call.name}`;
-        targets = lookup.byNameAndFile(qualifiedName, relPath);
-      }
-      // Same-file fallback for plain object-literal methods
-      if (targets.length === 0) {
-        targets = lookup.byNameAndFile(call.name, relPath);
-      }
+      // Resolve via receiver type, restricted to function/method kinds
+      // (shared with the WASM-path fallback and incremental.ts — issue #1766).
+      const targets = resolveDefinePropertyAccessorTarget(
+        call.name,
+        caller.callerName,
+        relPath,
+        typeMap as Map<string, unknown>,
+        lookup,
+        definePropertyReceivers,
+      );
 
       for (const t of targets) {
         const edgeKey = `${caller.id}|${t.id}`;
@@ -1267,6 +1262,11 @@ function resolveReflectionKeyExprFallback(
  * nothing, try treating `obj` as the receiver and look up `obj.X` in the
  * typeMap, or fall back to a same-file lookup of any definition named X
  * that belongs to the object literal or its type.
+ *
+ * Checks applicability (this-receiver + known caller + a receiver map to
+ * consult) then delegates the actual resolution to the shared
+ * `resolveDefinePropertyAccessorTarget` (call-resolver.ts), which is also
+ * used by the native-engine post-pass below and by incremental.ts.
  */
 function resolveDefinePropertyAccessorFallback(
   call: Call,
@@ -1277,23 +1277,14 @@ function resolveDefinePropertyAccessorFallback(
   definePropertyReceivers: Map<string, string> | undefined,
 ): Array<{ id: number; file: string; kind?: string }> {
   if (call.receiver !== 'this' || callerName == null || !definePropertyReceivers) return [];
-  const receiverVarName = definePropertyReceivers.get(callerName);
-  if (!receiverVarName) return [];
-
-  const typeName = unwrapTypeEntry(typeMap.get(receiverVarName));
-  if (typeName) {
-    const qualified = lookup.byNameAndFile(`${typeName}.${call.name}`, relPath);
-    if (qualified.length > 0) return [...qualified];
-  }
-  // If still no targets, search for any definition named `call.name` in
-  // the same file — handles plain object literals where the method isn't
-  // qualified (e.g. `const obj = { baz() {} }` defines `baz` directly).
-  // Note: this is intentionally broad — it matches any same-file definition
-  // with the called name, not just members of the receiver object. This is
-  // the same behaviour used by the native post-pass path (buildDefinePropertyPostPass).
-  const sameFile = lookup.byNameAndFile(call.name, relPath);
-  if (sameFile.length > 0) return [...sameFile];
-  return [];
+  return resolveDefinePropertyAccessorTarget(
+    call.name,
+    callerName,
+    relPath,
+    typeMap as Map<string, unknown>,
+    lookup,
+    definePropertyReceivers,
+  );
 }
 
 /**
