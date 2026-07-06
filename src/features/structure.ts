@@ -777,13 +777,20 @@ function writeMedianCache(
 }
 
 function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
-  // Leaf kinds (parameter, property) can never have callers/callees.
+  // Property kind (class/struct fields) can never have callers/callees.
   // Classify them directly as dead-leaf without the expensive fan-in/fan-out JOINs.
+  //
+  // `parameter` is deliberately NOT included here (#1723): a parameter's liveness
+  // is a local dataflow question (is it referenced within its own function body),
+  // not a call-graph reachability question, so "no incoming call edges" carries
+  // zero dead-code signal for it. Parameters are also excluded from the main
+  // query below, so they never receive a role at all — the same treatment as
+  // `file`/`directory` nodes.
   const leafRows = db
     .prepare(
       `SELECT n.id
       FROM nodes n
-      WHERE n.kind IN ('parameter', 'property')`,
+      WHERE n.kind = 'property'`,
     )
     .all() as { id: number }[];
 
@@ -967,11 +974,13 @@ function classifyNodeRolesIncremental(
     globalMedians = computed;
   }
 
-  // 2a. Leaf kinds (parameter, property) in affected files — always dead-leaf
+  // 2a. Property kind (class/struct fields) in affected files — always dead-leaf.
+  // `parameter` is intentionally excluded (#1723) — see classifyNodeRolesFull for
+  // the rationale. Parameters stay unclassified (role = NULL) after the reset below.
   const leafRows = db
     .prepare(
       `SELECT n.id FROM nodes n
-      WHERE n.kind IN ('parameter', 'property')
+      WHERE n.kind = 'property'
         AND n.file IN (${placeholders})`,
     )
     .all(...allAffectedFiles) as { id: number }[];

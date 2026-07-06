@@ -38,7 +38,12 @@ const FUNCTION_KINDS: SymbolKind[] = ['function', 'method', 'class', 'constant']
 export function findMatchingNodes(
   dbOrRepo: BetterSqlite3Database | InstanceType<typeof Repository>,
   name: string,
-  opts: { noTests?: boolean; file?: string; kind?: string; kinds?: readonly string[] } = {},
+  opts: {
+    noTests?: boolean;
+    file?: string | string[];
+    kind?: string;
+    kinds?: readonly string[];
+  } = {},
 ): Array<NodeRowWithFanIn & { _relevance: number }> {
   const kinds = (
     opts.kind ? [opts.kind] : opts.kinds?.length ? [...opts.kinds] : FUNCTION_KINDS

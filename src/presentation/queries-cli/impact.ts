@@ -118,7 +118,7 @@ interface OutputOpts {
   format?: string;
   staged?: boolean;
   ref?: string;
-  file?: string;
+  file?: string | string[];
   kind?: string;
   [key: string]: unknown;
 }

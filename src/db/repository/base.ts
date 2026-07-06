@@ -231,7 +231,7 @@ export class Repository implements IRepository {
    */
   fnDeps(
     _name: string,
-    _opts?: { depth?: number; noTests?: boolean; file?: string; kind?: string },
+    _opts?: { depth?: number; noTests?: boolean; file?: string | string[]; kind?: string },
   ): FnDepsResult | null {
     return null;
   }

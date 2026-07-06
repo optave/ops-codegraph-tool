@@ -106,6 +106,55 @@ fn median(sorted: &[u32]) -> f64 {
     }
 }
 
+/// Compute, per file, the set of symbol names that are `TYPE_DEF_KINDS`-kind
+/// declarations (interface/type/struct/enum/trait/record). Mirrors JS
+/// `computeTypeDefNamesByFile` in `graph/classifiers/roles.ts`.
+fn compute_type_def_names_by_file(
+    rows: &[(i64, String, String, String, u32, u32)],
+) -> HashMap<String, std::collections::HashSet<String>> {
+    let mut by_file: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+    for (_id, name, kind, file, _fan_in, _fan_out) in rows {
+        if TYPE_DEF_KINDS.iter().any(|k| *k == kind.as_str()) {
+            by_file
+                .entry(file.clone())
+                .or_default()
+                .insert(name.clone());
+        }
+    }
+    by_file
+}
+
+/// True when `name`/`kind` is a `method`/`property` member of an interface/type
+/// declared in the same file — e.g. TS `interface Foo { bar: string }` extracts
+/// `bar` as a top-level `method`-kind definition named `Foo.bar` (#1723). Every
+/// language extractor qualifies interface/type members as `Owner.member`
+/// (mirroring class method qualification), so the owner name is recovered from
+/// the prefix before the first `.` and looked up against same-file
+/// `TYPE_DEF_KINDS` declarations. Class methods use the identical `Owner.member`
+/// convention but are unaffected here because `class` is not in `TYPE_DEF_KINDS`
+/// — they remain subject to normal dead-code detection.
+///
+/// These members can never gain inbound call edges by construction, so a
+/// `fan_in == 0` reading carries zero dead-code signal for them, unlike a real
+/// function/method where it does. Mirrors JS `isTypeDeclarationMember`.
+fn is_type_declaration_member(
+    name: &str,
+    kind: &str,
+    file: &str,
+    type_def_names_by_file: &HashMap<String, std::collections::HashSet<String>>,
+) -> bool {
+    if kind != "method" && kind != "property" {
+        return false;
+    }
+    let Some(dot_idx) = name.find('.') else {
+        return false;
+    };
+    let owner_name = &name[..dot_idx];
+    type_def_names_by_file
+        .get(file)
+        .is_some_and(|names| names.contains(owner_name))
+}
+
 /// Dead sub-role classification matching JS `classifyDeadSubRole`.
 fn classify_dead_sub_role(_name: &str, kind: &str, file: &str) -> &'static str {
     // Leaf kinds
@@ -126,6 +175,7 @@ fn classify_dead_sub_role(_name: &str, kind: &str, file: &str) -> &'static str {
 }
 
 /// Classify a single node into a role.
+#[allow(clippy::too_many_arguments)]
 fn classify_node(
     name: &str,
     kind: &str,
@@ -135,9 +185,16 @@ fn classify_node(
     is_exported: bool,
     production_fan_in: u32,
     has_active_file_siblings: bool,
+    is_type_member: bool,
     median_fan_in: f64,
     median_fan_out: f64,
 ) -> &'static str {
+    // Interface/type members (#1723) — never subject to call-graph dead-code
+    // detection, regardless of fan-in/fan-out/export status.
+    if is_type_member {
+        return "leaf";
+    }
+
     // Framework entry
     if FRAMEWORK_ENTRY_PREFIXES.iter().any(|p| name.starts_with(p)) {
         return "entry";
@@ -267,10 +324,14 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     let tx = conn.unchecked_transaction()?;
     let mut summary = RoleSummary::default();
 
-    // 1. Leaf kinds -> dead-leaf
+    // 1. Property kind (class/struct fields) -> dead-leaf.
+    // `parameter` is deliberately NOT included here (#1723): a parameter's liveness
+    // is a local dataflow question, not a call-graph reachability question, so
+    // "no incoming call edges" carries zero dead-code signal for it. Parameters are
+    // also excluded from the main rows query below, so they never receive a role
+    // at all — the same treatment as `file`/`directory` nodes.
     let leaf_ids: Vec<i64> = {
-        let mut stmt =
-            tx.prepare("SELECT id FROM nodes WHERE kind IN ('parameter', 'property')")?;
+        let mut stmt = tx.prepare("SELECT id FROM nodes WHERE kind = 'property'")?;
         let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
         rows.filter_map(|r| r.ok()).collect()
     };
@@ -408,6 +469,11 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     // 5b. Compute active files (files with non-constant callables connected to the graph)
     let (active_files, called_active_files) = compute_active_files(&rows);
 
+    // 5c. Compute interface/type owner names per file (#1723) — used to recognize
+    // method/property members of type-level declarations, which must never be
+    // judged dead by call-graph reachability.
+    let type_def_names_by_file = compute_type_def_names_by_file(&rows);
+
     // 6. Classify and collect IDs by role
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
@@ -423,6 +489,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
         &prod_fan_in,
         &active_files,
         &called_active_files,
+        &type_def_names_by_file,
         median_fan_in,
         median_fan_out,
         &mut ids_by_role,
@@ -541,12 +608,14 @@ fn query_id_counts(
 }
 
 /// Classify rows and accumulate into ids_by_role and summary.
+#[allow(clippy::too_many_arguments)]
 fn classify_rows(
     rows: &[(i64, String, String, String, u32, u32)],
     exported_ids: &std::collections::HashSet<i64>,
     prod_fan_in: &HashMap<i64, u32>,
     active_files: &std::collections::HashSet<String>,
     called_active_files: &std::collections::HashSet<String>,
+    type_def_names_by_file: &HashMap<String, std::collections::HashSet<String>>,
     median_fan_in: f64,
     median_fan_out: f64,
     ids_by_role: &mut HashMap<&'static str, Vec<i64>>,
@@ -573,6 +642,7 @@ fn classify_rows(
         } else {
             false
         };
+        let is_type_member = is_type_declaration_member(name, kind, file, type_def_names_by_file);
         let role = classify_node(
             name,
             kind,
@@ -582,6 +652,7 @@ fn classify_rows(
             is_exported,
             prod_fi,
             has_active_siblings,
+            is_type_member,
             median_fan_in,
             median_fan_out,
         );
@@ -629,16 +700,15 @@ fn find_neighbour_files(
 }
 
 /// Query leaf kind node IDs and callable node rows for a set of files.
+/// `parameter` is intentionally excluded from the leaf query (#1723) — see
+/// `do_classify_full`'s leaf_ids comment for the rationale.
 fn query_nodes_for_files(
     tx: &rusqlite::Transaction,
     files: &[&str],
 ) -> rusqlite::Result<(Vec<i64>, Vec<(i64, String, String, String, u32, u32)>)> {
     let ph: String = files.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
-    let leaf_sql = format!(
-        "SELECT id FROM nodes WHERE kind IN ('parameter', 'property') AND file IN ({})",
-        ph
-    );
+    let leaf_sql = format!("SELECT id FROM nodes WHERE kind = 'property' AND file IN ({})", ph);
     let leaf_ids: Vec<i64> = {
         let mut stmt = tx.prepare(&leaf_sql)?;
         for (i, f) in files.iter().enumerate() {
@@ -804,6 +874,9 @@ pub(crate) fn do_classify_incremental(
 
     let (active_files, called_active_files) = compute_active_files(&rows);
 
+    // Compute interface/type owner names per file (#1723) — see do_classify_full.
+    let type_def_names_by_file = compute_type_def_names_by_file(&rows);
+
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
     if !leaf_ids.is_empty() {
@@ -818,6 +891,7 @@ pub(crate) fn do_classify_incremental(
         &prod_fan_in,
         &active_files,
         &called_active_files,
+        &type_def_names_by_file,
         median_fan_in,
         median_fan_out,
         &mut ids_by_role,

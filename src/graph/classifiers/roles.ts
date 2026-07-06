@@ -4,10 +4,23 @@
  * Roles: entry, core, utility, adapter, leaf, dead-*, test-only
  *
  * Dead sub-categories refine the coarse "dead" bucket:
- *   dead-leaf       — parameters, properties, constants (leaf nodes by definition)
+ *   dead-leaf       — properties, constants (leaf nodes by definition)
  *   dead-entry      — framework dispatch: CLI commands, MCP tools, event handlers
  *   dead-ffi        — cross-language FFI boundaries (e.g. Rust napi-rs bindings)
  *   dead-unresolved — genuinely unreferenced callables (the real dead code)
+ *
+ * `parameter`-kind nodes never reach this module in production — callers
+ * (`features/structure.ts`, native `graph/classifiers/roles.rs`) exclude them
+ * entirely, leaving `role` unset, the same treatment as `file`/`directory`
+ * nodes. A parameter's liveness is a local dataflow question (is it referenced
+ * within its own function body), not a call-graph reachability question, so
+ * "no incoming call edges" carries zero dead-code signal for it (#1723).
+ *
+ * `method`/`property`-kind members of an interface/type declaration (e.g.
+ * `interface Foo { bar: string }`) DO reach this module, but are recognized by
+ * `isTypeDeclarationMember` and classified `leaf` unconditionally — they can
+ * never gain inbound call edges by construction, so call-graph reachability
+ * doesn't apply to them either (#1723).
  */
 
 import type { DeadSubRole, Role } from '../../types.js';
@@ -51,6 +64,56 @@ const COMMANDER_DISPATCH_NAMES = new Set(['execute', 'validate']);
 export interface ClassifiableNode {
   kind?: string;
   file?: string;
+}
+
+/**
+ * Compute, per file, the set of symbol names that are `TYPE_DEF_KINDS`-kind
+ * declarations (interface/type/struct/enum/trait/record). Used by
+ * `isTypeDeclarationMember` to recognize `Owner.member`-qualified nodes whose
+ * owner is a type-level declaration rather than a class.
+ */
+function computeTypeDefNamesByFile(nodes: RoleClassificationNode[]): Map<string, Set<string>> {
+  const byFile = new Map<string, Set<string>>();
+  for (const n of nodes) {
+    if (n.file && n.kind && TYPE_DEF_KINDS.has(n.kind)) {
+      let names = byFile.get(n.file);
+      if (!names) {
+        names = new Set();
+        byFile.set(n.file, names);
+      }
+      names.add(n.name);
+    }
+  }
+  return byFile;
+}
+
+/**
+ * True when `node` is a `method`/`property`-kind member of an interface/type
+ * declared in the same file — e.g. TS `interface Foo { bar: string }` extracts
+ * `bar` as a top-level `method`-kind definition named `Foo.bar` (#1723). Every
+ * language extractor qualifies interface/type members as `Owner.member`
+ * (mirroring class method qualification), so the owner name is recovered from
+ * the prefix before the first `.` and looked up against same-file
+ * `TYPE_DEF_KINDS` declarations. Class methods use the identical `Owner.member`
+ * convention but are unaffected here because `class` is not in `TYPE_DEF_KINDS`
+ * — they remain subject to normal dead-code detection.
+ *
+ * These members can never gain inbound call edges by construction — they are
+ * consumed via type annotations and structural typing, never calls — so a
+ * `fanIn === 0` reading carries zero dead-code signal for them, unlike a real
+ * function/method where it does. Call-edge-based reachability just doesn't
+ * apply to type-level declarations, so they must never be judged dead by it.
+ */
+function isTypeDeclarationMember(
+  node: RoleClassificationNode,
+  typeDefNamesByFile: Map<string, Set<string>>,
+): boolean {
+  if (node.kind !== 'method' && node.kind !== 'property') return false;
+  if (!node.file) return false;
+  const dotIdx = node.name.indexOf('.');
+  if (dotIdx === -1) return false;
+  const ownerName = node.name.slice(0, dotIdx);
+  return typeDefNamesByFile.get(node.file)?.has(ownerName) ?? false;
 }
 
 /**
@@ -176,10 +239,21 @@ function classifyByFanShape(highIn: boolean, highOut: boolean): Role {
 
 /**
  * Apply role-classification rules to a single node.
- * Order matters — framework entries are tagged first, then dead/test cases,
- * then the fan-in/fan-out shape decides among the structural roles.
+ * Order matters — type-level members are ruled out first (they can never be
+ * judged by call-graph reachability at all), then framework entries, then
+ * dead/test cases, then the fan-in/fan-out shape decides among the structural
+ * roles.
  */
-function classifyNodeRole(node: RoleClassificationNode, medFanIn: number, medFanOut: number): Role {
+function classifyNodeRole(
+  node: RoleClassificationNode,
+  medFanIn: number,
+  medFanOut: number,
+  typeDefNamesByFile: Map<string, Set<string>>,
+): Role {
+  // Interface/type members (#1723) — never subject to call-graph dead-code
+  // detection, regardless of fan-in/fan-out/export status.
+  if (isTypeDeclarationMember(node, typeDefNamesByFile)) return 'leaf';
+
   if (FRAMEWORK_ENTRY_PREFIXES.some((p) => node.name.startsWith(p))) return 'entry';
 
   if (node.fanIn === 0) {
@@ -217,10 +291,11 @@ export function classifyRoles(
   if (nodes.length === 0) return new Map();
 
   const { fanIn: medFanIn, fanOut: medFanOut } = medianOverrides ?? computeFanMedians(nodes);
+  const typeDefNamesByFile = computeTypeDefNamesByFile(nodes);
 
   const result = new Map<string, Role>();
   for (const node of nodes) {
-    result.set(node.id, classifyNodeRole(node, medFanIn, medFanOut));
+    result.set(node.id, classifyNodeRole(node, medFanIn, medFanOut, typeDefNamesByFile));
   }
   return result;
 }

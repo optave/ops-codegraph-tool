@@ -110,11 +110,84 @@ describe('CLI smoke tests', () => {
     expect(data).toHaveProperty('results');
   });
 
+  // Regression test for #1726: `-f/--file` is a repeatable Commander option
+  // (collectFile) that always produces a string[], even for a single use.
+  // query's native composite path used to forward that array straight into
+  // a napi binding typed for a single String and crash.
+  test('query -f scopes results to a single file without crashing', () => {
+    const out = run('query', 'add', '-f', 'math.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.results.length).toBeGreaterThan(0);
+    for (const r of data.results) expect(r.file).toContain('math.js');
+  });
+
+  test('query --file (long form) scopes results to a single file without crashing', () => {
+    const out = run('query', 'add', '--file', 'math.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.results.length).toBeGreaterThan(0);
+    for (const r of data.results) expect(r.file).toContain('math.js');
+  });
+
+  test('query with a single -f excludes non-matching files', () => {
+    // `add` is only defined in math.js, so scoping to utils.js must be empty.
+    const out = run('query', 'add', '-f', 'utils.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.results).toHaveLength(0);
+  });
+
+  test('query supports repeated -f (multi-file scoping)', () => {
+    // "square" substring-matches square() in math.js and sumOfSquares() in utils.js.
+    const out = run('query', 'square', '-f', 'math.js', '-f', 'utils.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    const names = data.results.map((r) => r.name);
+    expect(names).toContain('square');
+    expect(names).toContain('sumOfSquares');
+  });
+
   // ─── Fn-Impact ───────────────────────────────────────────────────────
   test('fn-impact --json returns valid JSON with results', () => {
     const out = run('fn-impact', 'add', '--db', dbPath, '--json');
     const data = JSON.parse(out);
     expect(data).toHaveProperty('results');
+  });
+
+  // Regression test for #1726 (see query -f test above for full context).
+  test('fn-impact -f scopes results to a single file without crashing', () => {
+    const out = run('fn-impact', 'add', '-f', 'math.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.results.length).toBeGreaterThan(0);
+    for (const r of data.results) expect(r.file).toContain('math.js');
+  });
+
+  test('fn-impact --file (long form) scopes results to a single file without crashing', () => {
+    const out = run('fn-impact', 'add', '--file', 'math.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.results.length).toBeGreaterThan(0);
+    for (const r of data.results) expect(r.file).toContain('math.js');
+  });
+
+  test('fn-impact with a single -f excludes non-matching files', () => {
+    const out = run('fn-impact', 'add', '-f', 'utils.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.results).toHaveLength(0);
+  });
+
+  test('fn-impact supports repeated -f (multi-file scoping)', () => {
+    const out = run(
+      'fn-impact',
+      'square',
+      '-f',
+      'math.js',
+      '-f',
+      'utils.js',
+      '--db',
+      dbPath,
+      '--json',
+    );
+    const data = JSON.parse(out);
+    const names = data.results.map((r) => r.name);
+    expect(names).toContain('square');
+    expect(names).toContain('sumOfSquares');
   });
 
   // ─── Query (path mode, formerly path) ────────────────────────────────

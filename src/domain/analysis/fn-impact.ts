@@ -268,7 +268,7 @@ export function fnImpactData(
   opts: {
     depth?: number;
     noTests?: boolean;
-    file?: string;
+    file?: string | string[];
     kind?: string;
     includeImplementors?: boolean;
     limit?: number;
