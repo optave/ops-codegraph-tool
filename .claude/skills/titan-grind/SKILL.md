@@ -109,8 +109,9 @@ Forge shapes the metal. Grind smooths the rough edges. Your goal: find helpers t
 
 12. **Capture dead-symbol baseline** (only if `grind.deadSymbolBaseline` is null):
     ```bash
-    codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{const items=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:items.length,byRole:items.reduce((a,i)=>{a[i.role]=(a[i.role]||0)+1;return a},{})}));})"
+    codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{const data=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:data.count,byRole:data.summary}));})"
     ```
+    `codegraph roles --json` returns `{ count, summary, symbols }` (not a bare array) — `summary` is already the per-role breakdown (e.g. `dead-leaf`, `dead-entry`, `dead-ffi`, `dead-unresolved`), so no manual reduce is needed.
     Store the total in `grind.deadSymbolBaseline`. Write `titan-state.json` immediately.
 
 13. **Drift detection.** Compare `titan-state.json → mainSHA` against current origin/main:
@@ -304,8 +305,8 @@ const tokens = helperName
   .slice(0, 3);
 const d=[];process.stdin.on('data',c=>d.push(c));
 process.stdin.on('end',()=>{ try {
-  const items=JSON.parse(Buffer.concat(d));
-  const candidates = items.filter(i =>
+  const data=JSON.parse(Buffer.concat(d));
+  const candidates = (data.symbols || []).filter(i =>
     i.name !== helperName &&
     tokens.some(t => i.name.toLowerCase().includes(t))
   );
@@ -579,7 +580,7 @@ After all targets in the phase are processed:
 
 ```bash
 codegraph build
-codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{const items=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:items.length,byRole:items.reduce((a,i)=>{a[i.role]=(a[i.role]||0)+1;return a},{})}));})"
+codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{const data=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:data.count,byRole:data.summary}));})"
 ```
 
 Store in `grind.deadSymbolCurrent`. Write `titan-state.json`.
