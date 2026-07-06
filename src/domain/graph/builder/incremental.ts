@@ -439,6 +439,14 @@ function emitEdgesForImport(
   }
   if (imp.reexport && !imp.wildcardReexport) {
     edgesAdded += emitNamedSymbolEdges(db, stmts, imp, resolvedPath, fileNodeId, 'reexports');
+  } else if (imp.reexport && imp.wildcardReexport) {
+    // Mirrors build-edges.ts (full-build path): a genuine wildcard must stay
+    // distinguishable from a named reexport even when a *different*
+    // statement in this file names specific symbols from the same target
+    // (#1849 review). See `collectReexportedSymbols` in
+    // domain/analysis/exports.ts.
+    stmts.insertEdge.run(fileNodeId, targetRow.id, 'reexports-wildcard', 1.0, 0);
+    edgesAdded++;
   }
   if (!imp.reexport && db) {
     edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp);

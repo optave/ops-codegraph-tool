@@ -20,6 +20,7 @@ const _consumersStmtCache: StmtCache<{ name: string; file: string; line: number 
 const _reexportsFromStmtCache: StmtCache<{ file: string }> = new WeakMap();
 const _reexportsToStmtCache: StmtCache<{ file: string }> = new WeakMap();
 const _reexportSymbolsStmtCache: StmtCache<NodeRow> = new WeakMap();
+const _wildcardReexportTargetsStmtCache: StmtCache<{ file: string }> = new WeakMap();
 
 export function exportsData(
   file: string,
@@ -102,16 +103,22 @@ export function exportsData(
  * `X`'s own node (emitted by `emitNamedSymbolEdges` in build-edges.ts /
  * incremental.ts, and the mirrored Rust extractors) — so for any target file
  * reached with at least one such edge, only those specifically-named symbols
- * are reported. `export * from 'Y'` (and any other reexport whose specific
- * symbol couldn't be resolved) carries no symbol-level edge, so it falls
- * back to the target's full export list — a wildcard genuinely does
- * re-export everything, unlike a named specifier (#1742).
+ * are reported *unless a genuine wildcard also targets that same file*.
+ * `export * from 'Y'` carries no specific names, so it's marked instead with
+ * a dedicated `reexports-wildcard` file-level edge — a wildcard's full-export
+ * semantics must not be suppressed just because a *different* statement in
+ * the same barrel also names specific symbols from that exact target (#1742,
+ * #1849 review). Any reexport whose specific name couldn't be resolved to a
+ * node (and so carries neither a named nor a wildcard marker) also falls
+ * back to the target's full export list, preserving the pre-fix behaviour
+ * for that unresolved case.
  */
 function collectReexportedSymbols(
   db: BetterSqlite3Database,
   fileNodeId: number,
   reexportsToStmt: ReturnType<BetterSqlite3Database['prepare']>,
   reexportSymbolsStmt: ReturnType<BetterSqlite3Database['prepare']>,
+  wildcardReexportTargetsStmt: ReturnType<BetterSqlite3Database['prepare']>,
   getFileLines: (file: string) => string[] | null,
   buildSymbolResult: (s: NodeRow, fileLines: string[] | null) => any,
 ) {
@@ -122,12 +129,16 @@ function collectReexportedSymbols(
     if (!namedByFile.has(s.file)) namedByFile.set(s.file, []);
     namedByFile.get(s.file)!.push(s);
   }
+  const wildcardFiles = new Set(
+    (wildcardReexportTargetsStmt.all(fileNodeId) as Array<{ file: string }>).map((r) => r.file),
+  );
 
   const reexportedSymbols: Array<ReturnType<typeof buildSymbolResult> & { originFile: string }> =
     [];
   for (const reexTarget of reexportTargets) {
-    const targetExported =
-      namedByFile.get(reexTarget.file) ?? findExportedNodesByFile(db, reexTarget.file);
+    const targetExported = wildcardFiles.has(reexTarget.file)
+      ? findExportedNodesByFile(db, reexTarget.file)
+      : (namedByFile.get(reexTarget.file) ?? findExportedNodesByFile(db, reexTarget.file));
     for (const s of targetExported) {
       reexportedSymbols.push({
         ...buildSymbolResult(s, getFileLines(reexTarget.file)),
@@ -191,6 +202,16 @@ function exportsFileImpl(
        WHERE e.source_id = ? AND e.kind = 'reexports' AND n.kind != 'file'
        ORDER BY n.line`,
   );
+  // Target files reached by a genuine `export * from 'Y'` wildcard (target
+  // is the file node itself). A wildcard's full-export semantics must apply
+  // even when a *different* statement in the same barrel also names
+  // specific symbols from that exact target file (#1849 review).
+  const wildcardReexportTargetsStmt = cachedStmt(
+    _wildcardReexportTargetsStmtCache,
+    db,
+    `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
+       WHERE e.source_id = ? AND e.kind = 'reexports-wildcard'`,
+  );
 
   return fileNodes.map((fn) => {
     const symbols = findNodesByFile(db, fn.file) as NodeRow[];
@@ -233,6 +254,7 @@ function exportsFileImpl(
       fn.id,
       reexportsToStmt,
       reexportSymbolsStmt,
+      wildcardReexportTargetsStmt,
       getFileLines,
       buildSymbolResult,
     );

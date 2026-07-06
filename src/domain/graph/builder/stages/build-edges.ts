@@ -235,6 +235,14 @@ function emitEdgesForImport(
   }
   if (imp.reexport && !imp.wildcardReexport) {
     emitNamedSymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows, 'reexports');
+  } else if (imp.reexport && imp.wildcardReexport) {
+    // A genuine wildcard needs to be distinguishable from a named reexport
+    // even when a *different* statement in the same file names specific
+    // symbols from this exact target — otherwise the query layer can't tell
+    // "only these symbols are re-exported" apart from "everything is
+    // re-exported, and these happen to also be individually named" (#1849
+    // review). See `collectReexportedSymbols` in domain/analysis/exports.ts.
+    allEdgeRows.push([fileNodeId, targetRow.id, 'reexports-wildcard', 1.0, 0, null, null]);
   }
 
   if (!imp.reexport && isBarrelFile(ctx, resolvedPath)) {
