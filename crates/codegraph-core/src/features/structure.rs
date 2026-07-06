@@ -141,6 +141,242 @@ pub fn get_existing_file_count(conn: &Connection) -> i64 {
     .unwrap_or(0)
 }
 
+/// Directories connected to `dir` via a live import/imports-type edge in
+/// either direction — the cross-directory neighbours whose own fan-in/out
+/// may have shifted even though none of their files changed. Used by
+/// `refresh_affected_directory_metrics` to expand its affected-directory set
+/// by exactly one hop.
+fn find_neighbor_files(conn: &Connection, dir: &str) -> Vec<String> {
+    let lo = format!("{dir}/");
+    let hi = format!("{dir}0");
+    let mut stmt = match conn.prepare(
+        "SELECT n2.file AS other FROM edges e \
+           JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
+           WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file \
+             AND n1.file >= ?1 AND n1.file < ?2 \
+         UNION \
+         SELECT n1.file AS other FROM edges e \
+           JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
+           WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file \
+             AND n2.file >= ?1 AND n2.file < ?2",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let result = match stmt.query_map(rusqlite::params![lo, hi], |row| row.get::<_, String>(0)) {
+        Ok(rows) => rows.flatten().collect(),
+        Err(_) => Vec::new(),
+    };
+    result
+}
+
+/// Targeted directory-metrics refresh for the small-incremental fast path.
+///
+/// `update_changed_file_metrics` only ever touches per-file `node_metrics`
+/// rows — it never looks at directories. Any file added to, removed from, or
+/// edited within a directory left that directory's
+/// fileCount/symbolCount/fanIn/fanOut/cohesion stale until the next full
+/// rebuild (#1738), and a file added under a brand-new directory never even
+/// got a directory node or a `contains` edge from its parent.
+///
+/// This recomputes metrics for the ancestor directories of the files that
+/// changed in this build (added, removed, or modified), PLUS any directory
+/// reachable from them via a live cross-directory import edge — a changed
+/// file that gains (or loses) an import into a sibling package shifts that
+/// package's fan-in/fan-out/cohesion even though none of its own files were
+/// touched. One level of expansion only (mirrors the neighbour-expansion
+/// `classifyNodeRolesIncremental`/`do_classify_incremental` already does for
+/// role classification) — bounded by (changed files × path depth) rather
+/// than the size of the repo, so it stays cheap enough to run
+/// unconditionally alongside the fast path.
+///
+/// Removed files need no edge/node cleanup of their own — the purge step
+/// already deleted their nodes and every edge referencing them (including
+/// their old `contains` edge) earlier in the pipeline; only their ancestor
+/// directories' aggregates need recomputing here. Note this expansion can't
+/// reach a directory whose ONLY relationship to the touched set was an edge
+/// to/from a file that was JUST removed — that edge is already gone by the
+/// time this runs, so there's nothing left to discover it from (tracked
+/// separately, see #1738 follow-up).
+pub fn refresh_affected_directory_metrics(
+    conn: &Connection,
+    changed_files: &[String],
+    removed_files: &[String],
+) {
+    let mut touched: Vec<String> = Vec::with_capacity(changed_files.len() + removed_files.len());
+    touched.extend_from_slice(changed_files);
+    touched.extend_from_slice(removed_files);
+    let mut affected_dirs = get_ancestor_dirs(&touched);
+    if affected_dirs.is_empty() {
+        return;
+    }
+
+    let seed_dirs: Vec<String> = affected_dirs.iter().cloned().collect();
+    for dir in &seed_dirs {
+        let neighbor_files = find_neighbor_files(conn, dir);
+        for ancestor in get_ancestor_dirs(&neighbor_files) {
+            affected_dirs.insert(ancestor);
+        }
+    }
+
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(_) => return,
+    };
+
+    // 1. Ensure directory nodes exist for the whole affected ancestor chain —
+    //    handles a file added under a brand-new (possibly multi-level) directory.
+    {
+        let mut insert_dir = match tx.prepare(
+            "INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, 'directory', ?, 0, NULL)",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        for dir in &affected_dirs {
+            let _ = insert_dir.execute(rusqlite::params![dir, dir]);
+        }
+    }
+
+    {
+        let mut insert_edge = match tx.prepare(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) \
+             SELECT ?, ?, 'contains', 1.0, 0 \
+             WHERE NOT EXISTS (SELECT 1 FROM edges WHERE source_id = ? AND target_id = ? AND kind = 'contains')",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        // 2. Wire dir -> parent-dir contains edges for the chain.
+        for dir in &affected_dirs {
+            if let Some(parent) = parent_dir(dir) {
+                if let (Some(parent_id), Some(dir_id)) = (
+                    get_node_id(&tx, &parent, "directory", &parent, 0),
+                    get_node_id(&tx, dir, "directory", dir, 0),
+                ) {
+                    let _ =
+                        insert_edge.execute(rusqlite::params![parent_id, dir_id, parent_id, dir_id]);
+                }
+            }
+        }
+
+        // 3. Wire dir -> file contains edges for changed (added/modified) files.
+        //    Removed files' nodes and edges are already purged upstream.
+        for rel_path in changed_files {
+            if let Some(dir) = parent_dir(rel_path) {
+                if let (Some(dir_id), Some(file_id)) = (
+                    get_node_id(&tx, &dir, "directory", &dir, 0),
+                    get_node_id(&tx, rel_path, "file", rel_path, 0),
+                ) {
+                    let _ =
+                        insert_edge.execute(rusqlite::params![dir_id, file_id, dir_id, file_id]);
+                }
+            }
+        }
+    }
+
+    // 4. Recompute each affected directory's metrics from the live DB state.
+    {
+        // fileCount/symbolCount: transitive counts under `dir`, matching
+        // compute_directory_metrics below. `file >= dir/ AND file < dir0` is
+        // an index-friendly prefix-range scan equivalent to `file LIKE
+        // 'dir/%'` — '0' (0x30) is the character immediately after '/'
+        // (0x2F), so this bound matches exactly the paths nested under `dir`.
+        let mut count_files = match tx.prepare(
+            "SELECT COUNT(*) FROM nodes WHERE kind = 'file' AND file >= ?1 AND file < ?2",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut count_symbols = match tx.prepare(
+            "SELECT COUNT(*) FROM nodes WHERE kind != 'file' AND kind != 'directory' AND file >= ?1 AND file < ?2",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        // Edges sourced from a file inside dir: intra (target also inside dir) vs fan-out.
+        let mut outbound = match tx.prepare(
+            "SELECT \
+               COALESCE(SUM(CASE WHEN n2.file >= ?1 AND n2.file < ?2 THEN 1 ELSE 0 END), 0), \
+               COUNT(*) \
+             FROM edges e \
+             JOIN nodes n1 ON e.source_id = n1.id \
+             JOIN nodes n2 ON e.target_id = n2.id \
+             WHERE e.kind IN ('imports', 'imports-type') \
+               AND n1.file != n2.file \
+               AND n2.kind = 'file' \
+               AND n1.file >= ?1 AND n1.file < ?2",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        // Edges targeting a file inside dir, sourced from a file outside dir (fan-in only).
+        let mut inbound = match tx.prepare(
+            "SELECT COUNT(*) \
+             FROM edges e \
+             JOIN nodes n1 ON e.source_id = n1.id \
+             JOIN nodes n2 ON e.target_id = n2.id \
+             WHERE e.kind IN ('imports', 'imports-type') \
+               AND n1.file != n2.file \
+               AND n2.kind = 'file' \
+               AND n2.file >= ?1 AND n2.file < ?2 \
+               AND NOT (n1.file >= ?1 AND n1.file < ?2)",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut upsert = match tx.prepare(
+            "INSERT OR REPLACE INTO node_metrics \
+             (node_id, line_count, symbol_count, import_count, export_count, fan_in, fan_out, cohesion, file_count) \
+             VALUES (?, NULL, ?, NULL, NULL, ?, ?, ?, ?)",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        for dir in &affected_dirs {
+            let dir_id = match get_node_id(&tx, dir, "directory", dir, 0) {
+                Some(id) => id,
+                None => continue,
+            };
+            let lo = format!("{dir}/");
+            let hi = format!("{dir}0");
+
+            let file_count: i64 = count_files
+                .query_row(rusqlite::params![lo, hi], |r| r.get(0))
+                .unwrap_or(0);
+            let symbol_count: i64 = count_symbols
+                .query_row(rusqlite::params![lo, hi], |r| r.get(0))
+                .unwrap_or(0);
+            let (intra, total): (i64, i64) = outbound
+                .query_row(rusqlite::params![lo, hi], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap_or((0, 0));
+            let fan_out = total - intra;
+            let fan_in: i64 = inbound
+                .query_row(rusqlite::params![lo, hi], |r| r.get(0))
+                .unwrap_or(0);
+            let total_edges = intra + fan_in + fan_out;
+            let cohesion: Option<f64> = if total_edges > 0 {
+                Some(intra as f64 / total_edges as f64)
+            } else {
+                None
+            };
+
+            let _ = upsert.execute(rusqlite::params![
+                dir_id,
+                symbol_count,
+                fan_in,
+                fan_out,
+                cohesion,
+                file_count
+            ]);
+        }
+    }
+
+    let _ = tx.commit();
+}
+
 // ── Full structure computation ──────────────────────────────────────────
 
 /// Normalize a path to use forward slashes only.

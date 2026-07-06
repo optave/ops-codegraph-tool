@@ -77,3 +77,23 @@ export function isSupportedFile(filePath: string): boolean {
 export function normalizePath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
+
+/**
+ * Walk every ancestor directory of each given file path (not just the direct
+ * parent) and return the union across all files. Shared by the full
+ * directory-structure build (`features/structure.ts`) and the incremental
+ * fast path (`domain/graph/builder/stages/build-structure.ts`), which both
+ * need to scope work to exactly the directories whose file composition may
+ * have changed (#1738).
+ */
+export function getAncestorDirs(filePaths: Iterable<string>): Set<string> {
+  const dirs = new Set<string>();
+  for (const f of filePaths) {
+    let d = normalizePath(path.dirname(f));
+    while (d && d !== '.') {
+      dirs.add(d);
+      d = normalizePath(path.dirname(d));
+    }
+  }
+  return dirs;
+}

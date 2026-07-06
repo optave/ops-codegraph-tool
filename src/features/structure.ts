@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { getBuildMeta, getNodeId, setBuildMeta, testFilterSQL } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
-import { normalizePath } from '../shared/constants.js';
+import { getAncestorDirs, normalizePath } from '../shared/constants.js';
 import type { BetterSqlite3Database } from '../types.js';
 
 // ─── Build-time helpers ───────────────────────────────────────────────
@@ -15,18 +15,6 @@ interface FileSymbolData {
   imports: unknown[];
   exports: unknown[];
   calls?: unknown[];
-}
-
-function getAncestorDirs(filePaths: string[]): Set<string> {
-  const dirs = new Set<string>();
-  for (const f of filePaths) {
-    let d = normalizePath(path.dirname(f));
-    while (d && d !== '.') {
-      dirs.add(d);
-      d = normalizePath(path.dirname(d));
-    }
-  }
-  return dirs;
 }
 
 function cleanupPreviousData(

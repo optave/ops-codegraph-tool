@@ -6,7 +6,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { debug } from '../../../../infrastructure/logger.js';
-import { normalizePath } from '../../../../shared/constants.js';
+import { getAncestorDirs, normalizePath } from '../../../../shared/constants.js';
 import type { ExtractorOutput } from '../../../../types.js';
 import type { PipelineContext } from '../context.js';
 import { readFileSafe } from '../helpers.js';
@@ -55,6 +55,7 @@ async function buildDirectoryStructure(
 ): Promise<void> {
   if (useSmallIncrementalFastPath) {
     updateChangedFileMetrics(ctx, changedFileList!);
+    refreshAffectedDirectoryMetrics(ctx, changedFileList!, ctx.removed ?? []);
     return;
   }
 
@@ -185,8 +186,9 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
  * (~8ms) and full structure rebuild (~15ms), replacing them with per-file
  * indexed queries (~1-2ms total for 1-5 files).
  *
- * Directory metrics are not recomputed — a 1-5 file change won't
- * meaningfully alter directory-level cohesion or symbol counts.
+ * Directory-level metrics are handled separately by
+ * `refreshAffectedDirectoryMetrics` below — this function only ever touches
+ * per-file rows.
  */
 function updateChangedFileMetrics(ctx: PipelineContext, changedFiles: string[]): void {
   const { db } = ctx;
@@ -248,6 +250,189 @@ function updateChangedFileMetrics(ctx: PipelineContext, changedFiles: string[]):
   })();
 
   debug(`Structure (fast path): updated metrics for ${changedFiles.length} files`);
+}
+
+/**
+ * Targeted directory-metrics refresh for the small-incremental fast path.
+ *
+ * `updateChangedFileMetrics` only ever touches per-file `node_metrics` rows —
+ * it never looks at directories. Any file added to, removed from, or edited
+ * within a directory left that directory's fileCount/symbolCount/fanIn/
+ * fanOut/cohesion stale until the next full rebuild (#1738), and a file added
+ * under a brand-new directory never even got a directory node or a `contains`
+ * edge from its parent.
+ *
+ * This recomputes metrics for the ancestor directories of the files that
+ * changed in this build (added, removed, or modified), PLUS any directory
+ * reachable from them via a live cross-directory import edge — a changed
+ * file that gains (or loses) an import into a sibling package shifts that
+ * package's fan-in/fan-out/cohesion even though none of its own files were
+ * touched. One level of expansion only (mirrors the neighbour-expansion
+ * `classifyNodeRolesIncremental` already does for role classification) —
+ * bounded by (changed files × path depth) rather than the size of the repo,
+ * so it stays cheap enough to run unconditionally alongside the fast path.
+ *
+ * Removed files need no edge/node cleanup of their own — `purgeFilesData`
+ * already deleted their nodes and every edge referencing them (including
+ * their old `contains` edge) earlier in the pipeline; only their ancestor
+ * directories' aggregates need recomputing here. Note this expansion can't
+ * reach a directory whose ONLY relationship to the touched set was an edge
+ * to/from a file that was JUST removed — that edge is already gone by the
+ * time this runs, so there's nothing left to discover it from (tracked
+ * separately, see #1738 follow-up).
+ */
+function refreshAffectedDirectoryMetrics(
+  ctx: PipelineContext,
+  changedFiles: string[],
+  removedFiles: string[],
+): void {
+  const { db } = ctx;
+  const affectedDirs = getAncestorDirs([...changedFiles, ...removedFiles]);
+  if (affectedDirs.size === 0) return;
+
+  const getDirId = db.prepare(
+    "SELECT id FROM nodes WHERE name = ? AND kind = 'directory' AND file = ? AND line = 0",
+  );
+  // Directories connected to `dir` via a live import/imports-type edge in
+  // either direction — the cross-directory neighbours whose own fan-in/out
+  // may have shifted even though none of their files changed.
+  const neighborFiles = db.prepare(`
+    SELECT n2.file AS other FROM edges e 
+      JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
+      WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file
+        AND n1.file >= @lo AND n1.file < @hi
+    UNION
+    SELECT n1.file AS other FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
+      WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file
+        AND n2.file >= @lo AND n2.file < @hi
+  `);
+  for (const dir of [...affectedDirs]) {
+    const otherFiles = neighborFiles.all({ lo: `${dir}/`, hi: `${dir}0` }) as Array<{
+      other: string;
+    }>;
+    for (const ancestor of getAncestorDirs(otherFiles.map((r) => r.other))) {
+      affectedDirs.add(ancestor);
+    }
+  }
+
+  const insertDirNode = db.prepare(
+    'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+  );
+  const getFileId = db.prepare(
+    "SELECT id FROM nodes WHERE name = ? AND kind = 'file' AND file = ? AND line = 0",
+  );
+  const insertContainsIfMissing = db.prepare(`
+    INSERT INTO edges (source_id, target_id, kind, confidence, dynamic)
+    SELECT ?, ?, 'contains', 1.0, 0
+    WHERE NOT EXISTS (
+      SELECT 1 FROM edges WHERE source_id = ? AND target_id = ? AND kind = 'contains'
+    )
+  `);
+  // fileCount/symbolCount: transitive counts under `dir`, matching
+  // computeDirectoryMetrics in features/structure.ts. `file >= dir/ AND
+  // file < dir0` is an index-friendly prefix-range scan equivalent to
+  // `file LIKE 'dir/%'` — '0' (0x30) is the character immediately after
+  // '/' (0x2F), so this bound matches exactly the paths nested under `dir`.
+  const countFiles = db.prepare(
+    "SELECT COUNT(*) AS c FROM nodes WHERE kind = 'file' AND file >= ? AND file < ?",
+  );
+  const countSymbols = db.prepare(
+    "SELECT COUNT(*) AS c FROM nodes WHERE kind != 'file' AND kind != 'directory' AND file >= ? AND file < ?",
+  );
+  // Edges sourced from a file inside dir: intra (target also inside dir) vs fan-out.
+  const outboundEdges = db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN n2.file >= @lo AND n2.file < @hi THEN 1 ELSE 0 END), 0) AS intra,
+      COUNT(*) AS total
+    FROM edges e
+    JOIN nodes n1 ON e.source_id = n1.id
+    JOIN nodes n2 ON e.target_id = n2.id
+    WHERE e.kind IN ('imports', 'imports-type')
+      AND n1.file != n2.file
+      AND n2.kind = 'file'
+      AND n1.file >= @lo AND n1.file < @hi
+  `);
+  // Edges targeting a file inside dir, sourced from a file outside dir (fan-in only).
+  const inboundEdges = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM edges e
+    JOIN nodes n1 ON e.source_id = n1.id
+    JOIN nodes n2 ON e.target_id = n2.id
+    WHERE e.kind IN ('imports', 'imports-type')
+      AND n1.file != n2.file
+      AND n2.kind = 'file'
+      AND n2.file >= @lo AND n2.file < @hi
+      AND NOT (n1.file >= @lo AND n1.file < @hi)
+  `);
+  const upsertMetric = db.prepare(`
+    INSERT OR REPLACE INTO node_metrics
+      (node_id, line_count, symbol_count, import_count, export_count, fan_in, fan_out, cohesion, file_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  db.transaction(() => {
+    // Ensure directory nodes exist for the whole affected ancestor chain —
+    // handles a file added under a brand-new (possibly multi-level) directory.
+    for (const dir of affectedDirs) {
+      insertDirNode.run(dir, 'directory', dir, 0, null);
+    }
+
+    // Wire dir -> parent-dir contains edges for the chain.
+    for (const dir of affectedDirs) {
+      const parent = normalizePath(path.dirname(dir));
+      if (!parent || parent === '.' || parent === dir) continue;
+      const parentRow = getDirId.get(parent, parent) as { id: number } | undefined;
+      const childRow = getDirId.get(dir, dir) as { id: number } | undefined;
+      if (parentRow && childRow) {
+        insertContainsIfMissing.run(parentRow.id, childRow.id, parentRow.id, childRow.id);
+      }
+    }
+
+    // Wire dir -> file contains edges for changed (added/modified) files.
+    // Removed files' nodes and edges are already purged upstream.
+    for (const relPath of changedFiles) {
+      const dir = normalizePath(path.dirname(relPath));
+      if (!dir || dir === '.') continue;
+      const dirRow = getDirId.get(dir, dir) as { id: number } | undefined;
+      const fileRow = getFileId.get(relPath, relPath) as { id: number } | undefined;
+      if (dirRow && fileRow) {
+        insertContainsIfMissing.run(dirRow.id, fileRow.id, dirRow.id, fileRow.id);
+      }
+    }
+
+    // Recompute each affected directory's metrics from the live DB state.
+    for (const dir of affectedDirs) {
+      const dirRow = getDirId.get(dir, dir) as { id: number } | undefined;
+      if (!dirRow) continue;
+
+      const lo = `${dir}/`;
+      const hi = `${dir}0`;
+      const fileCount = (countFiles.get(lo, hi) as { c: number }).c;
+      const symbolCount = (countSymbols.get(lo, hi) as { c: number }).c;
+      const out = outboundEdges.get({ lo, hi }) as { intra: number; total: number };
+      const fanOut = out.total - out.intra;
+      const fanIn = (inboundEdges.get({ lo, hi }) as { c: number }).c;
+      const totalEdges = out.intra + fanIn + fanOut;
+      const cohesion = totalEdges > 0 ? out.intra / totalEdges : null;
+
+      upsertMetric.run(
+        dirRow.id,
+        null,
+        symbolCount,
+        null,
+        null,
+        fanIn,
+        fanOut,
+        cohesion,
+        fileCount,
+      );
+    }
+  })();
+
+  debug(
+    `Structure (fast path): refreshed metrics for ${affectedDirs.size} affected director${affectedDirs.size === 1 ? 'y' : 'ies'}`,
+  );
 }
 
 // ── Full incremental DB load (medium/large changes) ──────────────────────

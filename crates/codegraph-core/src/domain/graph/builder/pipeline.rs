@@ -286,6 +286,11 @@ fn reconnect_saved_reverse_dep_edges(
 /// structure rebuild based on the same gates as the JS pipeline. The change
 /// set is read from `file_symbols.keys()` because only truly-changed files
 /// are present (reverse-deps are reconnected, not re-parsed).
+///
+/// `removed_files` is threaded through separately from `parse_changes_len`
+/// (which only counts re-parsed files) so the fast path's directory-metrics
+/// refresh also covers files deleted from a directory, not just files added
+/// or modified within it (#1738).
 fn run_structure_phase(
     conn: &Connection,
     file_symbols: &BTreeMap<String, FileSymbols>,
@@ -293,6 +298,7 @@ fn run_structure_phase(
     root_dir: &str,
     line_count_map: &HashMap<String, i64>,
     parse_changes_len: usize,
+    removed_files: &[String],
     is_full_build: bool,
 ) {
     let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
@@ -303,6 +309,7 @@ fn run_structure_phase(
 
     if use_fast_path {
         structure::update_changed_file_metrics(conn, &changed_files, line_count_map, file_symbols);
+        structure::refresh_affected_directory_metrics(conn, &changed_files, removed_files);
     } else {
         let changed_for_structure: Option<Vec<String>> = if is_full_build {
             None
@@ -603,6 +610,7 @@ pub fn run_pipeline(
         root_dir,
         &line_count_map,
         parse_changes.len(),
+        &change_result.removed,
         change_result.is_full_build,
     );
     timing.structure_ms = t0.elapsed().as_secs_f64() * 1000.0;
