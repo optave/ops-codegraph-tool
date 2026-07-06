@@ -166,15 +166,36 @@ function importNamePairs(imp: Import): Array<{ local: string; original: string }
 }
 
 /**
- * For a `import type` statement, emit symbol-level `imports-type` edges so
- * the target symbols get fan-in credit and aren't classified as dead code.
+ * Emit one symbol-level edge per named specifier in `imp`, pointing at the
+ * specific target symbol (resolved through barrel chains when needed).
+ *
+ * Shared by two statement shapes that name specific symbols without a plain
+ * file-level `imports`/`reexports` edge fully capturing the relationship:
+ *   - `import type { X } from 'Y'` → kind `imports-type`, so the target gets
+ *     fan-in credit and isn't classified as dead code (#1724).
+ *   - `export { X } from 'Y'` / `export { X as Z } from 'Y'` → kind
+ *     `reexports`, so `codegraph exports` can report exactly which symbols
+ *     are re-exported instead of conflating the file-level barrel edge with
+ *     "every export of Y" (#1742).
+ *
+ * `imp.names` always carries the *original* declaration name for export
+ * specifiers, even when renamed externally (see `extractImportNames`), so
+ * the emitted edge — and the resulting `reexportedSymbols` entry — reports
+ * the symbol under its own declared name, not the barrel's external alias.
+ *
+ * Wildcard re-exports (`export * from 'Y'`) carry no specific names
+ * (`imp.names` is empty), so the loop below is a no-op for them — a file
+ * only gets a precise symbol-level edge when a name is actually spelled
+ * out; the query layer falls back to the target's full export list for
+ * anything reached only by the file-level edge (genuine wildcard semantics).
  */
-function emitTypeOnlySymbolEdges(
+function emitNamedSymbolEdges(
   ctx: PipelineContext,
   imp: Import,
   resolvedPath: string,
   fileNodeId: number,
   allEdgeRows: EdgeRowTuple[],
+  edgeKind: 'imports-type' | 'reexports',
 ): void {
   if (!ctx.nodesByNameAndFile) return;
   for (const { original } of importNamePairs(imp)) {
@@ -185,14 +206,14 @@ function emitTypeOnlySymbolEdges(
     }
     const candidates = ctx.nodesByNameAndFile.get(`${original}|${targetFile}`);
     if (candidates && candidates.length > 0) {
-      allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0, null, null]);
+      allEdgeRows.push([fileNodeId, candidates[0]!.id, edgeKind, 1.0, 0, null, null]);
     }
   }
 }
 
 /**
  * Process a single import statement and emit all resulting edges (file→file,
- * type-only symbol-level, and barrel re-export targets).
+ * named-symbol-level, and barrel re-export targets).
  */
 function emitEdgesForImport(
   ctx: PipelineContext,
@@ -210,7 +231,10 @@ function emitEdgesForImport(
   allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0, null, null]);
 
   if (imp.typeOnly) {
-    emitTypeOnlySymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows);
+    emitNamedSymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows, 'imports-type');
+  }
+  if (imp.reexport && !imp.wildcardReexport) {
+    emitNamedSymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows, 'reexports');
   }
 
   if (!imp.reexport && isBarrelFile(ctx, resolvedPath)) {

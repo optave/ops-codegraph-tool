@@ -19,6 +19,7 @@ import { resolveAnalysisOpts, withReadonlyDb } from './query-helpers.js';
 const _consumersStmtCache: StmtCache<{ name: string; file: string; line: number }> = new WeakMap();
 const _reexportsFromStmtCache: StmtCache<{ file: string }> = new WeakMap();
 const _reexportsToStmtCache: StmtCache<{ file: string }> = new WeakMap();
+const _reexportSymbolsStmtCache: StmtCache<NodeRow> = new WeakMap();
 
 export function exportsData(
   file: string,
@@ -94,19 +95,39 @@ export function exportsData(
   });
 }
 
-/** Collect symbols re-exported through barrel files. */
+/**
+ * Collect symbols re-exported through barrel files.
+ *
+ * `export { X } from 'Y'` records a symbol-level `reexports` edge straight to
+ * `X`'s own node (emitted by `emitNamedSymbolEdges` in build-edges.ts /
+ * incremental.ts, and the mirrored Rust extractors) — so for any target file
+ * reached with at least one such edge, only those specifically-named symbols
+ * are reported. `export * from 'Y'` (and any other reexport whose specific
+ * symbol couldn't be resolved) carries no symbol-level edge, so it falls
+ * back to the target's full export list — a wildcard genuinely does
+ * re-export everything, unlike a named specifier (#1742).
+ */
 function collectReexportedSymbols(
   db: BetterSqlite3Database,
   fileNodeId: number,
   reexportsToStmt: ReturnType<BetterSqlite3Database['prepare']>,
+  reexportSymbolsStmt: ReturnType<BetterSqlite3Database['prepare']>,
   getFileLines: (file: string) => string[] | null,
   buildSymbolResult: (s: NodeRow, fileLines: string[] | null) => any,
 ) {
   const reexportTargets = reexportsToStmt.all(fileNodeId) as Array<{ file: string }>;
+  const namedSymbols = reexportSymbolsStmt.all(fileNodeId) as NodeRow[];
+  const namedByFile = new Map<string, NodeRow[]>();
+  for (const s of namedSymbols) {
+    if (!namedByFile.has(s.file)) namedByFile.set(s.file, []);
+    namedByFile.get(s.file)!.push(s);
+  }
+
   const reexportedSymbols: Array<ReturnType<typeof buildSymbolResult> & { originFile: string }> =
     [];
   for (const reexTarget of reexportTargets) {
-    const targetExported = findExportedNodesByFile(db, reexTarget.file);
+    const targetExported =
+      namedByFile.get(reexTarget.file) ?? findExportedNodesByFile(db, reexTarget.file);
     for (const s of targetExported) {
       reexportedSymbols.push({
         ...buildSymbolResult(s, getFileLines(reexTarget.file)),
@@ -159,6 +180,17 @@ function exportsFileImpl(
     `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
        WHERE e.source_id = ? AND e.kind = 'reexports'`,
   );
+  // Symbol-level `reexports` edges — the specific symbols named in
+  // `export { X } from 'Y'` clauses (target is the symbol node itself, not
+  // a file node). Distinct from reexportsToStmt above, which only proves a
+  // reexport *relationship* exists with a target file (#1742).
+  const reexportSymbolsStmt = cachedStmt(
+    _reexportSymbolsStmtCache,
+    db,
+    `SELECT DISTINCT n.* FROM edges e JOIN nodes n ON e.target_id = n.id
+       WHERE e.source_id = ? AND e.kind = 'reexports' AND n.kind != 'file'
+       ORDER BY n.line`,
+  );
 
   return fileNodes.map((fn) => {
     const symbols = findNodesByFile(db, fn.file) as NodeRow[];
@@ -200,6 +232,7 @@ function exportsFileImpl(
       db,
       fn.id,
       reexportsToStmt,
+      reexportSymbolsStmt,
       getFileLines,
       buildSymbolResult,
     );

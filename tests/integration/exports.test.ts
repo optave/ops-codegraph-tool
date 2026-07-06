@@ -313,3 +313,128 @@ describe('exportsData — import type consumer crediting (#1724)', () => {
     expect(unused.consumers).toEqual([]);
   });
 });
+
+// ─── reexportedSymbols scoped to actually-named specifiers (#1742) ───────
+//
+// Regression coverage for: a single named re-export (`export { X } from 'Y'`)
+// was treated as if the file transitively re-exported EVERY export of `Y`,
+// even symbols never mentioned in any reexport clause (and even symbols only
+// imported as a type, never re-exported). The builder now emits a
+// symbol-level `reexports` edge straight to the specifically-named symbol
+// (mirroring the existing `imports-type` symbol-level edge from #1724) —
+// see `emitNamedSymbolEdges` in build-edges.ts / incremental.ts and the
+// mirrored Rust extractors. `collectReexportedSymbols` only falls back to a
+// target's full export list when no symbol-level edge was recorded for it
+// (i.e. a genuine `export * from 'Y'` wildcard, which really does re-export
+// everything).
+
+describe('exportsData — reexportedSymbols scoped to named specifiers (#1742)', () => {
+  let tmpDir3: string, dbPath3: string;
+
+  beforeAll(() => {
+    tmpDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-exports-reexport-scope-'));
+    fs.mkdirSync(path.join(tmpDir3, '.codegraph'));
+    dbPath3 = path.join(tmpDir3, '.codegraph', 'graph.db');
+
+    const db = new Database(dbPath3);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+
+    // File nodes
+    const fViewer = insertNode(db, 'viewer.ts', 'file', 'viewer.ts', 0);
+    const fHelpers = insertNode(db, 'helpers.ts', 'file', 'helpers.ts', 0);
+    const fBarrel = insertNode(db, 'enrichment.ts', 'file', 'enrichment.ts', 0);
+
+    // viewer.ts exports four symbols; only two are ever re-exported by
+    // enrichment.ts, one of them under a renamed external alias.
+    const loadPlotConfig = insertNode(db, 'loadPlotConfig', 'function', 'viewer.ts', 1);
+    const buildLayoutOptions = insertNode(db, 'buildLayoutOptions', 'function', 'viewer.ts', 10);
+    const escapeHtml = insertNode(db, 'escapeHtml', 'function', 'viewer.ts', 20);
+    const plotConfig = insertNode(db, 'PlotConfig', 'interface', 'viewer.ts', 30);
+
+    // helpers.ts is reached only via a wildcard re-export (`export * from`) —
+    // no symbol-level edges are ever recorded for it.
+    const formatDate = insertNode(db, 'formatDate', 'function', 'helpers.ts', 1);
+    const formatNumber = insertNode(db, 'formatNumber', 'function', 'helpers.ts', 10);
+
+    const markExported = db.prepare('UPDATE nodes SET exported = 1 WHERE id = ?');
+    for (const id of [
+      loadPlotConfig,
+      buildLayoutOptions,
+      escapeHtml,
+      plotConfig,
+      formatDate,
+      formatNumber,
+    ]) {
+      markExported.run(id);
+    }
+
+    // enrichment.ts:
+    //   export { loadPlotConfig } from './viewer';                 (named, no rename)
+    //   export { buildLayoutOptions as buildOptions } from './viewer'; (named, renamed)
+    //   import type { PlotConfig } from './viewer';                 (type-only, NOT a reexport)
+    //   export * from './helpers';                                  (wildcard)
+    //
+    // File-level `reexports` edges (barrel-relationship proof, one per target):
+    insertEdge(db, fBarrel, fViewer, 'reexports');
+    insertEdge(db, fBarrel, fHelpers, 'reexports');
+    // Symbol-level `reexports` edges (the precise named specifiers). The
+    // rename target still points at buildLayoutOptions's own node — `names`
+    // always carries the pre-rename declaration name (see
+    // `extractImportNames` / `does not apply rename tracking to
+    // export_specifier` in tests/parsers/javascript.test.ts).
+    insertEdge(db, fBarrel, loadPlotConfig, 'reexports');
+    insertEdge(db, fBarrel, buildLayoutOptions, 'reexports');
+    // Type-only import — must never contribute to reexportedSymbols.
+    insertEdge(db, fBarrel, plotConfig, 'imports-type');
+
+    db.close();
+  });
+
+  afterAll(() => {
+    if (tmpDir3) fs.rmSync(tmpDir3, { recursive: true, force: true });
+  });
+
+  test('only the specifically-named symbols are reported, not every export of the target file', () => {
+    const data = exportsData('enrichment.ts', dbPath3);
+    const fromViewer = data.reexportedSymbols.filter((s) => s.originFile === 'viewer.ts');
+    const names = fromViewer.map((s) => s.name).sort();
+    expect(names).toEqual(['buildLayoutOptions', 'loadPlotConfig']);
+    // escapeHtml is exported by viewer.ts but never re-exported by
+    // enrichment.ts — it must not leak in.
+    expect(names).not.toContain('escapeHtml');
+  });
+
+  test('a symbol imported as a type (not re-exported) is excluded', () => {
+    const data = exportsData('enrichment.ts', dbPath3);
+    const names = data.reexportedSymbols.map((s) => s.name);
+    expect(names).not.toContain('PlotConfig');
+  });
+
+  test('a renamed re-export (`export { X as Y } from ...`) resolves to X, not the external alias', () => {
+    const data = exportsData('enrichment.ts', dbPath3);
+    const renamed = data.reexportedSymbols.find(
+      (s) => s.originFile === 'viewer.ts' && s.name === 'buildLayoutOptions',
+    );
+    expect(renamed).toBeDefined();
+    expect(renamed.kind).toBe('function');
+    // The external alias name is never used as the reported name.
+    expect(data.reexportedSymbols.some((s) => s.name === 'buildOptions')).toBe(false);
+  });
+
+  test('a wildcard re-export (`export * from ...`) still reports every export of its target, distinctly from the named case', () => {
+    const data = exportsData('enrichment.ts', dbPath3);
+    const fromHelpers = data.reexportedSymbols.filter((s) => s.originFile === 'helpers.ts');
+    const names = fromHelpers.map((s) => s.name).sort();
+    expect(names).toEqual(['formatDate', 'formatNumber']);
+  });
+
+  test('total reexported count reflects only the correctly-scoped symbols', () => {
+    const data = exportsData('enrichment.ts', dbPath3);
+    // 2 named from viewer.ts (loadPlotConfig, buildLayoutOptions) + 2 wildcard
+    // from helpers.ts (formatDate, formatNumber) = 4. Not 6 (which would
+    // include the stray escapeHtml/PlotConfig leak from the pre-fix bug).
+    expect(data.reexportedSymbols.length).toBe(4);
+    expect(data.totalReexported).toBe(4);
+  });
+});
