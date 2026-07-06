@@ -52,8 +52,11 @@ jobs:
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: claude-sonnet-4-6
-          direct_prompt: |
+          # claude-code-action v1 dropped the `model` input; model selection now goes
+          # through `claude_args` (see anthropics/claude-code-action migration guide).
+          claude_args: |
+            --model claude-sonnet-4-6
+          prompt: |
             ## Review this pull request
 
             You are reviewing a PR for **codegraph** — a local code dependency graph CLI that parses
@@ -211,6 +214,9 @@ jobs:
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: claude-sonnet-4-6
+          # claude-code-action v1 dropped the `model` input; model selection now goes
+          # through `claude_args` (see anthropics/claude-code-action migration guide).
+          claude_args: |
+            --model claude-sonnet-4-6
           additional_permissions: |
             actions: read
