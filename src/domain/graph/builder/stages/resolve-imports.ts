@@ -11,6 +11,14 @@ interface ReexportEntry {
   source: string;
   names: string[];
   wildcardReexport: boolean;
+  /**
+   * `{ local, imported }` pairs for `export { X as Y } from …` specifiers
+   * within this entry: `local` is the external name (Y) a consumer of the
+   * barrel imports, `imported` is the name (X) actually declared in `source`.
+   * Lets `resolveBarrelExport` translate a consumer's requested name back to
+   * X before matching it against `names` (#1823).
+   */
+  renames: Array<{ local: string; imported: string }>;
 }
 
 /** Collect reexport entries from fileSymbols into the reexportMap. */
@@ -26,6 +34,7 @@ function buildReexportMap(ctx: PipelineContext): void {
           source: getResolved(ctx, path.join(rootDir, relPath), imp.source),
           names: imp.names,
           wildcardReexport: imp.wildcardReexport || false,
+          renames: imp.renamedImports ?? [],
         })),
       );
     }
@@ -158,6 +167,7 @@ async function reparseBarrelFiles(
             source: getResolved(ctx, path.join(rootDir, relPath), imp.source),
             names: imp.names,
             wildcardReexport: imp.wildcardReexport || false,
+            renames: imp.renamedImports ?? [],
           })),
         );
       }
@@ -169,14 +179,26 @@ async function reparseBarrelFiles(
   return added;
 }
 
+export interface BarrelExportResolution {
+  /** The file that actually defines the symbol. */
+  file: string;
+  /**
+   * The name the symbol is declared under in `file`. Identical to the
+   * requested `symbolName` unless one of the barrel hops in the chain
+   * renamed it (`export { X as Y } from …`), in which case this is the
+   * *original* declared name (X) to search for in `file` (#1823).
+   */
+  name: string;
+}
+
 export function resolveBarrelExportCached(
   ctx: PipelineContext,
   barrelPath: string,
   symbolName: string,
-): string | null {
+): BarrelExportResolution | null {
   const cacheKey = `${barrelPath}|${symbolName}`;
   if (ctx.barrelExportCache.has(cacheKey))
-    return ctx.barrelExportCache.get(cacheKey) as string | null;
+    return ctx.barrelExportCache.get(cacheKey) as BarrelExportResolution | null;
   const result = resolveBarrelExport(ctx, barrelPath, symbolName);
   ctx.barrelExportCache.set(cacheKey, result);
   return result;
@@ -254,12 +276,23 @@ function sourceDefinesSymbol(ctx: PipelineContext, source: string, symbolName: s
   return targetSymbols.definitions.some((d) => d.name === symbolName);
 }
 
+/**
+ * Translate a consumer-requested name through a single reexport entry's
+ * rename table, if it renamed that name (`export { X as Y } from …`
+ * records `{ local: Y, imported: X }`). Returns `symbolName` unchanged when
+ * the entry doesn't rename it — covers both "not renamed at all" and
+ * "requested name isn't one of this entry's external aliases" (#1823).
+ */
+function translateThroughRename(re: ReexportEntry, symbolName: string): string {
+  return re.renames.find((r) => r.local === symbolName)?.imported ?? symbolName;
+}
+
 export function resolveBarrelExport(
   ctx: PipelineContext,
   barrelPath: string,
   symbolName: string,
   visited: Set<string> = new Set<string>(),
-): string | null {
+): BarrelExportResolution | null {
   if (visited.has(barrelPath)) return null;
   visited.add(barrelPath);
 
@@ -267,17 +300,25 @@ export function resolveBarrelExport(
   if (!reexports) return null;
 
   for (const re of reexports) {
+    // Translate the requested external name (Y) back to the name actually
+    // declared in `re.source` (X) before matching `re.names`/checking the
+    // target's definitions — `re.names` always carries the original
+    // declaration name, never the barrel's external alias (#1823).
+    const lookupName = translateThroughRename(re, symbolName);
+
     // Named re-export: only follow if the symbol is in the export list
     if (re.names.length > 0 && !re.wildcardReexport) {
-      if (!re.names.includes(symbolName)) continue;
-      if (sourceDefinesSymbol(ctx, re.source, symbolName)) return re.source;
-      const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
-      return deeper ?? re.source;
+      if (!re.names.includes(lookupName)) continue;
+      if (sourceDefinesSymbol(ctx, re.source, lookupName))
+        return { file: re.source, name: lookupName };
+      const deeper = resolveBarrelExport(ctx, re.source, lookupName, visited);
+      return deeper ?? { file: re.source, name: lookupName };
     }
 
     // Wildcard or namespace re-export: check if target defines the symbol
-    if (sourceDefinesSymbol(ctx, re.source, symbolName)) return re.source;
-    const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
+    if (sourceDefinesSymbol(ctx, re.source, lookupName))
+      return { file: re.source, name: lookupName };
+    const deeper = resolveBarrelExport(ctx, re.source, lookupName, visited);
     if (deeper) return deeper;
   }
 

@@ -261,7 +261,8 @@ function handleExportCapture(
   const source = c.exp_node!.childForFieldName('source') || findChild(c.exp_node!, 'string');
   if (source && !decl) {
     const modPath = source.text.replace(/['"]/g, '');
-    const reexportNames = extractImportNames(c.exp_node!);
+    const reexportRenames: Array<{ local: string; imported: string }> = [];
+    const reexportNames = extractImportNames(c.exp_node!, reexportRenames);
     const nodeText = c.exp_node!.text;
     const isWildcard = nodeText.includes('export *') || nodeText.includes('export*');
     imports.push({
@@ -270,6 +271,7 @@ function handleExportCapture(
       line: exportLine,
       reexport: true,
       wildcardReexport: isWildcard && reexportNames.length === 0,
+      ...(reexportRenames.length > 0 ? { renamedImports: reexportRenames } : {}),
     });
   }
 }
@@ -1588,7 +1590,8 @@ function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const source = node.childForFieldName('source') || findChild(node, 'string');
   if (source && !decl) {
     const modPath = source.text.replace(/['"]/g, '');
-    const reexportNames = extractImportNames(node);
+    const reexportRenames: Array<{ local: string; imported: string }> = [];
+    const reexportNames = extractImportNames(node, reexportRenames);
     const nodeText = node.text;
     const isWildcard = nodeText.includes('export *') || nodeText.includes('export*');
     ctx.imports.push({
@@ -1597,6 +1600,7 @@ function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
       line: exportLine,
       reexport: true,
       wildcardReexport: isWildcard && reexportNames.length === 0,
+      ...(reexportRenames.length > 0 ? { renamedImports: reexportRenames } : {}),
     });
   }
 }
@@ -4087,9 +4091,16 @@ function findParentClass(node: TreeSitterNode): string | null {
  * `name` field is *always* present — it holds the name as declared by the
  * source module. `alias` is only present for `X as Y` and holds the *local*
  * binding actually referenced by call sites in this file. Preferring `name`
- * unconditionally (as this function used to, and as the `export_specifier`
- * branch below still deliberately does — see its comment) silently drops the
- * local alias for every renamed import: call sites use `Y`, not `X` (#1730).
+ * unconditionally (as this function used to) silently drops the local alias
+ * for every renamed import: call sites use `Y`, not `X` (#1730).
+ *
+ * `export_specifier` has the same `name`/`alias` shape but the opposite
+ * consumer: `name` (X) is the declaration being re-exported, `alias` (Y) is
+ * the external name a consumer of *this* barrel imports. `names` keeps
+ * recording X (barrel/reexport tracing keys off the original declaration —
+ * see `resolveBarrelExport`), but when the two differ, `renamedOut` also
+ * receives the `{ local: Y, imported: X }` pair so barrel resolution can
+ * translate a consumer's requested external name back to X (#1823).
  */
 function extractImportNames(
   node: TreeSitterNode,
@@ -4118,12 +4129,21 @@ function extractImportNames(
       // export_specifier's `name` is the local declaration being (re-)exported;
       // `alias` is the external name it's exposed as. Barrel/reexport tracing
       // (resolveBarrelExport) keys off the *original* declaration name, so this
-      // branch is deliberately left picking `name` first — do not unify with
-      // the import_specifier branch above. Rename-aware barrel tracing for
-      // `export { X as Y } from …` is a distinct, separate gap (#1730 investigation).
-      const nameNode = n.childForFieldName('name') || n.childForFieldName('alias');
-      if (nameNode) names.push(nameNode.text);
-      else names.push(n.text);
+      // branch keeps picking `name` first — do not unify with the
+      // import_specifier branch above. When `alias` differs from `name`, the
+      // rename pair is recorded in renamedOut so resolveBarrelExport can map a
+      // consumer's requested external name (Y) back to X (#1823).
+      const sourceNameNode = n.childForFieldName('name');
+      const aliasNode = n.childForFieldName('alias');
+      const nameNode = sourceNameNode || aliasNode;
+      if (nameNode) {
+        names.push(nameNode.text);
+        if (aliasNode && sourceNameNode && aliasNode.text !== sourceNameNode.text) {
+          renamedOut?.push({ local: aliasNode.text, imported: sourceNameNode.text });
+        }
+      } else {
+        names.push(n.text);
+      }
     } else if (n.type === 'identifier' && n.parent && n.parent.type === 'import_clause') {
       names.push(n.text);
     } else if (n.type === 'namespace_import') {

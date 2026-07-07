@@ -26,7 +26,14 @@ export interface CallNodeLookup {
   ): ReadonlyArray<{ id: number; file: string; kind?: string }>;
   byName(name: string): ReadonlyArray<{ id: number; file: string; kind?: string }>;
   isBarrel(file: string): boolean;
-  resolveBarrel(barrelFile: string, symbolName: string): string | null;
+  /**
+   * Resolve `symbolName` through `barrelFile`'s re-export chain. `name` in the
+   * result is the name actually declared in the returned `file` — identical
+   * to `symbolName` unless a barrel hop renamed it (`export { X as Y } from …`,
+   * #1823), in which case callers must search the target file for `name`, not
+   * the originally-requested `symbolName`.
+   */
+  resolveBarrel(barrelFile: string, symbolName: string): { file: string; name: string } | null;
   nodeId(name: string, kind: string, file: string, line: number): { id: number } | undefined;
 }
 
@@ -279,9 +286,9 @@ export function resolveCallTargets(
   if (importedFrom) {
     targets = lookup.byNameAndFile(targetName, importedFrom);
     if (targets.length === 0 && lookup.isBarrel(importedFrom)) {
-      const actualSource = lookup.resolveBarrel(importedFrom, targetName);
-      if (actualSource) {
-        targets = lookup.byNameAndFile(targetName, actualSource);
+      const resolved = lookup.resolveBarrel(importedFrom, targetName);
+      if (resolved) {
+        targets = lookup.byNameAndFile(resolved.name, resolved.file);
       }
     }
   }

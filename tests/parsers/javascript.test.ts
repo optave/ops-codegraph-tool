@@ -163,15 +163,26 @@ describe('JavaScript parser', () => {
       ]);
     });
 
-    it('does not apply rename tracking to export_specifier (reexport) statements', () => {
-      // export_specifier semantics differ (name = local declaration being
-      // re-exported, alias = external name) — barrel/reexport tracing keys off
-      // the original declaration name, so this is intentionally left as-is.
-      // See resolveBarrelExport / issues filed from the #1730 investigation.
+    it('records the external-alias -> declared-name rename pair for export_specifier (reexport) statements (#1823)', () => {
+      // export_specifier semantics differ from import_specifier (name = local
+      // declaration being re-exported, alias = external name a consumer of
+      // this barrel imports), so `names` keeps recording the declared name
+      // (collectFiles) — barrel/reexport tracing keys off it (see
+      // resolveBarrelExport). renamedImports separately records the
+      // { local: externalAlias, imported: declaredName } pair so barrel
+      // resolution can translate a consumer's requested external name back
+      // to the declared name.
       const symbols = parseJS(`export { collectFiles as friendlyName } from './helpers';`);
       expect(symbols.imports).toHaveLength(1);
       expect(symbols.imports[0].reexport).toBe(true);
       expect(symbols.imports[0].names).toEqual(['collectFiles']);
+      expect(symbols.imports[0].renamedImports).toEqual([
+        { local: 'friendlyName', imported: 'collectFiles' },
+      ]);
+    });
+
+    it('does not set renamedImports for non-renamed export_specifier (reexport) statements', () => {
+      const symbols = parseJS(`export { collectFiles } from './helpers';`);
       expect(symbols.imports[0].renamedImports).toBeUndefined();
     });
   });

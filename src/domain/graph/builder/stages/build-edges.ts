@@ -233,11 +233,15 @@ function emitNamedSymbolEdges(
   for (const { original, typeOnly } of importNamePairs(imp)) {
     if (edgeKind === 'imports-type' && !typeOnly) continue;
     let targetFile = resolvedPath;
+    let targetName = original;
     if (isBarrelFile(ctx, resolvedPath)) {
-      const actual = resolveBarrelExportCached(ctx, resolvedPath, original);
-      if (actual) targetFile = actual;
+      const resolved = resolveBarrelExportCached(ctx, resolvedPath, original);
+      if (resolved) {
+        targetFile = resolved.file;
+        targetName = resolved.name;
+      }
     }
-    const candidates = ctx.nodesByNameAndFile.get(`${original}|${targetFile}`);
+    const candidates = ctx.nodesByNameAndFile.get(`${targetName}|${targetFile}`);
     if (candidates && candidates.length > 0) {
       allEdgeRows.push([fileNodeId, candidates[0]!.id, edgeKind, 1.0, 0, null, null]);
     }
@@ -307,7 +311,8 @@ function buildBarrelEdges(
 ): void {
   const resolvedSources = new Set<string>();
   for (const { original } of importNamePairs(imp)) {
-    const actualSource = resolveBarrelExportCached(ctx, resolvedPath, original);
+    const resolved = resolveBarrelExportCached(ctx, resolvedPath, original);
+    const actualSource = resolved?.file;
     if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
       resolvedSources.add(actualSource);
       const actualRow = getNodeIdStmt.get(actualSource, 'file', actualSource, 0);
@@ -885,18 +890,24 @@ function buildImportedNamesForNative(
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const { local, original } of importNamePairs(imp)) {
       let targetFile = resolvedPath;
+      let targetName = original;
       if (isBarrelFile(ctx, resolvedPath)) {
-        const actual = resolveBarrelExportCached(ctx, resolvedPath, original);
-        if (actual) targetFile = actual;
+        const resolved = resolveBarrelExportCached(ctx, resolvedPath, original);
+        if (resolved) {
+          targetFile = resolved.file;
+          targetName = resolved.name;
+        }
       }
-      // `imported` carries the original (pre-rename) exported name so the
-      // native resolver can look it up in `targetFile` instead of the local
-      // alias, which only exists in this file (#1730). Omitted when unrenamed.
+      // `imported` carries the name actually declared in `targetFile` so the
+      // native resolver can look it up there instead of the local alias
+      // (which only exists in this file, #1730) or the barrel's external
+      // rename (which only exists in the re-exporting barrel, #1823).
+      // Omitted when identical to the local binding.
       const entry: { name: string; file: string; imported?: string } = {
         name: local,
         file: targetFile,
       };
-      if (original !== local) entry.imported = original;
+      if (targetName !== local) entry.imported = targetName;
       importedNames.push(entry);
     }
   };
@@ -998,12 +1009,15 @@ function buildCallEdgesJS(
 
 /**
  * Maps each locally-bound import name in `relPath` to the file it comes from
- * (`importedNames`), plus, for renamed specifiers (`import { X as Y }`), the
- * *original* exported name (`importedOriginalNames`, keyed by local name Y).
+ * (`importedNames`), plus, whenever the name to search for in that file
+ * differs from the local binding — a renamed specifier (`import { X as Y }`,
+ * #1730) or a barrel hop that renamed the symbol on re-export
+ * (`export { X as Y } from …`, #1823) — the name actually declared there
+ * (`importedOriginalNames`, keyed by local name).
  *
  * Barrel tracing and downstream target-file symbol lookups must search using
- * the original name — the renamed local alias only exists in the importing
- * file, not in the file being imported from (#1730).
+ * that declared name — neither the renamed local alias nor the barrel's
+ * external rename exists in the file being imported from.
  */
 function buildImportedNamesMap(
   ctx: PipelineContext,
@@ -1016,15 +1030,19 @@ function buildImportedNamesMap(
   // Phase 8.4: trace through barrel files so that symbol names map to their
   // actual definition file, not the re-exporting barrel. Mirrors the tracing
   // already done in buildImportedNamesForNative (the native path).
-  const traceBarrel = (resolvedPath: string, originalName: string): string => {
-    if (!isBarrelFile(ctx, resolvedPath)) return resolvedPath;
-    const actual = resolveBarrelExportCached(ctx, resolvedPath, originalName);
-    return actual ?? resolvedPath;
+  const traceBarrel = (
+    resolvedPath: string,
+    originalName: string,
+  ): { file: string; name: string } => {
+    if (!isBarrelFile(ctx, resolvedPath)) return { file: resolvedPath, name: originalName };
+    const resolved = resolveBarrelExportCached(ctx, resolvedPath, originalName);
+    return resolved ?? { file: resolvedPath, name: originalName };
   };
   const addImportNames = (imp: (typeof symbols.imports)[number], resolvedPath: string) => {
     for (const { local, original } of importNamePairs(imp)) {
-      importedNames.set(local, traceBarrel(resolvedPath, original));
-      if (original !== local) importedOriginalNames.set(local, original);
+      const { file, name } = traceBarrel(resolvedPath, original);
+      importedNames.set(local, file);
+      if (name !== local) importedOriginalNames.set(local, name);
     }
   };
   // Process dynamic imports first (lower priority), then static imports
@@ -1062,8 +1080,8 @@ function buildImportArtifactNames(
   const combined = new Map(importedNames);
   const traceBarrel = (resolvedPath: string, cleanName: string): string => {
     if (!isBarrelFile(ctx, resolvedPath)) return resolvedPath;
-    const actual = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
-    return actual ?? resolvedPath;
+    const resolved = resolveBarrelExportCached(ctx, resolvedPath, cleanName);
+    return resolved?.file ?? resolvedPath;
   };
   for (const binding of symbols.cjsRequireBindings) {
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), binding.source);

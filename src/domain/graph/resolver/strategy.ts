@@ -29,7 +29,7 @@ export interface StrategyLookup {
   ): ReadonlyArray<{ id: number; file: string; kind?: string }>;
   byName(name: string): ReadonlyArray<{ id: number; file: string; kind?: string }>;
   isBarrel(file: string): boolean;
-  resolveBarrel(barrelFile: string, symbolName: string): string | null;
+  resolveBarrel(barrelFile: string, symbolName: string): { file: string; name: string } | null;
   nodeId(name: string, kind: string, file: string, line: number): { id: number } | undefined;
 }
 

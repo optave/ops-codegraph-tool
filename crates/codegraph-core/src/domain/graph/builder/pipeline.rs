@@ -1189,7 +1189,7 @@ fn compute_edge_relevant_files(
                     if let Some(ultimate) =
                         import_ctx.resolve_barrel_export(&resolved, clean_name, &mut visited)
                     {
-                        relevant_files.insert(ultimate);
+                        relevant_files.insert(ultimate.file);
                     }
                 }
             }
@@ -1341,16 +1341,18 @@ fn collect_imported_names_for_file(
                 continue;
             }
             let mut target_file = resolved_path.clone();
+            let mut target_name = original;
             if import_ctx.is_barrel_file(&resolved_path) {
                 let mut visited = HashSet::new();
-                if let Some(actual) =
-                    import_ctx.resolve_barrel_export(&resolved_path, &original, &mut visited)
+                if let Some(resolved) =
+                    import_ctx.resolve_barrel_export(&resolved_path, &target_name, &mut visited)
                 {
-                    target_file = actual;
+                    target_file = resolved.file;
+                    target_name = resolved.name;
                 }
             }
             imported_names.push(ImportedName {
-                imported: if original != local { Some(original) } else { None },
+                imported: if target_name != local { Some(target_name) } else { None },
                 name: local,
                 file: target_file,
             });

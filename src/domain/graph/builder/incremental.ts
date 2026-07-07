@@ -302,12 +302,25 @@ function isBarrelFile(db: BetterSqlite3Database, relPath: string): boolean {
   return (reexportCount || 0) > 0;
 }
 
+/**
+ * KNOWN LIMITATION, tracked separately in #1967: this is `codegraph watch`'s
+ * single-file rebuild path (see `watcher.ts`) — unlike the `codegraph build`
+ * resolver (`resolveBarrelExport` in resolve-imports.ts, fixed for #1823),
+ * this has no way to recover a barrel's `export { X as Y } from …` rename
+ * table when the barrel file itself isn't part of the current watch batch —
+ * that mapping only exists in the barrel's freshly-parsed `Import.renamedImports`,
+ * which isn't persisted to the DB and this function has no reparse access to.
+ * It therefore still resolves purely by direct name match — renamed barrel
+ * re-exports are not resolved when only a consumer file changes under watch.
+ * `name` in the result mirrors the shared `CallNodeLookup.resolveBarrel`
+ * shape but is always just the input `symbolName` unchanged.
+ */
 function resolveBarrelTarget(
   db: BetterSqlite3Database,
   barrelPath: string,
   symbolName: string,
   visited: Set<string> = new Set(),
-): string | null {
+): { file: string; name: string } | null {
   if (visited.has(barrelPath)) return null;
   visited.add(barrelPath);
 
@@ -319,7 +332,7 @@ function resolveBarrelTarget(
   for (const { file: targetFile } of reexportTargets) {
     // Check if the symbol is defined in this target file
     const hasDef = hasDefStmt.get(symbolName, targetFile);
-    if (hasDef) return targetFile;
+    if (hasDef) return { file: targetFile, name: symbolName };
 
     // Recurse through barrel chains
     if (isBarrelFile(db, targetFile)) {
@@ -374,7 +387,8 @@ function resolveBarrelImportEdges(
   if (!isBarrelFile(db, resolvedPath)) return edgesAdded;
   const resolvedSources = new Set<string>();
   for (const { original } of importNamePairs(imp)) {
-    const actualSource = resolveBarrelTarget(db, resolvedPath, original);
+    const resolved = resolveBarrelTarget(db, resolvedPath, original);
+    const actualSource = resolved?.file;
     if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
       resolvedSources.add(actualSource);
       const actualRow = stmts.getNodeId.get(actualSource, 'file', actualSource, 0);
@@ -412,11 +426,15 @@ function emitNamedSymbolEdges(
   for (const { original, typeOnly } of importNamePairs(imp)) {
     if (edgeKind === 'imports-type' && !typeOnly) continue;
     let targetFile = resolvedPath;
+    let targetName = original;
     if (db && isBarrelFile(db, resolvedPath)) {
-      const actual = resolveBarrelTarget(db, resolvedPath, original);
-      if (actual) targetFile = actual;
+      const resolved = resolveBarrelTarget(db, resolvedPath, original);
+      if (resolved) {
+        targetFile = resolved.file;
+        targetName = resolved.name;
+      }
     }
-    const candidates = stmts.findNodeInFile.all(original, targetFile) as Array<{
+    const candidates = stmts.findNodeInFile.all(targetName, targetFile) as Array<{
       id: number;
       file: string;
     }>;
@@ -512,12 +530,16 @@ function buildImportedNamesMap(
       // `computeConfidence` gets `importedFrom === targetFile` and returns 1.0
       // instead of the cross-directory fallback (0.3).
       let targetFile = resolvedPath;
+      let targetName = original;
       if (isBarrelFile(db, resolvedPath)) {
-        const actual = resolveBarrelTarget(db, resolvedPath, original);
-        if (actual) targetFile = actual;
+        const resolved = resolveBarrelTarget(db, resolvedPath, original);
+        if (resolved) {
+          targetFile = resolved.file;
+          targetName = resolved.name;
+        }
       }
       importedNames.set(local, targetFile);
-      if (original !== local) importedOriginalNames.set(local, original);
+      if (targetName !== local) importedOriginalNames.set(local, targetName);
     }
   }
   return { importedNames, importedOriginalNames };

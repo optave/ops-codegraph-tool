@@ -1792,13 +1792,19 @@ fn collect_exported_var_declarations(
 fn handle_reexport(node: &Node, source_node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let mod_path = node_text(source_node, source)
         .replace(&['\'', '"'][..], "");
-    let reexport_names = extract_import_names(node, source);
+    let mut reexport_renames = Vec::new();
+    let mut type_only_names = Vec::new();
+    let reexport_names =
+        extract_import_names_with_renames(node, source, &mut reexport_renames, &mut type_only_names);
     let text = node_text(node, source);
     let is_wildcard = text.contains("export *") || text.contains("export*");
     let mut imp = Import::new(mod_path, reexport_names.clone(), start_line(node));
     imp.reexport = Some(true);
     if is_wildcard && reexport_names.is_empty() {
         imp.wildcard_reexport = Some(true);
+    }
+    if !reexport_renames.is_empty() {
+        imp.renamed_imports = Some(reexport_renames);
     }
     symbols.imports.push(imp);
 }
@@ -3170,14 +3176,6 @@ fn extract_rest_identifier(rest_node: &Node, source: &[u8], names: &mut Vec<Stri
     }
 }
 
-fn extract_import_names(node: &Node, source: &[u8]) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut renamed = Vec::new();
-    let mut type_only = Vec::new();
-    scan_import_names(node, source, &mut names, &mut renamed, &mut type_only);
-    names
-}
-
 /// Extract import names and collect `{ local, imported }` pairs for
 /// `import_specifier` nodes that rename a binding (`import { X as Y }`), plus
 /// the local names of specifiers carrying an inline `type`/`typeof`
@@ -3209,9 +3207,16 @@ fn scan_import_names(
 /// `name` field is *always* present — it holds the name as declared by the
 /// source module. `alias` is only present for `X as Y` and holds the *local*
 /// binding actually referenced by call sites in this file. Preferring `name`
-/// unconditionally (as this function used to, and as the `export_specifier`
-/// branch below still deliberately does — see its comment) silently drops the
-/// local alias for every renamed import: call sites use `Y`, not `X` (#1730).
+/// unconditionally (as this function used to) silently drops the local alias
+/// for every renamed import: call sites use `Y`, not `X` (#1730).
+///
+/// `export_specifier` has the same `name`/`alias` shape but the opposite
+/// consumer: `name` (X) is the declaration being re-exported, `alias` (Y) is
+/// the external name a consumer of *this* barrel imports. `names` keeps
+/// recording X (barrel/reexport tracing keys off the original declaration —
+/// see `resolve_barrel_export`), but when the two differ, `renamed_out` also
+/// receives the `{ local: Y, imported: X }` pair so barrel resolution can
+/// translate a consumer's requested external name back to X (#1823).
 ///
 /// The tree-sitter-typescript grammar defines `import_specifier` as
 /// `optional(choice('type', 'typeof'))` followed by the name/alias fields, so
@@ -3258,16 +3263,26 @@ fn scan_import_names_depth(
         "export_specifier" => {
             // export_specifier's `name` is the local declaration being (re-)exported;
             // `alias` is the external name it's exposed as. Barrel/reexport tracing
-            // keys off the *original* declaration name, so this branch is
-            // deliberately left picking `name` first — do not unify with the
-            // import_specifier branch above. Rename-aware barrel tracing for
-            // `export { X as Y } from …` is a distinct, separate gap (#1730
-            // investigation).
-            let name_node = node
-                .child_by_field_name("name")
-                .or_else(|| node.child_by_field_name("alias"));
+            // (resolve_barrel_export) keys off the *original* declaration name, so
+            // this branch keeps picking `name` first — do not unify with the
+            // import_specifier branch above. When `alias` differs from `name`, the
+            // rename pair is recorded in renamed_out so resolve_barrel_export can
+            // map a consumer's requested external name (Y) back to X (#1823).
+            let source_name_node = node.child_by_field_name("name");
+            let alias_node = node.child_by_field_name("alias");
+            let name_node = source_name_node.or(alias_node);
             if let Some(name_node) = name_node {
                 names.push(node_text(&name_node, source).to_string());
+                if let (Some(alias), Some(source_name)) = (alias_node, source_name_node) {
+                    let alias_text = node_text(&alias, source);
+                    let source_text = node_text(&source_name, source);
+                    if alias_text != source_text {
+                        renamed_out.push(RenamedImport {
+                            local: alias_text.to_string(),
+                            imported: source_text.to_string(),
+                        });
+                    }
+                }
             } else {
                 names.push(node_text(node, source).to_string());
             }

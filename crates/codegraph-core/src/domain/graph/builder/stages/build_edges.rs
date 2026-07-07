@@ -6,7 +6,7 @@ use crate::domain::graph::builder::barrel_resolution::{self, BarrelContext, Reex
 use crate::domain::graph::resolve;
 use crate::types::{
     ArrayCallbackBinding, ArrayElemBinding, FnRefBinding, ForOfBinding, ObjectPropBinding,
-    ObjectRestParamBinding, ParamBinding, SpreadArgBinding, ThisCallBinding,
+    ObjectRestParamBinding, ParamBinding, RenamedImport, SpreadArgBinding, ThisCallBinding,
 };
 
 /// Kind sets for hierarchy edge resolution -- mirrors the JS constants in
@@ -1495,6 +1495,10 @@ pub struct ReexportEntryInput {
     pub names: Vec<String>,
     #[napi(js_name = "wildcardReexport")]
     pub wildcard_reexport: bool,
+    /// `{ local, imported }` pairs for `export { X as Y } from …` specifiers
+    /// within this entry — see `barrel_resolution::ReexportRef::renames` (#1823).
+    #[napi(ts_type = "RenamedImport[] | undefined")]
+    pub renames: Option<Vec<RenamedImport>>,
 }
 
 #[napi(object)]
@@ -1537,7 +1541,11 @@ struct ImportEdgeContext<'a> {
     file_defs: HashMap<&'a str, HashSet<&'a str>>,
     /// Symbol node lookup: (name, file) → node ID.
     /// Used to create symbol-level `imports-type` edges for type-only imports.
-    symbol_node_map: HashMap<(&'a str, &'a str), u32>,
+    ///
+    /// Owned keys (rather than `&'a str`) because a barrel-rename lookup key
+    /// (#1823) is a freshly-resolved name that doesn't borrow from `'a` input
+    /// data.
+    symbol_node_map: HashMap<(String, String), u32>,
 }
 
 impl<'a> ImportEdgeContext<'a> {
@@ -1575,7 +1583,7 @@ impl<'a> ImportEdgeContext<'a> {
 
         let mut symbol_node_map = HashMap::with_capacity(symbol_nodes.len());
         for entry in symbol_nodes {
-            symbol_node_map.insert((entry.name.as_str(), entry.file.as_str()), entry.node_id);
+            symbol_node_map.insert((entry.name.clone(), entry.file.clone()), entry.node_id);
         }
 
         Self { resolved, reexport_map, file_node_map, barrel_set, file_defs, symbol_node_map }
@@ -1591,6 +1599,7 @@ impl<'a> BarrelContext for ImportEdgeContext<'a> {
                     source: re.source.as_str(),
                     names: &re.names,
                     wildcard_reexport: re.wildcard_reexport,
+                    renames: re.renames.as_deref().unwrap_or(&[]),
                 })
                 .collect()
         })
@@ -1698,6 +1707,13 @@ fn has_type_only_names(imp: &ImportInfo) -> bool {
 /// externally, so this naturally resolves `export { X as Z }` against `X`'s
 /// own node — the emitted edge (and downstream `reexportedSymbols` entry)
 /// is reported under the symbol's own declared name, not the barrel alias.
+///
+/// When `resolved_path` is itself a barrel that renamed the requested name
+/// further down its own reexport chain (`export { X as Y } from …`),
+/// `resolve_barrel_export` reports the name actually declared in the
+/// resolved file — which may differ from `clean_name` — so the lookup below
+/// must use that reported name, not `clean_name`, against the barrel target
+/// (#1823).
 fn emit_named_symbol_edges(
     edges: &mut Vec<ComputedEdge>,
     file_input: &ImportEdgeFileInput,
@@ -1724,9 +1740,12 @@ fn emit_named_symbol_edges(
             None
         };
         let sym_id = barrel_target
-            .as_deref()
-            .and_then(|f| ctx.symbol_node_map.get(&(clean_name, f)))
-            .or_else(|| ctx.symbol_node_map.get(&(clean_name, resolved_path)));
+            .as_ref()
+            .and_then(|resolved| ctx.symbol_node_map.get(&(resolved.name.clone(), resolved.file.clone())))
+            .or_else(|| {
+                ctx.symbol_node_map
+                    .get(&(clean_name.to_string(), resolved_path.to_string()))
+            });
         if let Some(&id) = sym_id {
             edges.push(ComputedEdge {
                 source_id: file_input.file_node_id,
@@ -1771,7 +1790,7 @@ fn emit_barrel_through_edges(
             &mut visited,
         );
         let actual_source = match actual {
-            Some(s) => s,
+            Some(resolved) => resolved.file,
             None => continue,
         };
         if actual_source == resolved_path || resolved_sources.contains(&actual_source) {
@@ -2115,6 +2134,7 @@ mod import_edge_tests {
                 source: "src/utils.ts".to_string(),
                 names: vec!["foo".to_string()],
                 wildcard_reexport: false,
+                renames: None,
             }],
         }];
         let node_ids = vec![
@@ -2153,6 +2173,7 @@ mod import_edge_tests {
                     source: "src/mid.ts".to_string(),
                     names: vec![],
                     wildcard_reexport: true,
+                    renames: None,
                 }],
             },
             FileReexports {
@@ -2161,6 +2182,7 @@ mod import_edge_tests {
                     source: "src/deep.ts".to_string(),
                     names: vec!["deep".to_string()],
                     wildcard_reexport: false,
+                    renames: None,
                 }],
             },
         ];
@@ -2194,6 +2216,7 @@ mod import_edge_tests {
                     source: "src/b.ts".to_string(),
                     names: vec![],
                     wildcard_reexport: true,
+                    renames: None,
                 }],
             },
             FileReexports {
@@ -2202,6 +2225,7 @@ mod import_edge_tests {
                     source: "src/a.ts".to_string(),
                     names: vec![],
                     wildcard_reexport: true,
+                    renames: None,
                 }],
             },
         ];
@@ -2233,6 +2257,7 @@ mod import_edge_tests {
                 source: "src/helpers.ts".to_string(),
                 names: vec![],
                 wildcard_reexport: true,
+                renames: None,
             }],
         }];
         let node_ids = vec![
@@ -2265,6 +2290,7 @@ mod import_edge_tests {
                 source: "src/real.ts".to_string(),
                 names: vec!["a".to_string(), "b".to_string()],
                 wildcard_reexport: false,
+                renames: None,
             }],
         }];
         let node_ids = vec![
@@ -2277,6 +2303,47 @@ mod import_edge_tests {
         let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
         // 1 direct import + 1 barrel-through (deduped, not 2)
         assert_eq!(edges.len(), 2);
+    }
+
+    /// `export { realName as friendlyName } from './underlying'` — a consumer
+    /// importing the barrel's external name `friendlyName` must produce a
+    /// barrel-through edge to `underlying.ts`, the file that actually
+    /// declares `realName` (#1823).
+    #[test]
+    fn renamed_barrel_reexport_resolution() {
+        let files = vec![
+            make_file("src/app.ts", 1, vec![
+                make_import("./barrel", vec!["friendlyName"], false, false, false),
+            ], vec![]),
+            make_file("src/barrel.ts", 10, vec![], vec![]),
+            make_file("src/underlying.ts", 20, vec![], vec!["realName"]),
+        ];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./barrel", "src/barrel.ts")];
+        let reexports = vec![FileReexports {
+            file: "src/barrel.ts".to_string(),
+            reexports: vec![ReexportEntryInput {
+                source: "src/underlying.ts".to_string(),
+                names: vec!["realName".to_string()],
+                wildcard_reexport: false,
+                renames: Some(vec![RenamedImport {
+                    local: "friendlyName".to_string(),
+                    imported: "realName".to_string(),
+                }]),
+            }],
+        }];
+        let node_ids = vec![
+            make_node_entry("src/app.ts", 1),
+            make_node_entry("src/barrel.ts", 10),
+            make_node_entry("src/underlying.ts", 20),
+        ];
+        let barrels = vec!["src/barrel.ts".to_string()];
+
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
+        assert_eq!(edges.len(), 2);
+        // Barrel-through edge resolves through the rename to underlying.ts.
+        assert_eq!(edges[1].target_id, 20);
+        assert_eq!(edges[1].confidence, 0.9);
+        assert_eq!(edges[1].kind, "imports");
     }
 }
 

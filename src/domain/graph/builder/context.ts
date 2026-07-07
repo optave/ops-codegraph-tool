@@ -17,6 +17,7 @@ import type {
   ParseChange,
   PathAliases,
 } from '../../../types.js';
+import type { BarrelExportResolution } from './stages/resolve-imports.js';
 
 export class PipelineContext {
   // ── Inputs (set during setup) ──────────────────────────────────────
@@ -69,7 +70,7 @@ export class PipelineContext {
   reexportMap!: Map<string, unknown[]>;
   barrelOnlyFiles!: Set<string>;
   /** Phase 8.4: cache for resolveBarrelExport results keyed as "barrelPath|symbolName". */
-  barrelExportCache: Map<string, string | null> = new Map();
+  barrelExportCache: Map<string, BarrelExportResolution | null> = new Map();
 
   // ── Node lookup (set by insertNodes / buildEdges stages) ───────────
   nodesByName!: Map<string, NodeRow[]>;

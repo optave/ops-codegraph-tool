@@ -6,7 +6,7 @@
 
 use crate::domain::graph::builder::barrel_resolution::{self, BarrelContext, ReexportRef};
 use crate::domain::graph::resolve;
-use crate::types::{FileSymbols, PathAliases};
+use crate::types::{FileSymbols, PathAliases, RenamedImport};
 use rusqlite::Connection;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -17,6 +17,9 @@ pub struct ReexportEntry {
     pub source: String,
     pub names: Vec<String>,
     pub wildcard_reexport: bool,
+    /// `{ local, imported }` pairs for `export { X as Y } from …` specifiers
+    /// within this entry — see `barrel_resolution::ReexportRef::renames` (#1823).
+    pub renames: Vec<RenamedImport>,
 }
 
 /// Context for import edge building — holds resolved imports, reexport map, and file symbols.
@@ -89,7 +92,7 @@ impl ImportEdgeContext {
         barrel_path: &str,
         symbol_name: &str,
         visited: &mut HashSet<String>,
-    ) -> Option<String> {
+    ) -> Option<barrel_resolution::BarrelResolution> {
         barrel_resolution::resolve_barrel_export(self, barrel_path, symbol_name, visited)
     }
 }
@@ -103,6 +106,7 @@ impl BarrelContext for ImportEdgeContext {
                     source: re.source.as_str(),
                     names: &re.names,
                     wildcard_reexport: re.wildcard_reexport,
+                    renames: &re.renames,
                 })
                 .collect()
         })
@@ -180,6 +184,7 @@ pub fn build_reexport_map(ctx: &ImportEdgeContext) -> HashMap<String, Vec<Reexpo
                     source: ctx.get_resolved(abs_str, &imp.source),
                     names: imp.names.clone(),
                     wildcard_reexport: imp.wildcard_reexport.unwrap_or(false),
+                    renames: imp.renamed_imports.clone().unwrap_or_default(),
                 })
                 .collect();
             reexport_map.insert(rel_path.clone(), entries);
@@ -312,15 +317,17 @@ fn collect_symbol_lookup_pairs(ctx: &ImportEdgeContext) -> HashSet<(String, Stri
                     continue;
                 }
                 let mut target_file = resolved_path.clone();
+                let mut target_name = original;
                 if ctx.is_barrel_file(&resolved_path) {
                     let mut visited = HashSet::new();
-                    if let Some(actual) =
-                        ctx.resolve_barrel_export(&resolved_path, &original, &mut visited)
+                    if let Some(resolved) =
+                        ctx.resolve_barrel_export(&resolved_path, &target_name, &mut visited)
                     {
-                        target_file = actual;
+                        target_file = resolved.file;
+                        target_name = resolved.name;
                     }
                 }
-                pairs.insert((original, target_file));
+                pairs.insert((target_name, target_file));
             }
         }
     }
@@ -373,14 +380,17 @@ fn emit_named_symbol_rows(
             continue;
         }
         let mut target_file = resolved_path.to_string();
+        let mut target_name = original;
         if ctx.is_barrel_file(resolved_path) {
             let mut visited = HashSet::new();
-            if let Some(actual) = ctx.resolve_barrel_export(resolved_path, &original, &mut visited)
+            if let Some(resolved) =
+                ctx.resolve_barrel_export(resolved_path, &target_name, &mut visited)
             {
-                target_file = actual;
+                target_file = resolved.file;
+                target_name = resolved.name;
             }
         }
-        if let Some(&sym_id) = symbol_node_ids.get(&(original, target_file)) {
+        if let Some(&sym_id) = symbol_node_ids.get(&(target_name, target_file)) {
             edges.push(EdgeRow {
                 source_id: file_node_id,
                 target_id: sym_id,
@@ -417,7 +427,7 @@ fn emit_barrel_through_rows(
         let mut visited = HashSet::new();
         let actual_source = match ctx.resolve_barrel_export(resolved_path, &original, &mut visited)
         {
-            Some(s) => s,
+            Some(resolved) => resolved.file,
             None => continue,
         };
         if actual_source == resolved_path || !resolved_sources.insert(actual_source.clone()) {

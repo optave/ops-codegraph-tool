@@ -520,8 +520,15 @@ export interface Import {
    * resolution recover the *original* symbol name to look up in the imported
    * file when a call site uses the local alias (#1730). Only populated for
    * specifiers that actually rename a binding; entries where local === source
-   * name are omitted. Not populated for `export { X as Y } from …` reexports
-   * — barrel/reexport tracing is a distinct mechanism (see resolveBarrelExport).
+   * name are omitted.
+   *
+   * Also populated for `export { X as Y } from …` reexport specifiers: `local`
+   * is the external name (Y) a consumer of *this* barrel would import, and
+   * `imported` is the name (X) actually declared in the source module. `names`
+   * keeps carrying the original declaration name (X) for reexports (see
+   * `extractImportNames`), so `resolveBarrelExport` uses this map to translate
+   * a consumer's requested external name back to X before matching against
+   * `names`/looking up the underlying definition (#1823).
    */
   renamedImports?: Array<{ local: string; imported: string }>;
   /**
