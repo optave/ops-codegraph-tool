@@ -159,6 +159,13 @@ describe('CLI smoke tests', () => {
     for (const r of data.results) expect(r.file).toContain('math.js');
   });
 
+  test('fn-impact --file (long form) scopes results to a single file without crashing', () => {
+    const out = run('fn-impact', 'add', '--file', 'math.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.results.length).toBeGreaterThan(0);
+    for (const r of data.results) expect(r.file).toContain('math.js');
+  });
+
   test('fn-impact with a single -f excludes non-matching files', () => {
     const out = run('fn-impact', 'add', '-f', 'utils.js', '--db', dbPath, '--json');
     const data = JSON.parse(out);

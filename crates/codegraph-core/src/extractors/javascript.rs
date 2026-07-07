@@ -2309,6 +2309,11 @@ const HTTP_VERB_CALLEES: &[&str] = &[
 /// separate `CALLBACK_ACCEPTING_CALLEES` entry needed); only the arg at its
 /// listed index is eligible.
 ///
+/// Invariant: this map and `CALLBACK_ACCEPTING_CALLEES` must stay disjoint.
+/// A callee name present in both would have its any-position intent silently
+/// narrowed to the single listed index (positional wins — see the gate in
+/// `extract_callback_reference_calls`), with no error or warning.
+///
 /// Name-based, not receiver-typed, so it can't distinguish `Array.from(x,
 /// mapFn)` from an unrelated `.from(x, y)` shaped differently (e.g.
 /// `Buffer.from(data, encoding)`) — that residual risk is far narrower than
@@ -4352,6 +4357,39 @@ mod tests {
             !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
             "Uint8Array.from(arr, mapCallback) must not emit `arr`; got: {:?}",
             s.calls,
+        );
+    }
+
+    #[test]
+    fn applies_array_from_positional_gate_to_member_expression_args_too() {
+        // Mirrors the TS test of the same intent: the old member_expression
+        // guard was an explicit `&& memberExprArgsAllowed` inline check; the
+        // positional restructuring moved that responsibility to the shared
+        // early-return above the loop. `Array.from(arr, obj.mapper)` exercises
+        // that a member_expression at the positional index (1) is still
+        // emitted with its receiver, while one at index 0 is not.
+        let s = parse_js("Array.from(arr, obj.mapper);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapper" && c.receiver.as_deref() == Some("obj")),
+            "Array.from(arr, obj.mapper) must emit mapper with receiver obj; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Array.from(arr, obj.mapper) must not emit `arr` (index 0); got: {:?}",
+            s.calls,
+        );
+
+        let s2 = parse_js("Array.from(obj.arrayLike, mapCallback);");
+        assert!(
+            !s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arrayLike"),
+            "Array.from(obj.arrayLike, mapCallback) must not emit `arrayLike` (index 0); got: {:?}",
+            s2.calls,
+        );
+        assert!(
+            s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Array.from(obj.arrayLike, mapCallback) must emit mapCallback; got: {:?}",
+            s2.calls,
         );
     }
 
