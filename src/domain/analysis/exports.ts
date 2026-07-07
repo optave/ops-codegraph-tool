@@ -32,8 +32,11 @@ export function exportsData(
     config?: any;
   } = {},
 ) {
-  return withReadonlyDb(customDbPath, (db) => {
-    const { noTests, displayOpts } = resolveAnalysisOpts(opts);
+  return withReadonlyDb(customDbPath, (db, config) => {
+    const { noTests, displayOpts } = resolveAnalysisOpts({
+      ...opts,
+      config: opts.config ?? config,
+    });
 
     const dbFilePath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbFilePath), '..');
