@@ -1986,6 +1986,61 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('top-level const with a non-"literal-shaped" initializer (#1819)', () => {
+    it('extracts a const with a parenthesized member-expression initializer as a definition (repro)', () => {
+      // Repro from #1819: `(...).version` isn't one of the recognized "literal"
+      // shapes, so the whole declaration was previously dropped — not just
+      // unexported, absent from `definitions` entirely.
+      const symbols = parseJS(
+        `export const CODEGRAPH_VERSION = (\n  JSON.parse(readFileSync(pkgPath, 'utf-8'))\n).version;`,
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'CODEGRAPH_VERSION', kind: 'constant' }),
+      );
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'CODEGRAPH_VERSION', kind: 'constant' }),
+      );
+    });
+
+    it('extracts a const with a call-expression initializer as a definition', () => {
+      const symbols = parseJS(`const config = loadConfig();`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'config', kind: 'constant' }),
+      );
+    });
+
+    it('extracts an exported const with a call-expression initializer', () => {
+      const symbols = parseJS(`export const config = loadConfig();`);
+      expect(symbols.exports).toContainEqual(
+        expect.objectContaining({ name: 'config', kind: 'constant' }),
+      );
+    });
+
+    it('extracts a const with a bare identifier initializer as a definition', () => {
+      const symbols = parseJS(`const alias = handler;`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'alias', kind: 'constant' }),
+      );
+      // The new Definition must not come at the expense of the existing pts
+      // fnRefBindings tracking (they're independent passes).
+      expect(symbols.fnRefBindings).toContainEqual(
+        expect.objectContaining({ lhs: 'alias', rhs: 'handler' }),
+      );
+    });
+
+    it('still skips a non-top-level const with a non-literal initializer', () => {
+      const symbols = parseJS(`function f() { const x = compute(); }`);
+      expect(symbols.definitions.some((d) => d.name === 'x')).toBe(false);
+    });
+
+    it('extracts a const array pattern with a call-expression initializer (parity with identifier case)', () => {
+      const symbols = parseJS(`const [a, b] = computePair();`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: '[a, b]', kind: 'constant' }),
+      );
+    });
+  });
+
   describe('interface member kind labeling (#1809)', () => {
     function parseTS(code) {
       const parser = parsers.get('typescript');

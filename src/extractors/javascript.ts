@@ -208,11 +208,13 @@ const EXPORT_DECL_KIND: Record<string, string> = {
  * Named function/class/interface/type declarations carry their own `name`
  * field. `export const/let/var …` has no such field — each declarator's value
  * is classified the same way `handleVariableDeclarator` classifies it when
- * building the matching Definition (function-valued → kind 'function',
- * literal/array/object/new-expression-valued `const` → kind 'constant').
- * This predicate must stay identical to the Definition-building one: the
- * exported=1 UPDATE it feeds matches DB rows by (name, kind, file, line), so
- * a mismatched kind silently no-ops instead of marking the symbol exported (#1728).
+ * building the matching Definition (function-valued → kind 'function'; any
+ * other `const` initializer shape → kind 'constant', regardless of complexity —
+ * mirroring how function declarations are captured regardless of body
+ * complexity, #1819). This predicate must stay identical to the
+ * Definition-building one: the exported=1 UPDATE it feeds matches DB rows by
+ * (name, kind, file, line), so a mismatched kind silently no-ops instead of
+ * marking the symbol exported (#1728).
  */
 function collectExportedDeclarations(
   decl: TreeSitterNode,
@@ -241,7 +243,7 @@ function collectExportedDeclarations(
       valType === 'generator_function'
     ) {
       exps.push({ name: nameN.text, kind: 'function', line: exportLine });
-    } else if (isConst && isConstantValue(valueN)) {
+    } else if (isConst) {
       exps.push({ name: nameN.text, kind: 'constant', line: exportLine });
     }
   }
@@ -737,21 +739,22 @@ function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definiti
       valType === 'generator_function'
     )
       continue;
-    if (isConstantValue(valueN)) {
-      definitions.push({
-        name: nameN.text,
-        kind: 'constant',
-        line: nodeStartLine(declNode),
-        endLine: nodeEndLine(declNode),
-      });
-      // Phase 8.3f: extract function/arrow properties from object literals.
-      // Scope guard: extractConstDeclarators is only called from extractConstantsWalk, which
-      // already skips const declarations inside function scopes (line ~412). So these definitions
-      // are always top-level. Any new call site must add a hasFunctionScopeAncestor guard
-      // (the walk path at handleVariableDecl does this).
-      if (valueN.type === 'object') {
-        extractObjectLiteralFunctions(valueN, nameN.text, definitions);
-      }
+    // Any other initializer shape becomes a 'constant' Definition, regardless of
+    // complexity (call/member/parenthesized expressions, etc.) — mirroring how
+    // function declarations are captured regardless of body complexity (#1819).
+    definitions.push({
+      name: nameN.text,
+      kind: 'constant',
+      line: nodeStartLine(declNode),
+      endLine: nodeEndLine(declNode),
+    });
+    // Phase 8.3f: extract function/arrow properties from object literals.
+    // Scope guard: extractConstDeclarators is only called from extractConstantsWalk, which
+    // already skips const declarations inside function scopes (line ~412). So these definitions
+    // are always top-level. Any new call site must add a hasFunctionScopeAncestor guard
+    // (the walk path at handleVariableDecl does this).
+    if (valueN.type === 'object') {
+      extractObjectLiteralFunctions(valueN, nameN.text, definitions);
     }
   }
 }
@@ -1234,12 +1237,10 @@ function handleVariableDeclarator(
     valType === 'generator_function'
   ) {
     handleVarFnAssignment(node, nameN, valueN, ctx);
-  } else if (
-    isConst &&
-    nameN.type === 'identifier' &&
-    isConstantValue(valueN) &&
-    !hasFunctionScopeAncestor(node)
-  ) {
+  } else if (isConst && nameN.type === 'identifier' && !hasFunctionScopeAncestor(node)) {
+    // Any other initializer shape becomes a 'constant' Definition, regardless of
+    // complexity (call/member/parenthesized expressions, etc.) — mirroring how
+    // function declarations are captured regardless of body complexity (#1819).
     handleConstIdentifierAssignment(node, nameN, valueN, ctx);
   } else if (
     !isConst &&
@@ -1703,26 +1704,6 @@ function extractVisibility(node: TreeSitterNode): 'public' | 'private' | 'protec
     return 'private';
   }
   return undefined;
-}
-
-function isConstantValue(valueNode: TreeSitterNode): boolean {
-  if (!valueNode) return false;
-  const t = valueNode.type;
-  return (
-    t === 'number' ||
-    t === 'string' ||
-    t === 'template_string' ||
-    t === 'true' ||
-    t === 'false' ||
-    t === 'null' ||
-    t === 'undefined' ||
-    t === 'array' ||
-    t === 'object' ||
-    t === 'regex' ||
-    t === 'unary_expression' ||
-    t === 'binary_expression' ||
-    t === 'new_expression'
-  );
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────

@@ -1303,6 +1303,14 @@ fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+/// Node types marking a function-body scope; declarations inside these are skipped by
+/// the top-level-constant/destructuring branches below (parity with TS `FUNCTION_SCOPE_TYPES`).
+const VAR_DECL_FN_SCOPE_TYPES: [&str; 6] = [
+    "function_declaration", "arrow_function",
+    "function_expression", "method_definition",
+    "generator_function_declaration", "generator_function",
+];
+
 fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let is_const = node.child(0)
         .map(|c| node_text(&c, source) == "const")
@@ -1314,6 +1322,8 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         let value_n = declarator.child_by_field_name("value");
         let (Some(name_n), Some(value_n)) = (name_n, value_n) else { continue };
         let vt = value_n.kind();
+        let in_function_scope = find_parent_of_types(node, &VAR_DECL_FN_SCOPE_TYPES).is_some();
+
         if vt == "arrow_function" || vt == "function_expression" || vt == "function" || vt == "generator_function" {
             let children = extract_js_parameters(&value_n, source);
             symbols.definitions.push(Definition {
@@ -1326,13 +1336,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 cfg: build_function_cfg(&value_n, "javascript", source),
                 children: opt_children(children),
             });
-        } else if is_const && name_n.kind() == "object_pattern"
-            && find_parent_of_types(node, &[
-                "function_declaration", "arrow_function",
-                "function_expression", "method_definition",
-                "generator_function_declaration", "generator_function",
-            ]).is_none()
-        {
+        } else if is_const && name_n.kind() == "object_pattern" && !in_function_scope {
             // Parity with TS query path (extractDestructuredBindingsWalk):
             // skip destructured const bindings inside function scopes so the
             // Rust walk path matches FUNCTION_SCOPE_TYPES behaviour.
@@ -1362,13 +1366,14 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     }
                 }
             }
-        } else if is_const && is_js_literal(&value_n)
-            && find_parent_of_types(node, &[
-                "function_declaration", "arrow_function",
-                "function_expression", "method_definition",
-                "generator_function_declaration", "generator_function",
-            ]).is_none()
+        } else if is_const
+            && (name_n.kind() == "identifier" || name_n.kind() == "array_pattern")
+            && !in_function_scope
         {
+            // Any other initializer shape becomes a "constant" Definition, regardless of
+            // complexity (call/member/parenthesized expressions, etc.) — mirroring how
+            // function declarations are captured regardless of body complexity, and the
+            // WASM/TS extractor's unconditional identifier + array_pattern branches (#1819).
             symbols.definitions.push(Definition {
                 name: node_text(&name_n, source).to_string(),
                 kind: "constant".to_string(),
@@ -1386,13 +1391,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 let var_name = node_text(&name_n, source);
                 extract_object_literal_functions(&value_n, source, var_name, symbols);
             }
-        } else if !is_const && value_n.kind() == "object" && name_n.kind() == "identifier"
-            && find_parent_of_types(node, &[
-                "function_declaration", "arrow_function",
-                "function_expression", "method_definition",
-                "generator_function_declaration", "generator_function",
-            ]).is_none()
-        {
+        } else if !is_const && value_n.kind() == "object" && name_n.kind() == "identifier" && !in_function_scope {
             // `let`/`var` object literals get no "constant" definition of their own (mirrors
             // WASM extractLetVarObjLiteralDeclarators) but still need their function/method
             // properties extracted — inline here, like the `const` branch above, so native and
@@ -1401,7 +1400,13 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             // definitions in the wrong relative position.
             let var_name = node_text(&name_n, source);
             extract_object_literal_functions(&value_n, source, var_name, symbols);
-        } else if name_n.kind() == "identifier" && value_n.kind() == "identifier" {
+        }
+
+        // pts fn_ref_binding tracking runs independently of the Definition-shape branching
+        // above (mirrors WASM's collectFnRefBindings, which always runs before any
+        // Definition-related early return) so `const alias = handler` still seeds a pts
+        // alias even though `alias` now also gets its own "constant" Definition (#1819).
+        if name_n.kind() == "identifier" && value_n.kind() == "identifier" {
             // Phase 8.3: `const alias = handler` — record for pts analysis.
             // Mirror the JS BUILTIN_GLOBALS guard: skip well-known JS globals so
             // they are never seeded as pts targets (e.g. `const a = Array`).
@@ -1741,8 +1746,8 @@ fn handle_export_declaration(node: &Node, decl: &Node, source: &[u8], symbols: &
 /// field (handled above); a lexical/variable declaration doesn't, so each
 /// declarator's value is classified the same way `handle_var_decl` classifies
 /// it when creating the matching `Definition`: function-valued declarators
-/// become kind "function", `const` declarators with a literal/array/object/
-/// new-expression value (per `is_js_literal`) become kind "constant".
+/// become kind "function"; any other `const` declarator becomes kind "constant",
+/// regardless of initializer complexity (#1819).
 /// Mirrors the WASM/TS extractor's `collectExportedDeclarations`.
 ///
 /// This predicate must stay identical to `handle_var_decl`'s: `insert_nodes.rs`
@@ -1774,7 +1779,7 @@ fn collect_exported_var_declarations(
                 kind: "function".to_string(),
                 line,
             });
-        } else if is_const && is_js_literal(&value_n) {
+        } else if is_const {
             symbols.exports.push(ExportInfo {
                 name: node_text(&name_n, source).to_string(),
                 kind: "constant".to_string(),
@@ -2178,14 +2183,6 @@ fn extract_ts_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {
         }
     }
     members
-}
-
-fn is_js_literal(node: &Node) -> bool {
-    matches!(node.kind(),
-        "number" | "string" | "true" | "false" | "null" | "undefined"
-        | "template_string" | "regex" | "array" | "object"
-        | "unary_expression" | "binary_expression" | "new_expression"
-    )
 }
 
 // ── Existing helpers ────────────────────────────────────────────────────────
@@ -4122,6 +4119,78 @@ mod tests {
         // Only `main` should be extracted — local constants are not top-level symbols
         assert_eq!(s.definitions.len(), 1);
         assert_eq!(s.definitions[0].name, "main");
+    }
+
+    // ── #1819: top-level const with a non-"literal-shaped" initializer ────────
+
+    #[test]
+    fn extracts_const_with_member_expression_initializer_as_constant() {
+        // Repro from #1819: a parenthesized member-expression initializer
+        // (`(...).version`) was not one of the recognized "literal" shapes, so
+        // the whole declaration was silently dropped — not just unexported,
+        // absent from `definitions` entirely.
+        let s = parse_js(
+            "const CODEGRAPH_VERSION = (JSON.parse(readFileSync(pkgPath, 'utf-8'))).version;",
+        );
+        let def = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "CODEGRAPH_VERSION")
+            .unwrap_or_else(|| panic!("CODEGRAPH_VERSION should be extracted as a definition"));
+        assert_eq!(def.kind, "constant");
+    }
+
+    #[test]
+    fn extracts_const_with_call_expression_initializer_as_constant() {
+        let s = parse_js("const config = loadConfig();");
+        let def = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "config")
+            .unwrap_or_else(|| panic!("config should be extracted as a definition"));
+        assert_eq!(def.kind, "constant");
+    }
+
+    #[test]
+    fn exports_const_with_call_expression_initializer() {
+        let s = parse_js("export const config = loadConfig();");
+        assert!(
+            s.exports.iter().any(|e| e.name == "config" && e.kind == "constant"),
+            "config should be listed as an exported constant; got: {:?}",
+            s.exports
+        );
+    }
+
+    #[test]
+    fn extracts_const_array_pattern_with_call_expression_initializer() {
+        // Parity with the identifier case above: array-pattern names must also
+        // be discoverable regardless of initializer complexity.
+        let s = parse_js("const [a, b] = computePair();");
+        let def = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "[a, b]")
+            .unwrap_or_else(|| panic!("[a, b] should be extracted as a definition"));
+        assert_eq!(def.kind, "constant");
+    }
+
+    #[test]
+    fn const_alias_gets_both_definition_and_fn_ref_binding() {
+        // The new "constant" Definition for an identifier-aliased const must not
+        // come at the expense of the existing pts fn_ref_binding tracking — the
+        // two concerns are independent (mirrors the WASM/TS extractor's
+        // decoupled fnRefBindings pass).
+        let s = parse_js("const alias = handler;");
+        assert!(
+            s.definitions.iter().any(|d| d.name == "alias" && d.kind == "constant"),
+            "alias should be extracted as a constant definition; got: {:?}",
+            s.definitions
+        );
+        assert!(
+            s.fn_ref_bindings.iter().any(|b| b.lhs == "alias" && b.rhs == "handler"),
+            "alias -> handler fn_ref_binding should still be recorded; got: {:?}",
+            s.fn_ref_bindings
+        );
     }
 
     // ── AST node extraction tests ────────────────────────────────────────────
