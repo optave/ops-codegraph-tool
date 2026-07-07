@@ -337,13 +337,25 @@ function resolveBarrelTarget(
  * target-file symbol lookups must search using the *original* name — the
  * renamed local alias only exists in the importing file, not in the file
  * being imported from (#1730). Mirrors `importNamePairs` in build-edges.ts.
+ *
+ * Also reports, per name, whether it should be treated as type-only —
+ * either because the whole statement is (`import type { X }`) or because
+ * this specific specifier carries the inline modifier
+ * (`import { type X }`, #1813).
  */
-function importNamePairs(imp: Import): Array<{ local: string; original: string }> {
+function importNamePairs(
+  imp: Import,
+): Array<{ local: string; original: string; typeOnly: boolean }> {
   const originalNameFor = new Map<string, string>();
   for (const r of imp.renamedImports ?? []) originalNameFor.set(r.local, r.imported);
+  const typeOnlyNames = new Set(imp.typeOnlyNames ?? []);
   return imp.names.map((name) => {
     const local = name.replace(/^\*\s+as\s+/, '');
-    return { local, original: originalNameFor.get(local) ?? local };
+    return {
+      local,
+      original: originalNameFor.get(local) ?? local,
+      typeOnly: imp.typeOnly === true || typeOnlyNames.has(local),
+    };
   });
 }
 
@@ -383,6 +395,10 @@ function resolveBarrelImportEdges(
  * so the loop is a no-op for them; the query layer falls back to the
  * target's full export list for anything reached only by the file-level
  * edge. Mirrors `emitNamedSymbolEdges` in build-edges.ts (full-build path).
+ *
+ * For `edgeKind === 'imports-type'`, only specifiers actually marked
+ * type-only (whole-statement or inline per-specifier, #1813) get an edge —
+ * a mixed `import { value, type Foo }` must not credit `value`.
  */
 function emitNamedSymbolEdges(
   db: BetterSqlite3Database | null,
@@ -393,7 +409,8 @@ function emitNamedSymbolEdges(
   edgeKind: 'imports-type' | 'reexports',
 ): number {
   let edgesAdded = 0;
-  for (const { original } of importNamePairs(imp)) {
+  for (const { original, typeOnly } of importNamePairs(imp)) {
+    if (edgeKind === 'imports-type' && !typeOnly) continue;
     let targetFile = resolvedPath;
     if (db && isBarrelFile(db, resolvedPath)) {
       const actual = resolveBarrelTarget(db, resolvedPath, original);
@@ -437,7 +454,7 @@ function emitEdgesForImport(
   stmts.insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
   let edgesAdded = 1;
 
-  if (imp.typeOnly) {
+  if (imp.typeOnly || (imp.typeOnlyNames && imp.typeOnlyNames.length > 0)) {
     edgesAdded += emitNamedSymbolEdges(db, stmts, imp, resolvedPath, fileNodeId, 'imports-type');
   }
   if (imp.reexport && !imp.wildcardReexport) {

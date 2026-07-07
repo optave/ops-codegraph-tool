@@ -1699,13 +1699,18 @@ fn handle_import_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         let mod_path = node_text(&source_node, source)
             .replace(&['\'', '"'][..], "");
         let mut renamed_imports = Vec::new();
-        let names = extract_import_names_with_renames(node, source, &mut renamed_imports);
+        let mut type_only_names = Vec::new();
+        let names =
+            extract_import_names_with_renames(node, source, &mut renamed_imports, &mut type_only_names);
         let mut imp = Import::new(mod_path, names, start_line(node));
         if is_type_only {
             imp.type_only = Some(true);
         }
         if !renamed_imports.is_empty() {
             imp.renamed_imports = Some(renamed_imports);
+        }
+        if !type_only_names.is_empty() {
+            imp.type_only_names = Some(type_only_names);
         }
         symbols.imports.push(imp);
     }
@@ -3184,21 +3189,25 @@ fn extract_rest_identifier(rest_node: &Node, source: &[u8], names: &mut Vec<Stri
 fn extract_import_names(node: &Node, source: &[u8]) -> Vec<String> {
     let mut names = Vec::new();
     let mut renamed = Vec::new();
-    scan_import_names(node, source, &mut names, &mut renamed);
+    let mut type_only = Vec::new();
+    scan_import_names(node, source, &mut names, &mut renamed, &mut type_only);
     names
 }
 
 /// Extract import names and collect `{ local, imported }` pairs for
-/// `import_specifier` nodes that rename a binding (`import { X as Y }`).
-/// Mirrors `extractImportNames`'s `renamedOut` parameter in
-/// src/extractors/javascript.ts (#1730).
+/// `import_specifier` nodes that rename a binding (`import { X as Y }`), plus
+/// the local names of specifiers carrying an inline `type`/`typeof`
+/// modifier (`import { type X }`, #1813). Mirrors `extractImportNames`'s
+/// `renamedOut`/`typeOnlyOut` parameters in src/extractors/javascript.ts
+/// (#1730, #1813).
 fn extract_import_names_with_renames(
     node: &Node,
     source: &[u8],
     renamed_out: &mut Vec<RenamedImport>,
+    type_only_out: &mut Vec<String>,
 ) -> Vec<String> {
     let mut names = Vec::new();
-    scan_import_names(node, source, &mut names, renamed_out);
+    scan_import_names(node, source, &mut names, renamed_out, type_only_out);
     names
 }
 
@@ -3207,8 +3216,9 @@ fn scan_import_names(
     source: &[u8],
     names: &mut Vec<String>,
     renamed_out: &mut Vec<RenamedImport>,
+    type_only_out: &mut Vec<String>,
 ) {
-    scan_import_names_depth(node, source, names, renamed_out, 0);
+    scan_import_names_depth(node, source, names, renamed_out, type_only_out, 0);
 }
 
 /// Grammar note (see tree-sitter-javascript): for `import_specifier`, the
@@ -3218,11 +3228,17 @@ fn scan_import_names(
 /// unconditionally (as this function used to, and as the `export_specifier`
 /// branch below still deliberately does — see its comment) silently drops the
 /// local alias for every renamed import: call sites use `Y`, not `X` (#1730).
+///
+/// The tree-sitter-typescript grammar defines `import_specifier` as
+/// `optional(choice('type', 'typeof'))` followed by the name/alias fields, so
+/// an inline per-specifier type modifier (`import { type X }`) — when
+/// present — is always the specifier's first child (#1813).
 fn scan_import_names_depth(
     node: &Node,
     source: &[u8],
     names: &mut Vec<String>,
     renamed_out: &mut Vec<RenamedImport>,
+    type_only_out: &mut Vec<String>,
     depth: usize,
 ) {
     if depth >= MAX_WALK_DEPTH {
@@ -3234,7 +3250,8 @@ fn scan_import_names_depth(
             let alias_node = node.child_by_field_name("alias");
             let local_node = alias_node.or(source_name_node);
             if let Some(local_node) = local_node {
-                names.push(node_text(&local_node, source).to_string());
+                let local_text = node_text(&local_node, source).to_string();
+                names.push(local_text.clone());
                 if let (Some(alias), Some(source_name)) = (alias_node, source_name_node) {
                     let alias_text = node_text(&alias, source);
                     let source_text = node_text(&source_name, source);
@@ -3243,6 +3260,11 @@ fn scan_import_names_depth(
                             local: alias_text.to_string(),
                             imported: source_text.to_string(),
                         });
+                    }
+                }
+                if let Some(modifier) = node.child(0) {
+                    if modifier.kind() == "type" || modifier.kind() == "typeof" {
+                        type_only_out.push(local_text);
                     }
                 }
             } else {
@@ -3280,7 +3302,7 @@ fn scan_import_names_depth(
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            scan_import_names_depth(&child, source, names, renamed_out, depth + 1);
+            scan_import_names_depth(&child, source, names, renamed_out, type_only_out, depth + 1);
         }
     }
 }

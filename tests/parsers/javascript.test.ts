@@ -176,6 +176,56 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('inline per-specifier type-only import modifier (#1813)', () => {
+    function parseTS(code) {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.ts');
+    }
+
+    it('records the type-only specifier in typeOnlyNames for a mixed statement', () => {
+      const symbols = parseTS(`import { openRepo, type Repository } from './db';`);
+      expect(symbols.imports[0].names).toEqual(['openRepo', 'Repository']);
+      expect(symbols.imports[0].typeOnly).toBe(false);
+      expect(symbols.imports[0].typeOnlyNames).toEqual(['Repository']);
+    });
+
+    it('records the type-only specifier regardless of its position in the statement', () => {
+      const symbols = parseTS(`import { type Repository, openRepo } from './db';`);
+      expect(symbols.imports[0].typeOnlyNames).toEqual(['Repository']);
+    });
+
+    it('records every type-only name when multiple specifiers use the inline modifier', () => {
+      const symbols = parseTS(`import { type A, type B, value } from './mixed';`);
+      expect(symbols.imports[0].typeOnlyNames).toEqual(['A', 'B']);
+    });
+
+    it('recognizes the `typeof` modifier as well as `type`', () => {
+      const symbols = parseTS(`import { typeof Z, value } from './mixed';`);
+      expect(symbols.imports[0].typeOnlyNames).toEqual(['Z']);
+    });
+
+    it('does not set typeOnlyNames when no specifier uses the inline modifier', () => {
+      const symbols = parseTS(`import { foo, bar } from './baz';`);
+      expect(symbols.imports[0].typeOnlyNames).toBeUndefined();
+    });
+
+    it('does not set typeOnlyNames for a whole-statement `import type` (already covered by typeOnly)', () => {
+      const symbols = parseTS(`import type { Foo, Bar } from './types';`);
+      expect(symbols.imports[0].typeOnly).toBe(true);
+      expect(symbols.imports[0].typeOnlyNames).toBeUndefined();
+    });
+
+    it('records the local alias, not the source name, for a renamed type-only specifier', () => {
+      const symbols = parseTS(`import { type Repository as Repo, openRepo } from './db';`);
+      expect(symbols.imports[0].names).toEqual(['Repo', 'openRepo']);
+      expect(symbols.imports[0].typeOnlyNames).toEqual(['Repo']);
+      expect(symbols.imports[0].renamedImports).toEqual([
+        { local: 'Repo', imported: 'Repository' },
+      ]);
+    });
+  });
+
   describe('dynamic import() destructuring through parens/as-cast wrappers (#1781)', () => {
     function parseTS(code) {
       const parser = parsers.get('typescript');

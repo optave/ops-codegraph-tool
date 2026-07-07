@@ -144,6 +144,17 @@ pub struct Import {
     /// `Import.renamedImports`.
     #[napi(js_name = "renamedImports")]
     pub renamed_imports: Option<Vec<RenamedImport>>,
+    /// Local binding names (post-alias, matching entries in `names`) that
+    /// carry an inline per-specifier `type`/`typeof` modifier
+    /// (`import { type X }`), as distinct from a whole-statement
+    /// `import type { X }` (already covered by `type_only`). Only populated
+    /// for specifiers that actually use the modifier — mirrors
+    /// `renamed_imports`'s sparse-population convention. Lets a mixed
+    /// statement (`import { value, type Foo }`) still credit `Foo` with a
+    /// symbol-level `imports-type` edge. Mirrors TS `Import.typeOnlyNames`
+    /// (#1813).
+    #[napi(js_name = "typeOnlyNames")]
+    pub type_only_names: Option<Vec<String>>,
     // Language-specific flags
     #[napi(js_name = "pythonImport")]
     pub python_import: Option<bool>,
@@ -188,6 +199,7 @@ impl Import {
             reexport: None,
             wildcard_reexport: None,
             renamed_imports: None,
+            type_only_names: None,
             python_import: None,
             go_import: None,
             rust_use: None,

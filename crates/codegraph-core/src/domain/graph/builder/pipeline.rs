@@ -1325,7 +1325,7 @@ fn collect_imported_names_for_file(
     let mut imported_names: Vec<ImportedName> = Vec::new();
     for imp in &symbols.imports {
         let resolved_path = import_ctx.get_resolved(abs_str, &imp.source);
-        for (local, original) in import_name_pairs(imp) {
+        for (local, original, _type_only) in import_name_pairs(imp) {
             // CJS require bindings are included in imported_names so the receiver-edge
             // resolver treats them as import artifacts (not locally-defined symbols).
             // We use an empty target_file so the import-aware call-target lookup
