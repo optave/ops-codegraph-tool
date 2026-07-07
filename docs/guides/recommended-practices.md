@@ -149,10 +149,10 @@ Use `check` for pass/fail CI validation with configurable predicates:
 - name: Validate changes
   run: |
     npx codegraph build
-    npx codegraph check --staged --no-new-cycles --max-blast-radius 50 --no-boundary-violations -T
+    npx codegraph check --staged --cycles --blast-radius 50 --boundaries -T
 ```
 
-Combine multiple predicates — exit code 1 if any fails. Available predicates: `--no-new-cycles`, `--max-complexity <n>`, `--max-blast-radius <n>`, `--no-boundary-violations`.
+Combine multiple predicates — exit code 1 if any fails. Available predicates: `--cycles`, `--blast-radius <n>`, `--signatures`, `--boundaries`.
 
 ### Caching the graph database
 
@@ -690,7 +690,7 @@ codegraph co-change --analyze
 codegraph check -T
 
 # 8. (Optional) Set up CI validation gate
-# codegraph check --staged --no-new-cycles --max-blast-radius 50 -T
+# codegraph check --staged --cycles --blast-radius 50 -T
 
 # 9. (Optional) Build embeddings for semantic search
 codegraph embed
