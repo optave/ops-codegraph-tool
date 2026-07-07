@@ -2642,7 +2642,9 @@ fn extract_receiver_name(obj: &Node, source: &[u8]) -> String {
 }
 
 /// Return the first non-punctuation argument node from a call_expression.
-fn get_first_call_arg<'a>(call_node: &'a Node, source: &[u8]) -> Option<Node<'a>> {
+/// Mirrors `getFirstCallArg` in src/extractors/javascript.ts, which likewise
+/// only needs node structure (not source text) to locate the argument.
+fn get_first_call_arg<'a>(call_node: &'a Node) -> Option<Node<'a>> {
     let args = call_node.child_by_field_name("arguments")
         .or_else(|| find_child(call_node, "arguments"))?;
     for i in 0..args.child_count() {
@@ -2698,7 +2700,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             let name = node_text(fn_node, source);
             if name == "eval" {
                 // eval(code) — dynamic code execution; capture first arg if string literal
-                let key_expr = get_first_call_arg(call_node, source)
+                let key_expr = get_first_call_arg(call_node)
                     .filter(|a| a.kind() == "string" || a.kind() == "template_string")
                     .map(|a| node_text(&a, source).to_string());
                 return Some(Call {
@@ -2732,7 +2734,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             // Note: Reflect.call does not exist in the ECMAScript spec; only Reflect.apply, construct, get, etc.
             if is_reflect && prop_text == "apply" {
                 return Some(extract_reflect_callee_from_arg(
-                    get_first_call_arg(call_node, source),
+                    get_first_call_arg(call_node),
                     call_line,
                     source,
                 ));
@@ -2741,7 +2743,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             // Reflect.construct(Target, args) — extract constructor as callee
             if is_reflect && prop_text == "construct" {
                 return Some(extract_reflect_callee_from_arg(
-                    get_first_call_arg(call_node, source),
+                    get_first_call_arg(call_node),
                     call_line,
                     source,
                 ));
@@ -4414,6 +4416,53 @@ mod tests {
         let c = s.calls.iter().find(|c| c.name == "method").unwrap();
         assert_eq!(c.dynamic, Some(true));
         assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+    }
+
+    // ── #1817: get_first_call_arg consumers (eval/Reflect.apply/Reflect.construct) ──
+    //
+    // Exercises the three call sites that resolve their first call argument via
+    // `get_first_call_arg`, which used to take an unused `source` parameter.
+
+    #[test]
+    fn eval_captures_string_literal_key_expr() {
+        let s = parse_js("function test() { eval(\"console.log('hi')\"); }");
+        let c = s.calls.iter().find(|c| c.name == "<dynamic:eval>").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("eval"));
+        assert!(c.key_expr.as_deref().unwrap().contains("console.log"));
+    }
+
+    #[test]
+    fn eval_with_non_literal_arg_has_no_key_expr() {
+        let s = parse_js("function test(code) { eval(code); }");
+        let c = s.calls.iter().find(|c| c.name == "<dynamic:eval>").unwrap();
+        assert_eq!(c.dynamic_kind.as_deref(), Some("eval"));
+        assert!(c.key_expr.is_none());
+    }
+
+    #[test]
+    fn reflect_apply_extracts_first_arg_as_callee() {
+        let s = parse_js("function test(fn, ctx) { Reflect.apply(fn, ctx, []); }");
+        let c = s.calls.iter().find(|c| c.name == "fn").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+    }
+
+    #[test]
+    fn reflect_construct_extracts_first_arg_as_callee() {
+        let s = parse_js("function test(Cls) { Reflect.construct(Cls, []); }");
+        let c = s.calls.iter().find(|c| c.name == "Cls").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+    }
+
+    #[test]
+    fn reflect_apply_member_expression_arg_extracts_property_with_receiver() {
+        let s = parse_js("function test(obj, ctx) { Reflect.apply(obj.method, ctx, []); }");
+        let c = s.calls.iter().find(|c| c.name == "method").unwrap();
+        assert_eq!(c.dynamic, Some(true));
+        assert_eq!(c.dynamic_kind.as_deref(), Some("reflection"));
+        assert_eq!(c.receiver.as_deref(), Some("obj"));
     }
 
     // ── #1771: object-literal value-ref extraction ──────────────────────────
