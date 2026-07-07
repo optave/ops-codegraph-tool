@@ -1,8 +1,17 @@
 import path from 'node:path';
 import { getBuildMeta, getNodeId, setBuildMeta, testFilterSQL } from '../db/index.js';
+import { cachedStmt } from '../db/repository/cached-stmt.js';
 import { debug } from '../infrastructure/logger.js';
 import { getAncestorDirs, normalizePath } from '../shared/constants.js';
-import type { BetterSqlite3Database } from '../types.js';
+import type { BetterSqlite3Database, StmtCache } from '../types.js';
+
+// isBarrelProdReachable's two queries are identical text on every call (the
+// interpolated test-file filter is a fixed set of LIKE patterns keyed only
+// by column name) — cache them per-db so repeated calls (1-3 barrels per
+// incremental build) skip re-preparing the same statement. Mirrors
+// `prepare_cached` in the Rust `is_barrel_prod_reachable`.
+const _barrelDirectStmt: StmtCache<{ reachable: number }> = new WeakMap();
+const _barrelBackwardStmt: StmtCache<{ reachable: number }> = new WeakMap();
 
 // ─── Build-time helpers ───────────────────────────────────────────────
 
@@ -947,9 +956,10 @@ function findDirectReexportBarrels(
 function isBarrelProdReachable(db: BetterSqlite3Database, barrelFile: string): boolean {
   // Fast path: barrelFile itself is directly imported by a non-test file
   // (the base case of the original `prod_reachable` definition).
-  const direct = db
-    .prepare(
-      `SELECT EXISTS(
+  const direct = cachedStmt(
+    _barrelDirectStmt,
+    db,
+    `SELECT EXISTS(
          SELECT 1 FROM edges e
            JOIN nodes src ON e.source_id = src.id
            JOIN nodes tgt ON e.target_id = tgt.id
@@ -957,8 +967,7 @@ function isBarrelProdReachable(db: BetterSqlite3Database, barrelFile: string): b
            AND src.kind = 'file' AND tgt.kind = 'file' AND tgt.file = ?
            ${testFilterSQL('src.file')}
        ) AS reachable`,
-    )
-    .get(barrelFile) as { reachable: number };
+  ).get(barrelFile) as { reachable: number };
   if (direct.reachable) return true;
 
   // Slow path: walk `reexports` edges backward from barrelFile (who
@@ -966,9 +975,10 @@ function isBarrelProdReachable(db: BetterSqlite3Database, barrelFile: string): b
   // that's directly imported by production. `UNION` (not `UNION ALL`)
   // dedupes on `file`, which both bounds the search to barrelFile's own
   // chain and guarantees termination if the chain contains a cycle.
-  const backward = db
-    .prepare(
-      `WITH RECURSIVE ancestors(file) AS (
+  const backward = cachedStmt(
+    _barrelBackwardStmt,
+    db,
+    `WITH RECURSIVE ancestors(file) AS (
          SELECT ? AS file
          UNION
          SELECT DISTINCT n1.file FROM edges e
@@ -986,8 +996,7 @@ function isBarrelProdReachable(db: BetterSqlite3Database, barrelFile: string): b
            AND src2.kind = 'file'
            ${testFilterSQL('src2.file')}
        ) AS reachable`,
-    )
-    .get(barrelFile) as { reachable: number };
+  ).get(barrelFile) as { reachable: number };
   return !!backward.reachable;
 }
 

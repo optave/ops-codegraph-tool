@@ -730,8 +730,14 @@ fn is_barrel_prod_reachable(
          )",
         test_file_filter_col("src.file")
     );
-    let direct: bool =
-        tx.query_row(&direct_sql, rusqlite::params![barrel_file], |row| row.get(0))?;
+    // prepare_cached: `direct_sql` is the same text on every call (the
+    // interpolated test-file filter is a fixed set of LIKE patterns keyed
+    // only by column name), so the statement cache turns every call after
+    // the first into a lookup instead of a fresh parse/plan — worthwhile
+    // even at the small 1-3-barrels-per-build cardinality this runs at.
+    let direct: bool = tx
+        .prepare_cached(&direct_sql)?
+        .query_row(rusqlite::params![barrel_file], |row| row.get(0))?;
     if direct {
         return Ok(true);
     }
@@ -762,7 +768,8 @@ fn is_barrel_prod_reachable(
          )",
         test_file_filter_col("src2.file")
     );
-    tx.query_row(&backward_sql, rusqlite::params![barrel_file], |row| row.get(0))
+    tx.prepare_cached(&backward_sql)?
+        .query_row(rusqlite::params![barrel_file], |row| row.get(0))
 }
 
 /// Find neighbouring files connected by call/imports-type/reexports edges to the changed files.
