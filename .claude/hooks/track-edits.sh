@@ -23,8 +23,27 @@ if [ -z "$FILE_PATH" ]; then
   exit 0
 fi
 
-# Use git worktree root so each worktree session has its own edit log
-PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+# Resolve the git worktree that actually owns the edited file, rather than
+# the hook process's own ambient cwd. Edit/Write tool calls carry only an
+# absolute file_path with no associated "current directory" state, so the
+# hook's ambient cwd is not guaranteed to match the worktree the file lives
+# in (see issue #1838) — this mirrors the `-C "$WORK_DIR"` pattern
+# guard-git.sh already uses on the read side of this same check.
+#
+# Walk up to the nearest existing ancestor directory first: Write can target
+# a not-yet-created nested directory, and `git -C` requires an existing path.
+SEARCH_DIR=$(dirname -- "$FILE_PATH")
+while [ ! -d "$SEARCH_DIR" ] && [ "$SEARCH_DIR" != "/" ] && [ -n "$SEARCH_DIR" ]; do
+  SEARCH_DIR=$(dirname -- "$SEARCH_DIR")
+done
+
+PROJECT_DIR=""
+if [ -n "$SEARCH_DIR" ] && [ -d "$SEARCH_DIR" ]; then
+  PROJECT_DIR=$(git -C "$SEARCH_DIR" rev-parse --show-toplevel 2>/dev/null) || true
+fi
+if [ -z "$PROJECT_DIR" ]; then
+  PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+fi
 LOG_FILE="$PROJECT_DIR/.claude/session-edits.log"
 
 # Normalize to relative path with forward slashes
