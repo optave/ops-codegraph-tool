@@ -557,32 +557,49 @@ const INSERT_CHUNK: usize = 199;
 /// per-edge bind/step/reset cycle. With the chunked path each chunk runs a
 /// single VM execution against a freshly prepared statement (#1013).
 ///
-/// Bind/execute errors are surfaced via a stderr warning and the offending
-/// chunk is skipped — silently swallowing them previously could produce
-/// `NULL` columns in the inserted edge rows.
-pub fn insert_edges(conn: &Connection, edges: &[EdgeRow]) {
+/// Every failure mode — transaction-start, a chunk's bind/execute, and
+/// commit — is both logged to stderr for immediate diagnosis and returned to
+/// the caller as `Err` (#1827). A single malformed chunk still doesn't
+/// sacrifice every other edge in the batch: it's skipped so the remaining
+/// chunks commit, but the `Err` return means `run_pipeline` finds out the
+/// edge set is incomplete instead of reporting a silently "successful"
+/// build — which also keeps `file_hashes` from being advanced over
+/// incomplete data (#1731).
+pub fn insert_edges(conn: &Connection, edges: &[EdgeRow]) -> Result<(), String> {
     if edges.is_empty() {
-        return;
+        return Ok(());
     }
-    let tx = match conn.unchecked_transaction() {
-        Ok(tx) => tx,
-        Err(e) => {
-            eprintln!("[codegraph] insert_edges: failed to start transaction: {e}");
-            return;
-        }
-    };
+    let tx = conn.unchecked_transaction().map_err(|e| {
+        let msg = format!("insert_edges: failed to start transaction: {e}");
+        eprintln!("[codegraph] {msg}");
+        msg
+    })?;
 
+    let mut total_chunks = 0usize;
+    let mut chunk_failures: Vec<String> = Vec::new();
     for chunk in edges.chunks(INSERT_CHUNK) {
+        total_chunks += 1;
         if let Err(e) = insert_edge_chunk(&tx, chunk) {
-            eprintln!(
-                "[codegraph] insert_edges: skipped chunk of {} rows due to error: {e}",
-                chunk.len()
-            );
+            let msg = format!("chunk of {} row(s): {e}", chunk.len());
+            eprintln!("[codegraph] insert_edges: skipped {msg}");
+            chunk_failures.push(msg);
         }
     }
-    if let Err(e) = tx.commit() {
-        eprintln!("[codegraph] insert_edges: commit failed: {e}");
+
+    tx.commit().map_err(|e| {
+        let msg = format!("insert_edges: commit failed: {e}");
+        eprintln!("[codegraph] {msg}");
+        msg
+    })?;
+
+    if !chunk_failures.is_empty() {
+        return Err(format!(
+            "insert_edges: {} of {total_chunks} chunk(s) failed to insert: {}",
+            chunk_failures.len(),
+            chunk_failures.join("; ")
+        ));
     }
+    Ok(())
 }
 
 /// Bind and execute a single chunk in its own fallible scope so the caller
@@ -754,5 +771,71 @@ mod tests {
 
         let pairs = import_name_pairs(&imp);
         assert!(pairs.iter().all(|(_, _, type_only)| !*type_only));
+    }
+
+    /// Minimal in-memory `edges` schema covering only the columns
+    /// `insert_edge_chunk` writes.
+    fn edges_test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                confidence REAL DEFAULT 1.0,
+                dynamic INTEGER DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn sample_edge_row() -> EdgeRow {
+        EdgeRow {
+            source_id: 1,
+            target_id: 2,
+            kind: "imports".to_string(),
+            confidence: 1.0,
+            dynamic: 0,
+        }
+    }
+
+    #[test]
+    fn insert_edges_commits_rows_and_returns_ok_on_success() {
+        let conn = edges_test_conn();
+        let result = insert_edges(&conn, &[sample_edge_row()]);
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn insert_edges_returns_ok_for_an_empty_batch() {
+        let conn = edges_test_conn();
+        assert!(insert_edges(&conn, &[]).is_ok());
+    }
+
+    /// Regression test for #1827: a transaction-start failure must surface
+    /// as `Err`, not be swallowed behind a stderr-only warning while the
+    /// caller sees nothing (`run_pipeline` previously ignored this entirely).
+    #[test]
+    fn insert_edges_returns_err_when_transaction_cannot_start() {
+        let conn = edges_test_conn();
+        // SQLite refuses to start a second transaction on a connection that
+        // already has one active — a reliable way to force
+        // `conn.unchecked_transaction()` to fail deterministically.
+        conn.execute_batch("BEGIN").unwrap();
+
+        let result = insert_edges(&conn, &[sample_edge_row()]);
+        assert!(
+            result.is_err(),
+            "insert_edges must return Err instead of silently no-op'ing when the transaction can't start"
+        );
+
+        conn.execute_batch("ROLLBACK").unwrap();
     }
 }

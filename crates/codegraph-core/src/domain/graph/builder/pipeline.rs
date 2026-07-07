@@ -18,6 +18,14 @@
 //!    that their edges match this revision (#1731)
 //! 8. Structure metrics + role classification
 //! 9. Finalize (metadata, journal)
+//!
+//! Steps 5 and 7 propagate write failures via `?` instead of discarding
+//! them: a transaction that never started (or never committed) for nodes or
+//! edges now aborts `run_pipeline` with `Err`, which `NativeDatabase::build_graph`
+//! turns into a thrown napi error. The JS caller (`tryNativeOrchestrator`)
+//! already catches that and falls back to the JS/WASM pipeline, so a write
+//! failure now triggers a real retry instead of a "successful" build over an
+//! incomplete graph (#1827).
 
 use crate::domain::graph::builder::stages::detect_changes;
 use crate::infrastructure::config::{BuildConfig, BuildOpts, BuildPathAliases};
@@ -523,14 +531,19 @@ pub fn run_pipeline(
     // desyncing file_hashes from the edges it's supposed to gate re-parsing
     // on (#1731). The hash is committed at the end of Stage 7 instead, once
     // edges genuinely match this revision — see `commit_file_hashes` below.
+    // A failure here propagates via `?` instead of being discarded: nodes
+    // are the foundation every later stage builds on, so a transaction
+    // failure must abort the pipeline and surface as a thrown error rather
+    // than a "successful" build with missing data (#1827).
     let t0 = Instant::now();
     let insert_batches = build_insert_batches(&file_symbols);
     let file_hashes = build_file_hash_entries(&parse_changes);
-    let _ = crate::domain::graph::builder::stages::insert_nodes::do_insert_nodes(
+    crate::domain::graph::builder::stages::insert_nodes::do_insert_nodes(
         conn,
         &insert_batches,
         &change_result.removed,
-    );
+    )
+    .map_err(|e| format!("insert_nodes failed: {e}"))?;
     detect_changes::heal_metadata(conn, &change_result.metadata_updates);
     timing.insert_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -566,9 +579,14 @@ pub fn run_pipeline(
     import_ctx.reexport_map = import_edges::build_reexport_map(&import_ctx);
     import_ctx.barrel_only_files = import_edges::detect_barrel_only_files(&import_ctx);
 
-    // Build import edges
+    // Build import edges. A write failure here (transaction-start, a
+    // malformed chunk, or commit) propagates via `?` instead of being
+    // discarded — the old `run_pipeline` had no way to know edges were
+    // never written for some or all files, so it returned `Ok(...)` (a
+    // "successful" build) over an incomplete edge set (#1827).
     let import_edge_rows = import_edges::build_import_edges(conn, &import_ctx);
-    import_edges::insert_edges(conn, &import_edge_rows);
+    import_edges::insert_edges(conn, &import_edge_rows)
+        .map_err(|e| format!("import edge insertion failed: {e}"))?;
 
     // Phase 8.2: cross-file return-type propagation — seed each file's
     // type_map with the return types of imported functions before call-edge
@@ -578,18 +596,28 @@ pub fn run_pipeline(
     // Build call edges using existing Rust edge_builder (internal path)
     // For now, call edges are built via the existing napi-exported function's
     // internal logic. We load nodes from DB and pass to the edge builder.
+    // Same error-propagation rationale as import edges above (#1827) — this
+    // call used to run unchecked, with its `Result` never captured.
     build_and_insert_call_edges(
         conn,
         &file_symbols,
         &import_ctx,
         !change_result.is_full_build,
         config.analysis.points_to_max_iterations,
-    );
+    )
+    .map_err(|e| format!("call edge insertion failed: {e}"))?;
 
     reconnect_saved_reverse_dep_edges(conn, &saved_reverse_dep_edges);
 
     // Now that edges reflect this revision, commit file_hashes for the
     // changed files (#1731). Deferred from Stage 5 — see the comment there.
+    // Only reached once import and call edges above are confirmed written —
+    // an edge-insertion failure now aborts the pipeline (via `?`) before this
+    // point instead of committing a hash over an incomplete edge set (#1827).
+    // A failure of this commit itself stays non-fatal (log and continue):
+    // it only affects bookkeeping, not correctness — the file's hash simply
+    // keeps its old value, so the next build re-detects and re-processes it
+    // (the same self-healing property #1731 relies on).
     if let Err(e) = crate::domain::graph::builder::stages::insert_nodes::commit_file_hashes(
         conn,
         &file_hashes,
@@ -1505,10 +1533,18 @@ fn inject_return_types_for_file(
     symbols.type_map.extend(injections);
 }
 
-/// Insert the edges produced by the native edge builder into the edges table.
-fn insert_call_edge_rows(conn: &Connection, edges: &[crate::domain::graph::builder::stages::build_edges::ComputedEdge]) {
+/// Insert the edges produced by the native edge builder into the edges
+/// table. Propagates `do_insert_edges`'s `Result` instead of discarding it
+/// (#1827) — `do_insert_edges` already fails fast (transaction-start,
+/// bind/execute, or commit) via `?`, but the previous `let _ = …` here threw
+/// that signal away, so `run_pipeline` had no way to detect a transaction
+/// that never started, or failed to commit, for this file's call edges.
+fn insert_call_edge_rows(
+    conn: &Connection,
+    edges: &[crate::domain::graph::builder::stages::build_edges::ComputedEdge],
+) -> Result<(), String> {
     if edges.is_empty() {
-        return;
+        return Ok(());
     }
     let edge_rows: Vec<crate::db::repository::edges::EdgeRow> = edges
         .iter()
@@ -1521,7 +1557,8 @@ fn insert_call_edge_rows(conn: &Connection, edges: &[crate::domain::graph::build
             dynamic_kind: e.dynamic_kind.clone(),
         })
         .collect();
-    let _ = crate::db::repository::edges::do_insert_edges(conn, &edge_rows);
+    crate::db::repository::edges::do_insert_edges(conn, &edge_rows)
+        .map_err(|e| format!("call edge insertion failed: {e}"))
 }
 
 /// Full builds always load every node — there is no smaller set anyway.
@@ -1534,12 +1571,12 @@ fn build_and_insert_call_edges(
     import_ctx: &ImportEdgeContext,
     is_incremental: bool,
     max_iterations: u32,
-) {
+) -> Result<(), String> {
     use crate::domain::graph::builder::stages::build_edges::*;
 
     let all_nodes = load_edge_node_set(conn, file_symbols, import_ctx, is_incremental);
     if all_nodes.is_empty() {
-        return;
+        return Ok(());
     }
 
     let builtin_receivers = builtin_call_receivers();
@@ -1632,7 +1669,7 @@ fn build_and_insert_call_edges(
     }
 
     let computed_edges = build_call_edges(file_entries, all_nodes, builtin_receivers, max_iterations);
-    insert_call_edge_rows(conn, &computed_edges);
+    insert_call_edge_rows(conn, &computed_edges)
 }
 
 // ── Analysis persistence helpers ─────────────────────────────────────────
