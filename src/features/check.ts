@@ -27,6 +27,14 @@ interface ParsedDiff {
    * `checkMaxBlastRadius`'s call-graph-shape exemption — see issue #1740.
    */
   changedEdits: Map<string, DiffTextEdit[]>;
+  /**
+   * Files removed in their entirety (a `--- a/<file>` header followed by a
+   * `+++ /dev/null` target, git's marker for a full-file deletion) — distinct
+   * from `changedRanges`/`oldRanges`, which never gain an entry for these
+   * files since there is no new-side content to track. Powers
+   * `checkNoDeletedExportsInUse` — see issue #1806.
+   */
+  deletedFiles: Set<string>;
 }
 
 /** An added-line run paired with whatever it replaced, for shape comparison. */
@@ -37,6 +45,7 @@ interface DiffTextEdit extends DiffRange {
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const NEW_FILE_RE = /^\+\+\+ b\/(.+)/;
+const OLD_FILE_RE = /^--- a\/(.+)/;
 
 /** Returns true if the diff line marks the old file as /dev/null (new-file creation). */
 function isDevNullSourceLine(line: string): boolean {
@@ -51,6 +60,12 @@ function isSourceFileHeaderLine(line: string): boolean {
 /** Extracts the new filename from a `+++ b/<file>` diff header, or null. */
 function extractNewFileName(line: string): string | null {
   const m = line.match(NEW_FILE_RE);
+  return m ? m[1]! : null;
+}
+
+/** Extracts the old filename from a `--- a/<file>` diff header, or null. */
+function extractOldFileName(line: string): string | null {
+  const m = line.match(OLD_FILE_RE);
   return m ? m[1]! : null;
 }
 
@@ -216,8 +231,14 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
   const oldRanges = new Map<string, DiffRange[]>();
   const changedEdits = new Map<string, DiffTextEdit[]>();
   const newFiles = new Set<string>();
+  const deletedFiles = new Set<string>();
   let currentFile: string | null = null;
   let prevIsDevNull = false;
+  // Old-side filename staged by a `--- a/<file>` header, in case the very
+  // next header turns out to be `+++ /dev/null` (this file was deleted in
+  // its entirety). Cleared whenever the following header resolves to
+  // anything else, so it never leaks across an unrelated file's headers.
+  let pendingOldFile: string | null = null;
   const tracker = new DiffLineTracker();
 
   for (const line of diffOutput.split('\n')) {
@@ -231,10 +252,12 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
     if (!tracker.insideHunk()) {
       if (isDevNullSourceLine(line)) {
         prevIsDevNull = true;
+        pendingOldFile = null;
         continue;
       }
       if (isSourceFileHeaderLine(line)) {
         prevIsDevNull = false;
+        pendingOldFile = extractOldFileName(line);
         continue;
       }
       const newFile = extractNewFileName(line);
@@ -246,6 +269,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
         if (!changedEdits.has(currentFile)) changedEdits.set(currentFile, []);
         if (prevIsDevNull) newFiles.add(currentFile);
         prevIsDevNull = false;
+        pendingOldFile = null;
         continue;
       }
       if (isDevNullTargetLine(line)) {
@@ -253,12 +277,16 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
         // extractNewFileName returned null above and this line would otherwise
         // fall through to tracker.consume and be misread as an added source
         // line under whichever file preceded this one in the diff. Flush and
-        // clear the file context instead — the deleted file's hunk body that
-        // follows has no corresponding DB entry to check against anyway (its
-        // nodes are purged from the graph), so there is nothing to track here.
+        // clear the file context instead — a deleted file never accumulates
+        // changedRanges/oldRanges entries (there is no new-side content, and
+        // the old-side body is about to disappear along with the file), but
+        // its pre-purge DB rows are still worth checking for lingering
+        // external consumers — see `checkNoDeletedExportsInUse` (#1806).
         if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges, changedEdits);
+        if (pendingOldFile) deletedFiles.add(pendingOldFile);
         currentFile = null;
         prevIsDevNull = false;
+        pendingOldFile = null;
         continue;
       }
     }
@@ -282,7 +310,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
   }
   if (currentFile) tracker.flush(currentFile, oldRanges, changedRanges, changedEdits);
 
-  return { changedRanges, oldRanges, newFiles, changedEdits };
+  return { changedRanges, oldRanges, newFiles, changedEdits, deletedFiles };
 }
 
 // ─── Predicates ───────────────────────────────────────────────────────
@@ -474,11 +502,21 @@ export function checkMaxBlastRadius(
   return result;
 }
 
+interface ConsumerRef {
+  name: string;
+  file: string;
+  line: number;
+}
+
 interface SignatureViolation {
   name: string;
   kind: string;
   file: string;
   line: number;
+  /** Present only for violations from `checkNoDeletedExportsInUse` — see #1806. */
+  reason?: 'file-deleted';
+  /** External (cross-file) consumers found for a deleted export — only set when `reason === 'file-deleted'`. */
+  consumers?: ConsumerRef[];
 }
 
 interface SignatureResult {
@@ -530,6 +568,105 @@ export function checkNoSignatureChanges(
           break;
         }
       }
+    }
+  }
+
+  return { passed: violations.length === 0, violations };
+}
+
+type DeletedDefRow = {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+};
+
+/**
+ * Detects exported functions/methods/classes lost when a file is deleted in
+ * its entirety, for deletions whose exports still have consumers elsewhere
+ * in the codebase.
+ *
+ * `checkNoSignatureChanges` can never see this case: a fully deleted file
+ * never gets a `changedRanges` entry (there is no new-side content to track
+ * — see `parseDiffOutput`'s `+++ /dev/null` handling), and its `nodes` rows
+ * are purged by the very next `codegraph build`/incremental rebuild
+ * (`DELETE FROM nodes WHERE file = ?`, run unconditionally for any file
+ * `detectChanges` no longer finds on disk — see
+ * `domain/graph/builder/stages/detect-changes.ts`). `checkData` itself never
+ * triggers a rebuild — it only opens the DB read-only — so whether this
+ * predicate can see a deleted file's exports depends entirely on whether
+ * some *other*, separate `codegraph build` invocation has already purged it
+ * by the time `check` runs.
+ *
+ * This closes that gap for the common case: `db` still reflects pre-purge
+ * state whenever `codegraph check --staged` runs before any rebuild has
+ * observed the deletion (e.g. this repo's own pre-commit hook, which checks
+ * staged changes without rebuilding first). Once some rebuild purges the
+ * deleted file's rows, this predicate has nothing left to find for it — the
+ * violation silently goes undetected, same as before this predicate
+ * existed. See issue #1806 for the follow-up tracking a durable,
+ * purge-order-independent fix (e.g. capturing this at purge time inside the
+ * build pipeline itself, so it survives regardless of invocation order).
+ *
+ * Unlike `checkNoSignatureChanges` (which flags any touched exported
+ * declaration regardless of caller count, since editing an exported line is
+ * inherently risky), this predicate only flags a deleted export when it has
+ * a real consumer OUTSIDE the deleted file — reusing the same
+ * cross-file-consumer shape as `domain/analysis/exports.ts` /
+ * `features/structure.ts` (`calls`/`imports-type` edges whose source file
+ * differs from the target's file). Deleting a file whose exports are never
+ * imported elsewhere is a legitimate, safe cleanup and must not be flagged.
+ *
+ * Known limitation: a same-commit rename (delete `old.js` + add `new.js`
+ * with equivalent exports, with callers updated to import from `new.js` in
+ * the same diff) can false-positive here, because `db` only reflects
+ * pre-change edges — it has no visibility into the staged content of the
+ * files that will import from the new location. This mirrors an existing,
+ * accepted trade-off in this predicate family (e.g. `checkMaxBlastRadius`'s
+ * paren-less-call blind spot) rather than a new class of problem.
+ */
+export function checkNoDeletedExportsInUse(
+  db: BetterSqlite3Database,
+  deletedFiles: Set<string>,
+  noTests: boolean,
+): SignatureResult {
+  const violations: SignatureViolation[] = [];
+  if (deletedFiles.size === 0) return { passed: true, violations };
+
+  const defsStmt = db.prepare(
+    `SELECT id, name, kind, file, line FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') AND exported = 1 ORDER BY line`,
+  );
+  const consumersStmt = db.prepare(
+    `SELECT DISTINCT caller.name, caller.file, caller.line
+     FROM edges e
+     JOIN nodes caller ON e.source_id = caller.id
+     WHERE e.target_id = ? AND e.kind IN ('calls', 'imports-type') AND caller.file != ?`,
+  );
+
+  for (const file of deletedFiles) {
+    if (noTests && isTestFile(file)) continue;
+
+    const defs = defsStmt.all(file) as DeletedDefRow[];
+    for (const def of defs) {
+      let consumers = consumersStmt.all(def.id, def.file) as ConsumerRef[];
+      // A caller that is itself among the files this same diff deletes isn't
+      // an external caller left dangling by the diff — it's being removed
+      // too. Mirrors checkNoSignatureChanges's exported-only filter: only a
+      // caller reachable from outside the set of files this diff removes can
+      // be a caller the diff doesn't already account for.
+      consumers = consumers.filter((c) => !deletedFiles.has(c.file));
+      if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
+      if (consumers.length === 0) continue;
+
+      violations.push({
+        name: def.name,
+        kind: def.kind,
+        file: def.file,
+        line: def.line,
+        reason: 'file-deleted',
+        consumers,
+      });
     }
   }
 
@@ -604,6 +741,7 @@ interface CheckSummary {
   failed: number;
   changedFiles: number;
   newFiles: number;
+  deletedFiles: number;
 }
 
 interface CheckResult {
@@ -694,9 +832,21 @@ function runPredicates(
     });
   }
   if (flags.enableSignatures) {
+    // Both predicates report under the single 'signatures' name: they are
+    // two detection strategies for the same class of risk (an exported
+    // declaration this diff makes unreachable to its existing callers) —
+    // checkNoSignatureChanges for declarations edited in place,
+    // checkNoDeletedExportsInUse for declarations lost via full-file
+    // deletion (#1806). Merging keeps both gated by the same --signatures
+    // flag/config and lets existing consumers of the 'signatures' predicate
+    // (the pre-commit hook, `codegraph check --json`) pick up the new
+    // violations with no wiring changes.
+    const editedResult = checkNoSignatureChanges(db, diff.changedRanges, noTests);
+    const deletedResult = checkNoDeletedExportsInUse(db, diff.deletedFiles, noTests);
     predicates.push({
       name: 'signatures',
-      ...checkNoSignatureChanges(db, diff.changedRanges, noTests),
+      passed: editedResult.passed && deletedResult.passed,
+      violations: [...editedResult.violations, ...deletedResult.violations],
     });
   }
   if (flags.enableBoundaries) {
@@ -712,7 +862,7 @@ function runPredicates(
 function makeEmptyCheck(): CheckResult {
   return {
     predicates: [],
-    summary: { total: 0, passed: 0, failed: 0, changedFiles: 0, newFiles: 0 },
+    summary: { total: 0, passed: 0, failed: 0, changedFiles: 0, newFiles: 0, deletedFiles: 0 },
     passed: true,
   };
 }
@@ -752,7 +902,12 @@ export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}
     if (!diffOutput.trim()) return makeEmptyCheck();
 
     const diff = parseDiffOutput(diffOutput);
-    if (diff.changedRanges.size === 0) return makeEmptyCheck();
+    // A delete-only diff (e.g. `git rm` with no other staged changes) never
+    // populates changedRanges — see parseDiffOutput's `+++ /dev/null`
+    // handling — but must still run the predicates below (specifically
+    // checkNoDeletedExportsInUse) rather than short-circuiting to "no
+    // changes" (#1806).
+    if (diff.changedRanges.size === 0 && diff.deletedFiles.size === 0) return makeEmptyCheck();
 
     const predicates = runPredicates(db, diff, flags, repoRoot, noTests, maxDepth);
 
@@ -767,6 +922,7 @@ export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}
         failed: failedCount,
         changedFiles: diff.changedRanges.size,
         newFiles: diff.newFiles.size,
+        deletedFiles: diff.deletedFiles.size,
       },
       passed: failedCount === 0,
     };

@@ -15,6 +15,7 @@ import {
   checkData,
   checkMaxBlastRadius,
   checkNoBoundaryViolations,
+  checkNoDeletedExportsInUse,
   checkNoNewCycles,
   checkNoSignatureChanges,
   parseDiffOutput,
@@ -198,16 +199,74 @@ describe('parseDiffOutput', () => {
       '-deleted line 2',
     ].join('\n');
 
-    const { changedRanges, oldRanges } = parseDiffOutput(diff);
+    const { changedRanges, oldRanges, deletedFiles } = parseDiffOutput(diff);
     // kept.js's ranges must reflect only its own hunk, not the deleted
     // file's `+++ /dev/null` header or removed body lines.
     expect(changedRanges.get('src/kept.js')).toEqual([{ start: 1, end: 1 }]);
     expect(oldRanges.get('src/kept.js')).toEqual([{ start: 1, end: 1 }]);
-    // The deleted file itself is not tracked — its nodes are purged from the
-    // DB during the rebuild, so there is nothing for the check predicates to
-    // match against.
+    // The deleted file never gets a changedRanges/oldRanges entry — there is
+    // no new-side content to compare post-purge line numbers against — but
+    // it IS recorded in `deletedFiles` so checkNoDeletedExportsInUse can
+    // still check its pre-purge exports for lingering external callers
+    // (#1806).
     expect(changedRanges.has('src/removed.js')).toBe(false);
     expect(oldRanges.has('src/removed.js')).toBe(false);
+    expect(deletedFiles.has('src/removed.js')).toBe(true);
+  });
+
+  // ─── deletedFiles (issue #1806) ─────────────────────────────────────
+
+  test('detects a fully deleted file via the /dev/null target marker', () => {
+    const diff = [
+      '--- a/src/old-file.js',
+      '+++ /dev/null',
+      '@@ -1,2 +0,0 @@',
+      '-export function foo() {}',
+      '-export function bar() {}',
+    ].join('\n');
+
+    const { deletedFiles } = parseDiffOutput(diff);
+    expect(deletedFiles.has('src/old-file.js')).toBe(true);
+    expect(deletedFiles.size).toBe(1);
+  });
+
+  test('does not mark a modified file as deleted', () => {
+    const diff = ['--- a/src/kept.js', '+++ b/src/kept.js', '@@ -1,1 +1,1 @@', '-old', '+new'].join(
+      '\n',
+    );
+
+    const { deletedFiles } = parseDiffOutput(diff);
+    expect(deletedFiles.size).toBe(0);
+  });
+
+  test('a new file is not also recorded as deleted (/dev/null on the source side)', () => {
+    // `--- /dev/null` (new-file creation) must not be confused with
+    // `+++ /dev/null` (deletion) — isDevNullSourceLine clears pendingOldFile
+    // so a subsequent unrelated `+++ /dev/null` elsewhere can't attribute a
+    // deletion to this file.
+    const diff = ['--- /dev/null', '+++ b/src/new-file.js', '@@ -0,0 +1,1 @@', '+line1'].join('\n');
+
+    const { deletedFiles, newFiles } = parseDiffOutput(diff);
+    expect(newFiles.has('src/new-file.js')).toBe(true);
+    expect(deletedFiles.size).toBe(0);
+  });
+
+  test('tracks multiple deleted files in the same diff', () => {
+    const diff = [
+      '--- a/src/first.js',
+      '+++ /dev/null',
+      '@@ -1,1 +0,0 @@',
+      '-export function first() {}',
+      '--- a/src/second.js',
+      '+++ /dev/null',
+      '@@ -1,1 +0,0 @@',
+      '-export function second() {}',
+    ].join('\n');
+
+    const { deletedFiles } = parseDiffOutput(diff);
+    expect(deletedFiles.has('src/first.js')).toBe(true);
+    expect(deletedFiles.has('src/second.js')).toBe(true);
+    expect(deletedFiles.size).toBe(2);
   });
 
   test('handles multiple files', () => {
@@ -667,6 +726,64 @@ describe('checkNoSignatureChanges', () => {
   });
 });
 
+// ─── checkNoDeletedExportsInUse (issue #1806) ──────────────────────────
+
+describe('checkNoDeletedExportsInUse', () => {
+  test('flags an exported symbol whose file is deleted when it still has external callers', () => {
+    // Fixture: add (exported, src/math.js) is called by handleRequest
+    // (src/handler.js) and formatResult (src/utils.js) — both external.
+    const result = checkNoDeletedExportsInUse(db, new Set(['src/math.js']), false);
+    expect(result.passed).toBe(false);
+    const violation = result.violations.find((v) => v.name === 'add');
+    expect(violation).toBeDefined();
+    expect(violation.reason).toBe('file-deleted');
+    expect(violation.consumers.map((c) => c.file).sort()).toEqual([
+      'src/handler.js',
+      'src/utils.js',
+    ]);
+  });
+
+  test('does not flag an exported symbol whose only caller lives in the same deleted file', () => {
+    // multiply (exported, src/math.js) is only called by `add`, which lives
+    // in the same file being deleted — not an external consumer left
+    // dangling by this diff.
+    const result = checkNoDeletedExportsInUse(db, new Set(['src/math.js']), false);
+    expect(result.violations.map((v) => v.name)).not.toContain('multiply');
+  });
+
+  test('passes for a deleted file with no exported symbols', () => {
+    const result = checkNoDeletedExportsInUse(db, new Set(['src/processor.js']), false);
+    expect(result.passed).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  test('passes when deletedFiles is empty', () => {
+    const result = checkNoDeletedExportsInUse(db, new Set(), false);
+    expect(result.passed).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  test('excludes a caller that is itself among the files this diff also deletes', () => {
+    // handler.js (home of handleRequest, one of add's two external callers)
+    // is being deleted in the same diff — its call to `add` must not count
+    // as a dangling external consumer. formatResult (utils.js) is untouched
+    // and must still be reported.
+    const result = checkNoDeletedExportsInUse(
+      db,
+      new Set(['src/math.js', 'src/handler.js']),
+      false,
+    );
+    const violation = result.violations.find((v) => v.name === 'add');
+    expect(violation).toBeDefined();
+    expect(violation.consumers.map((c) => c.file)).toEqual(['src/utils.js']);
+  });
+
+  test('skips a deleted file when noTests is true and it is a test file', () => {
+    const result = checkNoDeletedExportsInUse(db, new Set(['tests/math.test.js']), true);
+    expect(result.passed).toBe(true);
+  });
+});
+
 // ─── checkNoBoundaryViolations ────────────────────────────────────────
 
 describe('checkNoBoundaryViolations', () => {
@@ -890,6 +1007,138 @@ describe('checkData', () => {
       expect(names).toContain('boundaries');
       // blast-radius should NOT appear (no default threshold)
       expect(names).not.toContain('blast-radius');
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── checkData: full file deletion (issue #1806) ───────────────────────
+//
+// End-to-end repro of the scenario the issue describes: file A exports a
+// symbol used by file B; staging A's deletion (with B untouched) must be
+// flagged, while deleting a file with no external callers must not be.
+// checkData is exercised directly (not via a rebuild) so `db` reflects the
+// pre-purge state checkNoDeletedExportsInUse depends on — see that
+// function's docstring for why purge ordering matters here.
+
+describe('checkData: full file deletion (issue #1806)', () => {
+  test('flags an exported function whose entire file is deleted while a real external caller remains', () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-check-delfile-'));
+    fs.mkdirSync(path.join(projectDir, '.codegraph'));
+    fs.mkdirSync(path.join(projectDir, 'src'), { recursive: true });
+    const projectDbPath = path.join(projectDir, '.codegraph', 'graph.db');
+
+    const projectDb = new Database(projectDbPath);
+    projectDb.pragma('journal_mode = WAL');
+    initSchema(projectDb);
+    // src/shared.js exports sharedHelper, called by src/consumer.js.
+    const sharedHelperId = insertNode(
+      projectDb,
+      'sharedHelper',
+      'function',
+      'src/shared.js',
+      1,
+      3,
+      1,
+    );
+    const callerId = insertNode(projectDb, 'useShared', 'function', 'src/consumer.js', 1, 3, 0);
+    insertEdge(projectDb, callerId, sharedHelperId, 'calls');
+    projectDb.close();
+
+    const { execFileSync } = require('node:child_process');
+    try {
+      execFileSync('git', ['init'], { cwd: projectDir, stdio: 'pipe' });
+      execFileSync('git', ['config', 'user.email', 'test@test.com'], {
+        cwd: projectDir,
+        stdio: 'pipe',
+      });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectDir, stdio: 'pipe' });
+
+      fs.writeFileSync(
+        path.join(projectDir, 'src', 'shared.js'),
+        'export function sharedHelper() {\n  return 1;\n}\n',
+      );
+      fs.writeFileSync(
+        path.join(projectDir, 'src', 'consumer.js'),
+        "import { sharedHelper } from './shared.js';\nfunction useShared() {\n  return sharedHelper();\n}\n",
+      );
+      execFileSync('git', ['add', '.'], { cwd: projectDir, stdio: 'pipe' });
+      execFileSync('git', ['commit', '-m', 'init'], { cwd: projectDir, stdio: 'pipe' });
+
+      // Stage ONLY the deletion of shared.js — consumer.js is left
+      // untouched, still importing/calling it. A real diff-parsing bug
+      // would let this slip through silently.
+      execFileSync('git', ['rm', 'src/shared.js'], { cwd: projectDir, stdio: 'pipe' });
+
+      const data = checkData(projectDbPath, {
+        staged: true,
+        signatures: true,
+        cycles: false,
+        boundaries: false,
+      });
+
+      expect(data.error).toBeUndefined();
+      expect(data.summary.deletedFiles).toBe(1);
+      expect(data.passed).toBe(false);
+
+      const sigPred = data.predicates.find((p) => p.name === 'signatures');
+      expect(sigPred).toBeDefined();
+      expect(sigPred.passed).toBe(false);
+      const violation = sigPred.violations.find((v) => v.name === 'sharedHelper');
+      expect(violation).toBeDefined();
+      expect(violation.reason).toBe('file-deleted');
+      expect(violation.consumers.map((c) => c.file)).toContain('src/consumer.js');
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('does not flag deleting a file whose exports have no external callers', () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-check-delfile-safe-'));
+    fs.mkdirSync(path.join(projectDir, '.codegraph'));
+    fs.mkdirSync(path.join(projectDir, 'src'), { recursive: true });
+    const projectDbPath = path.join(projectDir, '.codegraph', 'graph.db');
+
+    const projectDb = new Database(projectDbPath);
+    projectDb.pragma('journal_mode = WAL');
+    initSchema(projectDb);
+    // src/orphan.js exports unusedHelper — zero callers anywhere.
+    insertNode(projectDb, 'unusedHelper', 'function', 'src/orphan.js', 1, 3, 1);
+    projectDb.close();
+
+    const { execFileSync } = require('node:child_process');
+    try {
+      execFileSync('git', ['init'], { cwd: projectDir, stdio: 'pipe' });
+      execFileSync('git', ['config', 'user.email', 'test@test.com'], {
+        cwd: projectDir,
+        stdio: 'pipe',
+      });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectDir, stdio: 'pipe' });
+
+      fs.writeFileSync(
+        path.join(projectDir, 'src', 'orphan.js'),
+        'export function unusedHelper() {\n  return 1;\n}\n',
+      );
+      execFileSync('git', ['add', '.'], { cwd: projectDir, stdio: 'pipe' });
+      execFileSync('git', ['commit', '-m', 'init'], { cwd: projectDir, stdio: 'pipe' });
+
+      execFileSync('git', ['rm', 'src/orphan.js'], { cwd: projectDir, stdio: 'pipe' });
+
+      const data = checkData(projectDbPath, {
+        staged: true,
+        signatures: true,
+        cycles: false,
+        boundaries: false,
+      });
+
+      expect(data.error).toBeUndefined();
+      expect(data.summary.deletedFiles).toBe(1);
+      expect(data.passed).toBe(true);
+      const sigPred = data.predicates.find((p) => p.name === 'signatures');
+      expect(sigPred).toBeDefined();
+      expect(sigPred.passed).toBe(true);
+      expect(sigPred.violations).toEqual([]);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

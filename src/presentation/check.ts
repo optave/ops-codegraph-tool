@@ -28,6 +28,9 @@ interface CheckViolation {
   from?: string;
   to?: string;
   edgeKind?: string;
+  /** Set when this violation comes from `checkNoDeletedExportsInUse` (#1806). */
+  reason?: string;
+  consumers?: Array<{ name: string; file: string; line: number }>;
 }
 
 interface CheckPredicate {
@@ -46,6 +49,7 @@ interface CheckDataResult {
   summary: {
     changedFiles: number;
     newFiles: number;
+    deletedFiles: number;
     total: number;
     passed: number;
     failed: number;
@@ -73,6 +77,14 @@ function formatPredicateViolations(pred: CheckPredicate): void {
     }
     if (pred.name === 'boundaries') {
       return `${v.from} -> ${v.to} (${v.edgeKind})`;
+    }
+    if (v.reason === 'file-deleted' && v.consumers) {
+      const sample = v.consumers
+        .slice(0, 3)
+        .map((c) => `${c.file}:${c.line}`)
+        .join(', ');
+      const more = v.consumers.length > 3 ? `, ... and ${v.consumers.length - 3} more` : '';
+      return `${v.name} (${v.kind}) — file ${v.file} deleted but still used by ${v.consumers.length} external consumer(s): ${sample}${more}`;
     }
     return `${v.name} (${v.kind}) at ${v.file}:${v.line}`;
   };
@@ -113,8 +125,10 @@ export function check(customDbPath: string | undefined, opts: CheckCliOpts = {})
     return;
   }
 
+  const deletedSuffix =
+    data.summary.deletedFiles > 0 ? `  Deleted files: ${data.summary.deletedFiles}` : '';
   console.log(
-    `  Changed files: ${data.summary.changedFiles}  New files: ${data.summary.newFiles}\n`,
+    `  Changed files: ${data.summary.changedFiles}  New files: ${data.summary.newFiles}${deletedSuffix}\n`,
   );
 
   for (const pred of data.predicates) {
