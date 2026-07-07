@@ -2271,11 +2271,25 @@ export interface NativeAddon {
   fanInOut(
     edges: Array<{ source: string; target: string }>,
   ): Array<{ node: string; fanIn: number; fanOut: number }>;
-  louvainCommunities(
+  /**
+   * Leiden community detection (undirected modularity optimization) — see
+   * `crates/codegraph-core/src/graph/algorithms/leiden.rs` for the full
+   * option-surface caveat (this binding only covers what
+   * `louvainCommunities`/`LouvainOptions` in `src/graph/algorithms/louvain.ts`
+   * ever passes through). Optional: older published addons predate this
+   * export (it replaced the classic-Louvain `louvainCommunities` binding —
+   * issue #1804), so callers must feature-detect and fall back to
+   * `louvainJS()`/`detectClusters()`.
+   */
+  leidenCommunities?(
     edges: Array<{ source: string; target: string }>,
     nodeIds: string[],
     resolution?: number | null,
     randomSeed?: number | null,
+    maxLevels?: number | null,
+    maxLocalPasses?: number | null,
+    refinementTheta?: number | null,
+    capacityGrowthFactor?: number | null,
   ): {
     assignments: Array<{ node: string; community: number }>;
     modularity: number;

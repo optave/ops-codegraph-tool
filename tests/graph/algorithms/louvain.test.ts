@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { louvainCommunities } from '../../../src/graph/algorithms/louvain.js';
 import { CodeGraph } from '../../../src/graph/model.js';
-import { setVerbose } from '../../../src/infrastructure/logger.js';
 
 describe('louvainCommunities', () => {
   it('returns empty for empty graph', () => {
@@ -138,67 +137,29 @@ describe('louvainCommunities', () => {
     });
   });
 
-  describe('Leiden-knob parity logging', () => {
-    let stderrSpy: ReturnType<typeof vi.spyOn>;
+  // Regression guard for issue #1804: before that fix, the native Rust path
+  // ran classic Louvain and silently ignored maxLevels/maxLocalPasses/
+  // refinementTheta/capacityGrowthFactor entirely (native Leiden now honors
+  // all four, same as the JS fallback) — this just pins that passing them
+  // doesn't throw or change the shape of the result, on both engines.
+  it('accepts maxLevels/maxLocalPasses/refinementTheta/capacityGrowthFactor without error', () => {
+    const g = new CodeGraph();
+    g.addEdge('a', 'b');
+    g.addEdge('b', 'c');
+    g.addEdge('c', 'a');
+    g.addEdge('x', 'y');
+    g.addEdge('y', 'z');
+    g.addEdge('z', 'x');
+    g.addEdge('c', 'x');
 
-    beforeEach(() => {
-      stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const { assignments, modularity } = louvainCommunities(g, {
+      maxLevels: 50,
+      maxLocalPasses: 20,
+      refinementTheta: 1.0,
+      capacityGrowthFactor: 1.5,
     });
 
-    afterEach(() => {
-      stderrSpy.mockRestore();
-      setVerbose(false);
-    });
-
-    function buildTwoClusterGraph(): CodeGraph {
-      const g = new CodeGraph();
-      g.addEdge('a', 'b');
-      g.addEdge('b', 'c');
-      g.addEdge('c', 'a');
-      g.addEdge('x', 'y');
-      g.addEdge('y', 'z');
-      g.addEdge('z', 'x');
-      g.addEdge('c', 'x');
-      return g;
-    }
-
-    // Regression guard: DEFAULTS.community always populates maxLevels/maxLocalPasses/
-    // refinementTheta, so forwarding config values used to emit `[codegraph WARN]` on
-    // every communities computation. Keep the parity note at debug level — never warn.
-    it('never emits the parity message at WARN level when config defaults are forwarded', () => {
-      const g = buildTwoClusterGraph();
-      louvainCommunities(g, {
-        maxLevels: 50,
-        maxLocalPasses: 20,
-        refinementTheta: 1.0,
-      });
-
-      const warnWrites = stderrSpy.mock.calls
-        .map(([chunk]) => (typeof chunk === 'string' ? chunk : (chunk?.toString?.() ?? '')))
-        .filter((line) => line.includes('[codegraph WARN]'));
-      expect(warnWrites).toEqual([]);
-    });
-
-    it('emits the parity message at DEBUG level when verbose is enabled and Leiden knobs are set', () => {
-      setVerbose(true);
-      const g = buildTwoClusterGraph();
-      louvainCommunities(g, {
-        maxLevels: 50,
-        maxLocalPasses: 20,
-        refinementTheta: 1.0,
-      });
-
-      const writes = stderrSpy.mock.calls
-        .map(([chunk]) => (typeof chunk === 'string' ? chunk : (chunk?.toString?.() ?? '')))
-        .join('');
-      // Message is only emitted on the native path. When native is unavailable we at
-      // least assert no WARN was emitted (covered by the previous test); when it is
-      // available, it must go through the DEBUG channel and never WARN.
-      expect(writes).not.toContain('[codegraph WARN]');
-      // Allow either outcome for DEBUG depending on engine availability.
-      if (writes.includes('maxLevels/maxLocalPasses/refinementTheta')) {
-        expect(writes).toContain('[codegraph DEBUG]');
-      }
-    });
+    expect(assignments.size).toBe(6);
+    expect(typeof modularity).toBe('number');
   });
 });

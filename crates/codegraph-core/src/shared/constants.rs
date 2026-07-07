@@ -2,16 +2,37 @@
 /// on deeply nested trees. Used by extractors, complexity, CFG, and dataflow.
 pub const MAX_WALK_DEPTH: usize = 200;
 
-// ─── Louvain community detection ────────────────────────────────────
+// ─── Leiden community detection ─────────────────────────────────────
+//
+// Mirrors the TS reference implementation's defaults exactly (both must
+// produce identical output — see leiden.rs's module doc for why):
+//   - DEFAULT_MAX_LEVELS/DEFAULT_MAX_LOCAL_PASSES/GAIN_EPSILON:
+//     src/graph/algorithms/leiden/optimiser.ts
+//   - DEFAULT_REFINEMENT_THETA/DEFAULT_RESOLUTION:
+//     optimiser.ts's normalizeOptions() and src/infrastructure/config.ts's
+//     DEFAULTS.community
+//   - DEFAULT_CAPACITY_GROWTH_FACTOR: src/graph/algorithms/leiden/partition.ts
 
-/// Maximum number of coarsening levels in the Louvain algorithm.
-pub const LOUVAIN_MAX_LEVELS: usize = 50;
+/// Maximum number of coarsening levels.
+pub const LEIDEN_DEFAULT_MAX_LEVELS: usize = 50;
 
 /// Maximum number of local-move passes per level before stopping.
-pub const LOUVAIN_MAX_PASSES: usize = 20;
+pub const LEIDEN_DEFAULT_MAX_LOCAL_PASSES: usize = 20;
 
-/// Minimum modularity gain to accept a node move (avoids floating-point noise).
-pub const LOUVAIN_MIN_GAIN: f64 = 1e-12;
+/// Minimum quality gain to accept a node move (avoids floating-point noise).
+pub const LEIDEN_GAIN_EPSILON: f64 = 1e-12;
+
+/// Default Boltzmann temperature for the refinement phase's probabilistic
+/// candidate selection (Algorithm 3, Traag et al. 2019).
+pub const LEIDEN_DEFAULT_REFINEMENT_THETA: f64 = 1.0;
+
+/// Default resolution (gamma) parameter for modularity optimization.
+pub const LEIDEN_DEFAULT_RESOLUTION: f64 = 1.0;
+
+/// Growth multiplier applied when a partition's per-community arrays need to
+/// grow beyond their initial capacity (post-refinement disconnected-community
+/// splitting can mint more community ids than the initial allocation).
+pub const LEIDEN_DEFAULT_CAPACITY_GROWTH_FACTOR: f64 = 1.5;
 
 /// Default random seed for deterministic community detection.
 pub const DEFAULT_RANDOM_SEED: u32 = 42;

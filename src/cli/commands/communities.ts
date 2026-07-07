@@ -2,11 +2,11 @@ import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
   name: 'communities',
-  description: 'Detect natural module boundaries using Louvain community detection',
+  description: 'Detect natural module boundaries using Leiden community detection',
   queryOpts: true,
   options: [
     ['--functions', 'Function-level instead of file-level'],
-    ['--resolution <n>', 'Louvain resolution parameter (default 1.0)', '1.0'],
+    ['--resolution <n>', 'Leiden resolution parameter (default 1.0)', '1.0'],
     ['--drift', 'Show only drift analysis'],
   ],
   async execute(_args, opts, ctx) {

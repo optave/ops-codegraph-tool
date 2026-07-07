@@ -2,13 +2,13 @@
 
 pub mod bfs;
 pub mod centrality;
-pub mod louvain;
+pub mod leiden;
 pub mod shortest_path;
 pub mod tarjan;
 
 pub use bfs::{bfs_traversal, BfsEntry};
 pub use centrality::{fan_in_out, FanInOutEntry};
-pub use louvain::{louvain_communities, CommunityAssignment, LouvainResult};
+pub use leiden::{leiden_communities, LeidenCommunitiesResult, LeidenCommunityAssignment};
 pub use shortest_path::shortest_path;
 pub use tarjan::detect_cycles;
 

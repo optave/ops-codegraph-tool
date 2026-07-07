@@ -1,12 +1,21 @@
 /**
- * Community detection via native Rust Louvain or vendored Leiden algorithm.
+ * Community detection via native Rust Leiden or vendored TS Leiden.
  * Maintains backward-compatible API: { assignments: Map<string, number>, modularity: number }
  *
- * Native path: classic Louvain (Rust, undirected modularity optimization).
- * JS fallback: Leiden algorithm via `detectClusters` (always undirected, `directed: false`).
+ * Both the native path and the JS fallback run the same algorithm — Leiden
+ * (always undirected, `directed: false`, modularity quality). Before issue
+ * #1804, the native path ran classic Louvain while the JS fallback ran
+ * Leiden: two genuinely different algorithms with different guarantees
+ * (Leiden avoids Louvain's disconnected-community defect), so `codegraph
+ * communities`/`--drift` reported different partitions purely based on
+ * whether the native addon loaded. `crates/codegraph-core/src/graph/algorithms/leiden.rs`
+ * is a faithful Rust port of `./leiden/*` covering exactly the option
+ * surface `LouvainOptions` exposes below (undirected, modularity-only,
+ * "neighbors" candidate strategy, refine always on) — see that file's module
+ * doc for the precise (deliberately narrower) subset ported and the
+ * follow-up issue tracking the rest.
  */
 
-import { debug } from '../../infrastructure/logger.js';
 import { loadNative } from '../../infrastructure/native.js';
 import type { CodeGraph } from '../model.js';
 import type { DetectClustersResult } from './leiden/index.js';
@@ -36,20 +45,19 @@ export function louvainCommunities(graph: CodeGraph, opts: LouvainOptions = {}):
   const resolution: number = opts.resolution ?? 1.0;
 
   const native = loadNative();
-  if (native?.louvainCommunities) {
-    if (
-      opts.maxLevels != null ||
-      opts.maxLocalPasses != null ||
-      opts.refinementTheta != null ||
-      opts.capacityGrowthFactor != null
-    ) {
-      debug(
-        'louvainCommunities: maxLevels/maxLocalPasses/refinementTheta/capacityGrowthFactor are ignored by the native Rust path',
-      );
-    }
+  if (native?.leidenCommunities) {
     const edges = graph.toEdgeArray();
     const nodeIds = graph.nodeIds();
-    const result = native.louvainCommunities(edges, nodeIds, resolution, DEFAULT_RANDOM_SEED);
+    const result = native.leidenCommunities(
+      edges,
+      nodeIds,
+      resolution,
+      DEFAULT_RANDOM_SEED,
+      opts.maxLevels,
+      opts.maxLocalPasses,
+      opts.refinementTheta,
+      opts.capacityGrowthFactor,
+    );
     const assignments = new Map<string, number>();
     for (const entry of result.assignments) {
       assignments.set(entry.node, entry.community);

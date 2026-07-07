@@ -538,7 +538,7 @@ const BASE_TOOLS: ToolSchema[] = [
   {
     name: 'communities',
     description:
-      'Detect natural module boundaries using Louvain community detection. Compares discovered communities against directory structure and surfaces architectural drift.',
+      'Detect natural module boundaries using Leiden community detection. Compares discovered communities against directory structure and surfaces architectural drift.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -549,7 +549,7 @@ const BASE_TOOLS: ToolSchema[] = [
         },
         resolution: {
           type: 'number',
-          description: 'Louvain resolution parameter (higher = more communities)',
+          description: 'Leiden resolution parameter (higher = more communities)',
           default: 1.0,
         },
         drift: {
