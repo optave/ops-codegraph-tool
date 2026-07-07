@@ -24,6 +24,7 @@ import { computeConfidence, resolveImportPath } from '../resolve.js';
 import {
   type CallNodeLookup,
   findCaller,
+  isModuleScopedLanguage,
   resolveCallTargets,
   resolveReceiverEdge,
   resolveSameClassQualifiedMethod,
@@ -643,10 +644,23 @@ function resolveDefinePropertyTarget(
 }
 
 /**
- * Apply `this`-receiver fallback resolution strategies for a single call site
- * when the primary resolveCallTargets pass returned no targets.
+ * Apply fallback resolution strategies for a single call site when the
+ * primary resolveCallTargets pass returned no targets.
+ *
+ * Runs in order:
+ *   1. Same-class `this.method()` fallback.
+ *   2. Same-class bare-call fallback for non-JS/TS class-scoped languages
+ *      (e.g. C# static sibling calls: `IsValidEmail()` inside
+ *      `Validators.ValidateUser` resolves to `Validators.IsValidEmail`).
+ *   3. Object.defineProperty accessor fallback (this-calls inside getter/setter).
+ *
+ * Mirrors the same-class fallback strategies in `resolveFallbackTargets`
+ * (stages/build-edges.ts, full-build path). The Kotlin-reflection
+ * pre-qualify and reflection-keyExpr fallbacks are intentionally not
+ * mirrored here — that broader points-to/CHA/dynamic-sink gap between the
+ * two paths is tracked separately (#1815/#1852), not by this function.
  */
-function applyThisReceiverFallbacks(
+function applyCallFallbacks(
   call: { name: string; receiver?: string | null },
   callerName: string | null,
   relPath: string,
@@ -663,7 +677,15 @@ function applyThisReceiverFallbacks(
     if (s1.length > 0) return s1;
   }
 
-  // Strategy 2: Object.defineProperty accessor fallback.
+  // Strategy 2: same-class bare-call fallback. Skipped for JS/TS, where a
+  // bare call is module-scoped, not class-scoped (mirrors
+  // resolveSameClassBareCallFallback in stages/build-edges.ts).
+  if (!call.receiver && callerName != null && !isModuleScopedLanguage(relPath)) {
+    const s2 = resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
+    if (s2.length > 0) return s2;
+  }
+
+  // Strategy 3: Object.defineProperty accessor fallback.
   if (call.receiver === 'this' && callerName != null && definePropertyReceivers) {
     return resolveDefinePropertyTarget(
       call.name,
@@ -760,7 +782,7 @@ function buildCallEdges(
       importedOriginalNames,
     );
 
-    const targets = applyThisReceiverFallbacks(
+    const targets = applyCallFallbacks(
       call,
       caller.callerName,
       relPath,
@@ -801,7 +823,7 @@ function buildCallEdges(
  * same file), as opposed to `'points-to'` (alias/pts fallback) or `'cha'` /
  * `'super-dispatch'` (virtual-dispatch expansion). `incremental.ts`'s call
  * resolution (`resolveCallTargets` + the same-class/defineProperty
- * fallbacks in `applyThisReceiverFallbacks`) implements only that same
+ * fallbacks in `applyCallFallbacks`) implements only that same
  * direct-resolution cascade — it has no pts or CHA/RTA post-pass of its own
  * — so every edge it emits is the direct-resolution case and always
  * belongs under `'ts-native'`, regardless of which engine parsed the file.
