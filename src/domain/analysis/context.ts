@@ -438,12 +438,15 @@ export function contextData(
     config?: any;
   } = {},
 ) {
-  return withReadonlyDb(customDbPath, (db) => {
+  return withReadonlyDb(customDbPath, (db, config) => {
     const depth = opts.depth || 0;
     const noSource = opts.noSource || false;
     const includeTests = opts.includeTests || false;
 
-    const { noTests, displayOpts } = resolveAnalysisOpts(opts);
+    const { noTests, displayOpts } = resolveAnalysisOpts({
+      ...opts,
+      config: opts.config ?? config,
+    });
 
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');
@@ -510,11 +513,14 @@ export function explainData(
     config?: any;
   } = {},
 ) {
-  return withReadonlyDb(customDbPath, (db) => {
+  return withReadonlyDb(customDbPath, (db, config) => {
     const depth = opts.depth || 0;
     const kind = isFileLikeTarget(target) ? 'file' : 'function';
 
-    const { noTests, displayOpts } = resolveAnalysisOpts(opts);
+    const { noTests, displayOpts } = resolveAnalysisOpts({
+      ...opts,
+      config: opts.config ?? config,
+    });
 
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');

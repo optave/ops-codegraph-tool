@@ -16,7 +16,6 @@ import type {
   BetterSqlite3Database,
   EngineOpts,
   ExtractorOutput,
-  Import,
   PathAliases,
   SqliteStatement,
 } from '../../../types.js';
@@ -32,6 +31,7 @@ import {
   resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
 import { BUILTIN_RECEIVERS, fileHash, fileStat, readFileSafe } from './helpers.js';
+import { importNamePairs } from './import-utils.js';
 
 // ── Local types ─────────────────────────────────────────────────────────
 
@@ -330,23 +330,6 @@ function resolveBarrelTarget(
 }
 
 /**
- * Pairs each locally-bound name from an import statement with its original
- * (pre-rename) exported name — identical to the local name unless the
- * specifier renames a binding (`import { X as Y }`). Barrel tracing and
- * target-file symbol lookups must search using the *original* name — the
- * renamed local alias only exists in the importing file, not in the file
- * being imported from (#1730). Mirrors `importNamePairs` in build-edges.ts.
- */
-function importNamePairs(imp: Import): Array<{ local: string; original: string }> {
-  const originalNameFor = new Map<string, string>();
-  for (const r of imp.renamedImports ?? []) originalNameFor.set(r.local, r.imported);
-  return imp.names.map((name) => {
-    const local = name.replace(/^\*\s+as\s+/, '');
-    return { local, original: originalNameFor.get(local) ?? local };
-  });
-}
-
-/**
  * Resolve barrel imports for a single import statement and create edges to actual source files.
  * Shared by buildImportEdges (primary file) and Pass 2 of the reverse-dep cascade.
  */
@@ -441,6 +424,14 @@ function emitEdgesForImport(
   }
   if (imp.reexport && !imp.wildcardReexport) {
     edgesAdded += emitNamedSymbolEdges(db, stmts, imp, resolvedPath, fileNodeId, 'reexports');
+  } else if (imp.reexport && imp.wildcardReexport) {
+    // Mirrors build-edges.ts (full-build path): a genuine wildcard must stay
+    // distinguishable from a named reexport even when a *different*
+    // statement in this file names specific symbols from the same target
+    // (#1849 review). See `collectReexportedSymbols` in
+    // domain/analysis/exports.ts.
+    stmts.insertEdge.run(fileNodeId, targetRow.id, 'reexports-wildcard', 1.0, 0);
+    edgesAdded++;
   }
   if (!imp.reexport && db) {
     edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp);
