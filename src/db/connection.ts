@@ -441,9 +441,14 @@ export function resolveDbConfig(customDbPath?: string): CodegraphConfig {
  * sites (features/*, domain/analysis/*, domain/search/*) that call
  * openReadonlyOrFail() directly and don't need engine selection. Shares
  * rootDir derivation with resolveDbSettings() so the two can't drift.
+ *
+ * Accepts an optional pre-resolved `config` for callers that already loaded
+ * it (e.g. withReadonlyDb()), avoiding a second findDbPath()/loadConfig() for
+ * the same path (#1943 review).
  */
-export function resolveBusyTimeoutMs(customDbPath?: string): number {
-  return resolveDbConfig(customDbPath).db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
+export function resolveBusyTimeoutMs(customDbPath?: string, config?: CodegraphConfig): number {
+  const cfg = config ?? resolveDbConfig(customDbPath);
+  return cfg.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
 }
 
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */
