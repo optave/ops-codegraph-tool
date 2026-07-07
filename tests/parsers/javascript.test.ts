@@ -1548,6 +1548,34 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('computed object-literal property key extraction (#1764)', () => {
+    it('extracts computed arrow-function property with plain qualified name', () => {
+      const symbols = parseJS(`const obj = { ['foo']: () => { return 1; } };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'obj.foo', kind: 'function' }),
+      );
+    });
+
+    it('extracts computed function-expression property with plain qualified name', () => {
+      const symbols = parseJS(`const obj = { ['bar']: function () { return 2; } };`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'obj.bar', kind: 'function' }),
+      );
+    });
+
+    it('does not use the bracketed form in the stored name for pair values', () => {
+      const symbols = parseJS(`const obj = { ['foo']: () => { return 1; }, bar: () => 2 };`);
+      const def = symbols.definitions.find((d) => d.name.includes('['));
+      expect(def).toBeUndefined();
+    });
+
+    it('does not extract non-string computed key value (Symbol.iterator)', () => {
+      const symbols = parseJS(`const obj = { [Symbol.iterator]: () => {} };`);
+      const def = symbols.definitions.find((d) => d.name.includes('iterator'));
+      expect(def).toBeUndefined();
+    });
+  });
+
   describe('class expression inside function extraction (#1471)', () => {
     it('extracts named class expression returned from a function', () => {
       const symbols = parseJS(

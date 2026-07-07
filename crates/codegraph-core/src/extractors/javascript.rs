@@ -399,12 +399,7 @@ fn seed_object_create_entries(var_name: &str, call_node: &Node, source: &[u8], s
                 let Some(key_n) = child.child_by_field_name("key") else { continue };
                 let Some(val_n) = child.child_by_field_name("value") else { continue };
                 if val_n.kind() != "identifier" { continue; }
-                let key = if key_n.kind() == "string" {
-                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                } else {
-                    Some(node_text(&key_n, source).to_string())
-                };
-                let Some(key) = key else { continue };
+                let Some(key) = resolve_property_key_name(&key_n, source) else { continue };
                 symbols.type_map.push(TypeMapEntry {
                     name: format!("{}.{}", var_name, key),
                     type_name: node_text(&val_n, source).to_string(),
@@ -423,12 +418,7 @@ fn seed_descriptor_object(obj_name: &str, obj_node: &Node, source: &[u8], symbol
         if child.kind() != "pair" { continue; }
         let Some(key_n) = child.child_by_field_name("key") else { continue };
         let Some(val_n) = child.child_by_field_name("value") else { continue };
-        let key = if key_n.kind() == "string" {
-            extract_string_fragment(&key_n, source).map(|s| s.to_string())
-        } else {
-            Some(node_text(&key_n, source).to_string())
-        };
-        let Some(key) = key else { continue };
+        let Some(key) = resolve_property_key_name(&key_n, source) else { continue };
         let Some(target) = find_descriptor_value(&val_n, source) else { continue };
         symbols.type_map.push(TypeMapEntry {
             name: format!("{}.{}", obj_name, key),
@@ -442,6 +432,30 @@ fn seed_descriptor_object(obj_name: &str, obj_node: &Node, source: &[u8], symbol
 fn extract_string_fragment<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
     if node.kind() != "string" { return None; }
     find_child(node, "string_fragment").map(|n| node_text(&n, source))
+}
+
+/// Resolve a plain name from an object-literal `pair`'s key field (or an equivalent
+/// property-key node), unwrapping `computed_property_name` string literals the same way
+/// `resolve_method_def_name` does for `method_definition` name nodes (e.g. `['foo']: fn`
+/// -> "foo"). Plain string-literal keys have their surrounding quotes stripped; all other
+/// key node types (identifier, property_identifier, number, private_property_identifier)
+/// are returned as-is. Returns `None` for computed keys that aren't a resolvable string
+/// literal (e.g. `[Symbol.iterator]: fn`), mirroring `resolve_method_def_name`'s skip
+/// behavior for non-string computed keys.
+fn resolve_property_key_name(key_node: &Node, source: &[u8]) -> Option<String> {
+    if key_node.kind() == "computed_property_name" {
+        // child(0)='[', child(1)=string literal, child(2)=']'
+        let inner = key_node.child(1)?;
+        return match inner.kind() {
+            "string" => extract_string_fragment(&inner, source).map(|s| s.to_string()),
+            "string_fragment" => Some(node_text(&inner, source).to_string()),
+            _ => None, // non-string computed key — skip
+        };
+    }
+    if key_node.kind() == "string" {
+        return extract_string_fragment(key_node, source).map(|s| s.to_string());
+    }
+    Some(node_text(key_node, source).to_string())
 }
 
 /// Find the `value` identifier in a property descriptor object `{ value: fn }`.
@@ -512,12 +526,8 @@ fn extract_object_literal_functions(
             "pair" => {
                 let Some(key_n) = child.child_by_field_name("key") else { continue };
                 let Some(val_n) = child.child_by_field_name("value") else { continue };
-                let key = if key_n.kind() == "string" {
-                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                } else {
-                    Some(node_text(&key_n, source).to_string())
-                };
-                let Some(key) = key else { continue };
+                // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to None and are skipped.
+                let Some(key) = resolve_property_key_name(&key_n, source) else { continue };
                 let qualified = format!("{}.{}", var_name, key);
                 match val_n.kind() {
                     "arrow_function" | "function_expression" | "function" => {
@@ -597,12 +607,8 @@ fn seed_objlit_type_map_entries(var_name: &str, obj_node: &Node, source: &[u8], 
             "pair" => {
                 let Some(key_n) = child.child_by_field_name("key") else { continue };
                 let Some(val_n) = child.child_by_field_name("value") else { continue };
-                let key = if key_n.kind() == "string" {
-                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                } else {
-                    Some(node_text(&key_n, source).to_string())
-                };
-                let Some(key) = key else { continue };
+                // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to None and are skipped.
+                let Some(key) = resolve_property_key_name(&key_n, source) else { continue };
                 let qualified = format!("{}.{}", var_name, key);
                 match val_n.kind() {
                     "arrow_function" | "function_expression" | "function" => {
@@ -722,12 +728,8 @@ fn match_js_objlit_qualified_method_defs(
                     if !matches!(val_n.kind(), "arrow_function" | "function_expression" | "function") {
                         continue;
                     }
-                    let key = if key_n.kind() == "string" {
-                        extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                    } else {
-                        Some(node_text(&key_n, source).to_string())
-                    };
-                    let Some(key) = key else { continue };
+                    // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to None and are skipped.
+                    let Some(key) = resolve_property_key_name(&key_n, source) else { continue };
                     let qualified = format!("{}.{}", var_name, key);
                     symbols.definitions.push(Definition {
                         name: qualified,
@@ -998,19 +1000,10 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
                 let key_node = child.child_by_field_name("key");
                 let value_node = child.child_by_field_name("value");
                 if let (Some(key_node), Some(value_node)) = (key_node, value_node) {
-                    let method_name: &str = if key_node.kind() == "string" {
-                        let s = node_text(&key_node, source);
-                        // Strip exactly one matching pair of surrounding quote characters.
-                        // `trim_matches` would also strip embedded quotes; we only want the
-                        // outermost delimiter pair so `"it's"` stays `it's`.
-                        s.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
-                            .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-                            .unwrap_or(s)
-                    } else {
-                        node_text(&key_node, source)
-                    };
+                    // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to None and are skipped.
+                    let Some(method_name) = resolve_property_key_name(&key_node, source) else { continue };
                     if method_name.is_empty() { continue; }
-                    emit_js_prototype_method(class_name, method_name, &value_node, source, symbols);
+                    emit_js_prototype_method(class_name, &method_name, &value_node, source, symbols);
                 }
             }
             _ => {}
@@ -4665,6 +4658,23 @@ mod tests {
         assert!(bar.cfg.is_some(), "C.bar should have a CFG");
     }
 
+    /// Regression test for #1764: a computed string-literal key in a prototype object
+    /// literal (`['foo']: function() {}`) must resolve to the plain name `C.foo`, not
+    /// the bracketed/quoted text `C.['foo']`.
+    #[test]
+    fn prototype_object_literal_computed_key_emits_plain_name() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = {\n\
+               ['foo']: function() {},\n\
+             };",
+        );
+        let def = s.definitions.iter().find(|d| d.name == "C.foo");
+        assert!(def.is_some(), "C.foo missing; got: {:?}", s.definitions.iter().map(|d| &d.name).collect::<Vec<_>>());
+        let bracketed = s.definitions.iter().find(|d| d.name.contains('['));
+        assert!(bracketed.is_none(), "bracketed name leaked: {:?}", bracketed);
+    }
+
     #[test]
     fn prototype_object_literal_shorthand_method() {
         let s = parse_js(
@@ -4885,6 +4895,25 @@ mod tests {
         assert_eq!(e2.unwrap().type_name, "f2");
     }
 
+    /// Regression test for #1764: a computed string-literal key in an
+    /// Object.defineProperties descriptor object must seed the plain qualified type_map
+    /// key `obj.f1`, not the bracketed/quoted `obj.['f1']`.
+    #[test]
+    fn type_map_from_define_properties_computed_key() {
+        let s = parse_js(
+            "function f1() {}\n\
+             const obj = {};\n\
+             Object.defineProperties(obj, {\n\
+               ['f1']: { value: f1 },\n\
+             });",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "obj.f1");
+        assert!(entry.is_some(), "type_map should contain 'obj.f1'; got: {:?}", s.type_map);
+        assert_eq!(entry.unwrap().type_name, "f1");
+        let bracketed = s.type_map.iter().find(|e| e.name.contains('['));
+        assert!(bracketed.is_none(), "bracketed type_map key leaked: {:?}", bracketed);
+    }
+
     /// Phase 8.3e: Object.create seeds composite type_map keys from shorthand proto.
     #[test]
     fn type_map_from_object_create() {
@@ -4938,6 +4967,36 @@ mod tests {
         let tm_f = s.type_map.iter().find(|e| e.name == "o1.f");
         assert!(tm_f.is_some(), "typeMap o1.f missing");
         assert_eq!(tm_f.unwrap().type_name, "f");
+    }
+
+    /// Regression test for #1764: a computed string-literal key on an object-literal
+    /// arrow/function property (`{ ['foo']: () => {} }`) must produce a plain qualified
+    /// definition `obj.foo`, not the bracketed/quoted `obj.['foo']` — and the seeded
+    /// typeMap entry must match.
+    #[test]
+    fn object_literal_pair_computed_key_emits_plain_name() {
+        let s = parse_js(
+            "const obj = {\n\
+               ['foo']: () => { return 1; },\n\
+               bar: () => { return 2; },\n\
+             };",
+        );
+        let names: Vec<_> = s.definitions.iter().map(|d| &d.name).collect();
+        assert!(names.contains(&&"obj.foo".to_string()), "obj.foo missing; got: {:?}", names);
+        assert!(names.contains(&&"obj.bar".to_string()), "obj.bar missing; got: {:?}", names);
+        let bracketed = s.definitions.iter().find(|d| d.name.contains('['));
+        assert!(bracketed.is_none(), "bracketed name leaked: {:?}", bracketed);
+        let tm = s.type_map.iter().find(|e| e.name == "obj.foo");
+        assert!(tm.is_some(), "typeMap obj.foo missing; got: {:?}", s.type_map.iter().map(|e| &e.name).collect::<Vec<_>>());
+    }
+
+    /// Regression test for #1764: a non-string computed key (`[Symbol.iterator]`) on an
+    /// object-literal arrow/function property must be skipped, not produce a garbage name.
+    #[test]
+    fn object_literal_pair_non_string_computed_key_is_skipped() {
+        let s = parse_js("const obj = { [Symbol.iterator]: () => {} };");
+        let leaked = s.definitions.iter().find(|d| d.name.contains("iterator") || d.name.contains('['));
+        assert!(leaked.is_none(), "non-string computed key should be skipped; got: {:?}", leaked);
     }
 
     /// Issue #1551: `let` and `var` object-literal declarations must seed composite typeMap keys

@@ -1296,8 +1296,8 @@ function extractObjectLiteralFunctions(
       const keyNode = child.childForFieldName('key');
       const valueNode = child.childForFieldName('value');
       if (!keyNode || !valueNode) continue;
-      const keyName =
-        keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+      // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to '' and are skipped.
+      const keyName = resolvePropertyKeyName(keyNode);
       if (!keyName) continue;
       if (
         valueNode.type === 'arrow_function' ||
@@ -2088,6 +2088,25 @@ function resolveMethodDefinitionName(nameNode: TreeSitterNode): string {
 }
 
 /**
+ * Resolve a plain name from an object-literal `pair`'s key field (or an equivalent
+ * property-key node), unwrapping `computed_property_name` string literals the same way
+ * `resolveMethodDefinitionName` does for `method_definition` name nodes (e.g. `['foo']: fn`
+ * -> 'foo'). Plain string-literal keys have their surrounding quotes stripped; all other
+ * key node types (identifier, property_identifier, number, private_property_identifier)
+ * are returned as-is. Returns '' for computed keys that aren't a resolvable string literal
+ * (e.g. `[Symbol.iterator]: fn`), mirroring resolveMethodDefinitionName's skip behavior.
+ */
+function resolvePropertyKeyName(keyNode: TreeSitterNode): string {
+  if (keyNode.type === 'computed_property_name') {
+    const inner = keyNode.child(1);
+    if (!inner || (inner.type !== 'string' && inner.type !== 'string_fragment')) return '';
+    return inner.text.replace(/^['"]|['"]$/g, '');
+  }
+  if (keyNode.type === 'string') return keyNode.text.replace(/^['"]|['"]$/g, '');
+  return keyNode.text;
+}
+
+/**
  * Push node onto funcStack for a method_definition, qualified with the enclosing class
  * name so the PTS key matches callerName from findCaller (which uses
  * def.name = 'ClassName.method').
@@ -2476,8 +2495,8 @@ function handleObjectLiteralTypeMap(
       const keyNode = child.childForFieldName('key');
       const valNode = child.childForFieldName('value');
       if (!keyNode || !valNode) continue;
-      const keyName =
-        keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+      // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to '' and are skipped.
+      const keyName = resolvePropertyKeyName(keyNode);
       if (!keyName) continue;
       const qualifiedKey = `${lhsName}.${keyName}`;
       if (
@@ -2731,7 +2750,8 @@ function handleDefinePropertyTypeMap(
       const keyN = pair.childForFieldName('key');
       const valN = pair.childForFieldName('value');
       if (!keyN || !valN) continue;
-      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
+      const key = resolvePropertyKeyName(keyN);
+      if (!key) continue;
       const target = findDescriptorValue(valN);
       if (!target) continue;
       setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
@@ -2787,7 +2807,8 @@ function seedProtoProperties(
       const keyN = child.childForFieldName('key');
       const valN = child.childForFieldName('value');
       if (!keyN || !valN || valN.type !== 'identifier') continue;
-      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
+      const key = resolvePropertyKeyName(keyN);
+      if (!key) continue;
       setTypeMapEntry(typeMap, `${varName}.${key}`, valN.text, 0.85);
     }
   }
@@ -4195,7 +4216,7 @@ function extractPrototypeObjectLiteral(
     const valueNode = child.childForFieldName('value');
     if (!keyNode || !valueNode) continue;
 
-    const methodName = keyNode.type === 'string' ? keyNode.text.replace(/['"]/g, '') : keyNode.text;
+    const methodName = resolvePropertyKeyName(keyNode);
     if (!methodName) continue;
 
     emitPrototypeMethod(className, methodName, valueNode, definitions, typeMap);
