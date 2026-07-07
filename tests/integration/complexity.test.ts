@@ -198,6 +198,63 @@ describe('complexityData', () => {
     expect(data.functions[0].kind).toBe('method');
   });
 
+  // ─── Summary scoping (issue #1807) ──────────────────────────────────
+
+  test('summary reflects the --file scope, not the whole repo', () => {
+    const unfiltered = complexityData(dbPath);
+    const filtered = complexityData(dbPath, { file: 'handler' });
+
+    expect(filtered.functions.length).toBe(1);
+    expect(filtered.summary.analyzed).toBe(1);
+    expect(filtered.summary.avgCognitive).toBe(25);
+    expect(filtered.summary.maxCognitive).toBe(25);
+    expect(filtered.summary.avgMI).toBe(15);
+
+    // Whole-repo summary must differ from the file-scoped one.
+    expect(unfiltered.summary.analyzed).not.toBe(filtered.summary.analyzed);
+    expect(unfiltered.summary.avgCognitive).not.toBe(filtered.summary.avgCognitive);
+  });
+
+  test('summary reflects the --target scope, not the whole repo', () => {
+    const unfiltered = complexityData(dbPath);
+    const filtered = complexityData(dbPath, { target: 'validate' });
+
+    expect(filtered.functions.length).toBe(1);
+    expect(filtered.summary.analyzed).toBe(1);
+    expect(filtered.summary.avgCognitive).toBe(12);
+    expect(filtered.summary.maxCognitive).toBe(12);
+
+    expect(unfiltered.summary.analyzed).not.toBe(filtered.summary.analyzed);
+  });
+
+  test('summary reflects the --kind scope, not the whole repo', () => {
+    const unfiltered = complexityData(dbPath);
+    const filtered = complexityData(dbPath, { kind: 'method' });
+
+    expect(filtered.functions.length).toBe(1);
+    expect(filtered.summary.analyzed).toBe(1);
+    expect(filtered.summary.avgCognitive).toBe(25);
+
+    expect(unfiltered.summary.analyzed).not.toBe(filtered.summary.analyzed);
+  });
+
+  test('summary respects noTests scope alongside functions list', () => {
+    const withTests = complexityData(dbPath);
+    const withoutTests = complexityData(dbPath, { noTests: true });
+
+    expect(withoutTests.summary.analyzed).toBeLessThan(withTests.summary.analyzed);
+  });
+
+  test('summary is not further restricted by aboveThreshold (reflects file/target/kind scope only)', () => {
+    // aboveThreshold narrows `functions` to violators, but `summary.analyzed`
+    // should still reflect the full in-scope population so `aboveWarn` stays meaningful.
+    const scoped = complexityData(dbPath); // whole repo, no threshold filter
+    const aboveThreshold = complexityData(dbPath, { aboveThreshold: true });
+
+    expect(aboveThreshold.functions.length).toBeLessThan(scoped.summary.analyzed);
+    expect(aboveThreshold.summary.analyzed).toBe(scoped.summary.analyzed);
+  });
+
   test('sort by cyclomatic', () => {
     const data = complexityData(dbPath, { sort: 'cyclomatic' });
     expect(data.functions[0].cyclomatic).toBeGreaterThanOrEqual(data.functions[1].cyclomatic);

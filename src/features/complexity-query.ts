@@ -174,19 +174,19 @@ function exceedsAnyThreshold(r: ThresholdMetrics, thresholds: any): boolean {
   return getExceededMetrics(r, thresholds).length > 0;
 }
 
-/** Fetch the bare metric columns (all rows) used to compute summary statistics. */
+/** Fetch the bare metric columns for rows matching `where`/`params`, used to compute summary statistics. */
 function fetchAllComplexityMetrics(
   db: ReturnType<typeof openReadonlyOrFail>,
-  noTests: boolean,
+  where: string,
+  params: unknown[],
 ): ThresholdMetrics[] {
   return db
     .prepare<ThresholdMetrics>(
       `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
        FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
-       WHERE n.kind IN ('function','method')
-       ${noTests ? `AND n.file NOT LIKE '%.test.%' AND n.file NOT LIKE '%.spec.%' AND n.file NOT LIKE '%__test__%' AND n.file NOT LIKE '%__tests__%' AND n.file NOT LIKE '%.stories.%'` : ''}`,
+       ${where}`,
     )
-    .all();
+    .all(...params);
 }
 
 /** Arithmetic mean, rounded to 1 decimal (matches the summary's existing precision). */
@@ -214,14 +214,15 @@ function summarizeComplexityMetrics(
   };
 }
 
-/** Compute summary statistics across all complexity rows. */
+/** Compute summary statistics across the complexity rows matching `where`/`params`. */
 function computeComplexitySummary(
   db: ReturnType<typeof openReadonlyOrFail>,
-  noTests: boolean,
+  where: string,
+  params: unknown[],
   thresholds: any,
 ): Record<string, unknown> | null {
   try {
-    const allRows = fetchAllComplexityMetrics(db, noTests);
+    const allRows = fetchAllComplexityMetrics(db, where, params);
     if (allRows.length === 0) return null;
     return summarizeComplexityMetrics(allRows, thresholds);
   } catch (e: unknown) {
@@ -312,7 +313,10 @@ function buildComplexityResult(
   const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
   const functions = filtered.map((r) => mapComplexityRow(r, thresholds));
 
-  const summary = computeComplexitySummary(db, noTests, thresholds);
+  // Summary is scoped by the same file/target/kind/noTests `where` as `functions`,
+  // but deliberately excludes the above-threshold `having` clause so stats like
+  // `aboveWarn` remain meaningful against the full in-scope population.
+  const summary = computeComplexitySummary(db, sql.where, sql.params, thresholds);
   const hasGraph = summary === null ? checkHasGraph(db) : false;
 
   return { functions, summary, thresholds, hasGraph };
