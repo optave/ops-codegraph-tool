@@ -45,7 +45,7 @@ export function renderImpactLevels(
   const { emptyMessage = '  No callers found.', limit = 20 } = opts;
 
   if (Object.keys(levels).length === 0) {
-    if (emptyMessage) console.log(emptyMessage);
+    if (emptyMessage !== null) console.log(emptyMessage);
     return;
   }
 
