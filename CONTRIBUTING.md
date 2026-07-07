@@ -15,7 +15,7 @@ npm install                      # also installs git hooks via husky
 npm test                         # run the full test suite
 ```
 
-**Requirements:** Node.js >= 20
+**Requirements:** Node.js >= 22.12.0 (see `engines.node` in `package.json`)
 
 **Working in multiple git worktrees?** Each worktree gets its own untracked
 `node_modules/` and `grammars/` — neither is shared via git — so every fresh
@@ -58,27 +58,36 @@ installs two git hooks:
 
 ## Project Structure
 
+Source is TypeScript under `src/`, compiled via `tsup`/`tsc`; the native engine
+lives in `crates/codegraph-core/` (Rust, via napi-rs) and mirrors the `src/`
+tree module-for-module. `src/` is organized by layer, not by language:
+
 ```
 src/
-  cli.js          # Commander CLI entry point
-  index.js        # Programmatic API exports
-  builder.js      # Graph building: file collection, parsing, import resolution
-  parser.js       # tree-sitter WASM wrapper + symbol extractors per language
-  queries.js      # Query functions: symbol search, file deps, impact analysis
-  embedder.js     # Semantic search with @huggingface/transformers
-  db.js           # SQLite schema and operations
-  mcp.js          # MCP server for AI agent integration
-  cycles.js       # Circular dependency detection
-  export.js       # DOT / Mermaid / JSON graph export
-  watcher.js      # Watch mode for incremental rebuilds
-  config.js       # .codegraphrc.json loading
-  constants.js    # EXTENSIONS and IGNORE_DIRS
+  cli.ts, cli/        # Commander CLI entry point + per-command modules
+  index.ts            # Programmatic API exports
+  shared/             # Cross-cutting constants, error types, kind enums
+  infrastructure/     # Config loading, logging, native addon loader, doctor
+  db/                 # SQLite schema and operations (better-sqlite3)
+  domain/             # Parsing, graph building, import resolution, queries
+  extractors/         # Per-language symbol extractors (WASM/TS side)
+  features/           # Composable feature modules (audit, complexity, dataflow, ...)
+  presentation/       # Output formatting + CLI command wrappers
+  graph/              # Unified CodeGraph model + algorithms + classifiers
+  mcp/                # MCP server for AI agent integration
+  ast-analysis/       # Shared AST walker + pluggable analysis visitors
 
-grammars/         # Pre-built .wasm grammar files (committed)
-scripts/          # Build scripts (build-wasm.js)
-tests/            # vitest test suite
-docs/             # Extended documentation
+crates/codegraph-core/ # Native (Rust/napi-rs) engine — mirrors src/ layout
+scripts/               # Build, benchmark, and release tooling (TypeScript)
+tests/                 # vitest test suite
+docs/                  # Extended documentation
 ```
+
+For the authoritative, actively-maintained module-by-module breakdown (what
+each file does, key design decisions, the native↔TypeScript mirroring table),
+see the **Architecture** section of [`CLAUDE.md`](CLAUDE.md) — it is kept in
+sync with the codebase as part of every PR that changes structure, so it's a
+better long-term reference than a second copy here.
 
 ## Development Workflow
 
@@ -95,9 +104,11 @@ docs/             # Extended documentation
 npm test                         # Run all tests (vitest)
 npm run test:watch               # Watch mode
 npm run test:coverage            # Coverage report
-npx vitest run tests/parsers/go.test.js   # Single test file
+npx vitest run tests/parsers/go.test.ts   # Single test file
 npx vitest run -t "finds cycles"          # Single test by name
-npm run build:wasm               # Rebuild WASM grammars
+npm run build                    # Compile TypeScript (tsc) to dist/
+npm run typecheck                # Type-check only, no emit
+npm run build:wasm               # Rebuild WASM grammars from devDependencies
 npm run doctor                   # Check for a stale native binary / missing WASM grammars
 ```
 
@@ -169,6 +180,7 @@ tests/
   parsers/              # Language parser extraction (one file per language)
   search/               # Semantic search + embeddings
   benchmarks/resolution/ # Call resolution precision/recall (per-language fixtures)
+                          #   + tracer/ — dynamic call tracers used to validate fixtures
   fixtures/             # Sample projects used by tests
 ```
 
@@ -186,11 +198,11 @@ results in the PR description.
 
 | Benchmark | What it measures | When to run |
 |-----------|-----------------|-------------|
-| `node scripts/benchmark.js` | Build speed (native vs WASM), query latency | Changes to `builder.js`, `parser.js`, `queries.js`, `resolve.js`, `db.js`, or the native engine |
-| `node scripts/embedding-benchmark.js` | Search recall (Hit@1/3/5/10) across models | Changes to `embedder.js` or embedding strategies |
-| `node scripts/query-benchmark.js` | Query depth scaling, diff-impact latency | Changes to `queries.js`, `resolve.js`, or `db.js` |
-| `node scripts/incremental-benchmark.js` | Incremental build, import resolution throughput | Changes to `builder.js`, `resolve.js`, `parser.js`, or `journal.js` |
-| `npx vitest run tests/benchmarks/resolution/` | Call resolution precision/recall per language | Changes to `build-edges.js`, `resolve.js`, `parser.js`, or any extractor |
+| `npm run benchmark` | Build speed (native vs WASM), query latency | Changes to `domain/graph/builder/`, `domain/parser.ts`, `domain/queries.ts`, `domain/graph/resolve.ts`, `db/`, or the native engine |
+| `node scripts/node-ts.js scripts/embedding-benchmark.ts` | Search recall (Hit@1/3/5/10) across models | Changes to `domain/search/` or embedding strategies |
+| `node scripts/node-ts.js scripts/query-benchmark.ts` | Query depth scaling, diff-impact latency | Changes to `domain/queries.ts`, `domain/graph/resolve.ts`, or `db/` |
+| `node scripts/node-ts.js scripts/incremental-benchmark.ts` | Incremental build, import resolution throughput | Changes to `domain/graph/builder/`, `domain/graph/resolve.ts`, `domain/parser.ts`, or `domain/graph/journal.ts` |
+| `npx vitest run tests/benchmarks/resolution/` | Call resolution precision/recall per language | Changes to `domain/graph/builder/stages/build-edges.ts`, `domain/graph/resolve.ts`, `domain/parser.ts`, or any extractor |
 
 ### Resolution precision/recall benchmark
 
@@ -215,7 +227,7 @@ drops below the configured thresholds for any language, the test fails.
 1. Create `tests/benchmarks/resolution/fixtures/<language>/` with source files
 2. Add an `expected-edges.json` manifest (see the JSON schema at
    `tests/benchmarks/resolution/expected-edges.schema.json`)
-3. Add thresholds in `resolution-benchmark.test.js` → `THRESHOLDS`
+3. Add thresholds in `resolution-benchmark.test.ts` → `THRESHOLDS`
 4. The benchmark runner auto-discovers fixtures with an `expected-edges.json`
 
 ### How to report results
@@ -226,10 +238,10 @@ your PR description:
 
 ```bash
 git stash && git checkout main
-node scripts/benchmark.js > before.json
+npm run benchmark > before.json
 
 git checkout - && git stash pop
-node scripts/benchmark.js > after.json
+npm run benchmark > after.json
 ```
 
 In the PR, include a table like:
@@ -271,8 +283,11 @@ generics, nested types):
 
 1. Find the tree-sitter AST node type using the
    [tree-sitter playground](https://tree-sitter.github.io/tree-sitter/playground)
-2. Add a `case` in the corresponding `extract<Lang>Symbols()` function
-3. Add a test case in `tests/parsers/<lang>.test.js`
+2. Add a `case` in the corresponding `extract<Lang>Symbols()` function in
+   `src/extractors/<lang>.ts` (WASM) — and the mirrored extractor in
+   `crates/codegraph-core/src/extractors/` (native) if the change affects both
+   engines, per the dual-engine parity requirement in `CLAUDE.md`
+3. Add a test case in `tests/parsers/<lang>.test.ts`
 
 ### Harness Engineering (Claude Code Hooks)
 
@@ -296,19 +311,30 @@ Documentation improvements are always welcome. The main docs live in:
 imports -> SQLite DB -> query/search
 
 **Key design decisions:**
-- WASM grammars are pre-built and committed in `grammars/` — no native compilation needed at install time
+- **Dual-engine:** native Rust parsing via napi-rs (`crates/codegraph-core/`), with automatic fallback to WASM (`--engine native|wasm|auto`, default `auto`). Both engines must produce identical results — see `CLAUDE.md` for the mirrored module layout
 - Optional dependencies (`@huggingface/transformers`, `@modelcontextprotocol/sdk`) are lazy-loaded
-- Parsers that can't load fail gracefully — they log a warning and skip those files
+- Non-required parsers (everything except JS/TS/TSX) fail gracefully if their WASM grammar is unavailable — they log a warning and skip those files
 - Import resolution uses a 6-level priority system with confidence scoring
-- The `feat/rust-core` branch introduces an optional native Rust engine via napi-rs for 5-10x faster parsing, with automatic fallback to WASM
+- Incremental builds track file hashes in the DB to skip unchanged files
 
-**Database:** SQLite at `.codegraph/graph.db` with tables: `nodes`, `edges`,
-`metadata`, `embeddings`
+**Database:** SQLite at `.codegraph/graph.db`. See the **Database** entry in
+`CLAUDE.md` for the current table list — it's kept up to date there rather
+than duplicated here.
+
+This is a summary; for full detail (module-by-module responsibilities,
+configuration system, credential resolution, MCP isolation model) see
+`CLAUDE.md`, which is the actively-maintained reference.
 
 ## WASM Grammars
 
-The `.wasm` files in `grammars/` are pre-built and committed. You only need to
-rebuild them if you:
+`.wasm` grammar files are **not** committed to git — they're built from
+`devDependencies` into `grammars/` automatically via the `prepare` npm script
+(`npm run build:wasm`), which runs on every `npm install`. Each git worktree
+therefore needs its own `npm install` before its `grammars/` directory is
+populated (see "Working in multiple git worktrees?" above; `npm run doctor`
+detects a missing or incomplete `grammars/`).
+
+Rebuild manually if you:
 
 - Add a new language
 - Upgrade a `tree-sitter-*` devDependency version
@@ -328,8 +354,8 @@ Use [GitHub Issues](https://github.com/optave/ops-codegraph-tool/issues) with:
 
 ## Code Style
 
-- All source is plain JavaScript (ES modules) — no transpilation
-- [Biome](https://biomejs.dev/) is used for linting and formatting (config in `biome.json`)
+- Source is TypeScript (`src/`), compiled via `tsc`/`tsup`; run `npm run typecheck` to type-check without emitting
+- [Biome](https://biomejs.dev/) is used for linting and formatting (config in `biome.json`, scoped to `src/` and `tests/`)
 - Run `npm run lint` to check and `npm run lint:fix` to auto-fix
 - The pre-commit hook runs the linter automatically
 - Use `const`/`let` (no `var`)
