@@ -3,27 +3,66 @@ import { loadNative } from '../../infrastructure/native.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import type { BetterSqlite3Database } from '../../types.js';
 
-type Edge = { source: string; target: string };
-type DbEdge = { source_id: number; target_id: number };
+type Edge = { source: string; target: string; speculative?: boolean };
+type DbEdge = {
+  source_id: number;
+  target_id: number;
+  confidence?: number | null;
+  dynamic?: 0 | 1;
+};
+
+/**
+ * A detected circular dependency, classified by how solid its evidence is.
+ */
+export interface Cycle {
+  /** Node labels forming the cycle (file paths for file-level, `name|file` for function-level). */
+  nodes: string[];
+  /**
+   * True when every edge that closes this cycle is a low-confidence dynamic
+   * resolution (`dynamic = 1 AND confidence < 1`) — i.e. the cycle
+   * disappears once those resolver guesses are excluded from the graph, so
+   * it has no confirmed structural basis. See issue #1844.
+   */
+  speculative: boolean;
+}
+
+/**
+ * An edge only counts as a low-confidence dynamic guess — not confirmed
+ * structural evidence — when it's flagged dynamic *and* the resolver wasn't
+ * fully confident about it. `confidence == null` is treated as confirmed
+ * (unknown, not guessed) so a missing value never manufactures a false
+ * "speculative" classification.
+ */
+function isSpeculative(e: DbEdge): boolean {
+  return e.dynamic === 1 && typeof e.confidence === 'number' && e.confidence < 1;
+}
 
 /**
  * Build a label-based edge list from DB rows, filtering to known nodes and
  * deduplicating. Self-loops are skipped (Tarjan treats them as trivial SCCs).
+ *
+ * When multiple DB edges collapse onto the same (source, target) label pair,
+ * the pair is only marked `speculative` if *every* underlying edge is — one
+ * confirmed edge between two nodes is enough to make that connection real,
+ * even if a separate low-confidence dynamic call also happens to link them.
  */
 function buildLabelEdges(dbEdges: DbEdge[], idToLabel: Map<number, string>): Edge[] {
-  const edges: Edge[] = [];
-  const seen = new Set<string>();
+  const byPair = new Map<string, Edge>();
   for (const e of dbEdges) {
     if (e.source_id === e.target_id) continue;
     const src = idToLabel.get(e.source_id);
     const tgt = idToLabel.get(e.target_id);
     if (src === undefined || tgt === undefined) continue;
     const key = `${src}\0${tgt}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    edges.push({ source: src, target: tgt });
+    const speculative = isSpeculative(e);
+    const existing = byPair.get(key);
+    if (!existing) {
+      byPair.set(key, { source: src, target: tgt, speculative });
+    } else if (existing.speculative && !speculative) {
+      existing.speculative = false;
+    }
   }
-  return edges;
+  return [...byPair.values()];
 }
 
 function buildFileLevelEdges(db: BetterSqlite3Database, noTests: boolean): Edge[] {
@@ -42,26 +81,68 @@ function buildCallableEdges(db: BetterSqlite3Database, noTests: boolean): Edge[]
   return buildLabelEdges(getCallEdges(db), idToLabel);
 }
 
-/**
- * Find cycles using Tarjan's SCC algorithm.
- *
- * Builds a label-based adjacency list directly from DB rows — no intermediate
- * CodeGraph construction. This is O(V + E) with minimal memory overhead.
- */
-export function findCycles(
-  db: BetterSqlite3Database,
-  opts: { fileLevel?: boolean; noTests?: boolean } = {},
-): string[][] {
-  const fileLevel = opts.fileLevel !== false;
-  const noTests = opts.noTests || false;
-
-  const edges = fileLevel ? buildFileLevelEdges(db, noTests) : buildCallableEdges(db, noTests);
-
+/** Run Tarjan's SCC (native when available, JS fallback otherwise) on a flat edge list. */
+function runTarjan(edges: Edge[]): string[][] {
   const native = loadNative();
   if (native) {
     return native.detectCycles(edges) as string[][];
   }
   return tarjanFromEdges(edges);
+}
+
+/** Canonical, order-independent key for an SCC's node set. */
+function sccKey(nodes: string[]): string {
+  return [...nodes].sort().join('\0');
+}
+
+/**
+ * Classify each cycle found in `edges` as confirmed or speculative.
+ *
+ * Runs Tarjan once on the full edge set (current behavior), then — only if
+ * at least one edge is speculative — runs it again on the edges that remain
+ * once low-confidence dynamic edges are removed. Removing edges can only
+ * shrink or split SCCs, never grow them, so any full-graph cycle whose exact
+ * node set doesn't reappear in the filtered run depended on a speculative
+ * edge to close it.
+ */
+function classifyCycles(edges: Edge[]): Cycle[] {
+  const allCycles = runTarjan(edges);
+  if (allCycles.length === 0) return [];
+
+  if (!edges.some((e) => e.speculative)) {
+    return allCycles.map((nodes) => ({ nodes, speculative: false }));
+  }
+
+  const confirmedEdges = edges.filter((e) => !e.speculative);
+  const confirmedCycles = runTarjan(confirmedEdges);
+  const confirmedKeys = new Set(confirmedCycles.map(sccKey));
+
+  return allCycles.map((nodes) => ({
+    nodes,
+    speculative: !confirmedKeys.has(sccKey(nodes)),
+  }));
+}
+
+/**
+ * Find cycles using Tarjan's SCC algorithm.
+ *
+ * Builds a label-based adjacency list directly from DB rows — no intermediate
+ * CodeGraph construction. This is O(V + E) with minimal memory overhead.
+ *
+ * By default returns every detected cycle, each flagged `speculative` when
+ * its only structural basis is a low-confidence dynamic edge. Pass
+ * `excludeSpeculative: true` to drop those from the result entirely.
+ */
+export function findCycles(
+  db: BetterSqlite3Database,
+  opts: { fileLevel?: boolean; noTests?: boolean; excludeSpeculative?: boolean } = {},
+): Cycle[] {
+  const fileLevel = opts.fileLevel !== false;
+  const noTests = opts.noTests || false;
+
+  const edges = fileLevel ? buildFileLevelEdges(db, noTests) : buildCallableEdges(db, noTests);
+  const cycles = classifyCycles(edges);
+  return opts.excludeSpeculative ? cycles.filter((c) => !c.speculative) : cycles;
 }
 
 export function findCyclesJS(edges: Edge[]): string[][] {
@@ -136,19 +217,22 @@ function tarjanFromEdges(edges: Edge[]): string[][] {
   return sccs;
 }
 
-export function formatCycles(cycles: string[][]): string {
+export function formatCycles(cycles: Cycle[]): string {
   if (cycles.length === 0) {
     return 'No circular dependencies detected.';
   }
 
   const lines: string[] = [`Found ${cycles.length} circular dependency cycle(s):\n`];
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i]!;
-    lines.push(`  Cycle ${i + 1} (${cycle.length} files):`);
-    for (const file of cycle) {
+    const { nodes, speculative } = cycles[i]!;
+    const tag = speculative
+      ? '  [speculative — only closes via a low-confidence dynamic call]'
+      : '';
+    lines.push(`  Cycle ${i + 1} (${nodes.length} files):${tag}`);
+    for (const file of nodes) {
       lines.push(`    -> ${file}`);
     }
-    lines.push(`    -> ${cycle[0]} (back to start)`);
+    lines.push(`    -> ${nodes[0]} (back to start)`);
     lines.push('');
   }
   return lines.join('\n');

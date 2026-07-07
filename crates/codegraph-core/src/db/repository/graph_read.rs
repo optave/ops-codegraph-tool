@@ -1682,12 +1682,16 @@ impl NativeDatabase {
     }
 
     /// Get all 'calls' edges.
+    ///
+    /// Includes `dynamic` alongside `confidence` so consumers (e.g. cycle
+    /// detection, #1844) can distinguish confirmed static calls from
+    /// low-confidence dynamic-dispatch guesses.
     #[napi]
     pub fn get_call_edges(&self) -> napi::Result<Vec<NativeCallEdgeRow>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare_cached(
-                "SELECT source_id, target_id, confidence FROM edges WHERE kind = 'calls' \
+                "SELECT source_id, target_id, confidence, dynamic FROM edges WHERE kind = 'calls' \
                  ORDER BY source_id, target_id",
             )
             .map_err(|e| napi::Error::from_reason(format!("get_call_edges prepare: {e}")))?;
@@ -1697,6 +1701,7 @@ impl NativeDatabase {
                     source_id: row.get("source_id")?,
                     target_id: row.get("target_id")?,
                     confidence: row.get("confidence")?,
+                    dynamic: row.get("dynamic")?,
                 })
             })
             .map_err(|e| napi::Error::from_reason(format!("get_call_edges: {e}")))?;

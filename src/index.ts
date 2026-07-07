@@ -10,6 +10,7 @@
  */
 
 export { buildGraph } from './domain/graph/builder.js';
+export type { Cycle } from './domain/graph/cycles.js';
 export { findCycles } from './domain/graph/cycles.js';
 export {
   briefData,

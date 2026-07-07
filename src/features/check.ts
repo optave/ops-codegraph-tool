@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findDbPath, openReadonlyOrFail } from '../db/index.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
+import type { Cycle } from '../domain/graph/cycles.js';
 import { findCycles } from '../domain/graph/cycles.js';
 import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -317,16 +318,17 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
 
 interface CyclesResult {
   passed: boolean;
-  cycles: string[][];
+  cycles: Cycle[];
 }
 
 export function checkNoNewCycles(
   db: BetterSqlite3Database,
   changedFiles: Set<string>,
   noTests: boolean,
+  excludeSpeculative: boolean,
 ): CyclesResult {
-  const cycles = findCycles(db, { fileLevel: true, noTests });
-  const involved = cycles.filter((cycle) => cycle.some((f) => changedFiles.has(f)));
+  const cycles = findCycles(db, { fileLevel: true, noTests, excludeSpeculative });
+  const involved = cycles.filter((cycle) => cycle.nodes.some((f) => changedFiles.has(f)));
   return { passed: involved.length === 0, cycles: involved };
 }
 
@@ -797,6 +799,8 @@ function resolveCheckFlags(opts: CheckOpts, config: CodegraphConfig) {
   const checkConfig = config.check || ({} as CodegraphConfig['check']);
   return {
     enableCycles: opts.cycles ?? checkConfig.cycles ?? true,
+    excludeSpeculativeCycles:
+      checkConfig.excludeSpeculativeCycles ?? DEFAULTS.check.excludeSpeculativeCycles,
     enableSignatures: opts.signatures ?? checkConfig.signatures ?? true,
     enableBoundaries: opts.boundaries ?? checkConfig.boundaries ?? true,
     blastRadiusThreshold: opts.blastRadius ?? checkConfig.blastRadius ?? null,
@@ -816,7 +820,10 @@ function runPredicates(
   const predicates: PredicateResult[] = [];
 
   if (flags.enableCycles) {
-    predicates.push({ name: 'cycles', ...checkNoNewCycles(db, changedFiles, noTests) });
+    predicates.push({
+      name: 'cycles',
+      ...checkNoNewCycles(db, changedFiles, noTests, flags.excludeSpeculativeCycles),
+    });
   }
   if (flags.blastRadiusThreshold != null) {
     predicates.push({

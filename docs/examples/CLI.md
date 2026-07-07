@@ -492,6 +492,14 @@ Found 1 file-level cycle:
     src/parser.js -> src/constants.js -> src/parser.js
 ```
 
+Cycles whose only closing edge is a low-confidence dynamic call (resolved via
+a resolver heuristic rather than confirmed statically) are marked
+`[speculative]` rather than reported as confirmed structural cycles. Pass
+`--exclude-speculative` to drop them from the output entirely, or `--json` to
+get a `speculative: boolean` field per cycle. `codegraph check --cycles` and
+the manifesto `noCycles` rule ignore speculative-only cycles by default (see
+`check.excludeSpeculativeCycles` in [configuration](../guides/configuration.md)).
+
 ---
 
 ## export — Graph as DOT, Mermaid, JSON, GraphML, GraphSON, or Neo4j CSV

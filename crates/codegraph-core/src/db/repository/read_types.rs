@@ -145,6 +145,11 @@ pub struct NativeCallEdgeRow {
     pub source_id: i32,
     pub target_id: i32,
     pub confidence: Option<f64>,
+    /// 0 or 1 — flags calls resolved via dynamic dispatch (vs. a direct
+    /// static reference). Paired with `confidence` lets consumers (e.g.
+    /// cycle detection, #1844) distinguish confirmed calls from
+    /// low-confidence dynamic-dispatch guesses.
+    pub dynamic: u32,
 }
 
 /// File node row — mirrors `FileNodeRow`.

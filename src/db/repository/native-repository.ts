@@ -143,6 +143,7 @@ function toCallEdgeRow(r: NativeCallEdgeRow): CallEdgeRow {
     source_id: r.sourceId,
     target_id: r.targetId,
     confidence: r.confidence,
+    dynamic: r.dynamic,
   };
 }
 

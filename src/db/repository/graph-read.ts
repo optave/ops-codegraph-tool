@@ -36,12 +36,16 @@ export function getCallableNodes(db: BetterSqlite3Database): CallableNodeRow[] {
 
 /**
  * Get all 'calls' edges. Ordered for determinism — see `getCallableNodes`.
+ *
+ * Includes `dynamic` alongside `confidence` so consumers (e.g. cycle
+ * detection, #1844) can distinguish confirmed static calls from low-
+ * confidence dynamic-dispatch guesses.
  */
 export function getCallEdges(db: BetterSqlite3Database): CallEdgeRow[] {
   return cachedStmt(
     _getCallEdgesStmt,
     db,
-    "SELECT source_id, target_id, confidence FROM edges WHERE kind = 'calls' ORDER BY source_id, target_id",
+    "SELECT source_id, target_id, confidence, dynamic FROM edges WHERE kind = 'calls' ORDER BY source_id, target_id",
   ).all();
 }
 

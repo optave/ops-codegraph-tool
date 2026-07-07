@@ -233,6 +233,7 @@ export interface CallEdgeRow {
   source_id: number;
   target_id: number;
   confidence: number | null;
+  dynamic: 0 | 1;
 }
 
 /** File node row (for graph-read queries). */
@@ -1475,6 +1476,13 @@ export interface CodegraphConfig {
 
   check: {
     cycles: boolean;
+    /**
+     * When true (default), cycles whose only closing edges are low-confidence
+     * dynamic calls (`dynamic = 1 AND confidence < 1`) don't fail `codegraph
+     * check --cycles` or the `manifesto` `noCycles` rule — they're resolver
+     * guesses, not confirmed structural dependencies (#1844).
+     */
+    excludeSpeculativeCycles: boolean;
     blastRadius: number | null;
     signatures: boolean;
     boundaries: boolean;
@@ -2505,6 +2513,7 @@ export interface NativeCallEdgeRow {
   sourceId: number;
   targetId: number;
   confidence: number | null;
+  dynamic: 0 | 1;
 }
 
 export interface NativeFileNodeRow {

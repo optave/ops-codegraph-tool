@@ -315,6 +315,7 @@ Toggles for the lightweight `codegraph check` command (separate from manifesto).
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
 | `cycles` | `boolean` | `true` | Fail if cycles exist. |
+| `excludeSpeculativeCycles` | `boolean` | `true` | Don't fail on cycles whose only closing edges are low-confidence dynamic calls (`dynamic = 1 AND confidence < 1`) — resolver guesses rather than confirmed structural dependencies. Also honored by the manifesto `noCycles` rule. |
 | `blastRadius` | `number \| null` | `null` | Fail if any function's caller count exceeds this. |
 | `signatures` | `boolean` | `true` | Warn on signature changes in the diff. |
 | `boundaries` | `boolean` | `true` | Honor the `manifesto.boundaries` rules. |

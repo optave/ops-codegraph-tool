@@ -1,3 +1,4 @@
+import type { Cycle } from '../domain/graph/cycles.js';
 import { checkData } from '../features/check.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 import { AnalysisError } from '../shared/errors.js';
@@ -37,7 +38,7 @@ interface CheckPredicate {
   passed: boolean;
   name: string;
   note?: string;
-  cycles?: string[][];
+  cycles?: Cycle[];
   violations?: CheckViolation[];
   threshold?: number;
 }
@@ -62,7 +63,8 @@ function formatPredicateViolations(pred: CheckPredicate): void {
 
   if (pred.name === 'cycles' && pred.cycles) {
     for (const cycle of pred.cycles.slice(0, MAX_SHOWN)) {
-      console.log(`         ${cycle.join(' -> ')}`);
+      const tag = cycle.speculative ? ' [speculative]' : '';
+      console.log(`         ${cycle.nodes.join(' -> ')}${tag}`);
     }
     if (pred.cycles.length > MAX_SHOWN) {
       console.log(`         ... and ${pred.cycles.length - MAX_SHOWN} more`);

@@ -106,6 +106,8 @@ interface Violation {
   name?: string;
   file?: string;
   line?: number | null;
+  /** Set on `noCycles` violations — true when the cycle's only closing edges are low-confidence dynamic calls (#1844). */
+  speculative?: boolean;
 }
 
 function checkThreshold(
@@ -333,6 +335,7 @@ function evaluateFileRules(
 function evaluateGraphRules(
   db: BetterSqlite3Database,
   rules: ResolvedRules,
+  config: CodegraphConfig,
   opts: ManifestoOpts,
   violations: Violation[],
   ruleResults: RuleResult[],
@@ -349,7 +352,13 @@ function evaluateGraphRules(
     return;
   }
 
-  const cycles = findCycles(db, { fileLevel: true, noTests: opts.noTests || false });
+  const excludeSpeculative =
+    config.check?.excludeSpeculativeCycles ?? DEFAULTS.check.excludeSpeculativeCycles;
+  const cycles = findCycles(db, {
+    fileLevel: true,
+    noTests: opts.noTests || false,
+    excludeSpeculative,
+  });
   const hasCycles = cycles.length > 0;
 
   if (!hasCycles) {
@@ -370,11 +379,12 @@ function evaluateGraphRules(
     violations.push({
       rule: 'noCycles',
       level,
-      name: `cycle(${cycle.length} files)`,
-      file: cycle.join(' → '),
+      name: `cycle(${cycle.nodes.length} files)`,
+      file: cycle.nodes.join(' → '),
       line: null,
-      value: cycle.length,
+      value: cycle.nodes.length,
       threshold: 0,
+      speculative: cycle.speculative,
     });
   }
 
@@ -489,7 +499,7 @@ export function manifestoData(
 
     evaluateFunctionRules(db, rules, opts, violations, ruleResults);
     evaluateFileRules(db, rules, opts, violations, ruleResults);
-    evaluateGraphRules(db, rules, opts, violations, ruleResults);
+    evaluateGraphRules(db, rules, config, opts, violations, ruleResults);
     evaluateBoundaryRules(db, rules, config, opts, violations, ruleResults);
 
     const failViolations = violations.filter((v) => v.level === 'fail');

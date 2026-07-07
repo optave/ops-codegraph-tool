@@ -117,6 +117,13 @@ export const DEFAULTS = deepFreeze({
   },
   check: {
     cycles: true,
+    /**
+     * When true, cycles whose only closing edges are low-confidence dynamic
+     * calls (`dynamic = 1 AND confidence < 1`) don't fail `codegraph check
+     * --cycles` or the manifesto `noCycles` rule — see `DEFAULTS.check` doc
+     * comment in src/types.ts (#1844).
+     */
+    excludeSpeculativeCycles: true,
     blastRadius: null as number | null,
     signatures: true,
     boundaries: true,

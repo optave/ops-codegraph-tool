@@ -574,7 +574,12 @@ export class InMemoryRepository extends Repository {
   getCallEdges(): CallEdgeRow[] {
     return [...this.#edges.values()]
       .filter((e) => e.kind === 'calls')
-      .map((e) => ({ source_id: e.source_id, target_id: e.target_id, confidence: e.confidence }));
+      .map((e) => ({
+        source_id: e.source_id,
+        target_id: e.target_id,
+        confidence: e.confidence,
+        dynamic: e.dynamic,
+      }));
   }
 
   getFileNodesAll(): FileNodeRow[] {

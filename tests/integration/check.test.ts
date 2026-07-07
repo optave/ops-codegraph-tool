@@ -436,18 +436,29 @@ describe('parseDiffOutput', () => {
 
 describe('checkNoNewCycles', () => {
   test('passes when changed file is NOT in a cycle', () => {
-    const result = checkNoNewCycles(db, new Set(['src/handler.js']), false);
+    const result = checkNoNewCycles(db, new Set(['src/handler.js']), false, false);
     expect(result.passed).toBe(true);
     expect(result.cycles).toEqual([]);
   });
 
   test('fails when changed file participates in a cycle', () => {
-    const result = checkNoNewCycles(db, new Set(['src/math.js']), false);
+    const result = checkNoNewCycles(db, new Set(['src/math.js']), false, false);
     expect(result.passed).toBe(false);
     expect(result.cycles.length).toBeGreaterThan(0);
-    // The cycle should involve math.js
-    const flat = result.cycles.flat();
+    // The cycle should involve math.js, and isn't speculative (plain static imports).
+    const flat = result.cycles.flatMap((c) => c.nodes);
     expect(flat).toContain('src/math.js');
+    expect(result.cycles.every((c) => c.speculative === false)).toBe(true);
+  });
+
+  test('excludeSpeculative has no effect on cycles formed entirely of static import edges', () => {
+    // File-level cycles are built from 'imports'/'imports-type' edges only —
+    // dynamic imports carry a distinct 'dynamic-imports' kind that's excluded
+    // from cycle detection entirely, so no file-level cycle can be
+    // speculative today. This asserts that invariant rather than assuming it.
+    const withSpeculative = checkNoNewCycles(db, new Set(['src/math.js']), false, false);
+    const withoutSpeculative = checkNoNewCycles(db, new Set(['src/math.js']), false, true);
+    expect(withoutSpeculative.cycles).toEqual(withSpeculative.cycles);
   });
 });
 
