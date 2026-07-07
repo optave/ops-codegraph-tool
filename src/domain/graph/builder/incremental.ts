@@ -12,6 +12,7 @@ import path from 'node:path';
 import { bulkNodeIdsByFile, purgeFileData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
 import { normalizePath, TS_NATIVE_CONFIDENCE_FLOOR } from '../../../shared/constants.js';
+import { isTypeErasedImportTarget } from '../../../shared/kinds.js';
 import type {
   BetterSqlite3Database,
   EngineOpts,
@@ -410,9 +411,14 @@ function resolveBarrelImportEdges(
  * target's full export list for anything reached only by the file-level
  * edge. Mirrors `emitNamedSymbolEdges` in build-edges.ts (full-build path).
  *
- * For `edgeKind === 'imports-type'`, only specifiers actually marked
- * type-only (whole-statement or inline per-specifier, #1813) get an edge —
- * a mixed `import { value, type Foo }` must not credit `value`.
+ * For `edgeKind === 'imports-type'`, a specifier gets an edge when either
+ * it's actually marked type-only (whole-statement or inline per-specifier,
+ * #1813 — a mixed `import { value, type Foo }` must not credit `value` on
+ * this basis alone), or the resolved target is a TypeScript
+ * interface/type-alias declaration (`isTypeErasedImportTarget`) — those
+ * kinds are erased before runtime, so a plain `import { Foo } from 'y'` (no
+ * `type` keyword) is the only consumption signal `codegraph exports` can
+ * observe for them (#1833).
  */
 function emitNamedSymbolEdges(
   db: BetterSqlite3Database | null,
@@ -424,7 +430,6 @@ function emitNamedSymbolEdges(
 ): number {
   let edgesAdded = 0;
   for (const { original, typeOnly } of importNamePairs(imp)) {
-    if (edgeKind === 'imports-type' && !typeOnly) continue;
     let targetFile = resolvedPath;
     let targetName = original;
     if (db && isBarrelFile(db, resolvedPath)) {
@@ -437,9 +442,18 @@ function emitNamedSymbolEdges(
     const candidates = stmts.findNodeInFile.all(targetName, targetFile) as Array<{
       id: number;
       file: string;
+      kind: string;
     }>;
     if (candidates.length === 0) continue;
-    stmts.insertEdge.run(fileNodeId, candidates[0]!.id, edgeKind, 1.0, 0);
+    const target = candidates[0]!;
+    if (
+      edgeKind === 'imports-type' &&
+      !typeOnly &&
+      !isTypeErasedImportTarget(target.kind, targetFile)
+    ) {
+      continue;
+    }
+    stmts.insertEdge.run(fileNodeId, target.id, edgeKind, 1.0, 0);
     edgesAdded++;
   }
   return edgesAdded;
@@ -472,7 +486,10 @@ function emitEdgesForImport(
   stmts.insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
   let edgesAdded = 1;
 
-  if (imp.typeOnly || (imp.typeOnlyNames && imp.typeOnlyNames.length > 0)) {
+  // Always attempted (not just for `import type`/inline-`type` specifiers) —
+  // emitNamedSymbolEdges also credits plain specifiers that resolve to a
+  // TypeScript interface/type-alias declaration (#1833).
+  if (!imp.reexport) {
     edgesAdded += emitNamedSymbolEdges(db, stmts, imp, resolvedPath, fileNodeId, 'imports-type');
   }
   if (imp.reexport && !imp.wildcardReexport) {

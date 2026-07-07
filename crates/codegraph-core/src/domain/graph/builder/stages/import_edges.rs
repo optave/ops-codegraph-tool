@@ -6,6 +6,7 @@
 
 use crate::domain::graph::builder::barrel_resolution::{self, BarrelContext, ReexportRef};
 use crate::domain::graph::resolve;
+use crate::shared::constants::{is_type_erased_import_target, TYPESCRIPT_EXTENSIONS};
 use crate::types::{FileSymbols, PathAliases, RenamedImport};
 use rusqlite::Connection;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -229,20 +230,23 @@ fn load_file_node_ids(conn: &Connection) -> HashMap<String, i64> {
     map
 }
 
-/// Load symbol node IDs for the supplied `(name, file)` pairs in one chunked
-/// query. Mirrors the JS `nodesByNameAndFile` lookup map; preserves the
-/// first-row semantics of the legacy `LIMIT 1` query by keeping the first ID
-/// seen per key.
+/// Load symbol node IDs (and kinds) for the supplied `(name, file)` pairs in
+/// one chunked query. Mirrors the JS `nodesByNameAndFile` lookup map;
+/// preserves the first-row semantics of the legacy `LIMIT 1` query by keeping
+/// the first row seen per key. `kind` lets `emit_named_symbol_rows` credit
+/// plain imports resolving to a TypeScript interface/type-alias declaration,
+/// not just `import type` statements (#1833).
 ///
-/// The pairs are pre-computed by walking the type-only imports in
-/// `ctx.file_symbols`, so we never scan the entire `nodes` table — even on
-/// monorepos with 100k+ symbols, only the small slice actually referenced by
-/// type-only imports is hit (#1013, #1028 review).
+/// The pairs are pre-computed by walking the type-only imports, named
+/// re-exports, and TypeScript-file-targeting imports in `ctx.file_symbols`,
+/// so we never scan the entire `nodes` table — even on monorepos with 100k+
+/// symbols, only the slice actually reachable by one of those import shapes
+/// is hit (#1013, #1028 review).
 fn load_symbol_node_ids(
     conn: &Connection,
     needed_pairs: &HashSet<(String, String)>,
-) -> HashMap<(String, String), i64> {
-    let mut map: HashMap<(String, String), i64> = HashMap::new();
+) -> HashMap<(String, String), (i64, String)> {
+    let mut map: HashMap<(String, String), (i64, String)> = HashMap::new();
     if needed_pairs.is_empty() {
         return map;
     }
@@ -260,7 +264,7 @@ fn load_symbol_node_ids(
             })
             .collect();
         let sql = format!(
-            "SELECT name, file, id FROM nodes WHERE kind != 'file' AND (name, file) IN ({})",
+            "SELECT name, file, id, kind FROM nodes WHERE kind != 'file' AND (name, file) IN ({})",
             placeholders.join(",")
         );
         let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 2);
@@ -275,10 +279,11 @@ fn load_symbol_node_ids(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             }) {
                 for r in rows.flatten() {
-                    map.entry((r.0, r.1)).or_insert(r.2);
+                    map.entry((r.0, r.1)).or_insert((r.2, r.3));
                 }
             }
         }
@@ -294,13 +299,23 @@ fn is_named_reexport(imp: &crate::types::Import) -> bool {
     imp.reexport.unwrap_or(false) && !imp.wildcard_reexport.unwrap_or(false)
 }
 
-/// Walk type-only imports and named re-exports in `ctx.file_symbols` and
-/// return the distinct `(name, file)` pairs that `build_import_edges` will
+/// True when `file`'s extension means it *might* hold a TypeScript
+/// interface/type-alias declaration (see `is_type_erased_import_target`) —
+/// used to widen `collect_symbol_lookup_pairs` beyond syntactically
+/// type-only imports without scanning every plain import in every language
+/// (#1833).
+fn maybe_type_erased_file(file: &str) -> bool {
+    TYPESCRIPT_EXTENSIONS.iter().any(|ext| file.ends_with(ext))
+}
+
+/// Walk type-only imports, named re-exports, and plain imports that might
+/// target a TypeScript interface/type-alias declaration in `ctx.file_symbols`,
+/// returning the distinct `(name, file)` pairs that `build_import_edges` will
 /// need to look up. Resolves barrel files the same way the edge-building
 /// loop does so the pre-computed set matches the actual lookup keys.
-/// Shared by symbol-level `imports-type` (#1724) and `reexports` (#1742)
-/// edges — both name specific symbols requiring a (name, file) → node-id
-/// lookup.
+/// Shared by symbol-level `imports-type` (#1724, #1833) and `reexports`
+/// (#1742) edges — all three name specific symbols requiring a
+/// (name, file) → node-id/kind lookup.
 fn collect_symbol_lookup_pairs(ctx: &ImportEdgeContext) -> HashSet<(String, String)> {
     let mut pairs = HashSet::new();
     for (rel_path, symbols) in &ctx.file_symbols {
@@ -308,12 +323,13 @@ fn collect_symbol_lookup_pairs(ctx: &ImportEdgeContext) -> HashSet<(String, Stri
         let abs_str = abs_file.to_str().unwrap_or("");
         for imp in &symbols.imports {
             let is_reexport = is_named_reexport(imp);
-            if !has_type_only_names(imp) && !is_reexport {
+            let resolved_path = ctx.get_resolved(abs_str, &imp.source);
+            let maybe_type_erased = maybe_type_erased_file(&resolved_path);
+            if !has_type_only_names(imp) && !is_reexport && !maybe_type_erased {
                 continue;
             }
-            let resolved_path = ctx.get_resolved(abs_str, &imp.source);
             for (_local, original, type_only) in import_name_pairs(imp) {
-                if !is_reexport && !type_only {
+                if !is_reexport && !type_only && !maybe_type_erased {
                     continue;
                 }
                 let mut target_file = resolved_path.clone();
@@ -357,15 +373,21 @@ fn classify_import_kind(imp: &crate::types::Import) -> &'static str {
     }
 }
 
-/// For a `type` import or a named re-export, emit one symbol-level edge per
-/// name so the target symbols receive fan-in credit and aren't classified
-/// dead (`imports-type`, #1724), or so `codegraph exports` can report the
-/// precise re-export surface instead of the target's full export list
-/// (`reexports`, #1742). `kind` selects which edge kind to emit.
+/// For a `type` import, a plain import of a TypeScript interface/type-alias,
+/// or a named re-export, emit one symbol-level edge per name so the target
+/// symbols receive fan-in credit and aren't classified dead (`imports-type`,
+/// #1724, #1833), or so `codegraph exports` can report the precise re-export
+/// surface instead of the target's full export list (`reexports`, #1742).
+/// `kind` selects which edge kind to emit.
 ///
-/// For `kind == "imports-type"`, only specifiers actually marked type-only
-/// (whole-statement or inline per-specifier, #1813) get an edge — a mixed
-/// `import { value, type Foo }` must not credit `value`.
+/// For `kind == "imports-type"`, a specifier gets an edge when either it's
+/// actually marked type-only (whole-statement or inline per-specifier,
+/// #1813 — a mixed `import { value, type Foo }` must not credit `value` on
+/// this basis alone), or the resolved target is a TypeScript
+/// interface/type-alias declaration (`is_type_erased_import_target`) — those
+/// kinds are erased before runtime, so a plain `import { Foo } from 'y'` (no
+/// `type` keyword) is the only consumption signal `codegraph exports` can
+/// observe for them (#1833).
 fn emit_named_symbol_rows(
     edges: &mut Vec<EdgeRow>,
     file_node_id: i64,
@@ -373,12 +395,9 @@ fn emit_named_symbol_rows(
     resolved_path: &str,
     kind: &str,
     ctx: &ImportEdgeContext,
-    symbol_node_ids: &HashMap<(String, String), i64>,
+    symbol_node_ids: &HashMap<(String, String), (i64, String)>,
 ) {
     for (_local, original, type_only) in import_name_pairs(imp) {
-        if kind == "imports-type" && !type_only {
-            continue;
-        }
         let mut target_file = resolved_path.to_string();
         let mut target_name = original;
         if ctx.is_barrel_file(resolved_path) {
@@ -390,15 +409,23 @@ fn emit_named_symbol_rows(
                 target_name = resolved.name;
             }
         }
-        if let Some(&sym_id) = symbol_node_ids.get(&(target_name, target_file)) {
-            edges.push(EdgeRow {
-                source_id: file_node_id,
-                target_id: sym_id,
-                kind: kind.to_string(),
-                confidence: 1.0,
-                dynamic: 0,
-            });
+        let Some((sym_id, sym_kind)) = symbol_node_ids.get(&(target_name, target_file.clone()))
+        else {
+            continue;
+        };
+        if kind == "imports-type"
+            && !type_only
+            && !is_type_erased_import_target(sym_kind, &target_file)
+        {
+            continue;
         }
+        edges.push(EdgeRow {
+            source_id: file_node_id,
+            target_id: *sym_id,
+            kind: kind.to_string(),
+            confidence: 1.0,
+            dynamic: 0,
+        });
     }
 }
 
@@ -454,7 +481,7 @@ fn emit_edges_for_import(
     is_barrel_only: bool,
     ctx: &ImportEdgeContext,
     file_node_ids: &HashMap<String, i64>,
-    symbol_node_ids: &HashMap<(String, String), i64>,
+    symbol_node_ids: &HashMap<(String, String), (i64, String)>,
 ) {
     let is_reexport = imp.reexport.unwrap_or(false);
     if is_barrel_only && !is_reexport {
@@ -473,7 +500,10 @@ fn emit_edges_for_import(
         confidence: 1.0,
         dynamic: 0,
     });
-    if has_type_only_names(imp) {
+    // Always attempted (not just for `import type`/inline-`type` specifiers) —
+    // emit_named_symbol_rows also credits plain specifiers that resolve to a
+    // TypeScript interface/type-alias declaration (#1833).
+    if !is_reexport {
         emit_named_symbol_rows(
             edges,
             file_node_id,
@@ -648,6 +678,21 @@ mod tests {
     use crate::types::{Definition, Import};
 
     fn make_symbols(defs: Vec<&str>, reexport_imports: Vec<&str>) -> FileSymbols {
+        make_symbols_with_imports(
+            defs,
+            reexport_imports
+                .into_iter()
+                .map(|src| {
+                    let mut imp = Import::new(src.to_string(), vec![], 1);
+                    imp.reexport = Some(true);
+                    imp.wildcard_reexport = Some(true);
+                    imp
+                })
+                .collect(),
+        )
+    }
+
+    fn make_symbols_with_imports(defs: Vec<&str>, imports: Vec<Import>) -> FileSymbols {
         FileSymbols {
             file: "test.ts".to_string(),
             definitions: defs
@@ -663,15 +708,7 @@ mod tests {
                     children: None,
                 })
                 .collect(),
-            imports: reexport_imports
-                .into_iter()
-                .map(|src| {
-                    let mut imp = Import::new(src.to_string(), vec![], 1);
-                    imp.reexport = Some(true);
-                    imp.wildcard_reexport = Some(true);
-                    imp
-                })
-                .collect(),
+            imports,
             calls: vec![],
             classes: vec![],
             exports: vec![],
@@ -771,6 +808,134 @@ mod tests {
 
         let pairs = import_name_pairs(&imp);
         assert!(pairs.iter().all(|(_, _, type_only)| !*type_only));
+    }
+
+    fn empty_ctx(file_symbols: BTreeMap<String, FileSymbols>) -> ImportEdgeContext {
+        ImportEdgeContext {
+            batch_resolved: HashMap::new(),
+            reexport_map: HashMap::new(),
+            barrel_only_files: HashSet::new(),
+            file_symbols,
+            root_dir: "/project".to_string(),
+            aliases: PathAliases { base_url: None, paths: vec![] },
+            known_files: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn emit_named_symbol_rows_credits_plain_import_of_ts_interface() {
+        // `import { Foo } from './types'` — no `type` keyword — where `Foo`
+        // is a TypeScript interface. Interfaces are erased before runtime, so
+        // this plain import is the only observable consumption signal
+        // `codegraph exports` can rely on; it must be credited exactly like
+        // `import type { Foo }` would be (#1833).
+        let ctx = empty_ctx(BTreeMap::new());
+        let imp = Import::new("./types".to_string(), vec!["Foo".to_string()], 1);
+        let mut symbol_node_ids: HashMap<(String, String), (i64, String)> = HashMap::new();
+        symbol_node_ids.insert(
+            ("Foo".to_string(), "src/types.ts".to_string()),
+            (50, "interface".to_string()),
+        );
+
+        let mut edges = Vec::new();
+        emit_named_symbol_rows(
+            &mut edges,
+            1,
+            &imp,
+            "src/types.ts",
+            "imports-type",
+            &ctx,
+            &symbol_node_ids,
+        );
+
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, "imports-type");
+        assert_eq!(edges[0].target_id, 50);
+    }
+
+    #[test]
+    fn emit_named_symbol_rows_skips_plain_import_of_value_symbol() {
+        // A plain import of a real function must NOT get a fabricated
+        // `imports-type` edge — value-symbol consumption credit still comes
+        // exclusively from an actual `calls` edge (#1833 must not regress
+        // the existing value-import behaviour).
+        let ctx = empty_ctx(BTreeMap::new());
+        let imp = Import::new("./utils".to_string(), vec!["helper".to_string()], 1);
+        let mut symbol_node_ids: HashMap<(String, String), (i64, String)> = HashMap::new();
+        symbol_node_ids.insert(
+            ("helper".to_string(), "src/utils.ts".to_string()),
+            (50, "function".to_string()),
+        );
+
+        let mut edges = Vec::new();
+        emit_named_symbol_rows(
+            &mut edges,
+            1,
+            &imp,
+            "src/utils.ts",
+            "imports-type",
+            &ctx,
+            &symbol_node_ids,
+        );
+
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn emit_named_symbol_rows_skips_non_typescript_interface() {
+        // An 'interface'-kind node outside a .ts/.tsx file (e.g. a Go
+        // `type ... interface {}`) is runtime-observable in its own
+        // language, so this heuristic — scoped to TypeScript's compile-time
+        // erasure — must not credit it on mere import (#1833).
+        let ctx = empty_ctx(BTreeMap::new());
+        let imp = Import::new("./iface".to_string(), vec!["Reader".to_string()], 1);
+        let mut symbol_node_ids: HashMap<(String, String), (i64, String)> = HashMap::new();
+        symbol_node_ids.insert(
+            ("Reader".to_string(), "src/iface.go".to_string()),
+            (50, "interface".to_string()),
+        );
+
+        let mut edges = Vec::new();
+        emit_named_symbol_rows(
+            &mut edges,
+            1,
+            &imp,
+            "src/iface.go",
+            "imports-type",
+            &ctx,
+            &symbol_node_ids,
+        );
+
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn collect_symbol_lookup_pairs_includes_plain_imports_targeting_ts_files() {
+        // A plain (non-type-only, non-reexport) import must still be
+        // collected when its resolved target is a TypeScript file — the
+        // target might be an interface/type-alias declaration, which
+        // `emit_named_symbol_rows` can only credit if this pre-pass fetched
+        // its (id, kind) from the DB (#1833).
+        let mut file_symbols = BTreeMap::new();
+        let plain_ts_import = Import::new("./types".to_string(), vec!["Foo".to_string()], 1);
+        let plain_py_import = Import::new("./helpers".to_string(), vec!["util".to_string()], 2);
+        file_symbols.insert(
+            "src/app.ts".to_string(),
+            make_symbols_with_imports(vec![], vec![plain_ts_import, plain_py_import]),
+        );
+        let mut ctx = empty_ctx(file_symbols);
+        ctx.batch_resolved.insert(
+            "/project/src/app.ts|./types".to_string(),
+            "src/types.ts".to_string(),
+        );
+        ctx.batch_resolved.insert(
+            "/project/src/app.ts|./helpers".to_string(),
+            "src/helpers.py".to_string(),
+        );
+
+        let pairs = collect_symbol_lookup_pairs(&ctx);
+        assert!(pairs.contains(&("Foo".to_string(), "src/types.ts".to_string())));
+        assert!(!pairs.contains(&("util".to_string(), "src/helpers.py".to_string())));
     }
 
     /// Minimal in-memory `edges` schema covering only the columns

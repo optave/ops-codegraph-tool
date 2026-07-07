@@ -13,6 +13,7 @@ import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import { getOrCreatePerDbChunkStmt } from '../../../../shared/chunked-stmt-cache.js';
 import { TS_NATIVE_CONFIDENCE_FLOOR } from '../../../../shared/constants.js';
+import { isTypeErasedImportTarget } from '../../../../shared/kinds.js';
 import type {
   ArrayCallbackBinding,
   ArrayElemBinding,
@@ -217,9 +218,14 @@ function importNamePairs(
  * out; the query layer falls back to the target's full export list for
  * anything reached only by the file-level edge (genuine wildcard semantics).
  *
- * For `edgeKind === 'imports-type'`, only specifiers actually marked
- * type-only (whole-statement or inline per-specifier, #1813) get an edge —
- * a mixed `import { value, type Foo }` must not credit `value`.
+ * For `edgeKind === 'imports-type'`, a specifier gets an edge when either:
+ *   - it's actually marked type-only (whole-statement or inline
+ *     per-specifier, #1813) — a mixed `import { value, type Foo }` must not
+ *     credit `value` on this basis alone; or
+ *   - the resolved target is a TypeScript interface/type-alias declaration
+ *     (`isTypeErasedImportTarget`) — those kinds are erased before runtime,
+ *     so a plain `import { Foo } from 'y'` (no `type` keyword) is the only
+ *     consumption signal `codegraph exports` can observe for them (#1833).
  */
 function emitNamedSymbolEdges(
   ctx: PipelineContext,
@@ -231,7 +237,6 @@ function emitNamedSymbolEdges(
 ): void {
   if (!ctx.nodesByNameAndFile) return;
   for (const { original, typeOnly } of importNamePairs(imp)) {
-    if (edgeKind === 'imports-type' && !typeOnly) continue;
     let targetFile = resolvedPath;
     let targetName = original;
     if (isBarrelFile(ctx, resolvedPath)) {
@@ -242,9 +247,16 @@ function emitNamedSymbolEdges(
       }
     }
     const candidates = ctx.nodesByNameAndFile.get(`${targetName}|${targetFile}`);
-    if (candidates && candidates.length > 0) {
-      allEdgeRows.push([fileNodeId, candidates[0]!.id, edgeKind, 1.0, 0, null, null]);
+    if (!candidates || candidates.length === 0) continue;
+    const target = candidates[0]!;
+    if (
+      edgeKind === 'imports-type' &&
+      !typeOnly &&
+      !isTypeErasedImportTarget(target.kind, targetFile)
+    ) {
+      continue;
     }
+    allEdgeRows.push([fileNodeId, target.id, edgeKind, 1.0, 0, null, null]);
   }
 }
 
@@ -267,7 +279,10 @@ function emitEdgesForImport(
   const edgeKind = importEdgeKind(imp);
   allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0, null, null]);
 
-  if (imp.typeOnly || (imp.typeOnlyNames && imp.typeOnlyNames.length > 0)) {
+  // Always attempted (not just for `import type`/inline-`type` specifiers) —
+  // emitNamedSymbolEdges also credits plain specifiers that resolve to a
+  // TypeScript interface/type-alias declaration (#1833).
+  if (!imp.reexport) {
     emitNamedSymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows, 'imports-type');
   }
   if (imp.reexport && !imp.wildcardReexport) {
@@ -474,13 +489,13 @@ function collectBarrelFiles(ctx: PipelineContext): string[] {
 
 function collectSymbolNodes(
   ctx: PipelineContext,
-): Array<{ name: string; file: string; nodeId: number }> {
-  const symbolNodes: Array<{ name: string; file: string; nodeId: number }> = [];
+): Array<{ name: string; file: string; nodeId: number; kind: string }> {
+  const symbolNodes: Array<{ name: string; file: string; nodeId: number; kind: string }> = [];
   if (!ctx.nodesByNameAndFile) return symbolNodes;
   for (const [key, nodes] of ctx.nodesByNameAndFile) {
     if (nodes.length === 0) continue;
     const [name, file] = key.split('|');
-    symbolNodes.push({ name: name!, file: file!, nodeId: nodes[0]!.id });
+    symbolNodes.push({ name: name!, file: file!, nodeId: nodes[0]!.id, kind: nodes[0]!.kind });
   }
   return symbolNodes;
 }

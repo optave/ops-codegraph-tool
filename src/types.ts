@@ -2346,7 +2346,7 @@ export interface NativeAddon {
     fileNodeIds: unknown[],
     barrelFiles: string[],
     rootDir: string,
-    symbolNodes?: Array<{ name: string; file: string; nodeId: number }>,
+    symbolNodes?: Array<{ name: string; file: string; nodeId: number; kind: string }>,
   ): unknown[];
   engineVersion(): string;
   analyzeComplexity(

@@ -50,3 +50,31 @@ pub const FAST_PATH_MAX_CHANGED_FILES: usize = 5;
 /// Minimum existing file count required before the fast path is considered.
 /// Typed as `i64` to match `get_existing_file_count()` return type (SQLite row count).
 pub const FAST_PATH_MIN_EXISTING_FILES: i64 = 20;
+
+// ─── Import edge classification ─────────────────────────────────────
+//
+// Mirrors TS's `shared/kinds.ts` (TYPE_ERASED_SYMBOL_KINDS,
+// isTypeErasedImportTarget) and `domain/parser.ts` (TYPESCRIPT_EXTENSIONS).
+
+/// TypeScript source extensions — type annotations (and TS's compile-time-only
+/// 'interface'/'type' declarations) only exist for these.
+pub const TYPESCRIPT_EXTENSIONS: [&str; 2] = [".ts", ".tsx"];
+
+/// Symbol kinds that are compile-time-only in TypeScript — interfaces and
+/// type aliases are erased before runtime, so a symbol of one of these kinds
+/// can never receive a `calls` edge. Importing one — with or without the
+/// `type` keyword — is the only consumption signal `codegraph exports` can
+/// observe for these kinds (#1833).
+pub const TYPE_ERASED_SYMBOL_KINDS: [&str; 2] = ["interface", "type"];
+
+/// True when a named import specifier resolving to `kind` in `file` can only
+/// ever be consumed as a type — see TYPE_ERASED_SYMBOL_KINDS. Scoped to
+/// `.ts`/`.tsx` files because other languages reuse the 'interface'/'type'
+/// node kinds for constructs that *are* runtime-observable (e.g. a Go `type`
+/// alias, a Java `interface` dispatched through at runtime) — crediting
+/// those on mere import would mask genuinely dead code instead of fixing a
+/// false positive.
+pub fn is_type_erased_import_target(kind: &str, file: &str) -> bool {
+    TYPE_ERASED_SYMBOL_KINDS.contains(&kind)
+        && TYPESCRIPT_EXTENSIONS.iter().any(|ext| file.ends_with(ext))
+}

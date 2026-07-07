@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { TYPESCRIPT_EXTENSIONS } from '../domain/parser.js';
 import type {
   CoreEdgeKind,
   CoreSymbolKind,
@@ -83,3 +85,27 @@ export const VALID_ROLES: readonly Role[] = [
   'leaf',
   ...DEAD_SUB_ROLES,
 ];
+
+// ── TypeScript type-erasure classification ──────────────────────────
+// Symbol kinds that are compile-time-only in TypeScript — interfaces and
+// type aliases are erased before runtime, so a symbol of one of these kinds
+// can never receive a `calls` edge. Importing one — with or without the
+// `type` keyword — is the only consumption signal `codegraph exports` can
+// observe for these kinds (#1833).
+export const TYPE_ERASED_SYMBOL_KINDS: ReadonlySet<string> = new Set(['interface', 'type']);
+
+/**
+ * True when a named import specifier resolving to `kind` in `file` can only
+ * ever be consumed as a type — i.e. it's a TypeScript interface/type-alias
+ * declaration, which no `calls` edge could ever target regardless of the
+ * `type` keyword on the importing statement.
+ *
+ * Scoped to `.ts`/`.tsx` files because other languages reuse the 'interface'/
+ * 'type' node kinds for constructs that *are* runtime-observable (e.g. a Go
+ * `type` alias, a Java `interface` implemented and dispatched through at
+ * runtime) — crediting those on mere import would mask genuinely dead code
+ * instead of fixing a false positive.
+ */
+export function isTypeErasedImportTarget(kind: string, file: string): boolean {
+  return TYPE_ERASED_SYMBOL_KINDS.has(kind) && TYPESCRIPT_EXTENSIONS.has(path.extname(file));
+}

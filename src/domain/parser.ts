@@ -134,8 +134,11 @@ let _allParsersLoaded: boolean = false;
 // In-flight grammar loads keyed by language id — prevents concurrent duplicate loads
 const _loadingPromises: Map<string, Promise<void>> = new Map();
 
-// Extensions that need typeMap backfill (type annotations only exist in TS/TSX)
-const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
+// TypeScript source extensions — type annotations (and TS's compile-time-only
+// 'interface'/'type' declarations, see shared/kinds.ts's TYPE_ERASED_SYMBOL_KINDS)
+// only exist for these. Used for typeMap backfill and, via shared/kinds.ts's
+// isTypeErasedImportTarget, for import-edge classification (#1833).
+export const TYPESCRIPT_EXTENSIONS: ReadonlySet<string> = new Set(['.ts', '.tsx']);
 
 // Re-export for backward compatibility
 export type { LanguageRegistryEntry } from '../types.js';
@@ -1119,7 +1122,7 @@ export async function parseFileAuto(
     // Always backfill typeMap for TS/TSX from WASM — native parser's type
     // extraction can produce incorrect scope-collision results. Non-TS files
     // are skipped to stay consistent with the batch path (backfillTypeMapBatch).
-    if (TS_BACKFILL_EXTS.has(path.extname(filePath))) {
+    if (TYPESCRIPT_EXTENSIONS.has(path.extname(filePath))) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
       if (backfilled) {
         patched.typeMap = typeMap;
@@ -1140,7 +1143,7 @@ async function backfillTypeMapBatch(
   result: Map<string, ExtractorOutput>,
 ): Promise<void> {
   const tsFiles = needsTypeMap.filter(({ filePath }) =>
-    TS_BACKFILL_EXTS.has(path.extname(filePath)),
+    TYPESCRIPT_EXTENSIONS.has(path.extname(filePath)),
   );
   if (tsFiles.length === 0) return;
 
@@ -1329,7 +1332,7 @@ function ingestNativeResults(
     // appears at multiple scopes (e.g. `node: TreeSitterNode` in one function
     // vs `node: NodeRow` in another). The WASM JS extractor handles scope
     // traversal order more accurately.
-    if (TS_BACKFILL_EXTS.has(path.extname(r.file))) {
+    if (TYPESCRIPT_EXTENSIONS.has(path.extname(r.file))) {
       needsTypeMap.push({ filePath: r.file, relPath });
     }
   }
@@ -1432,7 +1435,7 @@ export async function parseFileIncremental(
     if (!result) return null;
     const patched = patchNativeResult(result);
     // Always backfill typeMap for TS/TSX from WASM (see parseFileAuto comment).
-    if (TS_BACKFILL_EXTS.has(path.extname(filePath))) {
+    if (TYPESCRIPT_EXTENSIONS.has(path.extname(filePath))) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
       if (backfilled) {
         patched.typeMap = typeMap;

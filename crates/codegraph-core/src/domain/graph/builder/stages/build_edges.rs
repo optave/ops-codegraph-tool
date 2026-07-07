@@ -1536,14 +1536,18 @@ pub struct ResolvedImportEntry {
 }
 
 /// A symbol node entry for type-only import resolution.
-/// Maps (name, file) → nodeId so the native engine can create symbol-level
-/// `imports-type` edges (parity with the JS `buildImportEdges` path).
+/// Maps (name, file) → (nodeId, kind) so the native engine can create
+/// symbol-level `imports-type` edges (parity with the JS `buildImportEdges`
+/// path) — `kind` lets it also credit plain imports of TypeScript
+/// interface/type-alias declarations, not just `import type` statements
+/// (#1833).
 #[napi(object)]
 pub struct SymbolNodeEntry {
     pub name: String,
     pub file: String,
     #[napi(js_name = "nodeId")]
     pub node_id: u32,
+    pub kind: String,
 }
 
 /// Shared lookup context for import edge building.
@@ -1553,13 +1557,15 @@ struct ImportEdgeContext<'a> {
     file_node_map: HashMap<&'a str, u32>,
     barrel_set: HashSet<&'a str>,
     file_defs: HashMap<&'a str, HashSet<&'a str>>,
-    /// Symbol node lookup: (name, file) → node ID.
-    /// Used to create symbol-level `imports-type` edges for type-only imports.
+    /// Symbol node lookup: (name, file) → (node ID, kind).
+    /// Used to create symbol-level `imports-type` edges for type-only imports,
+    /// and — via `kind` — for plain imports resolving to a TypeScript
+    /// interface/type-alias declaration (#1833).
     ///
     /// Owned keys (rather than `&'a str`) because a barrel-rename lookup key
     /// (#1823) is a freshly-resolved name that doesn't borrow from `'a` input
     /// data.
-    symbol_node_map: HashMap<(String, String), u32>,
+    symbol_node_map: HashMap<(String, String), (u32, String)>,
 }
 
 impl<'a> ImportEdgeContext<'a> {
@@ -1597,7 +1603,10 @@ impl<'a> ImportEdgeContext<'a> {
 
         let mut symbol_node_map = HashMap::with_capacity(symbol_nodes.len());
         for entry in symbol_nodes {
-            symbol_node_map.insert((entry.name.clone(), entry.file.clone()), entry.node_id);
+            symbol_node_map.insert(
+                (entry.name.clone(), entry.file.clone()),
+                (entry.node_id, entry.kind.clone()),
+            );
         }
 
         Self { resolved, reexport_map, file_node_map, barrel_set, file_defs, symbol_node_map }
@@ -1698,13 +1707,6 @@ fn is_named_reexport(imp: &ImportInfo) -> bool {
     imp.reexport && !imp.wildcard_reexport
 }
 
-/// True when an import carries any type-only signal — a whole-statement
-/// `import type { X }` or at least one inline per-specifier `type` modifier
-/// (`import { type X }`, #1813).
-fn has_type_only_names(imp: &ImportInfo) -> bool {
-    imp.type_only || !imp.type_only_names.is_empty()
-}
-
 /// For a `type` import or a named re-export targeting a barrel or resolved
 /// file, emit one symbol-level edge per named symbol so the target symbols
 /// receive fan-in credit and aren't misclassified as dead code
@@ -1712,9 +1714,14 @@ fn has_type_only_names(imp: &ImportInfo) -> bool {
 /// precise re-export surface instead of the target's full export list
 /// (`reexports`, #1742). `kind` selects which edge kind to emit.
 ///
-/// For `kind == "imports-type"`, only specifiers actually marked type-only
-/// (whole-statement or inline per-specifier, #1813) get an edge — a mixed
-/// `import { value, type Foo }` must not credit `value`.
+/// For `kind == "imports-type"`, a specifier gets an edge when either it's
+/// actually marked type-only (whole-statement or inline per-specifier,
+/// #1813 — a mixed `import { value, type Foo }` must not credit `value` on
+/// this basis alone), or the resolved target is a TypeScript
+/// interface/type-alias declaration (`is_type_erased_import_target`) — those
+/// kinds are erased before runtime, so a plain `import { Foo } from 'y'` (no
+/// `type` keyword) is the only consumption signal `codegraph exports` can
+/// observe for them (#1833).
 ///
 /// `imp.names` holds the *original* declaration name for export specifiers
 /// (see `extractImportNames` in the JS extractor) even when renamed
@@ -1741,35 +1748,41 @@ fn emit_named_symbol_edges(
     }
     for name in &imp.names {
         let clean_name = strip_star_as_prefix(name);
-        if kind == "imports-type"
-            && !imp.type_only
-            && !imp.type_only_names.iter().any(|n| n == clean_name)
-        {
-            continue;
-        }
+        let type_only = imp.type_only || imp.type_only_names.iter().any(|n| n == clean_name);
         let barrel_target = if ctx.barrel_set.contains(resolved_path) {
             let mut visited = HashSet::new();
             barrel_resolution::resolve_barrel_export(ctx, resolved_path, clean_name, &mut visited)
         } else {
             None
         };
-        let sym_id = barrel_target
-            .as_ref()
-            .and_then(|resolved| ctx.symbol_node_map.get(&(resolved.name.clone(), resolved.file.clone())))
-            .or_else(|| {
-                ctx.symbol_node_map
-                    .get(&(clean_name.to_string(), resolved_path.to_string()))
-            });
-        if let Some(&id) = sym_id {
-            edges.push(ComputedEdge {
-                source_id: file_input.file_node_id,
-                target_id: id,
-                kind: kind.to_string(),
-                confidence: 1.0,
-                dynamic: 0,
-                dynamic_kind: None,
-            });
+        let (target_name, target_file) = match &barrel_target {
+            Some(resolved)
+                if ctx
+                    .symbol_node_map
+                    .contains_key(&(resolved.name.clone(), resolved.file.clone())) =>
+            {
+                (resolved.name.clone(), resolved.file.clone())
+            }
+            _ => (clean_name.to_string(), resolved_path.to_string()),
+        };
+        let Some((id, sym_kind)) = ctx.symbol_node_map.get(&(target_name, target_file.clone()))
+        else {
+            continue;
+        };
+        if kind == "imports-type"
+            && !type_only
+            && !crate::shared::constants::is_type_erased_import_target(sym_kind, &target_file)
+        {
+            continue;
         }
+        edges.push(ComputedEdge {
+            source_id: file_input.file_node_id,
+            target_id: *id,
+            kind: kind.to_string(),
+            confidence: 1.0,
+            dynamic: 0,
+            dynamic_kind: None,
+        });
     }
 }
 
@@ -1854,7 +1867,10 @@ fn process_single_import(
         dynamic: 0,
         dynamic_kind: None,
     });
-    if has_type_only_names(imp) {
+    // Always attempted (not just for `import type`/inline-`type` specifiers) —
+    // emit_named_symbol_edges also credits plain specifiers that resolve to a
+    // TypeScript interface/type-alias declaration (#1833).
+    if !imp.reexport {
         emit_named_symbol_edges(edges, file_input, imp, resolved_path, "imports-type", ctx);
     }
     if is_named_reexport(imp) {
@@ -1962,6 +1978,7 @@ mod import_edge_tests {
             name: "foo".to_string(),
             file: "src/utils.ts".to_string(),
             node_id: 99,
+            kind: "function".to_string(),
         }];
 
         let edges = build_import_edges(
@@ -2004,6 +2021,7 @@ mod import_edge_tests {
             name: "foo".to_string(),
             file: "src/utils.ts".to_string(),
             node_id: 99,
+            kind: "function".to_string(),
         }];
 
         let edges = build_import_edges(
@@ -2032,9 +2050,19 @@ mod import_edge_tests {
         let resolved = vec![make_resolved("/root/src/index.ts", "./utils", "src/utils.ts")];
         let node_ids = vec![make_node_entry("src/index.ts", 1), make_node_entry("src/utils.ts", 2)];
         let symbol_nodes = vec![
-            SymbolNodeEntry { name: "foo".to_string(), file: "src/utils.ts".to_string(), node_id: 99 },
+            SymbolNodeEntry {
+                name: "foo".to_string(),
+                file: "src/utils.ts".to_string(),
+                node_id: 99,
+                kind: "function".to_string(),
+            },
             // A decoy under the external alias name must NOT be matched.
-            SymbolNodeEntry { name: "bar".to_string(), file: "src/utils.ts".to_string(), node_id: 100 },
+            SymbolNodeEntry {
+                name: "bar".to_string(),
+                file: "src/utils.ts".to_string(),
+                node_id: 100,
+                kind: "function".to_string(),
+            },
         ];
 
         let edges = build_import_edges(
@@ -2077,8 +2105,18 @@ mod import_edge_tests {
         let resolved = vec![make_resolved("/root/src/app.ts", "./mixed", "src/mixed.ts")];
         let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/mixed.ts", 2)];
         let symbol_nodes = vec![
-            SymbolNodeEntry { name: "Foo".to_string(), file: "src/mixed.ts".to_string(), node_id: 50 },
-            SymbolNodeEntry { name: "value".to_string(), file: "src/mixed.ts".to_string(), node_id: 51 },
+            SymbolNodeEntry {
+                name: "Foo".to_string(),
+                file: "src/mixed.ts".to_string(),
+                node_id: 50,
+                kind: "function".to_string(),
+            },
+            SymbolNodeEntry {
+                name: "value".to_string(),
+                file: "src/mixed.ts".to_string(),
+                node_id: 51,
+                kind: "function".to_string(),
+            },
         ];
 
         let edges = build_import_edges(
@@ -2094,6 +2132,114 @@ mod import_edge_tests {
         assert_eq!(edges[0].kind, "imports");
         assert_eq!(edges[1].kind, "imports-type");
         assert_eq!(edges[1].target_id, 50);
+    }
+
+    #[test]
+    fn plain_import_of_ts_interface_credits_imports_type_edge() {
+        // `import { Foo } from './types'` — no `type` keyword — where `Foo`
+        // is a TypeScript interface. Interfaces are erased before runtime, so
+        // this plain import is the only observable consumption signal
+        // `codegraph exports` can rely on; it must be credited exactly like
+        // `import type { Foo }` would be (#1833).
+        let files = vec![make_file(
+            "src/app.ts",
+            1,
+            vec![make_import("./types", vec!["Foo"], false, false, false)],
+            vec![],
+        )];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./types", "src/types.ts")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/types.ts", 2)];
+        let symbol_nodes = vec![SymbolNodeEntry {
+            name: "Foo".to_string(),
+            file: "src/types.ts".to_string(),
+            node_id: 50,
+            kind: "interface".to_string(),
+        }];
+
+        let edges = build_import_edges(
+            files,
+            resolved,
+            vec![],
+            node_ids,
+            vec![],
+            "/root".to_string(),
+            Some(symbol_nodes),
+        );
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].kind, "imports");
+        assert_eq!(edges[1].kind, "imports-type");
+        assert_eq!(edges[1].target_id, 50);
+    }
+
+    #[test]
+    fn plain_import_of_ts_value_symbol_gets_no_symbol_level_edge() {
+        // `import { helper } from './utils'` where `helper` is a plain
+        // function (not an interface/type alias). Consumption credit for a
+        // value symbol must still come exclusively from a real `calls` edge
+        // — merely importing it must not fabricate one (#1833 must not
+        // regress the existing value-import behaviour).
+        let files = vec![make_file(
+            "src/app.ts",
+            1,
+            vec![make_import("./utils", vec!["helper"], false, false, false)],
+            vec![],
+        )];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./utils", "src/utils.ts")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/utils.ts", 2)];
+        let symbol_nodes = vec![SymbolNodeEntry {
+            name: "helper".to_string(),
+            file: "src/utils.ts".to_string(),
+            node_id: 50,
+            kind: "function".to_string(),
+        }];
+
+        let edges = build_import_edges(
+            files,
+            resolved,
+            vec![],
+            node_ids,
+            vec![],
+            "/root".to_string(),
+            Some(symbol_nodes),
+        );
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, "imports");
+    }
+
+    #[test]
+    fn plain_import_of_non_typescript_interface_gets_no_symbol_level_edge() {
+        // A plain import resolving to an 'interface'-kind node in a
+        // non-TypeScript file (e.g. a Go `type ... interface {}`) must not be
+        // credited by this heuristic — those kinds are runtime-observable in
+        // other languages, so crediting on mere import would mask genuinely
+        // dead code instead of fixing a false positive (#1833 is scoped to
+        // TypeScript's compile-time-only interfaces/type aliases).
+        let files = vec![make_file(
+            "src/app.ts",
+            1,
+            vec![make_import("./iface", vec!["Reader"], false, false, false)],
+            vec![],
+        )];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./iface", "src/iface.go")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/iface.go", 2)];
+        let symbol_nodes = vec![SymbolNodeEntry {
+            name: "Reader".to_string(),
+            file: "src/iface.go".to_string(),
+            node_id: 50,
+            kind: "interface".to_string(),
+        }];
+
+        let edges = build_import_edges(
+            files,
+            resolved,
+            vec![],
+            node_ids,
+            vec![],
+            "/root".to_string(),
+            Some(symbol_nodes),
+        );
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, "imports");
     }
 
     #[test]
