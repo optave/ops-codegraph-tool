@@ -277,7 +277,10 @@ function collectNode(ctx: CollectCtx, node: TreeSitterNode, kind: string): void 
  * When `requireNamedNode` is set, anonymous grammar tokens are rejected even
  * if their `type` string matches a mapped key — e.g. TypeScript's
  * `predefined_type` keyword (`string`, `number`, ...) lexes as an unnamed
- * token whose type collides with the named `string` literal node (#1729).
+ * token whose type collides with the named `string` literal node (#1729),
+ * and PHP's `primitive_type`/`cast_type` keyword (`string`) collides with
+ * the named `string` literal node the same way (#1821). See
+ * `astRequiresNamedNode()` in `../rules/index.ts` for the full language list.
  */
 function resolveAstKind(
   node: TreeSitterNode,

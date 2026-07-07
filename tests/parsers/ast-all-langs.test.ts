@@ -503,6 +503,15 @@ describe.skipIf(!canTestMultiLang)('native AST nodes — multi-language', () => 
     ).toBe(true);
   });
 
+  test('PHP: does not misclassify scalar type-hint keyword as kind:string (#1821)', () => {
+    // `string $name` (createUser's parameter, line 233) must never surface as a
+    // bare, unquoted "string" row — genuine literals are always quoted in `text`.
+    const strings = db
+      .prepare("SELECT * FROM ast_nodes WHERE kind = 'string' AND file LIKE '%fixture.php'")
+      .all();
+    expect(strings.some((n) => n.text === 'string')).toBe(false);
+  });
+
   // ── Cross-language ──
 
   test('all nodes have valid kinds', () => {

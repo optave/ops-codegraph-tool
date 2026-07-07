@@ -537,3 +537,171 @@ describe.skipIf(!canTestNative)('buildAstNodes — native TypeScript extraction 
     expect(nodes.length).toBe(4);
   });
 });
+
+// ─── PHP fixture (#1821: primitive_type/cast_type keyword false-positives) ─
+//
+// tree-sitter-php's `primitive_type` production (scalar type-hints like
+// `string $x` and `: string` return types) and `cast_type` production
+// (`(string) $x`) both lex the `string` keyword as an anonymous token whose
+// `type` string collides with the *named* `string` literal node type —
+// mirroring TypeScript's `predefined_type` construct (#1729).
+
+const PHP_FIXTURE_CODE = `<?php
+
+class Greeter {
+    public function greet(string $name): string {
+        $greeting = "Hello, $name!";
+        return $greeting;
+    }
+
+    public function label(): string {
+        return 'static label';
+    }
+
+    public function normalize($value): string {
+        return (string) $value;
+    }
+}
+
+$greeting = 'hello world';
+`;
+
+describe('buildAstNodes — PHP extraction (#1821)', () => {
+  let phpTmpDir: string, phpDb: any;
+
+  function queryPhpAstNodes(kind: string) {
+    return phpDb.prepare('SELECT * FROM ast_nodes WHERE kind = ? ORDER BY line').all(kind);
+  }
+
+  beforeAll(async () => {
+    phpTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ast-php-extract-'));
+    const srcDir = path.join(phpTmpDir, 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(path.join(phpTmpDir, '.codegraph'));
+
+    const fixturePath = path.join(srcDir, 'fixture.php');
+    fs.writeFileSync(fixturePath, PHP_FIXTURE_CODE);
+
+    const allSymbols = await parseFilesAuto([fixturePath], phpTmpDir, { engine: 'wasm' });
+    const symbols = allSymbols.get('src/fixture.php');
+    if (!symbols) throw new Error('Failed to parse PHP fixture file');
+
+    const dbPath = path.join(phpTmpDir, '.codegraph', 'graph.db');
+    phpDb = new Database(dbPath);
+    phpDb.pragma('journal_mode = WAL');
+    initSchema(phpDb);
+
+    const insertNode = phpDb.prepare(
+      'INSERT INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+    );
+    for (const def of symbols.definitions) {
+      insertNode.run(def.name, def.kind, 'src/fixture.php', def.line, def.endLine);
+    }
+
+    await buildAstNodes(phpDb, allSymbols, phpTmpDir);
+  });
+
+  afterAll(() => {
+    if (phpDb) phpDb.close();
+    fs.rmSync(phpTmpDir, { recursive: true, force: true });
+  });
+
+  test('does not misclassify parameter scalar type-hint as kind:string', () => {
+    // `string $name` (line 4) must never surface as a bare, unquoted "string"
+    // row — genuine literals are always quoted in `text`.
+    const nodes = queryPhpAstNodes('string');
+    expect(nodes.some((n) => n.text === 'string')).toBe(false);
+  });
+
+  test('does not misclassify return type-hint as kind:string', () => {
+    // `: string` return types on greet/label/normalize must not contribute
+    // bare "string" rows.
+    const nodes = queryPhpAstNodes('string');
+    expect(nodes.filter((n) => n.text === 'string').length).toBe(0);
+  });
+
+  test('does not misclassify (string) cast as kind:string', () => {
+    // `(string) $value` (line 12) must not contribute a bare "string" row.
+    const nodes = queryPhpAstNodes('string');
+    expect(nodes.some((n) => n.line === 12)).toBe(false);
+  });
+
+  test('still captures genuine string literals (interpolated and plain)', () => {
+    const nodes = queryPhpAstNodes('string');
+    const names = nodes.map((n) => n.name);
+    expect(names.some((n) => n?.includes('Hello,'))).toBe(true); // interpolated
+    expect(names).toContain('static label');
+    expect(names).toContain('hello world');
+  });
+
+  test('captures exactly the 3 genuine literals — no keyword false-positives', () => {
+    const nodes = queryPhpAstNodes('string');
+    expect(nodes.length).toBe(3);
+  });
+});
+
+// ─── Native engine: PHP primitive_type/cast_type false-positives (#1821) ──
+
+describe.skipIf(!canTestNative)('buildAstNodes — native PHP extraction (#1821)', () => {
+  let nativePhpTmpDir: string, nativePhpDb: any;
+
+  function queryNativePhpAstNodes(kind: string) {
+    return nativePhpDb.prepare('SELECT * FROM ast_nodes WHERE kind = ? ORDER BY line').all(kind);
+  }
+
+  beforeAll(async () => {
+    nativePhpTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ast-php-native-'));
+    const srcDir = path.join(nativePhpTmpDir, 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(path.join(nativePhpTmpDir, '.codegraph'));
+
+    const fixturePath = path.join(srcDir, 'fixture.php');
+    fs.writeFileSync(fixturePath, PHP_FIXTURE_CODE);
+
+    const allSymbols = await parseFilesAuto([fixturePath], nativePhpTmpDir, { engine: 'native' });
+    const symbols = allSymbols.get('src/fixture.php');
+    if (!symbols) throw new Error('Failed to parse PHP fixture file with native engine');
+
+    const dbPath = path.join(nativePhpTmpDir, '.codegraph', 'graph.db');
+    nativePhpDb = new Database(dbPath);
+    nativePhpDb.pragma('journal_mode = WAL');
+    initSchema(nativePhpDb);
+
+    const insertNode = nativePhpDb.prepare(
+      'INSERT INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+    );
+    for (const def of symbols.definitions) {
+      insertNode.run(def.name, def.kind, 'src/fixture.php', def.line, def.endLine);
+    }
+
+    await buildAstNodes(nativePhpDb, allSymbols, nativePhpTmpDir);
+  });
+
+  afterAll(() => {
+    if (nativePhpDb) nativePhpDb.close();
+    if (nativePhpTmpDir) fs.rmSync(nativePhpTmpDir, { recursive: true, force: true });
+  });
+
+  test('does not misclassify parameter scalar type-hint as kind:string', () => {
+    const nodes = queryNativePhpAstNodes('string');
+    expect(nodes.some((n) => n.text === 'string')).toBe(false);
+  });
+
+  test('does not misclassify return type-hint or cast as kind:string', () => {
+    const nodes = queryNativePhpAstNodes('string');
+    expect(nodes.filter((n) => n.text === 'string').length).toBe(0);
+  });
+
+  test('still captures genuine string literals (interpolated and plain)', () => {
+    const nodes = queryNativePhpAstNodes('string');
+    const names = nodes.map((n) => n.name);
+    expect(names.some((n) => n?.includes('Hello,'))).toBe(true);
+    expect(names).toContain('static label');
+    expect(names).toContain('hello world');
+  });
+
+  test('captures exactly the 3 genuine literals — no keyword false-positives', () => {
+    const nodes = queryNativePhpAstNodes('string');
+    expect(nodes.length).toBe(3);
+  });
+});

@@ -211,6 +211,13 @@ pub struct LangAstConfig {
     /// Single-char prefixes that can appear before string quotes (e.g. `r`, `b`, `f`, `u` for Python).
     /// Multi-char combos like `rb`, `fr` are handled by stripping each char in sequence.
     pub string_prefixes: &'static [char],
+    /// When true, a node is only classified if `node.is_named()` — guards against
+    /// anonymous grammar tokens whose `kind()` string collides with a named node
+    /// type mapped above (e.g. PHP's `primitive_type`/`cast_type` productions lex
+    /// the `string` scalar type-hint keyword as an unnamed token identical to the
+    /// named `string` literal node type). Mirrors the WASM-side
+    /// `astRequiresNamedNode()` guard in `ast-analysis/rules/index.ts`.
+    pub requires_named_node: bool,
 }
 
 // ── Per-language configs ─────────────────────────────────────────────────────
@@ -223,6 +230,7 @@ pub const PYTHON_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['\'', '"'],
     string_prefixes: &['r', 'b', 'f', 'u', 'R', 'B', 'F', 'U'],
+    requires_named_node: false,
 };
 
 pub const GO_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -233,6 +241,7 @@ pub const GO_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"', '`'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const RUST_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -243,6 +252,7 @@ pub const RUST_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const JAVA_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -253,6 +263,7 @@ pub const JAVA_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const CSHARP_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -263,6 +274,7 @@ pub const CSHARP_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const RUBY_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -273,6 +285,7 @@ pub const RUBY_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &["regex"],
     quote_chars: &['\'', '"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const PHP_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -283,6 +296,7 @@ pub const PHP_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['\'', '"'],
     string_prefixes: &[],
+    requires_named_node: true,
 };
 
 pub const C_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -293,6 +307,7 @@ pub const C_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const CPP_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -303,6 +318,7 @@ pub const CPP_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &['L', 'u', 'U', 'R'],
+    requires_named_node: false,
 };
 
 /// CUDA is a C++ superset; the tree-sitter-cuda grammar extends C++ with
@@ -317,6 +333,7 @@ pub const CUDA_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &['L', 'u', 'U', 'R'],
+    requires_named_node: false,
 };
 
 pub const KOTLIN_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -327,6 +344,7 @@ pub const KOTLIN_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const SWIFT_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -337,6 +355,7 @@ pub const SWIFT_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const SCALA_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -347,6 +366,7 @@ pub const SCALA_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const BASH_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -357,6 +377,7 @@ pub const BASH_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"', '\''],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const ELIXIR_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -367,6 +388,7 @@ pub const ELIXIR_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &["sigil"],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const LUA_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -377,6 +399,7 @@ pub const LUA_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['\'', '"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const DART_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -387,6 +410,7 @@ pub const DART_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['\'', '"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const ZIG_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -397,6 +421,7 @@ pub const ZIG_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const HASKELL_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -407,6 +432,7 @@ pub const HASKELL_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"', '\''],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -417,6 +443,7 @@ pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 // F# string nodes in tree-sitter-fsharp surface under the `string` kind inside
@@ -429,6 +456,7 @@ pub const FSHARP_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 /// Objective-C string literals use the `@"..."` prefix. The shared
@@ -442,6 +470,7 @@ pub const OBJC_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const GLEAM_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -452,6 +481,7 @@ pub const GLEAM_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const JULIA_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -462,6 +492,7 @@ pub const JULIA_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const CLOJURE_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -472,6 +503,7 @@ pub const CLOJURE_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &["regex_lit"],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const ERLANG_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -482,6 +514,7 @@ pub const ERLANG_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const GROOVY_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -495,6 +528,7 @@ pub const GROOVY_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['\'', '"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const R_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -506,6 +540,7 @@ pub const R_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['\'', '"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 pub const SOLIDITY_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -516,6 +551,7 @@ pub const SOLIDITY_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"', '\''],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 /// Verilog/SystemVerilog AST config.
@@ -533,6 +569,7 @@ pub const VERILOG_AST_CONFIG: LangAstConfig = LangAstConfig {
     regex_types: &[],
     quote_chars: &['"'],
     string_prefixes: &[],
+    requires_named_node: false,
 };
 
 // ── Generic AST node walker ──────────────────────────────────────────────────
@@ -565,7 +602,18 @@ pub fn walk_ast_nodes_with_config(
 
 /// Classify a tree-sitter node against the language AST config.
 /// Returns the AST kind string if matched, or `None` to skip.
-fn classify_ast_node<'a>(kind: &str, config: &'a LangAstConfig) -> Option<&'a str> {
+///
+/// When `config.requires_named_node` is set, anonymous grammar tokens are
+/// rejected even if their `kind()` string matches a mapped type — e.g. PHP's
+/// `primitive_type`/`cast_type` productions lex the `string` scalar
+/// type-hint keyword as an unnamed token whose `kind()` collides with the
+/// named `string` literal node (#1821, mirrors TypeScript's `predefined_type`
+/// guard from #1729).
+fn classify_ast_node<'a>(node: &Node, config: &'a LangAstConfig) -> Option<&'a str> {
+    if config.requires_named_node && !node.is_named() {
+        return None;
+    }
+    let kind = node.kind();
     if config.new_types.contains(&kind) {
         Some("new")
     } else if config.throw_types.contains(&kind) {
@@ -673,7 +721,7 @@ fn walk_ast_nodes_with_config_depth(
         return;
     }
 
-    if let Some(ast_kind) = classify_ast_node(node.kind(), config) {
+    if let Some(ast_kind) = classify_ast_node(node, config) {
         match ast_kind {
             "new" => {
                 ast_nodes.push(build_new_node(node, source));

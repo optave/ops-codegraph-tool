@@ -260,10 +260,11 @@ end
       ext: '.php',
       code: `<?php
 class App {
-    public function run() {
+    public function run(string $label): string {
         $s = "hello world";
         $o = new \\RuntimeException("bad");
         throw $o;
+        return (string) $label;
     }
 }
 `,
