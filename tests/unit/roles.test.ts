@@ -449,4 +449,79 @@ describe('classifyNodeRoles', () => {
     expect(getRole('ChaContext.implementors')).toBe('leaf');
     expect(getRole('trulyDeadHelper')).toBe('dead-unresolved');
   });
+
+  // ── Chunked role-statement cache (issue #1767) ──
+
+  it('correctly writes roles for a batch spanning multiple statement chunk sizes', () => {
+    // batchUpdateRoles chunks writes in groups of 500. A single role with
+    // 650 ids exercises both a full-size (500) and a remainder-size (150)
+    // prepared statement from the shared chunk-keyed statement cache.
+    insertNode('src/big.ts', 'file', 'src/big.ts', 0);
+    const total = 650;
+    for (let i = 0; i < total; i++) {
+      insertNode(`field${i}`, 'property', 'src/big.ts', i);
+    }
+
+    const summary = classifyNodeRoles(db);
+
+    expect(summary['dead-leaf']).toBe(total);
+    expect(summary.dead).toBe(total);
+    const count = db
+      .prepare("SELECT COUNT(*) AS cnt FROM nodes WHERE role = 'dead-leaf'")
+      .get() as { cnt: number };
+    expect(count.cnt).toBe(total);
+  });
+
+  it('keeps the shared chunk-keyed statement cache isolated across separate database instances', () => {
+    // The chunk-size statement cache (shared with domain/graph/builder/helpers.ts
+    // via cachedChunkStmt) is a module-level WeakMap keyed by db instance. Running
+    // classification against two independent in-memory databases back-to-back must
+    // not leak a prepared statement compiled against one db's connection into the other.
+    const dbA = new Database(':memory:');
+    dbA.pragma('journal_mode = WAL');
+    initSchema(dbA);
+    dbA
+      .prepare('INSERT INTO nodes (name, kind, file, line) VALUES (?, ?, ?, ?)')
+      .run('a.ts', 'file', 'a.ts', 0);
+    for (let i = 0; i < 5; i++) {
+      dbA
+        .prepare('INSERT INTO nodes (name, kind, file, line) VALUES (?, ?, ?, ?)')
+        .run(`fieldA${i}`, 'property', 'a.ts', i);
+    }
+
+    const dbB = new Database(':memory:');
+    dbB.pragma('journal_mode = WAL');
+    initSchema(dbB);
+    dbB
+      .prepare('INSERT INTO nodes (name, kind, file, line) VALUES (?, ?, ?, ?)')
+      .run('b.ts', 'file', 'b.ts', 0);
+    for (let i = 0; i < 9; i++) {
+      dbB
+        .prepare('INSERT INTO nodes (name, kind, file, line) VALUES (?, ?, ?, ?)')
+        .run(`fieldB${i}`, 'property', 'b.ts', i);
+    }
+
+    const summaryA = classifyNodeRoles(dbA);
+    const summaryB = classifyNodeRoles(dbB);
+
+    expect(summaryA['dead-leaf']).toBe(5);
+    expect(summaryB['dead-leaf']).toBe(9);
+    expect(
+      (
+        dbA.prepare("SELECT COUNT(*) AS cnt FROM nodes WHERE role = 'dead-leaf'").get() as {
+          cnt: number;
+        }
+      ).cnt,
+    ).toBe(5);
+    expect(
+      (
+        dbB.prepare("SELECT COUNT(*) AS cnt FROM nodes WHERE role = 'dead-leaf'").get() as {
+          cnt: number;
+        }
+      ).cnt,
+    ).toBe(9);
+
+    dbA.close();
+    dbB.close();
+  });
 });

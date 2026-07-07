@@ -2238,6 +2238,17 @@ export interface BetterSqlite3Database {
 /** WeakMap-based statement cache: one prepared statement per db instance. */
 export type StmtCache<TRow = unknown> = WeakMap<BetterSqlite3Database, SqliteStatement<TRow>>;
 
+/**
+ * WeakMap-based statement cache keyed by db instance, then by a numeric
+ * chunk size — for multi-value INSERT/UPDATE statements whose SQL text
+ * depends on how many rows are batched together (e.g. the number of `?`
+ * placeholders in an `IN (...)` clause).
+ */
+export type ChunkStmtCache<TRow = unknown> = WeakMap<
+  BetterSqlite3Database,
+  Map<number, SqliteStatement<TRow>>
+>;
+
 // ════════════════════════════════════════════════════════════════════════
 // §22  Native Addon (napi-rs FFI boundary)
 // ════════════════════════════════════════════════════════════════════════

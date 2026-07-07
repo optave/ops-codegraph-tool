@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { getBuildMeta, getNodeId, setBuildMeta, testFilterSQL } from '../db/index.js';
+import { cachedChunkStmt } from '../db/repository/cached-stmt.js';
 import { debug } from '../infrastructure/logger.js';
 import { getAncestorDirs, normalizePath } from '../shared/constants.js';
-import type { BetterSqlite3Database } from '../types.js';
+import type { BetterSqlite3Database, ChunkStmtCache } from '../types.js';
 
 // ─── Build-time helpers ───────────────────────────────────────────────
 
@@ -527,6 +528,22 @@ function buildRoleSummary(
   return { summary, idsByRole };
 }
 
+/** Batch UPDATE chunk size for role writes. */
+const ROLE_CHUNK = 500;
+
+// Statement cache keyed by chunk size, per db — avoids recompiling the
+// `UPDATE nodes SET role = ? WHERE id IN (...)` statement on every batch or
+// build. Shared shape with the node/edge/export batch-statement caches in
+// domain/graph/builder/helpers.ts, via `cachedChunkStmt`.
+const roleStmtCache: ChunkStmtCache = new WeakMap();
+
+function getRoleStmt(db: BetterSqlite3Database, chunkSize: number) {
+  return cachedChunkStmt(roleStmtCache, db, chunkSize, (n) => {
+    const placeholders = Array.from({ length: n }, () => '?').join(',');
+    return `UPDATE nodes SET role = ? WHERE id IN (${placeholders})`;
+  });
+}
+
 /**
  * Batch-update node roles in the database. Executes a reset callback
  * first (full resets all nodes, incremental resets only affected files),
@@ -537,20 +554,12 @@ function batchUpdateRoles(
   idsByRole: Map<string, number[]>,
   resetFn: () => void,
 ): void {
-  const ROLE_CHUNK = 500;
-  const roleStmtCache = new Map<number, SqliteStatement>();
   db.transaction(() => {
     resetFn();
     for (const [role, ids] of idsByRole) {
       for (let i = 0; i < ids.length; i += ROLE_CHUNK) {
         const end = Math.min(i + ROLE_CHUNK, ids.length);
-        const chunkSize = end - i;
-        let stmt = roleStmtCache.get(chunkSize);
-        if (!stmt) {
-          const placeholders = Array.from({ length: chunkSize }, () => '?').join(',');
-          stmt = db.prepare(`UPDATE nodes SET role = ? WHERE id IN (${placeholders})`);
-          roleStmtCache.set(chunkSize, stmt);
-        }
+        const stmt = getRoleStmt(db, end - i);
         const vals: unknown[] = [role];
         for (let j = i; j < end; j++) vals.push(ids[j]);
         stmt.run(...vals);

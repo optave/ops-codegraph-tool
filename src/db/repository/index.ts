@@ -3,7 +3,7 @@
 export type { FnDepsCallerNode, FnDepsEntry, FnDepsNode, FnDepsResult } from './base.js';
 export { Repository } from './base.js';
 export { purgeFileData, purgeFilesData } from './build-stmts.js';
-export { cachedStmt } from './cached-stmt.js';
+export { cachedChunkStmt, cachedStmt } from './cached-stmt.js';
 export { deleteCfgForNode, getCfgBlocks, getCfgEdges, hasCfgTables } from './cfg.js';
 export { getCoChangeMeta, hasCoChanges, upsertCoChangeMeta } from './cochange.js';
 export { getComplexityForNode } from './complexity.js';
