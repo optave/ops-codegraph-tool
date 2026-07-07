@@ -1680,7 +1680,7 @@ function extractInterfaceMethods(
       if (nameNode) {
         definitions.push({
           name: `${interfaceName}.${nameNode.text}`,
-          kind: 'method',
+          kind: child.type === 'method_signature' ? 'method' : 'property',
           line: nodeStartLine(child),
           endLine: nodeEndLine(child),
         });

@@ -437,7 +437,12 @@ export function buildStructure(
 // Re-export from classifier for backward compatibility
 export { FRAMEWORK_ENTRY_PREFIXES } from '../graph/classifiers/roles.js';
 
-import { classifyRoles, median } from '../graph/classifiers/roles.js';
+import {
+  classifyRoles,
+  computeTypeDefNamesByFile,
+  isTypeDeclarationMember,
+  median,
+} from '../graph/classifiers/roles.js';
 
 interface RoleSummary {
   entry: number;
@@ -491,13 +496,49 @@ export function classifyNodeRoles(
 
 // ─── Shared role-classification helpers ───────────────────────────────
 
+/** Raw `kind = 'property'` row shape needed to determine interface/type ownership. */
+interface PropertyRow {
+  id: number;
+  name: string;
+  file: string;
+}
+
+/**
+ * Split raw `kind = 'property'` rows into genuine dead-leaf class/struct/object
+ * fields and interface/type property-signature members (#1809). Property rows
+ * never reach the fan-in/fan-out `rows` query below (excluded for performance —
+ * they can never have callers/callees by construction), so
+ * `isTypeDeclarationMember` must be applied to them here explicitly —
+ * otherwise every property-kind interface member is misclassified `dead-leaf`
+ * instead of `leaf`, the same bug #1723 fixed for `method`-kind members.
+ */
+function partitionPropertyRows(
+  propertyRows: PropertyRow[],
+  typeDefNamesByFile: Map<string, Set<string>>,
+): { deadLeafRows: PropertyRow[]; typeMemberLeafRows: PropertyRow[] } {
+  const deadLeafRows: PropertyRow[] = [];
+  const typeMemberLeafRows: PropertyRow[] = [];
+  for (const row of propertyRows) {
+    // `row` carries no `kind` column (the query already filtered to
+    // kind = 'property') — supply it explicitly since isTypeDeclarationMember
+    // branches on it.
+    if (isTypeDeclarationMember({ ...row, kind: 'property' }, typeDefNamesByFile)) {
+      typeMemberLeafRows.push(row);
+    } else {
+      deadLeafRows.push(row);
+    }
+  }
+  return { deadLeafRows, typeMemberLeafRows };
+}
+
 /**
  * Build a role summary and group node IDs by role from classifier output.
  * Shared between full and incremental classification paths.
  */
 function buildRoleSummary(
   rows: { id: number }[],
-  leafRows: { id: number }[],
+  deadLeafRows: { id: number }[],
+  typeMemberLeafRows: { id: number }[],
   roleMap: Map<string, string>,
   emptySummary: RoleSummary,
 ): { summary: RoleSummary; idsByRole: Map<string, number[]> } {
@@ -505,12 +546,21 @@ function buildRoleSummary(
   const idsByRole = new Map<string, number[]>();
 
   // Leaf kinds are always dead-leaf — skip classifier
-  if (leafRows.length > 0) {
+  if (deadLeafRows.length > 0) {
     const leafIds: number[] = [];
-    for (const row of leafRows) leafIds.push(row.id);
+    for (const row of deadLeafRows) leafIds.push(row.id);
     idsByRole.set('dead-leaf', leafIds);
-    summary.dead += leafRows.length;
-    summary['dead-leaf'] += leafRows.length;
+    summary.dead += deadLeafRows.length;
+    summary['dead-leaf'] += deadLeafRows.length;
+  }
+
+  // Interface/type property members (#1809) are never dead — see partitionPropertyRows.
+  if (typeMemberLeafRows.length > 0) {
+    idsByRole.set(
+      'leaf',
+      typeMemberLeafRows.map((r) => r.id),
+    );
+    summary.leaf += typeMemberLeafRows.length;
   }
 
   for (const row of rows) {
@@ -764,8 +814,11 @@ function writeMedianCache(
 }
 
 function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
-  // Property kind (class/struct fields) can never have callers/callees.
-  // Classify them directly as dead-leaf without the expensive fan-in/fan-out JOINs.
+  // Property kind (class/struct/object fields) can never have callers/callees.
+  // Classify them directly as dead-leaf without the expensive fan-in/fan-out
+  // JOINs — except interface/type property-signature members (#1809), which
+  // are partitioned out below via `partitionPropertyRows`/`isTypeDeclarationMember`
+  // once `typeDefNamesByFile` is available, and classified `leaf` instead.
   //
   // `parameter` is deliberately NOT included here (#1723): a parameter's liveness
   // is a local dataflow question (is it referenced within its own function body),
@@ -773,13 +826,13 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
   // zero dead-code signal for it. Parameters are also excluded from the main
   // query below, so they never receive a role at all — the same treatment as
   // `file`/`directory` nodes.
-  const leafRows = db
+  const propertyRows = db
     .prepare(
-      `SELECT n.id
+      `SELECT n.id, n.name, n.file
       FROM nodes n
       WHERE n.kind = 'property'`,
     )
-    .all() as { id: number }[];
+    .all() as PropertyRow[];
 
   // Only compute fan-in/fan-out for callable/classifiable nodes
   const rows = db
@@ -798,7 +851,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     )
     .all() as CallableNodeRow[];
 
-  if (rows.length === 0 && leafRows.length === 0) return emptySummary;
+  if (rows.length === 0 && propertyRows.length === 0) return emptySummary;
 
   const exportedIds = new Set(
     (
@@ -912,7 +965,23 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
   const inMemoryEdgeCount = rows.reduce((acc, r) => acc + r.fan_in, 0);
   writeMedianCache(db, globalMedians, inMemoryEdgeCount);
 
-  const { summary, idsByRole } = buildRoleSummary(rows, leafRows, roleMap, emptySummary);
+  // Partition property rows: interface/type property-signature members (#1809)
+  // are recognized via `isTypeDeclarationMember` against the same-file
+  // TYPE_DEF_KINDS names already present in `rows` (interfaces/types are never
+  // excluded from the callable-nodes query above).
+  const typeDefNamesByFile = computeTypeDefNamesByFile(rows);
+  const { deadLeafRows, typeMemberLeafRows } = partitionPropertyRows(
+    propertyRows,
+    typeDefNamesByFile,
+  );
+
+  const { summary, idsByRole } = buildRoleSummary(
+    rows,
+    deadLeafRows,
+    typeMemberLeafRows,
+    roleMap,
+    emptySummary,
+  );
 
   batchUpdateRoles(db, idsByRole, () => {
     db.prepare('UPDATE nodes SET role = NULL').run();
@@ -970,16 +1039,18 @@ function classifyNodeRolesIncremental(
     globalMedians = computed;
   }
 
-  // 2a. Property kind (class/struct fields) in affected files — always dead-leaf.
+  // 2a. Property kind (class/struct/object fields) in affected files — dead-leaf,
+  // except interface/type property-signature members (#1809) — see
+  // classifyNodeRolesFull for the partitioning rationale.
   // `parameter` is intentionally excluded (#1723) — see classifyNodeRolesFull for
   // the rationale. Parameters stay unclassified (role = NULL) after the reset below.
-  const leafRows = db
+  const propertyRows = db
     .prepare(
-      `SELECT n.id FROM nodes n
+      `SELECT n.id, n.name, n.file FROM nodes n
       WHERE n.kind = 'property'
         AND n.file IN (${placeholders})`,
     )
-    .all(...allAffectedFiles) as { id: number }[];
+    .all(...allAffectedFiles) as PropertyRow[];
 
   // 2b. Get callable nodes using indexed correlated subqueries (fast point lookups)
   const rows = db
@@ -993,7 +1064,7 @@ function classifyNodeRolesIncremental(
     )
     .all(...allAffectedFiles) as CallableNodeRow[];
 
-  if (rows.length === 0 && leafRows.length === 0) return emptySummary;
+  if (rows.length === 0 && propertyRows.length === 0) return emptySummary;
 
   // 3. Get exported status for affected nodes only (scoped to changed files)
   const exportedIds = new Set(
@@ -1087,8 +1158,22 @@ function classifyNodeRolesIncremental(
   );
   const roleMap = classifyRoles(classifierInput, globalMedians);
 
+  // Partition property rows: interface/type property-signature members (#1809)
+  // — see classifyNodeRolesFull for the rationale.
+  const typeDefNamesByFile = computeTypeDefNamesByFile(rows);
+  const { deadLeafRows, typeMemberLeafRows } = partitionPropertyRows(
+    propertyRows,
+    typeDefNamesByFile,
+  );
+
   // 6. Build summary (only for affected nodes) and update only those nodes
-  const { summary, idsByRole } = buildRoleSummary(rows, leafRows, roleMap, emptySummary);
+  const { summary, idsByRole } = buildRoleSummary(
+    rows,
+    deadLeafRows,
+    typeMemberLeafRows,
+    roleMap,
+    emptySummary,
+  );
 
   batchUpdateRoles(db, idsByRole, () => {
     // Reset roles only for affected files' nodes

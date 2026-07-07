@@ -448,19 +448,53 @@ describe('classifyNodeRoles', () => {
 
   it('does not classify interface members as dead', () => {
     // TS `interface ExtractParametersOptions { typeMap?: Map<...> }` extracts
-    // `typeMap` as a top-level `method`-kind definition named
-    // `ExtractParametersOptions.typeMap` (property-signature members are
-    // currently mislabeled `method` by the extractor — tracked separately).
+    // `typeMap` as a top-level `property`-kind definition named
+    // `ExtractParametersOptions.typeMap` (property-signature members).
     // It has no callers by construction; it must not be flagged dead.
     insertNode('src/helpers.ts', 'file', 'src/helpers.ts', 0);
     insertNode('ExtractParametersOptions', 'interface', 'src/helpers.ts', 359);
-    insertNode('ExtractParametersOptions.typeMap', 'method', 'src/helpers.ts', 361);
+    insertNode('ExtractParametersOptions.typeMap', 'property', 'src/helpers.ts', 361);
 
     classifyNodeRoles(db);
 
     const role = db
       .prepare("SELECT role FROM nodes WHERE name = 'ExtractParametersOptions.typeMap'")
       .get() as { role: string | null };
+    expect(role.role).toBe('leaf');
+  });
+
+  it('still classifies a genuine (non-interface) class property as dead-leaf (#1809 regression guard)', () => {
+    // A plain class field with no owning interface/type declaration in the
+    // file must remain dead-leaf — the #1809 partition must not promote every
+    // property-kind node to leaf, only ones owned by a TYPE_DEF_KINDS symbol.
+    insertNode('src/widget.ts', 'file', 'src/widget.ts', 0);
+    insertNode('Widget', 'class', 'src/widget.ts', 1);
+    insertNode('Widget.label', 'property', 'src/widget.ts', 2);
+
+    classifyNodeRoles(db);
+
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'Widget.label'").get() as {
+      role: string | null;
+    };
+    expect(role.role).toBe('dead-leaf');
+  });
+
+  it('incremental path: does not classify property-kind interface members as dead (#1809)', () => {
+    // Exercises classifyNodeRolesIncremental (triggered by passing changedFiles).
+    // Property-kind interface members must land on `leaf`, not `dead-leaf`, on
+    // the incremental path just as on the full path — the fast-path property
+    // query in classifyNodeRolesIncremental must not blanket-classify every
+    // `kind = 'property'` row as dead-leaf without first ruling out interface/
+    // type ownership.
+    insertNode('src/helpers.ts', 'file', 'src/helpers.ts', 0);
+    insertNode('Widget', 'interface', 'src/helpers.ts', 10);
+    insertNode('Widget.name', 'property', 'src/helpers.ts', 11);
+
+    classifyNodeRoles(db, ['src/helpers.ts']);
+
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'Widget.name'").get() as {
+      role: string | null;
+    };
     expect(role.role).toBe('leaf');
   });
 

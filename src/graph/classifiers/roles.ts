@@ -74,12 +74,27 @@ export interface ClassifiableNode {
 }
 
 /**
+ * Minimal node shape needed to determine interface/type ownership by name —
+ * a structural subset of `RoleClassificationNode` so callers holding only
+ * `{ id, name, file }` rows (e.g. a raw `kind = 'property'` DB query, #1809)
+ * can reuse `computeTypeDefNamesByFile`/`isTypeDeclarationMember` without
+ * constructing a full classifier-input object.
+ */
+export interface NamedClassifiableNode {
+  name: string;
+  kind?: string;
+  file?: string;
+}
+
+/**
  * Compute, per file, the set of symbol names that are `TYPE_DEF_KINDS`-kind
  * declarations (interface/type/struct/enum/trait/record). Used by
  * `isTypeDeclarationMember` to recognize `Owner.member`-qualified nodes whose
  * owner is a type-level declaration rather than a class.
  */
-function computeTypeDefNamesByFile(nodes: RoleClassificationNode[]): Map<string, Set<string>> {
+export function computeTypeDefNamesByFile(
+  nodes: readonly NamedClassifiableNode[],
+): Map<string, Set<string>> {
   const byFile = new Map<string, Set<string>>();
   for (const n of nodes) {
     if (n.file && n.kind && TYPE_DEF_KINDS.has(n.kind)) {
@@ -111,8 +126,8 @@ function computeTypeDefNamesByFile(nodes: RoleClassificationNode[]): Map<string,
  * function/method where it does. Call-edge-based reachability just doesn't
  * apply to type-level declarations, so they must never be judged dead by it.
  */
-function isTypeDeclarationMember(
-  node: RoleClassificationNode,
+export function isTypeDeclarationMember(
+  node: NamedClassifiableNode,
   typeDefNamesByFile: Map<string, Set<string>>,
 ): boolean {
   if (node.kind !== 'method' && node.kind !== 'property') return false;

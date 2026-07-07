@@ -155,6 +155,26 @@ fn is_type_declaration_member(
         .is_some_and(|names| names.contains(owner_name))
 }
 
+/// Split raw `kind = 'property'` rows into genuine dead-leaf class/struct/object
+/// fields and interface/type property-signature members (#1809). Property rows
+/// never reach `classify_rows` (they're excluded from the `rows` query), so
+/// `is_type_declaration_member` must be applied to them here explicitly —
+/// otherwise every property-kind interface member would be misclassified
+/// `dead-leaf` instead of `leaf`, the same bug #1723 fixed for `method`-kind
+/// members. Returns `(dead_leaf_ids, type_member_leaf_ids)`.
+fn partition_property_rows(
+    leaf_rows: Vec<(i64, String, String)>,
+    type_def_names_by_file: &HashMap<String, std::collections::HashSet<String>>,
+) -> (Vec<i64>, Vec<i64>) {
+    let (type_member_rows, dead_rows): (Vec<_>, Vec<_>) = leaf_rows.into_iter().partition(
+        |(_, name, file)| is_type_declaration_member(name, "property", file, type_def_names_by_file),
+    );
+    (
+        dead_rows.into_iter().map(|(id, _, _)| id).collect(),
+        type_member_rows.into_iter().map(|(id, _, _)| id).collect(),
+    )
+}
+
 /// Dead sub-role classification matching JS `classifyDeadSubRole`.
 fn classify_dead_sub_role(_name: &str, kind: &str, file: &str) -> &'static str {
     // Leaf kinds
@@ -348,15 +368,20 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     let tx = conn.unchecked_transaction()?;
     let mut summary = RoleSummary::default();
 
-    // 1. Property kind (class/struct fields) -> dead-leaf.
+    // 1. Property kind (class/struct/object fields) -> dead-leaf, except
+    // interface/type property-signature members (#1809) — partitioned out
+    // below via `is_type_declaration_member` once `type_def_names_by_file` is
+    // available and classified `leaf` instead.
     // `parameter` is deliberately NOT included here (#1723): a parameter's liveness
     // is a local dataflow question, not a call-graph reachability question, so
     // "no incoming call edges" carries zero dead-code signal for it. Parameters are
     // also excluded from the main rows query below, so they never receive a role
     // at all — the same treatment as `file`/`directory` nodes.
-    let leaf_ids: Vec<i64> = {
-        let mut stmt = tx.prepare("SELECT id FROM nodes WHERE kind = 'property'")?;
-        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let leaf_rows: Vec<(i64, String, String)> = {
+        let mut stmt = tx.prepare("SELECT id, name, file FROM nodes WHERE kind = 'property'")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?;
         rows.filter_map(|r| r.ok()).collect()
     };
 
@@ -389,7 +414,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
         mapped.filter_map(|r| r.ok()).collect()
     };
 
-    if rows.is_empty() && leaf_ids.is_empty() {
+    if rows.is_empty() && leaf_rows.is_empty() {
         tx.commit()?;
         return Ok(summary);
     }
@@ -510,10 +535,19 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     // 6. Classify and collect IDs by role
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
-    if !leaf_ids.is_empty() {
-        summary.dead += leaf_ids.len() as u32;
-        summary.dead_leaf += leaf_ids.len() as u32;
-        ids_by_role.insert("dead-leaf", leaf_ids);
+    let (dead_leaf_ids, type_member_leaf_ids) =
+        partition_property_rows(leaf_rows, &type_def_names_by_file);
+    if !dead_leaf_ids.is_empty() {
+        summary.dead += dead_leaf_ids.len() as u32;
+        summary.dead_leaf += dead_leaf_ids.len() as u32;
+        ids_by_role.insert("dead-leaf", dead_leaf_ids);
+    }
+    if !type_member_leaf_ids.is_empty() {
+        summary.leaf += type_member_leaf_ids.len() as u32;
+        ids_by_role
+            .entry("leaf")
+            .or_default()
+            .extend(type_member_leaf_ids);
     }
 
     classify_rows(
@@ -732,17 +766,22 @@ fn find_neighbour_files(
     Ok(result)
 }
 
-/// Query leaf kind node IDs and callable node rows for a set of files.
+/// Query leaf kind node rows and callable node rows for a set of files.
 /// `parameter` is intentionally excluded from the leaf query (#1723) — see
-/// `do_classify_full`'s leaf_ids comment for the rationale.
+/// `do_classify_full`'s leaf_rows comment for the rationale. Leaf rows carry
+/// `name`/`file` (not just `id`) so callers can partition out interface/type
+/// property-signature members (#1809) via `partition_property_rows`.
 fn query_nodes_for_files(
     tx: &rusqlite::Transaction,
     files: &[&str],
-) -> rusqlite::Result<(Vec<i64>, Vec<(i64, String, String, String, u32, u32)>)> {
+) -> rusqlite::Result<(Vec<(i64, String, String)>, Vec<(i64, String, String, String, u32, u32)>)> {
     let ph: String = files.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
-    let leaf_sql = format!("SELECT id FROM nodes WHERE kind = 'property' AND file IN ({})", ph);
-    let leaf_ids: Vec<i64> = {
+    let leaf_sql = format!(
+        "SELECT id, name, file FROM nodes WHERE kind = 'property' AND file IN ({})",
+        ph
+    );
+    let leaf_rows: Vec<(i64, String, String)> = {
         let mut stmt = tx.prepare(&leaf_sql)?;
         for (i, f) in files.iter().enumerate() {
             stmt.raw_bind_parameter(i + 1, *f)?;
@@ -750,7 +789,7 @@ fn query_nodes_for_files(
         let mut rows = stmt.raw_query();
         let mut result = Vec::new();
         while let Some(row) = rows.next()? {
-            result.push(row.get::<_, i64>(0)?);
+            result.push((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?));
         }
         result
     };
@@ -784,7 +823,7 @@ fn query_nodes_for_files(
         result
     };
 
-    Ok((leaf_ids, rows))
+    Ok((leaf_rows, rows))
 }
 
 // ── Incremental classification ───────────────────────────────────────
@@ -810,9 +849,9 @@ pub(crate) fn do_classify_incremental(
 
     let (median_fan_in, median_fan_out) = compute_global_medians(&tx)?;
 
-    let (leaf_ids, rows) = query_nodes_for_files(&tx, &all_affected)?;
+    let (leaf_rows, rows) = query_nodes_for_files(&tx, &all_affected)?;
 
-    if rows.is_empty() && leaf_ids.is_empty() {
+    if rows.is_empty() && leaf_rows.is_empty() {
         tx.commit()?;
         return Ok(summary);
     }
@@ -913,10 +952,21 @@ pub(crate) fn do_classify_incremental(
 
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
-    if !leaf_ids.is_empty() {
-        summary.dead += leaf_ids.len() as u32;
-        summary.dead_leaf += leaf_ids.len() as u32;
-        ids_by_role.insert("dead-leaf", leaf_ids);
+    // Partition property rows: interface/type members (#1809) -> leaf, genuine
+    // class/struct/object fields -> dead-leaf. See do_classify_full/`partition_property_rows`.
+    let (dead_leaf_ids, type_member_leaf_ids) =
+        partition_property_rows(leaf_rows, &type_def_names_by_file);
+    if !dead_leaf_ids.is_empty() {
+        summary.dead += dead_leaf_ids.len() as u32;
+        summary.dead_leaf += dead_leaf_ids.len() as u32;
+        ids_by_role.insert("dead-leaf", dead_leaf_ids);
+    }
+    if !type_member_leaf_ids.is_empty() {
+        summary.leaf += type_member_leaf_ids.len() as u32;
+        ids_by_role
+            .entry("leaf")
+            .or_default()
+            .extend(type_member_leaf_ids);
     }
 
     classify_rows(

@@ -1935,4 +1935,53 @@ describe('JavaScript parser', () => {
       expect(symbols.exports.some((e) => e.name === 'INTERNAL')).toBe(false);
     });
   });
+
+  describe('interface member kind labeling (#1809)', () => {
+    function parseTS(code) {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.ts');
+    }
+
+    it('labels a property_signature interface member as kind "property"', () => {
+      const symbols = parseTS(`interface ExtractParametersOptions {
+  paramTypes: readonly string[];
+  nameField?: string | null;
+}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({
+          name: 'ExtractParametersOptions.paramTypes',
+          kind: 'property',
+        }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({
+          name: 'ExtractParametersOptions.nameField',
+          kind: 'property',
+        }),
+      );
+    });
+
+    it('still labels a method_signature interface member as kind "method"', () => {
+      const symbols = parseTS(`interface Repo {
+  find(id: string): Item | undefined;
+}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'Repo.find', kind: 'method' }),
+      );
+    });
+
+    it('labels mixed property and method interface members correctly', () => {
+      const symbols = parseTS(`interface Widget {
+  name: string;
+  render(): void;
+}`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'Widget.name', kind: 'property' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'Widget.render', kind: 'method' }),
+      );
+    });
+  });
 });

@@ -2210,9 +2210,14 @@ fn extract_interface_methods(
         if let Some(child) = body.child(i) {
             if child.kind() == "method_signature" || child.kind() == "property_signature" {
                 if let Some(name_node) = child.child_by_field_name("name") {
+                    let kind = if child.kind() == "method_signature" {
+                        "method"
+                    } else {
+                        "property"
+                    };
                     definitions.push(Definition {
                         name: format!("{}.{}", iface_name, node_text(&name_node, source)),
-                        kind: "method".to_string(),
+                        kind: kind.to_string(),
                         line: start_line(&child),
                         end_line: Some(end_line(&child)),
                         decorators: None,
