@@ -60,6 +60,52 @@ export function resolveSameClassQualifiedMethod(
     .filter((n) => n.kind === 'method');
 }
 
+/**
+ * Same-class `this.method()` fallback: when the call receiver is `this` and
+ * the primary resolution pass found nothing, derive the enclosing class name
+ * from the caller (e.g. `Logger.info` → class prefix `Logger`) and retry with
+ * the qualified method name `Logger._write`. This mirrors what the native
+ * Rust engine does implicitly via its class-scoped symbol table.
+ *
+ * NOTE: restricted to `this` only — `super.method()` targets a parent class,
+ * not the enclosing class, so qualifying with the child class name would
+ * produce a false edge when the child also defines a same-named method.
+ *
+ * Shared by the full-build (`stages/build-edges.ts`) and incremental
+ * (`incremental.ts`) call-resolution pipelines so the two cannot drift out of
+ * sync (#1765).
+ */
+export function resolveSameClassThisFallback(
+  call: { name: string; receiver?: string | null },
+  callerName: string | null,
+  relPath: string,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  if (call.receiver !== 'this' || callerName == null) return [];
+  return resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
+}
+
+/**
+ * Same-class bare-call fallback: when a no-receiver call can't be resolved
+ * globally, try the caller's own class as a qualifier. Handles C# static
+ * sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
+ * to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
+ * module-scoped, not class-scoped.
+ *
+ * Shared by the full-build (`stages/build-edges.ts`) and incremental
+ * (`incremental.ts`) call-resolution pipelines so the two cannot drift out of
+ * sync (#1765).
+ */
+export function resolveSameClassBareCallFallback(
+  call: { name: string; receiver?: string | null },
+  callerName: string | null,
+  relPath: string,
+  lookup: CallNodeLookup,
+): Array<{ id: number; file: string; kind?: string }> {
+  if (call.receiver || callerName == null || isModuleScopedLanguage(relPath)) return [];
+  return resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
+}
+
 // ── Shared resolution functions ──────────────────────────────────────────
 
 /**

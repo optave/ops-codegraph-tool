@@ -44,7 +44,8 @@ import {
   isModuleScopedLanguage,
   resolveCallTargets,
   resolveReceiverEdge,
-  resolveSameClassQualifiedMethod,
+  resolveSameClassBareCallFallback,
+  resolveSameClassThisFallback,
 } from '../call-resolver.js';
 import type { ChaContext } from '../cha.js';
 import { buildChaContext, resolveChaTargets, resolveThisDispatch } from '../cha.js';
@@ -1167,43 +1168,6 @@ function resolveKotlinReflectionPreQualified(
       .filter((n) => n.kind === 'method' || n.kind === 'function');
   }
   return [];
-}
-
-/**
- * Same-class `this.method()` fallback: when the call receiver is `this` and
- * resolveCallTargets found nothing, derive the enclosing class name from the
- * caller (e.g. `Logger.info` → class prefix `Logger`) and retry with the
- * qualified method name `Logger._write`. This mirrors what the native Rust
- * engine does implicitly via its class-scoped symbol table.
- * NOTE: restricted to `this` only — `super.method()` targets a parent class,
- * not the enclosing class, so qualifying with the child class name would
- * produce a false edge when the child also defines a same-named method.
- */
-function resolveSameClassThisFallback(
-  call: Call,
-  callerName: string | null,
-  relPath: string,
-  lookup: CallNodeLookup,
-): Array<{ id: number; file: string; kind?: string }> {
-  if (call.receiver !== 'this' || callerName == null) return [];
-  return resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
-}
-
-/**
- * Same-class bare-call fallback: when a no-receiver call can't be resolved
- * globally, try the caller's own class as a qualifier. Handles C# static
- * sibling calls: `IsValidEmail()` inside `Validators.ValidateUser` resolves
- * to `Validators.IsValidEmail`. Skipped for JS/TS where bare calls are
- * module-scoped, not class-scoped.
- */
-function resolveSameClassBareCallFallback(
-  call: Call,
-  callerName: string | null,
-  relPath: string,
-  lookup: CallNodeLookup,
-): Array<{ id: number; file: string; kind?: string }> {
-  if (call.receiver || callerName == null || isModuleScopedLanguage(relPath)) return [];
-  return resolveSameClassQualifiedMethod(call.name, callerName, relPath, lookup);
 }
 
 /**

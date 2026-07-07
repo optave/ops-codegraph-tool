@@ -19,6 +19,8 @@ import type { CallNodeLookup } from '../../src/domain/graph/builder/call-resolve
 import {
   resolveByMethodOrGlobal,
   resolveReceiverEdge,
+  resolveSameClassBareCallFallback,
+  resolveSameClassThisFallback,
 } from '../../src/domain/graph/builder/call-resolver.js';
 
 function makeLookup(
@@ -209,6 +211,137 @@ describe('resolveByMethodOrGlobal — bare-call JS/TS module-scope guard (#1407)
     );
     // C# is not module-scoped → same-class fallback runs → Processor.Flush found
     expect(result).toEqual([csMethod]);
+  });
+});
+
+// ── resolveSameClassThisFallback / resolveSameClassBareCallFallback (#1765) ──
+
+/**
+ * These two functions are shared by the full-build (`stages/build-edges.ts`)
+ * and incremental (`incremental.ts`) call-resolution pipelines so they cannot
+ * drift out of sync (#1765: incremental rebuild was missing the same-class
+ * bare-call fallback entirely). Testing them directly here — independent of
+ * `resolveByMethodOrGlobal`'s own embedded same-class fallback — proves each
+ * pipeline gets a working fallback even if a future change narrows or removes
+ * the embedded one in `resolveByGlobal` (`../resolver/strategy.ts`).
+ *
+ * `byNameAndFile` is scoped by construction to `makeLookup`'s `sameFile`
+ * bucket only — a deliberately different data source than `byName` — so a
+ * passing test proves these functions genuinely resolve via the file-scoped
+ * lookup, not by accident through some other path.
+ */
+function makeScopedLookup(
+  sameFile: Record<string, Array<{ id: number; file: string; kind: string }>>,
+): CallNodeLookup {
+  return {
+    byNameAndFile(name, file) {
+      return sameFile[`${name}|${file}`] ?? [];
+    },
+    byName() {
+      return [];
+    },
+    isBarrel() {
+      return false;
+    },
+    resolveBarrel() {
+      return null;
+    },
+    nodeId() {
+      return undefined;
+    },
+  };
+}
+
+describe('resolveSameClassThisFallback (#1765)', () => {
+  const areaMethod = { id: 1, file: 'shapes.cs', kind: 'method' };
+
+  it('resolves this.area() inside Shape.describe to Shape.area', () => {
+    const lookup = makeScopedLookup({ 'Shape.area|shapes.cs': [areaMethod] });
+    const result = resolveSameClassThisFallback(
+      { name: 'area', receiver: 'this' },
+      'Shape.describe',
+      'shapes.cs',
+      lookup,
+    );
+    expect(result).toEqual([areaMethod]);
+  });
+
+  it('does not resolve when receiver is not this (e.g. super)', () => {
+    const lookup = makeScopedLookup({ 'Shape.area|shapes.cs': [areaMethod] });
+    const result = resolveSameClassThisFallback(
+      { name: 'area', receiver: 'super' },
+      'Shape.describe',
+      'shapes.cs',
+      lookup,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('does not resolve when callerName is null', () => {
+    const lookup = makeScopedLookup({ 'Shape.area|shapes.cs': [areaMethod] });
+    const result = resolveSameClassThisFallback(
+      { name: 'area', receiver: 'this' },
+      null,
+      'shapes.cs',
+      lookup,
+    );
+    expect(result).toEqual([]);
+  });
+});
+
+describe('resolveSameClassBareCallFallback (#1765)', () => {
+  const isValidEmailMethod = { id: 2, file: 'Validators.cs', kind: 'method' };
+
+  it('resolves bare IsValidEmail() inside Validators.ValidateUser to Validators.IsValidEmail', () => {
+    const lookup = makeScopedLookup({
+      'Validators.IsValidEmail|Validators.cs': [isValidEmailMethod],
+    });
+    const result = resolveSameClassBareCallFallback(
+      { name: 'IsValidEmail', receiver: null },
+      'Validators.ValidateUser',
+      'Validators.cs',
+      lookup,
+    );
+    expect(result).toEqual([isValidEmailMethod]);
+  });
+
+  it('does not resolve when a receiver is present (not a bare call)', () => {
+    const lookup = makeScopedLookup({
+      'Validators.IsValidEmail|Validators.cs': [isValidEmailMethod],
+    });
+    const result = resolveSameClassBareCallFallback(
+      { name: 'IsValidEmail', receiver: 'Validators' },
+      'Validators.ValidateUser',
+      'Validators.cs',
+      lookup,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('does not resolve bare calls in a .ts file (module-scoped language)', () => {
+    const lookup = makeScopedLookup({
+      'Validators.isValidEmail|validators.ts': [{ id: 3, file: 'validators.ts', kind: 'method' }],
+    });
+    const result = resolveSameClassBareCallFallback(
+      { name: 'isValidEmail', receiver: null },
+      'Validators.validateUser',
+      'validators.ts',
+      lookup,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('does not resolve when callerName is null', () => {
+    const lookup = makeScopedLookup({
+      'Validators.IsValidEmail|Validators.cs': [isValidEmailMethod],
+    });
+    const result = resolveSameClassBareCallFallback(
+      { name: 'IsValidEmail', receiver: null },
+      null,
+      'Validators.cs',
+      lookup,
+    );
+    expect(result).toEqual([]);
   });
 });
 
