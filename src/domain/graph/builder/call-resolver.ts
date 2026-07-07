@@ -367,3 +367,49 @@ export function resolveReceiverEdge(
     confidence: typeConfidence ?? (typeName ? 0.9 : 0.7),
   };
 }
+
+/**
+ * Resolve the target(s) of a class-hierarchy heritage clause (`extends X` /
+ * `implements Y`) to actual node candidates.
+ *
+ * Previously this resolved by a bare, unscoped name lookup across the entire
+ * graph, so common type names (`Repository`, `User`, …) produced false
+ * cross-file — even cross-language — hierarchy edges whenever an unrelated
+ * declaration happened to share the name (#1812).
+ *
+ * Mirrors `resolveReceiverEdge`'s priority order:
+ * 1. Same-file declaration, when `name` is not itself an import artifact —
+ *    a locally-declared class/interface owns the name in its own file.
+ * 2. The file's actually-resolved import for `name` (barrel-traced), so
+ *    `extends X` only links to the specific `X` this file imported.
+ * 3. Last resort: a same-language-family global-by-name match (never
+ *    cross-language, per #1783) — and only the single first candidate, since
+ *    a heritage clause names exactly one type and an unscoped match set is
+ *    the ambiguity this function exists to eliminate.
+ */
+export function resolveHierarchyTargets(
+  lookup: CallNodeLookup,
+  name: string,
+  relPath: string,
+  importedNames: ReadonlyMap<string, string>,
+  targetKinds: ReadonlySet<string>,
+): ReadonlyArray<{ id: number; file: string }> {
+  const sameFileAll = lookup.byNameAndFile(name, relPath);
+  const isLocalDefinition = sameFileAll.length > 0 && !importedNames.has(name);
+  if (isLocalDefinition) {
+    return sameFileAll.filter((n) => targetKinds.has(n.kind ?? ''));
+  }
+
+  const importedFrom = importedNames.get(name);
+  if (importedFrom) {
+    const importedCandidates = lookup
+      .byNameAndFile(name, importedFrom)
+      .filter((n) => targetKinds.has(n.kind ?? ''));
+    if (importedCandidates.length > 0) return importedCandidates;
+  }
+
+  const globalCandidates = lookup
+    .byName(name)
+    .filter((n) => targetKinds.has(n.kind ?? '') && isSameLanguageFamily(relPath, n.file));
+  return globalCandidates.length > 0 ? [globalCandidates[0]!] : [];
+}

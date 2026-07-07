@@ -28,6 +28,7 @@ import {
   isModuleScopedLanguage,
   resolveCallTargets,
   resolveDefinePropertyAccessorTarget,
+  resolveHierarchyTargets,
   resolveReceiverEdge,
   resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
@@ -236,7 +237,7 @@ function rebuildReverseDepEdges(
     importedNames,
     importedOriginalNames,
   );
-  edgesAdded += buildClassHierarchyEdges(stmts, depRelPath, symbols);
+  edgesAdded += buildClassHierarchyEdges(db, stmts, depRelPath, symbols, importedNames);
   return edgesAdded;
 }
 
@@ -513,12 +514,25 @@ const HIERARCHY_SOURCE_KINDS = new Set(['class', 'struct', 'record', 'enum']);
 const EXTENDS_TARGET_KINDS = new Set(['class', 'struct', 'trait', 'record']);
 const IMPLEMENTS_TARGET_KINDS = new Set(['interface', 'trait', 'class']);
 
+/**
+ * Emit `extends`/`implements` edges for class/struct/trait heritage clauses.
+ *
+ * Target resolution goes through `resolveHierarchyTargets` (#1812) — same-file
+ * declaration first, then the file's actually-resolved import, only falling
+ * back to a same-language-family global-by-name match as a last resort —
+ * instead of matching the heritage name against every node in the graph
+ * regardless of file or language. Mirrors the full-build `buildClassHierarchyEdges`
+ * in build-edges.ts.
+ */
 function buildClassHierarchyEdges(
+  db: BetterSqlite3Database,
   stmts: IncrementalStmts,
   relPath: string,
   symbols: ExtractorOutput,
+  importedNames: ReadonlyMap<string, string>,
 ): number {
   let edgesAdded = 0;
+  const lookup = makeIncrementalLookup(db, stmts);
   for (const cls of symbols.classes) {
     const sourceRow = (stmts.findNodeInFile.all(cls.name, relPath) as NodeWithKind[]).find((n) =>
       HIERARCHY_SOURCE_KINDS.has(n.kind),
@@ -526,16 +540,24 @@ function buildClassHierarchyEdges(
     if (!sourceRow) continue;
 
     if (cls.extends) {
-      for (const t of (stmts.findNodeByName.all(cls.extends) as NodeWithKind[]).filter((n) =>
-        EXTENDS_TARGET_KINDS.has(n.kind),
+      for (const t of resolveHierarchyTargets(
+        lookup,
+        cls.extends,
+        relPath,
+        importedNames,
+        EXTENDS_TARGET_KINDS,
       )) {
         stmts.insertEdge.run(sourceRow.id, t.id, 'extends', 1.0, 0);
         edgesAdded++;
       }
     }
     if (cls.implements) {
-      for (const t of (stmts.findNodeByName.all(cls.implements) as NodeWithKind[]).filter((n) =>
-        IMPLEMENTS_TARGET_KINDS.has(n.kind),
+      for (const t of resolveHierarchyTargets(
+        lookup,
+        cls.implements,
+        relPath,
+        importedNames,
+        IMPLEMENTS_TARGET_KINDS,
       )) {
         stmts.insertEdge.run(sourceRow.id, t.id, 'implements', 1.0, 0);
         edgesAdded++;
@@ -908,7 +930,7 @@ function rebuildEdgesForTargetFile(
     importedNames,
     importedOriginalNames,
   );
-  edgesAdded += buildClassHierarchyEdges(stmts, relPath, symbols);
+  edgesAdded += buildClassHierarchyEdges(db, stmts, relPath, symbols, importedNames);
   return edgesAdded;
 }
 
