@@ -97,7 +97,7 @@ BUILD_OK=0
 if command -v codegraph &>/dev/null; then
   codegraph build "$PROJECT_DIR" -d "$DB_PATH" $BUILD_FLAGS 2>/dev/null && BUILD_OK=1 || true
 else
-  node "${CLAUDE_PROJECT_DIR:-$PROJECT_DIR}/src/cli.js" build "$PROJECT_DIR" -d "$DB_PATH" $BUILD_FLAGS 2>/dev/null && BUILD_OK=1 || true
+  node "${CLAUDE_PROJECT_DIR:-$PROJECT_DIR}/dist/cli.js" build "$PROJECT_DIR" -d "$DB_PATH" $BUILD_FLAGS 2>/dev/null && BUILD_OK=1 || true
 fi
 
 # Update marker only if we did a full rebuild AND it succeeded
