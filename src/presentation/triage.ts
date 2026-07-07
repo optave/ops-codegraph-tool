@@ -10,7 +10,7 @@ interface TriageOpts {
   sort?: string;
   kind?: string;
   role?: string;
-  file?: string;
+  file?: string | string[];
   minScore?: number;
   limit?: number;
   offset?: number;

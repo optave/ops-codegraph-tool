@@ -272,7 +272,8 @@ export interface QueryOpts {
 
 /** Options for listFunctionNodes / iterateFunctionNodes. */
 export interface ListFunctionOpts {
-  file?: string;
+  /** Partial-match file filter. Repeatable on the CLI (`-f/--file`), so a single value arrives as a one-element array. */
+  file?: string | string[];
   pattern?: string;
   noTests?: boolean;
 }
@@ -282,7 +283,8 @@ export interface TriageQueryOpts {
   kind?: string;
   role?: Role;
   noTests?: boolean;
-  file?: string;
+  /** Partial-match file filter. Repeatable on the CLI (`-f/--file`), so a single value arrives as a one-element array. */
+  file?: string | string[];
 }
 
 /**
@@ -303,7 +305,7 @@ export interface Repository {
   bulkNodeIdsByFile(file: string): NodeIdRow[];
   findNodeChildren(parentId: number): ChildNodeRow[];
   findNodesByScope(scopeName: string, opts?: QueryOpts): NodeRow[];
-  findNodeByQualifiedName(qualifiedName: string, opts?: { file?: string }): NodeRow[];
+  findNodeByQualifiedName(qualifiedName: string, opts?: { file?: string | string[] }): NodeRow[];
   listFunctionNodes(opts?: ListFunctionOpts): NodeRow[];
   iterateFunctionNodes(opts?: ListFunctionOpts): IterableIterator<NodeRow>;
   findNodesForTriage(opts?: TriageQueryOpts): TriageNodeRow[];
@@ -2563,9 +2565,12 @@ export interface NativeDatabase {
   findNodesByScope(
     scopeName: string,
     kind: string | null | undefined,
-    file: string | null | undefined,
+    file: string[] | null | undefined,
   ): NativeNodeRow[];
-  findNodeByQualifiedName(qualifiedName: string, file: string | null | undefined): NativeNodeRow[];
+  findNodeByQualifiedName(
+    qualifiedName: string,
+    file: string[] | null | undefined,
+  ): NativeNodeRow[];
   findNodesWithFanIn(
     namePattern: string,
     kinds: string[] | null | undefined,
@@ -2574,16 +2579,16 @@ export interface NativeDatabase {
   findNodesForTriage(
     kind: string | null | undefined,
     role: string | null | undefined,
-    file: string | null | undefined,
+    file: string[] | null | undefined,
     noTests: boolean | null | undefined,
   ): NativeTriageNodeRow[];
   listFunctionNodes(
-    file: string | null | undefined,
+    file: string[] | null | undefined,
     pattern: string | null | undefined,
     noTests: boolean | null | undefined,
   ): NativeNodeRow[];
   iterateFunctionNodes(
-    file: string | null | undefined,
+    file: string[] | null | undefined,
     pattern: string | null | undefined,
     noTests: boolean | null | undefined,
   ): NativeNodeRow[];

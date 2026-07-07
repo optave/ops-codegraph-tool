@@ -5,7 +5,9 @@
  */
 
 import { beforeAll, describe, expect, test } from 'vitest';
+import { InMemoryRepository } from '../../src/db/repository/in-memory-repository.js';
 import { triageData } from '../../src/features/triage.js';
+import { ConfigError } from '../../src/shared/errors.js';
 import { createTestRepo } from '../helpers/fixtures.js';
 
 // ─── Fixture ──────────────────────────────────────────────────────────
@@ -262,5 +264,32 @@ describe('triage', () => {
     expect(core.riskScore).toBeGreaterThan(leaf.riskScore);
     expect(core.roleWeight).toBe(1.0);
     expect(leaf.roleWeight).toBe(0.2);
+  });
+
+  // Regression tests for #1815: findNodesForTriage failures used to be
+  // unconditionally swallowed into an empty result (exit 0), masking real
+  // internal errors (e.g. the native array-vs-String crash) as "no symbols
+  // match". Only the validated-input ConfigError case should degrade
+  // gracefully; anything else must propagate.
+  test('propagates a non-ConfigError failure from findNodesForTriage instead of swallowing it', () => {
+    class BrokenRepo extends InMemoryRepository {
+      override findNodesForTriage(): never {
+        throw new Error('boom: internal query failure');
+      }
+    }
+    expect(() => triageData(null, { repo: new BrokenRepo(), limit: 100 })).toThrow(
+      'boom: internal query failure',
+    );
+  });
+
+  test('degrades gracefully (empty result) on a ConfigError from findNodesForTriage', () => {
+    class InvalidOptsRepo extends InMemoryRepository {
+      override findNodesForTriage(): never {
+        throw new ConfigError('Invalid kind: bogus (expected one of function, method, class)');
+      }
+    }
+    const result = triageData(null, { repo: new InvalidOptsRepo(), limit: 100 });
+    expect(result.items).toEqual([]);
+    expect(result.summary.total).toBe(0);
   });
 });

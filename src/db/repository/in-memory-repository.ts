@@ -267,7 +267,10 @@ export class InMemoryRepository extends Repository {
     return nodes.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
   }
 
-  findNodeByQualifiedName(qualifiedName: string, opts: { file?: string } = {}): NodeRow[] {
+  findNodeByQualifiedName(
+    qualifiedName: string,
+    opts: { file?: string | string[] } = {},
+  ): NodeRow[] {
     let nodes = [...this.#nodes.values()].filter((n) => n.qualified_name === qualifiedName);
 
     {

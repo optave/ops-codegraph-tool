@@ -243,6 +243,52 @@ describe('CLI smoke tests', () => {
     expect(data.level).toBe('directory');
   });
 
+  // Regression tests for #1815: `-f/--file` is a repeatable Commander option
+  // (collectFile) that always produces a string[], even for a single use.
+  // triage's native composite path (findNodesForTriage) used to forward that
+  // array straight into a napi binding typed for a single String; the failure
+  // was silently swallowed into an empty result with exit code 0 instead of
+  // crashing or surfacing an error (see query -f test above for #1726 context
+  // on the underlying array-vs-String bug class).
+  test('triage -f scopes results to a single file without crashing or silently emptying', () => {
+    const out = run('triage', '-f', 'math.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data.items.length).toBeGreaterThan(0);
+    for (const it of data.items) expect(it.file).toContain('math.js');
+  });
+
+  test('triage with a single -f excludes non-matching files', () => {
+    const out = run('triage', '-f', 'math.js', '--kind', 'function', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    const names = data.items.map((it) => it.name);
+    expect(names).toContain('add');
+    expect(names).not.toContain('sumOfSquares');
+  });
+
+  test('triage supports repeated -f (multi-file scoping)', () => {
+    const out = run('triage', '-f', 'math.js', '-f', 'utils.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    const files = new Set(data.items.map((it) => it.file));
+    expect([...files].some((f) => f.includes('math.js'))).toBe(true);
+    expect([...files].some((f) => f.includes('utils.js'))).toBe(true);
+    expect([...files].some((f) => f.includes('index.js'))).toBe(false);
+  });
+
+  // ─── Interfaces / Implementations ───────────────────────────────────
+  test('interfaces -f does not crash when scoping by file', () => {
+    const out = run('interfaces', 'Calculator', '-f', 'utils.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('results');
+    expect(Array.isArray(data.results)).toBe(true);
+  });
+
+  test('implementations -f does not crash when scoping by file', () => {
+    const out = run('implementations', 'Calculator', '-f', 'utils.js', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('results');
+    expect(Array.isArray(data.results)).toBe(true);
+  });
+
   // ─── Audit --quick (formerly explain) ──────────────────────────────
   test('audit --quick --json returns structural summary', () => {
     const out = run('audit', 'math.js', '--quick', '--db', dbPath, '--json');

@@ -4,6 +4,7 @@ import { DEFAULT_WEIGHTS, scoreRisk } from '../graph/classifiers/risk.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { warn } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import { ConfigError } from '../shared/errors.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { CodegraphConfig, Role, TriageNodeRow } from '../types.js';
 
@@ -108,7 +109,7 @@ interface TriageDataOpts {
   sort?: string;
   config?: CodegraphConfig;
   weights?: Partial<RiskWeights>;
-  file?: string;
+  file?: string | string[];
   kind?: string;
   role?: Role;
   limit?: number;
@@ -163,8 +164,15 @@ export function triageData(
         role: opts.role || undefined,
       });
     } catch (err: unknown) {
-      warn(`triage query failed: ${(err as Error).message}`);
-      return { items: [], summary: EMPTY_SUMMARY(weights) };
+      // Only invalid kind/role (validated inside findNodesForTriage, surfaced as
+      // ConfigError) degrade gracefully to an empty result — every other failure
+      // (e.g. an internal query bug) must propagate rather than masquerade as
+      // "no symbols match" with exit code 0.
+      if (err instanceof ConfigError) {
+        warn(`triage query failed: ${err.message}`);
+        return { items: [], summary: EMPTY_SUMMARY(weights) };
+      }
+      throw err;
     }
 
     const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;

@@ -12,7 +12,13 @@ import { findMatchingNodes } from './symbol-lookup.js';
 export function implementationsData(
   name: string,
   customDbPath: string,
-  opts: { noTests?: boolean; file?: string; kind?: string; limit?: number; offset?: number } = {},
+  opts: {
+    noTests?: boolean;
+    file?: string | string[];
+    kind?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
 ) {
   return withRepo(customDbPath, (repo) => {
     const noTests = opts.noTests || false;
@@ -49,7 +55,13 @@ export function implementationsData(
 export function interfacesData(
   name: string,
   customDbPath: string,
-  opts: { noTests?: boolean; file?: string; kind?: string; limit?: number; offset?: number } = {},
+  opts: {
+    noTests?: boolean;
+    file?: string | string[];
+    kind?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
 ) {
   return withRepo(customDbPath, (repo) => {
     const noTests = opts.noTests || false;

@@ -303,37 +303,53 @@ export class NativeRepository extends Repository {
   }
 
   findNodesByScope(scopeName: string, opts: QueryOpts = {}): NodeRow[] {
-    // Unlike findNodesWithFanIn/fnDeps, this native binding only accepts a single
-    // file (no CLI command currently wires -f/--file to it); take the first value
-    // rather than crash if a caller ever passes the repeatable-flag array form.
-    const [file] = normalizeFileFilter(opts.file);
-    return this.#ndb.findNodesByScope(scopeName, opts.kind ?? null, file ?? null).map(toNodeRow);
+    const files = normalizeFileFilter(opts.file);
+    return this.#ndb
+      .findNodesByScope(scopeName, opts.kind ?? null, files.length > 0 ? files : null)
+      .map(toNodeRow);
   }
 
-  findNodeByQualifiedName(qualifiedName: string, opts: { file?: string } = {}): NodeRow[] {
-    return this.#ndb.findNodeByQualifiedName(qualifiedName, opts.file ?? null).map(toNodeRow);
+  findNodeByQualifiedName(
+    qualifiedName: string,
+    opts: { file?: string | string[] } = {},
+  ): NodeRow[] {
+    const files = normalizeFileFilter(opts.file);
+    return this.#ndb
+      .findNodeByQualifiedName(qualifiedName, files.length > 0 ? files : null)
+      .map(toNodeRow);
   }
 
   listFunctionNodes(opts: ListFunctionOpts = {}): NodeRow[] {
+    const files = normalizeFileFilter(opts.file);
     return this.#ndb
-      .listFunctionNodes(opts.file ?? null, opts.pattern ?? null, opts.noTests ?? null)
+      .listFunctionNodes(
+        files.length > 0 ? files : null,
+        opts.pattern ?? null,
+        opts.noTests ?? null,
+      )
       .map(toNodeRow);
   }
 
   iterateFunctionNodes(opts: ListFunctionOpts = {}): IterableIterator<NodeRow> {
+    const files = normalizeFileFilter(opts.file);
     const rows = this.#ndb
-      .iterateFunctionNodes(opts.file ?? null, opts.pattern ?? null, opts.noTests ?? null)
+      .iterateFunctionNodes(
+        files.length > 0 ? files : null,
+        opts.pattern ?? null,
+        opts.noTests ?? null,
+      )
       .map(toNodeRow);
     return rows[Symbol.iterator]();
   }
 
   findNodesForTriage(opts: TriageQueryOpts = {}): TriageNodeRow[] {
     try {
+      const files = normalizeFileFilter(opts.file);
       return this.#ndb
         .findNodesForTriage(
           opts.kind ?? null,
           opts.role ?? null,
-          opts.file ?? null,
+          files.length > 0 ? files : null,
           opts.noTests ?? null,
         )
         .map(toTriageNodeRow);

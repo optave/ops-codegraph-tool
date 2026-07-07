@@ -75,7 +75,7 @@ export class Repository implements IRepository {
     throw new Error('not implemented');
   }
 
-  findNodeByQualifiedName(_qualifiedName: string, _opts?: { file?: string }): NodeRow[] {
+  findNodeByQualifiedName(_qualifiedName: string, _opts?: { file?: string | string[] }): NodeRow[] {
     throw new Error('not implemented');
   }
 

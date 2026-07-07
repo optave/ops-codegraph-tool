@@ -128,7 +128,7 @@ export class SqliteRepository extends Repository {
     return findNodesByScope(this.#db, scopeName, opts);
   }
 
-  findNodeByQualifiedName(qualifiedName: string, opts?: { file?: string }): NodeRow[] {
+  findNodeByQualifiedName(qualifiedName: string, opts?: { file?: string | string[] }): NodeRow[] {
     return findNodeByQualifiedName(this.#db, qualifiedName, opts);
   }
 

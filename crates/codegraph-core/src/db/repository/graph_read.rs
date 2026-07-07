@@ -719,7 +719,7 @@ fn validate_triage_role(role: Option<&str>) -> napi::Result<()> {
 fn build_triage_query(
     kind: Option<&str>,
     role: Option<&str>,
-    file: Option<&str>,
+    file: Option<&[String]>,
     no_tests: bool,
 ) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
     let kinds_to_use: Vec<&str> = match kind {
@@ -759,9 +759,7 @@ fn build_triage_query(
         sql.push_str(&format!(" {}", test_filter_clauses("n.file")));
     }
     if let Some(f) = file {
-        sql.push_str(&format!(" AND n.file LIKE ?{idx} ESCAPE '\\'"));
-        param_values.push(Box::new(format!("%{}%", escape_like(f))));
-        idx += 1;
+        push_file_filter(&mut sql, &mut param_values, &mut idx, "n.file", f);
     }
     if let Some(r) = role {
         if r == "dead" {
@@ -1033,7 +1031,7 @@ impl NativeDatabase {
         &self,
         scope_name: String,
         kind: Option<String>,
-        file: Option<String>,
+        file: Option<Vec<String>>,
     ) -> napi::Result<Vec<NativeNodeRow>> {
         let conn = self.conn()?;
 
@@ -1048,8 +1046,7 @@ impl NativeDatabase {
             idx += 1;
         }
         if let Some(ref f) = file {
-            sql.push_str(&format!(" AND file LIKE ?{idx} ESCAPE '\\'"));
-            param_values.push(Box::new(format!("%{}%", escape_like(f))));
+            push_file_filter(&mut sql, &mut param_values, &mut idx, "file", f);
         }
         sql.push_str(" ORDER BY file, line");
 
@@ -1065,53 +1062,35 @@ impl NativeDatabase {
             .map_err(|e| napi::Error::from_reason(format!("find_nodes_by_scope collect: {e}")))
     }
 
-    /// Find nodes by qualified name with optional file filter.
+    /// Find nodes by qualified name with optional (multi-value) file filter.
     #[napi]
     pub fn find_node_by_qualified_name(
         &self,
         qualified_name: String,
-        file: Option<String>,
+        file: Option<Vec<String>>,
     ) -> napi::Result<Vec<NativeNodeRow>> {
         let conn = self.conn()?;
 
+        let mut sql = "SELECT * FROM nodes WHERE qualified_name = ?1".to_string();
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(qualified_name)];
+        let mut idx = 2;
         if let Some(ref f) = file {
-            let pattern = format!("%{}%", escape_like(f));
-            let mut stmt = conn
-                .prepare_cached(
-                    "SELECT * FROM nodes WHERE qualified_name = ?1 AND file LIKE ?2 ESCAPE '\\' ORDER BY file, line",
-                )
-                .map_err(|e| {
-                    napi::Error::from_reason(format!(
-                        "find_node_by_qualified_name prepare: {e}"
-                    ))
-                })?;
-            let rows = stmt
-                .query_map(params![qualified_name, pattern], read_node_row)
-                .map_err(|e| {
-                    napi::Error::from_reason(format!("find_node_by_qualified_name: {e}"))
-                })?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
-                napi::Error::from_reason(format!("find_node_by_qualified_name collect: {e}"))
-            })
-        } else {
-            let mut stmt = conn
-                .prepare_cached(
-                    "SELECT * FROM nodes WHERE qualified_name = ?1 ORDER BY file, line",
-                )
-                .map_err(|e| {
-                    napi::Error::from_reason(format!(
-                        "find_node_by_qualified_name prepare: {e}"
-                    ))
-                })?;
-            let rows = stmt
-                .query_map(params![qualified_name], read_node_row)
-                .map_err(|e| {
-                    napi::Error::from_reason(format!("find_node_by_qualified_name: {e}"))
-                })?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
-                napi::Error::from_reason(format!("find_node_by_qualified_name collect: {e}"))
-            })
+            push_file_filter(&mut sql, &mut param_values, &mut idx, "file", f);
         }
+        sql.push_str(" ORDER BY file, line");
+
+        let mut stmt = conn.prepare_cached(&sql).map_err(|e| {
+            napi::Error::from_reason(format!("find_node_by_qualified_name prepare: {e}"))
+        })?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt
+            .query_map(params_ref.as_slice(), read_node_row)
+            .map_err(|e| napi::Error::from_reason(format!("find_node_by_qualified_name: {e}")))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
+            napi::Error::from_reason(format!("find_node_by_qualified_name collect: {e}"))
+        })
     }
 
     /// Find nodes matching a name pattern with fan-in count.
@@ -1189,7 +1168,7 @@ impl NativeDatabase {
         &self,
         kind: Option<String>,
         role: Option<String>,
-        file: Option<String>,
+        file: Option<Vec<String>>,
         no_tests: Option<bool>,
     ) -> napi::Result<Vec<NativeTriageNodeRow>> {
         validate_triage_kind(kind.as_deref())?;
@@ -1219,7 +1198,7 @@ impl NativeDatabase {
     #[napi]
     pub fn list_function_nodes(
         &self,
-        file: Option<String>,
+        file: Option<Vec<String>>,
         pattern: Option<String>,
         no_tests: Option<bool>,
     ) -> napi::Result<Vec<NativeNodeRow>> {
@@ -1230,7 +1209,7 @@ impl NativeDatabase {
     #[napi]
     pub fn iterate_function_nodes(
         &self,
-        file: Option<String>,
+        file: Option<Vec<String>>,
         pattern: Option<String>,
         no_tests: Option<bool>,
     ) -> napi::Result<Vec<NativeNodeRow>> {
@@ -1893,7 +1872,7 @@ impl NativeDatabase {
     /// Shared implementation for list_function_nodes / iterate_function_nodes.
     fn query_function_nodes(
         &self,
-        file: Option<String>,
+        file: Option<Vec<String>>,
         pattern: Option<String>,
         no_tests: Option<bool>,
     ) -> napi::Result<Vec<NativeNodeRow>> {
@@ -1909,9 +1888,7 @@ impl NativeDatabase {
         let mut idx = 1;
 
         if let Some(ref f) = file {
-            sql.push_str(&format!(" AND n.file LIKE ?{idx} ESCAPE '\\'"));
-            param_values.push(Box::new(format!("%{}%", escape_like(f))));
-            idx += 1;
+            push_file_filter(&mut sql, &mut param_values, &mut idx, "n.file", f);
         }
         if let Some(ref p) = pattern {
             sql.push_str(&format!(" AND n.name LIKE ?{idx} ESCAPE '\\'"));
