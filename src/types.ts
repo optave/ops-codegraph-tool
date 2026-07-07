@@ -529,6 +529,10 @@ export interface Import {
    * `extractImportNames`), so `resolveBarrelExport` uses this map to translate
    * a consumer's requested external name back to X before matching against
    * `names`/looking up the underlying definition (#1823).
+   *
+   * Also populated for dynamic `import()` destructuring renames
+   * (`const { X: Y } = await import(...)`): same local/original split as the
+   * static case, produced by `extractDynamicImportNames` (#1824).
    */
   renamedImports?: Array<{ local: string; imported: string }>;
   /**

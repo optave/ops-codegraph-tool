@@ -810,12 +810,14 @@ function collectDynamicImport(node: TreeSitterNode, imports: Import[]): boolean 
     const strArg = findChild(args, 'string');
     if (strArg) {
       const modPath = strArg.text.replace(/['"]/g, '');
-      const names = extractDynamicImportNames(node);
+      const renamedImports: Array<{ local: string; imported: string }> = [];
+      const names = extractDynamicImportNames(node, renamedImports);
       imports.push({
         source: modPath,
         names,
         line: nodeStartLine(node),
         dynamicImport: true,
+        ...(renamedImports.length > 0 ? { renamedImports } : {}),
       });
     } else {
       debug(
@@ -1555,8 +1557,15 @@ function handleDynamicImportCall(node: TreeSitterNode, imports: Import[]): void 
   const strArg = findChild(args, 'string');
   if (strArg) {
     const modPath = strArg.text.replace(/['"]/g, '');
-    const names = extractDynamicImportNames(node);
-    imports.push({ source: modPath, names, line: nodeStartLine(node), dynamicImport: true });
+    const renamedImports: Array<{ local: string; imported: string }> = [];
+    const names = extractDynamicImportNames(node, renamedImports);
+    imports.push({
+      source: modPath,
+      names,
+      line: nodeStartLine(node),
+      dynamicImport: true,
+      ...(renamedImports.length > 0 ? { renamedImports } : {}),
+    });
   } else {
     debug(
       `Skipping non-static dynamic import() at line ${nodeStartLine(node)} (template literal or variable)`,
@@ -4177,13 +4186,22 @@ const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
  *   const { a, b } = await import('./foo.js')                    → ['a', 'b']
  *   const mod = await import('./foo.js')                          → ['mod']
  *   const { a } = (await import('./foo.js')) as { a: Fn }         → ['a']
+ *   const { a: b } = await import('./foo.js')                     → ['b']
  *   import('./foo.js')                                            → [] (no names extractable)
  *
  * Walks up the AST from the call_expression — through any nesting of
  * await/parenthesized/as-cast wrappers — to find the enclosing
  * variable_declarator and reads the name/object_pattern.
+ *
+ * `renamedOut`, when supplied, is populated with `{ local, imported }` pairs
+ * for every `{ imported: local }` specifier — mirrors `extractImportNames`'s
+ * static-import convention (#1730) so call-edge resolution can recover the
+ * original exported name when a call site uses the local alias (#1824).
  */
-function extractDynamicImportNames(callNode: TreeSitterNode): string[] {
+function extractDynamicImportNames(
+  callNode: TreeSitterNode,
+  renamedOut?: Array<{ local: string; imported: string }>,
+): string[] {
   // Walk up through await_expression / parenthesized_expression / as_expression
   // wrappers, in any combination or order, to reach the variable_declarator.
   let current = callNode.parent;
@@ -4204,10 +4222,37 @@ function extractDynamicImportNames(callNode: TreeSitterNode): string[] {
       if (child.type === 'shorthand_property_identifier_pattern') {
         names.push(child.text);
       } else if (child.type === 'pair_pattern') {
-        // { a: localName } → use localName (the alias) for the local binding,
-        // but use the key (original name) for import resolution
+        // { imported: local } → the local binding (`value`) is what call
+        // sites actually reference; `key` is the name exported by the target
+        // module. Preferring `key` unconditionally (as this branch used to)
+        // silently dropped the local alias for every renamed destructure,
+        // the same class of bug fixed for static `import { X as Y }`
+        // specifiers in #1730 (#1824).
         const key = child.childForFieldName('key');
-        if (key) names.push(key.text);
+        const value = child.childForFieldName('value');
+        let localNode: TreeSitterNode | undefined;
+        if (
+          value?.type === 'identifier' ||
+          value?.type === 'shorthand_property_identifier_pattern'
+        ) {
+          localNode = value;
+        } else if (value?.type === 'assignment_pattern') {
+          // { imported: local = defaultValue } — the local binding is the
+          // assignment_pattern's left-hand identifier.
+          const left = value.childForFieldName('left');
+          if (left?.type === 'identifier') localNode = left;
+        }
+        if (localNode && key) {
+          names.push(localNode.text);
+          if (localNode.text !== key.text) {
+            renamedOut?.push({ local: localNode.text, imported: key.text });
+          }
+        } else if (key) {
+          // Nested pattern (`{ foo: { nested } }`) or other unsupported
+          // value shape — no single local binding to extract; fall back to
+          // the key so the specifier isn't dropped entirely.
+          names.push(key.text);
+        }
       }
     }
     return names;

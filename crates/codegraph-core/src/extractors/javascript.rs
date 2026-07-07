@@ -1353,7 +1353,13 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             if let Some(str_arg) = find_child(&args, "string") {
                                 let mod_path = node_text(&str_arg, source)
                                     .replace(&['\'', '"'][..], "");
-                                let names = collect_object_pattern_names(&name_n, source);
+                                // CJS require bindings never populate renamed_imports —
+                                // resolve_call_targets deliberately ignores the original
+                                // name for these (empty target_file forces a same-file
+                                // fallback match, matching WASM's importedNamesMap
+                                // exclusion, #1678) — so the rename pairs collected here
+                                // are discarded.
+                                let names = collect_object_pattern_names(&name_n, source, &mut Vec::new());
                                 if !names.is_empty() {
                                     let mut imp = Import::new(
                                         mod_path, names, start_line(node),
@@ -1672,9 +1678,13 @@ fn handle_dynamic_import(node: &Node, _fn_node: &Node, source: &[u8], symbols: &
     if let Some(str_node) = str_node {
         let mod_path = node_text(&str_node, source)
             .replace(&['\'', '"', '`'][..], "");
-        let names = extract_dynamic_import_names(node, source);
+        let mut renamed_imports = Vec::new();
+        let names = extract_dynamic_import_names(node, source, &mut renamed_imports);
         let mut imp = Import::new(mod_path, names, start_line(node));
         imp.dynamic_import = Some(true);
+        if !renamed_imports.is_empty() {
+            imp.renamed_imports = Some(renamed_imports);
+        }
         symbols.imports.push(imp);
     }
 }
@@ -3086,9 +3096,19 @@ const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] =
 
 /// Extract named bindings from a dynamic `import()` call expression.
 /// Handles: `const { a, b } = await import(...)`, `const mod = await import(...)`,
-/// and casts/parens wrapping the awaited call, e.g.
-/// `const { a } = (await import(...)) as { a: Fn }`.
-fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> {
+/// casts/parens wrapping the awaited call, e.g.
+/// `const { a } = (await import(...)) as { a: Fn }`, and destructuring
+/// renames, e.g. `const { a: b } = await import(...)`.
+///
+/// `renamed_out` is populated with `{ local, imported }` pairs for every
+/// `{ imported: local }` specifier — mirrors `extract_import_names_with_renames`'s
+/// static-import convention (#1730) so call-edge resolution can recover the
+/// original exported name when a call site uses the local alias (#1824).
+fn extract_dynamic_import_names(
+    call_node: &Node,
+    source: &[u8],
+    renamed_out: &mut Vec<RenamedImport>,
+) -> Vec<String> {
     // Walk up through any combination/nesting of await/parenthesized/as-cast
     // wrappers to reach the variable_declarator.
     let mut current = call_node.parent();
@@ -3107,7 +3127,7 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
         return Vec::new();
     };
     match name_node.kind() {
-        "object_pattern" => collect_object_pattern_names(&name_node, source),
+        "object_pattern" => collect_object_pattern_names(&name_node, source, renamed_out),
         "identifier" => vec![node_text(&name_node, source).to_string()],
         "array_pattern" => collect_array_pattern_names(&name_node, source),
         _ => Vec::new(),
@@ -3115,7 +3135,11 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
 }
 
 /// Collect names from `const { a, b } = await import(...)`
-fn collect_object_pattern_names(pattern: &Node, source: &[u8]) -> Vec<String> {
+fn collect_object_pattern_names(
+    pattern: &Node,
+    source: &[u8],
+    renamed_out: &mut Vec<RenamedImport>,
+) -> Vec<String> {
     let mut names = Vec::new();
     for i in 0..pattern.child_count() {
         let Some(child) = pattern.child(i) else { continue };
@@ -3124,9 +3148,46 @@ fn collect_object_pattern_names(pattern: &Node, source: &[u8]) -> Vec<String> {
                 names.push(node_text(&child, source).to_string());
             }
             "pair_pattern" | "pair" => {
-                // { exportName: localAlias } → extract the key (export name)
-                if let Some(key) = child.child_by_field_name("key") {
-                    names.push(node_text(&key, source).to_string());
+                // { imported: local } → the local binding (`value`) is what
+                // call sites actually reference; `key` is the name exported
+                // by the target module. Preferring `key` unconditionally (as
+                // this branch used to) silently dropped the local alias for
+                // every renamed destructure — the same class of bug fixed for
+                // static `import { X as Y }` specifiers in #1730 (#1824).
+                let key = child.child_by_field_name("key");
+                let value = child.child_by_field_name("value");
+                let local_node = match value.map(|v| (v.kind(), v)) {
+                    Some(("identifier", v)) | Some(("shorthand_property_identifier_pattern", v)) => {
+                        Some(v)
+                    }
+                    Some(("assignment_pattern", v)) => {
+                        // { imported: local = defaultValue } — the local
+                        // binding is the assignment_pattern's left identifier.
+                        v.child_by_field_name("left")
+                            .filter(|left| left.kind() == "identifier")
+                    }
+                    _ => None,
+                };
+                match (local_node, key) {
+                    (Some(local_node), Some(key)) => {
+                        let local_text = node_text(&local_node, source).to_string();
+                        let key_text = node_text(&key, source).to_string();
+                        if local_text != key_text {
+                            renamed_out.push(RenamedImport {
+                                local: local_text.clone(),
+                                imported: key_text,
+                            });
+                        }
+                        names.push(local_text);
+                    }
+                    (None, Some(key)) => {
+                        // Nested pattern (`{ foo: { nested } }`) or other
+                        // unsupported value shape — no single local binding
+                        // to extract; fall back to the key so the specifier
+                        // isn't dropped entirely.
+                        names.push(node_text(&key, source).to_string());
+                    }
+                    _ => {}
                 }
             }
             "object_assignment_pattern" => {
@@ -4318,12 +4379,25 @@ mod tests {
 
     #[test]
     fn finds_dynamic_import_with_aliased_destructuring() {
+        // #1824: the local binding actually referenced by call sites
+        // (`fromBarrel`) must be recorded in `names`, not the name exported by
+        // the target module (`buildGraph`) — mirrors the static
+        // `import { X as Y }` fix from #1730. `renamed_imports` carries the
+        // local → original mapping so call-edge resolution can still find
+        // `buildGraph` in the target file.
         let s = parse_js("const { buildGraph: fromBarrel } = await import('./builder.js');");
         let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
         assert_eq!(dyn_imports.len(), 1);
         assert_eq!(dyn_imports[0].source, "./builder.js");
-        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
-        assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()));
+        assert!(dyn_imports[0].names.contains(&"fromBarrel".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated for a renamed destructure");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "fromBarrel");
+        assert_eq!(renamed[0].imported, "buildGraph");
     }
 
     #[test]
@@ -4333,9 +4407,16 @@ mod tests {
         assert_eq!(dyn_imports.len(), 1);
         assert_eq!(dyn_imports[0].source, "./mod.js");
         assert!(dyn_imports[0].names.contains(&"a".to_string()));
-        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(dyn_imports[0].names.contains(&"fromBarrel".to_string()));
         assert!(dyn_imports[0].names.contains(&"c".to_string()));
-        assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated for a renamed destructure");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "fromBarrel");
+        assert_eq!(renamed[0].imported, "buildGraph");
     }
 
     #[test]
@@ -4343,8 +4424,15 @@ mod tests {
         let s = parse_js("const { buildGraph: local = null } = await import('./builder.js');");
         let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
         assert_eq!(dyn_imports.len(), 1);
-        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
-        assert!(!dyn_imports[0].names.contains(&"local".to_string()));
+        assert!(dyn_imports[0].names.contains(&"local".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated for a renamed destructure");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "local");
+        assert_eq!(renamed[0].imported, "buildGraph");
     }
 
     #[test]
