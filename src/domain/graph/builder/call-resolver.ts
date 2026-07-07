@@ -227,7 +227,11 @@ export function findCaller(
  *   - resolveByReceiver  — receiver is a concrete object/class reference
  *   - resolveByGlobal    — bare call, or this/self/super receiver
  *
- * The original logic is unchanged; only the physical location moved.
+ * `importedOriginalNames` is forwarded to `resolveByReceiver` so a receiver
+ * that is itself a renamed import binding (`import { X as Y }; Y.method()`)
+ * resolves against the declared name `X` rather than the local alias `Y`
+ * (#1825). `resolveByGlobal` has no receiver-qualifier lookups, so it does
+ * not need it.
  */
 export function resolveByMethodOrGlobal(
   lookup: CallNodeLookup,
@@ -235,6 +239,7 @@ export function resolveByMethodOrGlobal(
   relPath: string,
   typeMap: Map<string, unknown>,
   callerName?: string | null,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): ReadonlyArray<{ id: number; file: string }> {
   if (
     call.receiver &&
@@ -248,6 +253,7 @@ export function resolveByMethodOrGlobal(
       relPath,
       typeMap,
       callerName,
+      importedOriginalNames,
     );
   }
   if (
@@ -296,7 +302,14 @@ export function resolveCallTargets(
   if (!targets || targets.length === 0) {
     targets = lookup.byNameAndFile(call.name, relPath);
     if (targets.length === 0) {
-      targets = resolveByMethodOrGlobal(lookup, call, relPath, typeMap, callerName);
+      targets = resolveByMethodOrGlobal(
+        lookup,
+        call,
+        relPath,
+        typeMap,
+        callerName,
+        importedOriginalNames,
+      );
     }
   }
 

@@ -417,7 +417,6 @@ fn emit_pts_alias_edges<'a>(
 ) {
     for alias in resolve_via_points_to(alias_ctx.lookup_name, alias_ctx.pts) {
         let alias_imported_from = alias_ctx.imported_names.get(alias).copied();
-        let alias_imported_original_name = alias_ctx.imported_original_names.get(alias).copied();
         let alias_call = CallInfo {
             name: alias.to_string(),
             line: alias_ctx.call_line,
@@ -428,7 +427,7 @@ fn emit_pts_alias_edges<'a>(
         };
         let mut alias_targets = resolve_call_targets(
             ctx, &alias_call, alias_ctx.rel_path, alias_imported_from, alias_ctx.type_map, alias_ctx.caller_name,
-            alias_imported_original_name,
+            alias_ctx.imported_original_names,
         );
         sort_targets_by_confidence(&mut alias_targets, alias_ctx.rel_path, alias_imported_from);
         for t in &alias_targets {
@@ -780,10 +779,9 @@ fn process_file<'a>(
         let (caller_id, caller_name) = find_enclosing_caller(&fc.defs_with_ids, call.line, fc.file_node_id);
         let is_dynamic = if call.dynamic.unwrap_or(false) { 1u32 } else { 0u32 };
         let imported_from = fc.imported_names.get(call.name.as_str()).copied();
-        let imported_original_name = fc.imported_original_names.get(call.name.as_str()).copied();
 
         let mut targets = resolve_call_targets(
-            ctx, call, fc.rel_path, imported_from, &fc.type_map, caller_name, imported_original_name,
+            ctx, call, fc.rel_path, imported_from, &fc.type_map, caller_name, &fc.imported_original_names,
         );
         // #1771/#1784: value-ref references (object-literal property values,
         // Lua builtin reassignment, `instanceof ClassName`) resolve against
@@ -947,7 +945,7 @@ fn resolve_call_targets<'a>(
     imported_from: Option<&str>,
     type_map: &HashMap<&str, (&str, f64)>,
     caller_name: &str,
-    imported_original_name: Option<&str>,
+    imported_original_names: &HashMap<&str, &str>,
 ) -> Vec<&'a NodeInfo> {
     // Flagged dynamic calls use synthetic names like "<dynamic:eval>". Short-circuit
     // so they never accidentally match a real symbol via name lookup.
@@ -958,7 +956,7 @@ fn resolve_call_targets<'a>(
     // When the call site uses a renamed import binding (`import { X as Y }`),
     // the imported file's actual symbol is declared under the *original* name
     // (X) — look that up instead of the local alias the call site wrote (#1730).
-    let target_name = imported_original_name.unwrap_or(call.name.as_str());
+    let target_name = imported_original_names.get(call.name.as_str()).copied().unwrap_or(call.name.as_str());
 
     // 1. Import-aware resolution
     if let Some(imp_file) = imported_from {
@@ -1035,6 +1033,13 @@ fn resolve_call_targets<'a>(
         // Use typeMap-resolved type or inline-new-extracted type, whichever is available.
         let resolved_type = type_lookup.map(|&(t, _)| t).or(inline_new_type.as_deref());
         if let Some(type_name) = resolved_type {
+            // The resolved type name can itself be a renamed import binding
+            // (e.g. `import { Foo as Bar } from './x'; const y = new Bar();
+            // y.method()` seeds typeMap['y'] = 'Bar') — de-alias before
+            // building the qualified lookup key, since the symbol table
+            // stores definitions under the declared name (`Foo.method`),
+            // not the local alias (#1825).
+            let type_name = imported_original_names.get(type_name).copied().unwrap_or(type_name);
             let qualified = format!("{}.{}", type_name, call.name);
             let typed: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
@@ -1066,7 +1071,16 @@ fn resolve_call_targets<'a>(
         // Guard: skip when inline_new_type is Some — mirrors TS `!typeName` which is false when the
         // inline-new regex extracted a type (e.g. `(new Foo).bar()` → typeName='Foo' → skip).
         if type_lookup.is_none() && inline_new_type.is_none() {
-            let qualified = format!("{}.{}", effective_receiver, call.name);
+            // The receiver itself can be a renamed import binding (`import {
+            // NamespaceObj as NsAlias } from './helpers.js'; NsAlias.doThing()`)
+            // — de-alias before building the qualified lookup key, since the
+            // symbol table stores the object literal under its declared name
+            // (`NamespaceObj.doThing`), not the importing file's local alias (#1825).
+            let dealiased_receiver = imported_original_names
+                .get(effective_receiver)
+                .copied()
+                .unwrap_or(effective_receiver);
+            let qualified = format!("{}.{}", dealiased_receiver, call.name);
             let direct: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
                 .map(|v| v.iter()

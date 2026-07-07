@@ -208,6 +208,17 @@ function resolveViaCompositePtsKey(
  *   5.   resolveViaPrototypeAlias   — prototype alias via typeMap.
  *   6.   resolveViaDirectQualifiedMethod — direct qualified method lookup.
  *   7.   resolveViaCompositePtsKey  — composite pts key → callback target function.
+ *
+ * `importedOriginalNames` maps a local renamed-import binding to the name it
+ * is actually declared under in its source file (`import { X as Y }` → `Y` →
+ * `X`, #1730). Steps 4-6 build a qualified `Qualifier.methodName` string to
+ * look up in the symbol table, where `Qualifier` is either the receiver text
+ * itself (step 6) or a type name resolved from the typeMap (steps 4-5) — in
+ * both cases the qualifier can itself be a renamed import binding (e.g.
+ * `import { NamespaceObj as NsAlias } from './helpers.js'; NsAlias.doThing()`).
+ * The symbol table stores definitions under their *declared* name
+ * (`NamespaceObj.doThing`), not the importing file's local alias, so the
+ * qualifier is de-aliased before building the lookup key (#1825).
  */
 export function resolveByReceiver(
   lookup: StrategyLookup,
@@ -215,6 +226,7 @@ export function resolveByReceiver(
   relPath: string,
   typeMap: Map<string, unknown>,
   callerName?: string | null,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): ReadonlyArray<{ id: number; file: string }> {
   // Strip "this." so `this.repo.method()` resolves via typeMap["repo"]
   // (or the "this.repo" key seeded directly by the TSC property-declaration enricher).
@@ -225,13 +237,21 @@ export function resolveByReceiver(
   const typeName = resolveReceiverTypeName(typeMap, call.receiver, effectiveReceiver, callerName);
 
   if (typeName) {
-    const typed = resolveViaTypedMethod(lookup, typeName, call, relPath);
+    const dealiasedTypeName = importedOriginalNames?.get(typeName) ?? typeName;
+    const typed = resolveViaTypedMethod(lookup, dealiasedTypeName, call, relPath);
     if (typed.length > 0) return typed;
 
-    const viaPrototype = resolveViaPrototypeAlias(lookup, typeMap, typeName, call, relPath);
+    const viaPrototype = resolveViaPrototypeAlias(
+      lookup,
+      typeMap,
+      dealiasedTypeName,
+      call,
+      relPath,
+    );
     if (viaPrototype.length > 0) return viaPrototype;
   } else {
-    const direct = resolveViaDirectQualifiedMethod(lookup, effectiveReceiver, call, relPath);
+    const dealiasedReceiver = importedOriginalNames?.get(effectiveReceiver) ?? effectiveReceiver;
+    const direct = resolveViaDirectQualifiedMethod(lookup, dealiasedReceiver, call, relPath);
     if (direct.length > 0) return direct;
   }
 
