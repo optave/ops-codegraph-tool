@@ -117,11 +117,14 @@ describe('exportsData', () => {
     // main and testAdd both call add from other files
     expect(addExport.consumers.length).toBe(2);
     expect(addExport.consumers.map((c) => c.name).sort()).toEqual(['main', 'testAdd']);
+    // Real callers are discriminated as symbol-level consumers (#1830)
+    expect(addExport.consumers.every((c) => c.consumerKind === 'symbol')).toBe(true);
 
     const mulExport = data.results.find((r) => r.name === 'multiply');
     expect(mulExport).toBeDefined();
     expect(mulExport.consumers.length).toBe(1);
     expect(mulExport.consumers[0].name).toBe('main');
+    expect(mulExport.consumers[0].consumerKind).toBe('symbol');
 
     const unusedExport = data.results.find((r) => r.name === 'unusedFn');
     expect(unusedExport).toBeDefined();
@@ -298,6 +301,20 @@ describe('exportsData — import type consumer crediting (#1724)', () => {
     expect(config.consumerCount).toBe(1);
     expect(config.consumers.length).toBe(1);
     expect(config.consumers[0].file).toBe('consumer.ts');
+  });
+
+  // Regression coverage for #1830: a file-level `imports-type` consumer entry
+  // must be discriminated from a real symbol-level caller so downstream
+  // renderers don't treat `consumer.ts` as a calling function or `0` as a
+  // real call-site line.
+  test('import-type consumer is discriminated as file-level, not symbol-level (#1830)', () => {
+    const data = exportsData('types.ts', dbPath2);
+    const config = data.results.find((r) => r.name === 'Config');
+    expect(config.consumers[0].consumerKind).toBe('file');
+    // The file-level source node's own name/file coincide (both are the
+    // importing file), unlike a real caller whose name is a function/method.
+    expect(config.consumers[0].name).toBe('consumer.ts');
+    expect(config.consumers[0].line).toBe(0);
   });
 
   test('interface consumed only via `import type` is excluded from --unused', () => {

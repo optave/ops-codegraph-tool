@@ -485,7 +485,7 @@ describe('fileExports', () => {
           line: 1,
           role: 'utility',
           signature: { params: 'a, b' },
-          consumers: [{ name: 'main', file: 'index.js', line: 5 }],
+          consumers: [{ name: 'main', file: 'index.js', line: 5, consumerKind: 'symbol' }],
         },
         {
           name: 'subtract',
@@ -509,6 +509,32 @@ describe('fileExports', () => {
     expect(out).toContain('main (index.js:5)');
     expect(out).toContain('subtract');
     expect(out).toContain('(no consumers)');
+  });
+
+  it('renders a file-level consumer (import type) without a fabricated call-site line (#1830)', () => {
+    mocks.exportsData.mockReturnValue({
+      file: 'types.ts',
+      totalExported: 1,
+      totalInternal: 0,
+      totalUnused: 0,
+      results: [
+        {
+          name: 'Config',
+          kind: 'interface',
+          line: 1,
+          role: null,
+          signature: null,
+          consumers: [{ name: 'consumer.ts', file: 'consumer.ts', line: 0, consumerKind: 'file' }],
+        },
+      ],
+      reexportedSymbols: [],
+      reexports: [],
+    });
+    fileExports('types.ts', '/db');
+    const out = output();
+    expect(out).toContain('consumer.ts (type-only import)');
+    // Must not render the fabricated `:0` as if it were a real call-site line.
+    expect(out).not.toContain('consumer.ts:0');
   });
 
   it('renders barrel file header when no direct exports', () => {

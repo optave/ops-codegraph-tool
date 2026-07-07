@@ -5,6 +5,21 @@ interface ExportConsumer {
   name: string;
   file: string;
   line: number;
+  /**
+   * `'symbol'` — a real caller/constructor (`name`/`line` are a genuine
+   * call-site). `'file'` — a whole-file reference such as
+   * `import type { X }`, where `name` equals `file` and `line` is always
+   * `0` because there is no specific call-site to report (#1830).
+   */
+  consumerKind: 'file' | 'symbol';
+}
+
+/** Render one consumer entry, without a fabricated call-site line for file-level entries. */
+function formatConsumer(c: ExportConsumer): string {
+  if (c.consumerKind === 'file') {
+    return `${c.file} (type-only import)`;
+  }
+  return `${c.name} (${c.file}:${c.line})`;
 }
 
 interface ExportSymbol {
@@ -65,7 +80,7 @@ function printExportSymbols(results: ExportSymbol[]): void {
       console.log('    (no consumers)');
     } else {
       for (const c of sym.consumers) {
-        console.log(`    <- ${c.name} (${c.file}:${c.line})`);
+        console.log(`    <- ${formatConsumer(c)}`);
       }
     }
   }
@@ -89,7 +104,7 @@ function printReexportSymbol(sym: ExportSymbol, indent: string): void {
     console.log(`${indent}  (no consumers)`);
   } else {
     for (const c of sym.consumers) {
-      console.log(`${indent}  <- ${c.name} (${c.file}:${c.line})`);
+      console.log(`${indent}  <- ${formatConsumer(c)}`);
     }
   }
 }
