@@ -463,10 +463,15 @@ describe('classifyNodeRoles', () => {
     expect(role.role).toBe('leaf');
   });
 
-  it('still classifies a genuine (non-interface) class property as dead-leaf (#1809 regression guard)', () => {
+  it('excludes genuine (non-interface) class property-kind nodes from role classification entirely (#1810)', () => {
     // A plain class field with no owning interface/type declaration in the
-    // file must remain dead-leaf — the #1809 partition must not promote every
-    // property-kind node to leaf, only ones owned by a TYPE_DEF_KINDS symbol.
+    // file must get no role at all — the same treatment as `parameter` (#1723).
+    // A field's liveness (is it read/written anywhere in its owning class) is
+    // a dataflow question codegraph has no property-access/write edge tracking
+    // to answer, so "zero inbound call edges" (guaranteed by construction)
+    // carries zero dead-code signal. The #1809 partition still must not
+    // promote every property-kind node to `leaf` — only ones owned by a
+    // TYPE_DEF_KINDS symbol get `leaf`; the rest get `null`, never `dead-leaf`.
     insertNode('src/widget.ts', 'file', 'src/widget.ts', 0);
     insertNode('Widget', 'class', 'src/widget.ts', 1);
     insertNode('Widget.label', 'property', 'src/widget.ts', 2);
@@ -476,7 +481,7 @@ describe('classifyNodeRoles', () => {
     const role = db.prepare("SELECT role FROM nodes WHERE name = 'Widget.label'").get() as {
       role: string | null;
     };
-    expect(role.role).toBe('dead-leaf');
+    expect(role.role).toBeNull();
   });
 
   it('incremental path: does not classify property-kind interface members as dead (#1809)', () => {
@@ -498,9 +503,28 @@ describe('classifyNodeRoles', () => {
     expect(role.role).toBe('leaf');
   });
 
-  it('regression: used parameters, interface members, and a genuinely dead function are classified correctly together', () => {
+  it('incremental path: excludes genuine (non-interface) class property-kind nodes from role classification entirely (#1810)', () => {
+    // Exercises classifyNodeRolesIncremental (triggered by passing changedFiles).
+    // A genuine class field must get no role on the incremental path just as
+    // on the full path — the fast-path property query must not blanket-classify
+    // every `kind = 'property'` row owned by a non-type-def symbol.
+    insertNode('src/widget.ts', 'file', 'src/widget.ts', 0);
+    insertNode('Widget', 'class', 'src/widget.ts', 1);
+    insertNode('Widget.label', 'property', 'src/widget.ts', 2);
+
+    classifyNodeRoles(db, ['src/widget.ts']);
+
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'Widget.label'").get() as {
+      role: string | null;
+    };
+    expect(role.role).toBeNull();
+  });
+
+  it('regression: used parameters, unused properties, interface members, and a genuinely dead function are classified correctly together', () => {
     // Mirrors the exact issue #1723 repro: `findChild(node, type)` in
     // src/extractors/helpers.ts, alongside an interface and a truly dead function.
+    // Also covers #1810: a genuine class property with no other graph
+    // connections must land alongside the parameters (no role), not dead-leaf.
     insertNode('src/helpers.ts', 'file', 'src/helpers.ts', 0);
     const findChildFn = insertNode('findChild', 'function', 'src/helpers.ts', 26);
     insertNode('node', 'parameter', 'src/helpers.ts', 26);
@@ -508,6 +532,8 @@ describe('classifyNodeRoles', () => {
     insertNode('ChaContext', 'interface', 'src/helpers.ts', 18);
     insertNode('ChaContext.implementors', 'method', 'src/helpers.ts', 20);
     insertNode('trulyDeadHelper', 'function', 'src/helpers.ts', 400);
+    insertNode('Widget', 'class', 'src/helpers.ts', 500);
+    insertNode('Widget.label', 'property', 'src/helpers.ts', 501);
 
     const caller = insertNode('caller', 'function', 'other.ts', 1);
     insertEdge(caller, findChildFn, 'calls');
@@ -519,5 +545,6 @@ describe('classifyNodeRoles', () => {
     expect(getRole('type')).toBeNull();
     expect(getRole('ChaContext.implementors')).toBe('leaf');
     expect(getRole('trulyDeadHelper')).toBe('dead-unresolved');
+    expect(getRole('Widget.label')).toBeNull();
   });
 });

@@ -504,40 +504,47 @@ interface PropertyRow {
 }
 
 /**
- * Split raw `kind = 'property'` rows into genuine dead-leaf class/struct/object
- * fields and interface/type property-signature members (#1809). Property rows
- * never reach the fan-in/fan-out `rows` query below (excluded for performance —
- * they can never have callers/callees by construction), so
- * `isTypeDeclarationMember` must be applied to them here explicitly —
- * otherwise every property-kind interface member is misclassified `dead-leaf`
- * instead of `leaf`, the same bug #1723 fixed for `method`-kind members.
+ * Filter raw `kind = 'property'` rows down to interface/type
+ * property-signature members (#1809) — the only property rows that receive a
+ * role (`leaf`). Property rows never reach the fan-in/fan-out `rows` query
+ * below (excluded for performance — they can never have callers/callees by
+ * construction), so `isTypeDeclarationMember` must be applied to them here
+ * explicitly — otherwise every property-kind interface member is
+ * misclassified instead of `leaf`, the same bug #1723 fixed for
+ * `method`-kind members.
+ *
+ * Genuine (non-interface) class/struct/object fields are deliberately left
+ * unclassified (role stays `NULL`) — the same treatment `parameter` received
+ * in #1723 (#1810). A field's liveness is a question of whether it's
+ * read/written anywhere in its owning class, which is a dataflow question
+ * codegraph has no property-access/write edge tracking to answer; "zero
+ * inbound `calls` edges" is guaranteed for every field by construction
+ * (property reads/writes never produce `calls` edges), so it carries zero
+ * dead-code signal.
  */
-function partitionPropertyRows(
+function filterTypeMemberPropertyRows(
   propertyRows: PropertyRow[],
   typeDefNamesByFile: Map<string, Set<string>>,
-): { deadLeafRows: PropertyRow[]; typeMemberLeafRows: PropertyRow[] } {
-  const deadLeafRows: PropertyRow[] = [];
-  const typeMemberLeafRows: PropertyRow[] = [];
-  for (const row of propertyRows) {
-    // `row` carries no `kind` column (the query already filtered to
-    // kind = 'property') — supply it explicitly since isTypeDeclarationMember
-    // branches on it.
-    if (isTypeDeclarationMember({ ...row, kind: 'property' }, typeDefNamesByFile)) {
-      typeMemberLeafRows.push(row);
-    } else {
-      deadLeafRows.push(row);
-    }
-  }
-  return { deadLeafRows, typeMemberLeafRows };
+): PropertyRow[] {
+  // `row` carries no `kind` column (the query already filtered to
+  // kind = 'property') — supply it explicitly since isTypeDeclarationMember
+  // branches on it.
+  return propertyRows.filter((row) =>
+    isTypeDeclarationMember({ ...row, kind: 'property' }, typeDefNamesByFile),
+  );
 }
 
 /**
  * Build a role summary and group node IDs by role from classifier output.
  * Shared between full and incremental classification paths.
+ *
+ * Property-kind rows that are not interface/type members are intentionally
+ * absent from both `rows` and `typeMemberLeafRows` (#1810) — they get no
+ * entry in `idsByRole` and so keep the `NULL` role set by the reset callback
+ * in `batchUpdateRoles`, the same treatment `parameter` receives.
  */
 function buildRoleSummary(
   rows: { id: number }[],
-  deadLeafRows: { id: number }[],
   typeMemberLeafRows: { id: number }[],
   roleMap: Map<string, string>,
   emptySummary: RoleSummary,
@@ -545,16 +552,7 @@ function buildRoleSummary(
   const summary: RoleSummary = { ...emptySummary };
   const idsByRole = new Map<string, number[]>();
 
-  // Leaf kinds are always dead-leaf — skip classifier
-  if (deadLeafRows.length > 0) {
-    const leafIds: number[] = [];
-    for (const row of deadLeafRows) leafIds.push(row.id);
-    idsByRole.set('dead-leaf', leafIds);
-    summary.dead += deadLeafRows.length;
-    summary['dead-leaf'] += deadLeafRows.length;
-  }
-
-  // Interface/type property members (#1809) are never dead — see partitionPropertyRows.
+  // Interface/type property members (#1809) are never dead — see filterTypeMemberPropertyRows.
   if (typeMemberLeafRows.length > 0) {
     idsByRole.set(
       'leaf',
@@ -814,11 +812,19 @@ function writeMedianCache(
 }
 
 function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
-  // Property kind (class/struct/object fields) can never have callers/callees.
-  // Classify them directly as dead-leaf without the expensive fan-in/fan-out
-  // JOINs — except interface/type property-signature members (#1809), which
-  // are partitioned out below via `partitionPropertyRows`/`isTypeDeclarationMember`
-  // once `typeDefNamesByFile` is available, and classified `leaf` instead.
+  // Property kind (class/struct/object fields) can never have callers/callees,
+  // so they're excluded from the expensive fan-in/fan-out JOINs below — but
+  // unlike `parameter`, they aren't uniformly role-less: interface/type
+  // property-signature members (#1809) are partitioned out below via
+  // `filterTypeMemberPropertyRows`/`isTypeDeclarationMember` once
+  // `typeDefNamesByFile` is available, and classified `leaf`.
+  //
+  // Genuine (non-interface) class/struct/object fields get NO role at all
+  // (#1810), the same treatment `parameter` gets (#1723): a field's liveness
+  // is a question of whether it's read/written anywhere in its owning class —
+  // a dataflow question codegraph has no property-access/write edge tracking
+  // to answer — so "no incoming call edges" (guaranteed for every field by
+  // construction) carries zero dead-code signal for it.
   //
   // `parameter` is deliberately NOT included here (#1723): a parameter's liveness
   // is a local dataflow question (is it referenced within its own function body),
@@ -965,23 +971,16 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
   const inMemoryEdgeCount = rows.reduce((acc, r) => acc + r.fan_in, 0);
   writeMedianCache(db, globalMedians, inMemoryEdgeCount);
 
-  // Partition property rows: interface/type property-signature members (#1809)
-  // are recognized via `isTypeDeclarationMember` against the same-file
+  // Filter property rows down to interface/type property-signature members
+  // (#1809), recognized via `isTypeDeclarationMember` against the same-file
   // TYPE_DEF_KINDS names already present in `rows` (interfaces/types are never
-  // excluded from the callable-nodes query above).
+  // excluded from the callable-nodes query above). Non-member property rows
+  // (genuine class/struct fields) get no role at all (#1810) — see
+  // `filterTypeMemberPropertyRows`.
   const typeDefNamesByFile = computeTypeDefNamesByFile(rows);
-  const { deadLeafRows, typeMemberLeafRows } = partitionPropertyRows(
-    propertyRows,
-    typeDefNamesByFile,
-  );
+  const typeMemberLeafRows = filterTypeMemberPropertyRows(propertyRows, typeDefNamesByFile);
 
-  const { summary, idsByRole } = buildRoleSummary(
-    rows,
-    deadLeafRows,
-    typeMemberLeafRows,
-    roleMap,
-    emptySummary,
-  );
+  const { summary, idsByRole } = buildRoleSummary(rows, typeMemberLeafRows, roleMap, emptySummary);
 
   batchUpdateRoles(db, idsByRole, () => {
     db.prepare('UPDATE nodes SET role = NULL').run();
@@ -1039,11 +1038,12 @@ function classifyNodeRolesIncremental(
     globalMedians = computed;
   }
 
-  // 2a. Property kind (class/struct/object fields) in affected files — dead-leaf,
-  // except interface/type property-signature members (#1809) — see
-  // classifyNodeRolesFull for the partitioning rationale.
-  // `parameter` is intentionally excluded (#1723) — see classifyNodeRolesFull for
-  // the rationale. Parameters stay unclassified (role = NULL) after the reset below.
+  // 2a. Property kind (class/struct/object fields) in affected files. Interface/
+  // type property-signature members (#1809) get `leaf`; genuine (non-interface)
+  // fields get no role at all (#1810) — see classifyNodeRolesFull for the
+  // filtering rationale. `parameter` is intentionally excluded (#1723) — see
+  // classifyNodeRolesFull for the rationale. Parameters stay unclassified
+  // (role = NULL) after the reset below.
   const propertyRows = db
     .prepare(
       `SELECT n.id, n.name, n.file FROM nodes n
@@ -1158,22 +1158,14 @@ function classifyNodeRolesIncremental(
   );
   const roleMap = classifyRoles(classifierInput, globalMedians);
 
-  // Partition property rows: interface/type property-signature members (#1809)
-  // — see classifyNodeRolesFull for the rationale.
+  // Filter property rows down to interface/type property-signature members
+  // (#1809); non-member property rows get no role at all (#1810) — see
+  // classifyNodeRolesFull for the filtering rationale.
   const typeDefNamesByFile = computeTypeDefNamesByFile(rows);
-  const { deadLeafRows, typeMemberLeafRows } = partitionPropertyRows(
-    propertyRows,
-    typeDefNamesByFile,
-  );
+  const typeMemberLeafRows = filterTypeMemberPropertyRows(propertyRows, typeDefNamesByFile);
 
   // 6. Build summary (only for affected nodes) and update only those nodes
-  const { summary, idsByRole } = buildRoleSummary(
-    rows,
-    deadLeafRows,
-    typeMemberLeafRows,
-    roleMap,
-    emptySummary,
-  );
+  const { summary, idsByRole } = buildRoleSummary(rows, typeMemberLeafRows, roleMap, emptySummary);
 
   batchUpdateRoles(db, idsByRole, () => {
     // Reset roles only for affected files' nodes
