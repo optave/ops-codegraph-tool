@@ -667,6 +667,49 @@ pub fn find_reverse_dependencies(
     reverse_deps
 }
 
+/// Captures the forward+reverse import-neighbor file set for files about to
+/// be removed, BEFORE `purge_changed_files` deletes their edges.
+///
+/// `refresh_affected_directory_metrics` discovers cross-directory neighbors
+/// by querying LIVE import edges from the affected directories — this works
+/// for added/modified files (their edges are rebuilt and still present) but
+/// not for removed files, whose edges in both directions are purged before
+/// the structure stage runs. Reading them here, one step earlier in the
+/// pipeline, closes that gap. Mirrors `captureRemovedFileNeighbors` in
+/// `detect-changes.ts` (#1839).
+pub fn capture_removed_file_neighbors(conn: &Connection, removed_files: &[String]) -> Vec<String> {
+    if removed_files.is_empty() {
+        return Vec::new();
+    }
+    let removed_set: HashSet<&str> = removed_files.iter().map(|s| s.as_str()).collect();
+    let mut neighbors: HashSet<String> = HashSet::new();
+
+    let mut stmt = match conn.prepare(
+        "SELECT n2.file AS other FROM edges e \
+           JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
+           WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file AND n1.file = ?1 \
+         UNION \
+         SELECT n1.file AS other FROM edges e \
+           JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
+           WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file AND n2.file = ?1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    for f in removed_files {
+        if let Ok(rows) = stmt.query_map([f], |row| row.get::<_, String>(0)) {
+            for row in rows.flatten() {
+                if !removed_set.contains(row.as_str()) {
+                    neighbors.insert(row);
+                }
+            }
+        }
+    }
+
+    neighbors.into_iter().collect()
+}
+
 /// Purge graph data for changed/removed files and delete outgoing edges for reverse deps.
 ///
 /// Deletion order: analysis dependents → edges → nodes (matches `connection::purge_files_data`).
@@ -1108,5 +1151,64 @@ mod tests {
             )
             .unwrap();
         assert_eq!(new_target, target_new_id);
+    }
+
+    // ── capture_removed_file_neighbors (#1839) ──────────────────────────
+
+    #[test]
+    fn capture_removed_file_neighbors_finds_both_directions() {
+        let conn = test_conn();
+        // src/pkgA/a1.js imports src/pkgB/b1.js (forward); src/pkgC/c1.js
+        // imports src/pkgA/a1.js (reverse) — both directions must surface.
+        let a1 = insert_node(&conn, "a1", "function", "src/pkgA/a1.js", 1);
+        let b1 = insert_node(&conn, "b1", "function", "src/pkgB/b1.js", 1);
+        let c1 = insert_node(&conn, "c1", "function", "src/pkgC/c1.js", 1);
+        // Unrelated file — must not appear in the result.
+        insert_node(&conn, "d1", "function", "src/pkgD/d1.js", 1);
+
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'imports', 1.0, 0)",
+            rusqlite::params![a1, b1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'imports', 1.0, 0)",
+            rusqlite::params![c1, a1],
+        )
+        .unwrap();
+
+        let mut neighbors =
+            capture_removed_file_neighbors(&conn, &["src/pkgA/a1.js".to_string()]);
+        neighbors.sort();
+        assert_eq!(
+            neighbors,
+            vec!["src/pkgB/b1.js".to_string(), "src/pkgC/c1.js".to_string()]
+        );
+    }
+
+    #[test]
+    fn capture_removed_file_neighbors_empty_for_no_removed_files() {
+        let conn = test_conn();
+        assert!(capture_removed_file_neighbors(&conn, &[]).is_empty());
+    }
+
+    #[test]
+    fn capture_removed_file_neighbors_excludes_other_removed_files() {
+        // Two files being removed together that import each other must not
+        // report each other as "neighbors" — only still-live files count.
+        let conn = test_conn();
+        let a1 = insert_node(&conn, "a1", "function", "src/pkgA/a1.js", 1);
+        let a2 = insert_node(&conn, "a2", "function", "src/pkgA/a2.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'imports', 1.0, 0)",
+            rusqlite::params![a1, a2],
+        )
+        .unwrap();
+
+        let neighbors = capture_removed_file_neighbors(
+            &conn,
+            &["src/pkgA/a1.js".to_string(), "src/pkgA/a2.js".to_string()],
+        );
+        assert!(neighbors.is_empty());
     }
 }

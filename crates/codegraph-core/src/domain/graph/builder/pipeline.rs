@@ -177,22 +177,24 @@ fn early_exit_result(
 
 /// Save reverse-dep edges (and reverse-deps of removed files) before purging
 /// changed files. Mirrors the JS save-then-purge sequence in `build-edges.ts`
-/// (#1012). Returns `(saved_reverse_dep_edges, removal_reverse_deps)` so the
-/// pipeline can reconnect them after Stage 5 and reclassify roles in Stage 8.
+/// (#1012). Returns `(saved_reverse_dep_edges, removal_reverse_deps,
+/// removed_file_neighbors)` so the pipeline can reconnect edges after Stage 5,
+/// reclassify roles in Stage 8, and (#1839) fold a removed file's
+/// cross-directory neighbors into Stage 8's directory-metrics refresh.
 fn save_and_purge_changed(
     conn: &Connection,
     parse_changes: &[&detect_changes::ChangedFile],
     change_result: &detect_changes::ChangeResult,
     opts: &BuildOpts,
     root_dir: &str,
-) -> (Vec<detect_changes::SavedReverseDepEdge>, Vec<String>) {
+) -> (Vec<detect_changes::SavedReverseDepEdge>, Vec<String>, Vec<String>) {
     let mut saved_reverse_dep_edges: Vec<detect_changes::SavedReverseDepEdge> = Vec::new();
     let mut removal_reverse_deps: Vec<String> = Vec::new();
 
     if change_result.is_full_build {
         let has_embeddings = detect_changes::has_embeddings(conn);
         detect_changes::clear_all_graph_data(conn, has_embeddings);
-        return (saved_reverse_dep_edges, removal_reverse_deps);
+        return (saved_reverse_dep_edges, removal_reverse_deps, Vec::new());
     }
 
     let changed_paths: Vec<String> = parse_changes.iter().map(|c| c.rel_path.clone()).collect();
@@ -209,6 +211,12 @@ fn save_and_purge_changed(
         }
     }
 
+    // Capture removed files' cross-directory neighbor set BEFORE purging —
+    // both directions of their import edges are deleted below, so this is
+    // the last point they can still be discovered from live evidence (#1839).
+    let removed_file_neighbors =
+        detect_changes::capture_removed_file_neighbors(conn, &change_result.removed);
+
     let files_to_purge: Vec<String> = change_result
         .removed
         .iter()
@@ -217,7 +225,7 @@ fn save_and_purge_changed(
         .collect();
     detect_changes::purge_changed_files(conn, &files_to_purge, &[]);
 
-    (saved_reverse_dep_edges, removal_reverse_deps)
+    (saved_reverse_dep_edges, removal_reverse_deps, removed_file_neighbors)
 }
 
 /// Parse a changed-file slice in parallel and key the results by relative path.
@@ -298,7 +306,10 @@ fn reconnect_saved_reverse_dep_edges(
 /// `removed_files` is threaded through separately from `parse_changes_len`
 /// (which only counts re-parsed files) so the fast path's directory-metrics
 /// refresh also covers files deleted from a directory, not just files added
-/// or modified within it (#1738).
+/// or modified within it (#1738). `removed_file_neighbors` — the
+/// cross-directory import neighbors of `removed_files`, captured before they
+/// were purged — lets that refresh also reach a directory whose only link to
+/// the touched set was an edge to/from one of those removed files (#1839).
 fn run_structure_phase(
     conn: &Connection,
     file_symbols: &BTreeMap<String, FileSymbols>,
@@ -307,6 +318,7 @@ fn run_structure_phase(
     line_count_map: &HashMap<String, i64>,
     parse_changes_len: usize,
     removed_files: &[String],
+    removed_file_neighbors: &[String],
     is_full_build: bool,
 ) {
     let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
@@ -317,7 +329,12 @@ fn run_structure_phase(
 
     if use_fast_path {
         structure::update_changed_file_metrics(conn, &changed_files, line_count_map, file_symbols);
-        structure::refresh_affected_directory_metrics(conn, &changed_files, removed_files);
+        structure::refresh_affected_directory_metrics(
+            conn,
+            &changed_files,
+            removed_files,
+            removed_file_neighbors,
+        );
     } else {
         let changed_for_structure: Option<Vec<String>> = if is_full_build {
             None
@@ -511,7 +528,7 @@ pub fn run_pipeline(
     // Stage 3b: save reverse-dep edges (incremental) or clear all (full),
     // then purge changed files. Returns the saved edges for Stage 7
     // reconnect and the removal reverse-dep set for Stage 8 reclassification.
-    let (saved_reverse_dep_edges, removal_reverse_deps) =
+    let (saved_reverse_dep_edges, removal_reverse_deps, removed_file_neighbors) =
         save_and_purge_changed(conn, &parse_changes, &change_result, &opts, root_dir);
 
     // ── Stage 4: Parse files ───────────────────────────────────────────
@@ -645,6 +662,7 @@ pub fn run_pipeline(
         &line_count_map,
         parse_changes.len(),
         &change_result.removed,
+        &removed_file_neighbors,
         change_result.is_full_build,
     );
     timing.structure_ms = t0.elapsed().as_secs_f64() * 1000.0;

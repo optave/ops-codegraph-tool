@@ -24,10 +24,10 @@
  * changed file gaining/losing an import into a sibling package shifts that
  * package's fan-in/fan-out too, even though none of its own files changed)
  * — cheap because it's bounded by (changed files x path depth) rather than
- * the size of the repo. See #1839 for a narrower residual gap this does not
- * cover: a directory whose only link to the touched set was an edge to/from
- * a file that was itself just removed (that edge's evidence is gone by the
- * time the refresh runs).
+ * the size of the repo. See #1839 (fixed separately, in
+ * `issue-1839-directory-fanin-fanout-stale-removal.test.ts`) for the related
+ * case of a directory whose only link to the touched set was an edge to/from
+ * a file that was itself just removed.
  *
  * Strategy: build a fixture with >20 files (crossing the fast-path's
  * `existingFileCount > 20` gate), mutate it incrementally, then diff the

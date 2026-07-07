@@ -378,6 +378,41 @@ function findReverseDependencies(
 }
 
 /**
+ * Captures the forward+reverse import-neighbor file set for files about to be
+ * removed, BEFORE `purgeFilesFromGraph`/`purgeFilesData` deletes their edges.
+ *
+ * `refreshAffectedDirectoryMetrics` discovers cross-directory neighbors by
+ * querying LIVE import edges from the affected directories — this works for
+ * added/modified files (their edges are rebuilt and still present) but not
+ * for removed files, whose edges in both directions are purged before
+ * `buildStructure` runs. Reading them here, one step earlier in the pipeline,
+ * closes that gap: the neighbor files' ancestor directories are unioned into
+ * the affected-directory set so a directory whose only link to the touched
+ * set was an edge to/from a now-removed file still gets its fan-in/fan-out
+ * recomputed (#1839).
+ */
+function captureRemovedFileNeighbors(db: BetterSqlite3Database, removedFiles: string[]): string[] {
+  if (removedFiles.length === 0) return [];
+  const removedSet = new Set(removedFiles);
+  const neighbors = new Set<string>();
+  const neighborStmt = db.prepare(`
+    SELECT n2.file AS other FROM edges e
+    JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
+    WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file AND n1.file = ?
+    UNION
+    SELECT n1.file AS other FROM edges e
+    JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
+    WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file AND n2.file = ?
+  `);
+  for (const relPath of removedFiles) {
+    for (const row of neighborStmt.all(relPath, relPath) as Array<{ other: string }>) {
+      if (!removedSet.has(row.other)) neighbors.add(row.other);
+    }
+  }
+  return [...neighbors];
+}
+
+/**
  * Computes each node's 1-based ordinal rank (by ascending line) among nodes
  * sharing its (name, kind) within `file`, plus the sibling-group size, keyed
  * by `name|kind|line`.
@@ -579,6 +614,7 @@ function handleScopedBuild(ctx: PipelineContext): void {
     const changedRelPaths = new Set<string>([...changePaths, ...ctx.removed]);
     reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir, ctx.nativeDb);
   }
+  ctx.removedFileNeighbors = captureRemovedFileNeighbors(db, ctx.removed);
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
   info(
     `Scoped rebuild: ${changePaths.length} changed, ${ctx.removed.length} removed, ${reverseDeps.size} reverse-deps`,
@@ -621,6 +657,7 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
   const changePaths = ctx.parseChanges.map(
     (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
   );
+  ctx.removedFileNeighbors = captureRemovedFileNeighbors(db, ctx.removed);
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
 }
 
