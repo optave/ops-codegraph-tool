@@ -181,18 +181,12 @@ function handleMethodCapture(c: Record<string, TreeSitterNode>, definitions: Def
   // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to '' and are skipped.
   const methName = resolveMethodDefinitionName(methNameNode);
   if (!methName) return;
+  // extractObjectLiteralFunctions already emits this node's bare + qualified definitions
+  // together (#1818) — skip here to avoid a duplicate, differently-positioned bare entry.
+  if (isObjectLiteralDeclaratorMethod(c.meth_node!)) return;
   const parentClass = findParentClass(c.meth_node!);
   const fullName = parentClass ? `${parentClass}.${methName}` : methName;
-  const methChildren = extractParameters(c.meth_node!);
-  const methVis = extractVisibility(c.meth_node!);
-  definitions.push({
-    name: fullName,
-    kind: 'method',
-    line: nodeStartLine(c.meth_node!),
-    endLine: nodeEndLine(c.meth_node!),
-    children: methChildren.length > 0 ? methChildren : undefined,
-    visibility: methVis,
-  });
+  definitions.push(buildMethodDefinition(c.meth_node!, fullName));
 }
 
 /** Node types whose own `name` field is the exported symbol's name. */
@@ -516,6 +510,57 @@ function hasFunctionScopeAncestor(node: TreeSitterNode): boolean {
     p = p.parent ?? null;
   }
   return false;
+}
+
+/**
+ * True when `declarator` is the shape extractObjectLiteralFunctions qualifies: a plain
+ * identifier name, outside any function scope. Shared by that function's four call sites
+ * (extractConstDeclarators, extractLetVarObjLiteralDeclarators, handleVariableDeclarator's
+ * const/let/var branches) and by `isObjectLiteralDeclaratorMethod` below, which walks the
+ * same shape from a nested method_definition upward — keeping both directions in sync (#1818).
+ */
+function isEligibleObjectLiteralDeclarator(declarator: TreeSitterNode): boolean {
+  if (declarator.type !== 'variable_declarator') return false;
+  const nameN = declarator.childForFieldName('name');
+  if (nameN?.type !== 'identifier') return false;
+  return !hasFunctionScopeAncestor(declarator);
+}
+
+/**
+ * True when `methNode` (a method_definition) is a shorthand method whose enclosing object
+ * literal is the direct value of an eligible variable declarator (see
+ * `isEligibleObjectLiteralDeclarator`) AND has no enclosing class — the common shape
+ * extractObjectLiteralFunctions already emits both the qualified (`varName.method`) and bare
+ * (`method`) definitions for, together, in source position order relative to the declaration
+ * itself. The generic method_definition handlers (handleMethodCapture, handleMethodDef) skip
+ * these nodes to avoid pushing a second, differently-positioned bare entry that makes native
+ * and WASM disagree on `definitions` array order (#1818).
+ *
+ * The enclosing-class check excludes a rarer, unrelated nested shape — e.g. a const declared
+ * inside a class `static { }` block (not itself function-scoped) — where the generic handlers
+ * already produce a *class*-qualified entry (`ClassName.method`, via findParentClass) rather
+ * than a bare one; that entry must be left alone, not duplicated by a spurious bare push.
+ */
+function isObjectLiteralDeclaratorMethod(methNode: TreeSitterNode): boolean {
+  const obj = methNode.parent;
+  if (obj?.type !== 'object') return false;
+  const declarator = obj.parent;
+  if (!declarator || !isEligibleObjectLiteralDeclarator(declarator)) return false;
+  return findParentClass(methNode) === null;
+}
+
+/** Build the generic (possibly class-qualified) method_definition Definition entry. */
+function buildMethodDefinition(node: TreeSitterNode, name: string): Definition {
+  const methChildren = extractParameters(node);
+  const methVis = extractVisibility(node);
+  return {
+    name,
+    kind: 'method',
+    line: nodeStartLine(node),
+    endLine: nodeEndLine(node),
+    children: methChildren.length > 0 ? methChildren : undefined,
+    visibility: methVis,
+  };
 }
 
 /**
@@ -1005,18 +1050,12 @@ function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
     // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to '' and are skipped.
     const methName = resolveMethodDefinitionName(nameNode);
     if (!methName) return;
+    // extractObjectLiteralFunctions already emits this node's bare + qualified definitions
+    // together (#1818) — skip here to avoid a duplicate, differently-positioned bare entry.
+    if (isObjectLiteralDeclaratorMethod(node)) return;
     const parentClass = findParentClass(node);
     const fullName = parentClass ? `${parentClass}.${methName}` : methName;
-    const methChildren = extractParameters(node);
-    const methVis = extractVisibility(node);
-    ctx.definitions.push({
-      name: fullName,
-      kind: 'method',
-      line: nodeStartLine(node),
-      endLine: nodeEndLine(node),
-      children: methChildren.length > 0 ? methChildren : undefined,
-      visibility: methVis,
-    });
+    ctx.definitions.push(buildMethodDefinition(node, fullName));
   }
 }
 
@@ -1306,6 +1345,14 @@ function handleConstObjectPatternAssignment(
  * looks up `lookup.byName('obj.baz')` rather than `lookup.byName('baz')`.
  *
  * `const obj = { baz: () => {} }` → emits Definition { name: 'obj.baz', kind: 'function' }
+ *
+ * For `method_definition` children (shorthand methods), also emits the bare, unqualified
+ * `Definition { name: 'baz', kind: 'method' }` that the generic method_definition handlers
+ * (handleMethodCapture, handleMethodDef) would otherwise produce on their own — see
+ * `isObjectLiteralDeclaratorMethod`, which skips them for exactly these nodes so both entries
+ * are always emitted here together, in a fixed relative order (bare first). Keeping them
+ * adjacent (rather than one inline and one from a separate pass) is what keeps native and WASM
+ * agreeing on `definitions` array order (#1818).
  */
 function extractObjectLiteralFunctions(
   objNode: TreeSitterNode,
@@ -1347,6 +1394,15 @@ function extractObjectLiteralFunctions(
         // Non-string computed keys (e.g. `[Symbol.iterator]`) resolve to '' and are skipped.
         const methodName = resolveMethodDefinitionName(nameNode);
         if (!methodName) continue;
+        // Bare entry first (when the generic handlers would have produced one — see
+        // isObjectLiteralDeclaratorMethod) — matches the tie-break generic
+        // call-attribution (findCaller) relies on for equal-span duplicates: the first
+        // entry wins, so the bare method (not the qualified one) is picked as the call
+        // target. When there's an enclosing class, the generic handlers already push a
+        // class-qualified entry on their own; skip here to avoid a duplicate.
+        if (isObjectLiteralDeclaratorMethod(child)) {
+          definitions.push(buildMethodDefinition(child, methodName));
+        }
         definitions.push({
           name: `${varName}.${methodName}`,
           kind: 'function',
