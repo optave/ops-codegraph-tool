@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
+import { getOrCreatePerDbChunkStmt } from '../../../shared/chunked-stmt-cache.js';
 import { buildIgnoreSet, EXTENSIONS, normalizePath } from '../../../shared/constants.js';
 import { toErrorMessage } from '../../../shared/errors.js';
 import { compileGlobs, globToRegex, matchesAny } from '../../../shared/globs.js';
@@ -357,33 +358,8 @@ const BATCH_CHUNK = 500;
 const nodeStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
 const edgeStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
 
-/**
- * Get (or lazily prepare + cache) a multi-value INSERT statement for a given
- * chunk size, keyed per-database. Shared by getNodeStmt/getEdgeStmt, which
- * previously duplicated this exact WeakMap<db, Map<chunkSize, stmt>>
- * cache-getter shape — only the SQL text differed.
- */
-function getOrCreateBatchStmt(
-  cache: WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>,
-  db: BetterSqlite3Database,
-  chunkSize: number,
-  buildSql: (chunkSize: number) => string,
-): SqliteStatement {
-  let perDb = cache.get(db);
-  if (!perDb) {
-    perDb = new Map();
-    cache.set(db, perDb);
-  }
-  let stmt = perDb.get(chunkSize);
-  if (!stmt) {
-    stmt = db.prepare(buildSql(chunkSize));
-    perDb.set(chunkSize, stmt);
-  }
-  return stmt;
-}
-
 function getNodeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
-  return getOrCreateBatchStmt(nodeStmtCache, db, chunkSize, (n) => {
+  return getOrCreatePerDbChunkStmt(nodeStmtCache, db, chunkSize, (n) => {
     const ph = '(?,?,?,?,?,?,?,?,?)';
     return (
       'INSERT OR IGNORE INTO nodes (name,kind,file,line,end_line,parent_id,qualified_name,scope,visibility) VALUES ' +
@@ -393,7 +369,7 @@ function getNodeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatem
 }
 
 function getEdgeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
-  return getOrCreateBatchStmt(edgeStmtCache, db, chunkSize, (n) => {
+  return getOrCreatePerDbChunkStmt(edgeStmtCache, db, chunkSize, (n) => {
     const ph = '(?,?,?,?,?,?,?)';
     return (
       'INSERT INTO edges (source_id,target_id,kind,confidence,dynamic,technique,dynamic_kind) VALUES ' +
@@ -451,7 +427,7 @@ export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): 
 const exportStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
 
 function getExportStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
-  return getOrCreateBatchStmt(exportStmtCache, db, chunkSize, (n) => {
+  return getOrCreatePerDbChunkStmt(exportStmtCache, db, chunkSize, (n) => {
     const conditions = Array.from(
       { length: n },
       () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
