@@ -269,17 +269,21 @@ function updateChangedFileMetrics(ctx: PipelineContext, changedFiles: string[]):
  * loses) an import into a sibling package shifts that package's
  * fan-in/fan-out/cohesion even though none of its own files were touched.
  *
- * The neighbor-discovery step is seeded only from each touched file's leaf
- * directory, not from every ancestor up to root — the neighbor query is
- * bounded by the number of import edges crossing ONE directory's boundary,
- * which for a broad, near-root "container" directory (e.g. `src`, which
- * transitively contains most of the repo) is effectively the size of the
- * whole codebase, not "path depth". Seeding from every ancestor turned a
- * single touched file into 50+ affected directories on this repo's own
- * `src/` tree — a measured 70-90ms hit on the "1-file rebuild" benchmark
- * (#1738 follow-up, mirrors the same fix in structure.rs). Ancestor rollup
- * (ancestors' own aggregates still get recomputed) is unaffected; only the
- * expensive cross-directory neighbor lookup is scoped down.
+ * The neighbor-discovery step is seeded from each touched file itself, not
+ * from every ancestor up to root, and not from the touched file's whole
+ * containing directory either — the neighbor query is now bounded by the
+ * import edges attached to that ONE file. Seeding from every ancestor
+ * turned a single touched file into 50+ affected directories on this
+ * repo's own `src/` tree — a measured 70-90ms hit on the "1-file rebuild"
+ * benchmark (#1738 follow-up, mirrors the same fix in structure.rs).
+ * Seeding from the touched file's *directory* (an intermediate fix) was
+ * still broad enough to pull in unrelated sibling files' edges whenever
+ * that directory was itself a widely-imported hub (e.g. `src/domain`) —
+ * measured 251 neighbour files / 29 affected dirs (~55ms) for a single-file
+ * change there, cut to 46 / 13 by scoping to the exact file (#1855,
+ * mirrors the same fix in structure.rs). Ancestor rollup (ancestors' own
+ * aggregates still get recomputed) is unaffected; only the expensive
+ * cross-directory neighbor lookup is scoped down.
  *
  * Removed files need no edge/node cleanup of their own — `purgeFilesData`
  * already deleted their nodes and every edge referencing them (including
@@ -302,33 +306,44 @@ function refreshAffectedDirectoryMetrics(
   const getDirId = db.prepare(
     "SELECT id FROM nodes WHERE name = ? AND kind = 'directory' AND file = ? AND line = 0",
   );
-  // Directories connected to `dir` via a live import/imports-type edge in
-  // either direction — the cross-directory neighbours whose own fan-in/out
-  // may have shifted even though none of their files changed.
+  // Files connected to `file` via a live import/imports-type edge in either
+  // direction — the cross-directory neighbours whose own fan-in/out may
+  // have shifted even though `file` is the only one that actually changed.
+  //
+  // Scoped to the exact touched file, not its containing directory. An
+  // earlier version scoped this to the whole leaf directory (`file >= x/
+  // AND file < x0`), which also pulled in edges belonging to unrelated
+  // sibling files that happen to live alongside the touched file — harmless
+  // when the directory is small, but when the touched file sits in a
+  // widely-imported "hub" directory (e.g. `src/domain`, imported from
+  // dozens of unrelated directories via sibling files), that range scan
+  // discovers hundreds of neighbour files that have nothing to do with the
+  // touched file's own edges, which then balloon the affected-directory set
+  // to include broad, expensive-to-recompute ancestors like the repo-root
+  // `src` (measured: 251 neighbour files / 29 affected dirs for a
+  // single-file change to this repo's own `src/domain/queries.ts`, a ~55ms
+  // hit on the "1-file rebuild" benchmark — #1855). Scoping to the exact
+  // file preserves the cross-directory detection this exists for (#1738)
+  // while only considering edges that could plausibly have changed as a
+  // result of editing that file (251 -> 46 neighbour files / 29 -> 13
+  // affected dirs for the same probe).
   const neighborFiles = db.prepare(`
     SELECT n2.file AS other FROM edges e
       JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
-      WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file
-        AND n1.file >= @lo AND n1.file < @hi
-        AND NOT (n2.file >= @lo AND n2.file < @hi)
+      WHERE e.kind IN ('imports', 'imports-type') AND n1.file = @file AND n2.file != @file
     UNION
     SELECT n1.file AS other FROM edges e
       JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id
-      WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file
-        AND n2.file >= @lo AND n2.file < @hi
-        AND NOT (n1.file >= @lo AND n1.file < @hi)
+      WHERE e.kind IN ('imports', 'imports-type') AND n2.file = @file AND n1.file != @file
   `);
-  // Seed neighbor-discovery from each touched file's own leaf directory
-  // only — NOT every entry in `affectedDirs` (which includes the full
-  // ancestor chain up to root). See the function doc comment: expanding
-  // from a broad ancestor like `src` is effectively repo-wide.
-  const leafDirs = new Set<string>();
-  for (const f of [...changedFiles, ...removedFiles]) {
-    const d = normalizePath(path.dirname(f));
-    if (d && d !== '.') leafDirs.add(d);
-  }
-  for (const dir of leafDirs) {
-    const otherFiles = neighborFiles.all({ lo: `${dir}/`, hi: `${dir}0` }) as Array<{
+  // Seed neighbor-discovery from each touched file individually — NOT its
+  // containing directory, and NOT every entry in `affectedDirs` (which
+  // includes the full ancestor chain up to root). See the function doc
+  // comment: expanding from a broad ancestor like `src`, or from every
+  // sibling in the touched file's own directory, is effectively repo-wide
+  // whenever that directory is a widely-imported hub.
+  for (const file of [...changedFiles, ...removedFiles]) {
+    const otherFiles = neighborFiles.all({ file }) as Array<{
       other: string;
     }>;
     for (const ancestor of getAncestorDirs(otherFiles.map((r) => r.other))) {
