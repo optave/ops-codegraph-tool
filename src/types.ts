@@ -1319,6 +1319,8 @@ export interface BuildResult {
     chaMs?: number;
     /** Wall-clock time for the this/super dispatch WASM post-pass (native path only). */
     thisDispatchMs?: number;
+    /** Wall-clock time for the Object.defineProperty accessor dispatch WASM post-pass (native path only). */
+    definePropertyDispatchMs?: number;
     /** Wall-clock time for the dropped-language gap detection + backfill (native path only). */
     gapDetectMs?: number;
     /** Wall-clock time for role re-classification after JS edge-writing post-passes (native path only). */
