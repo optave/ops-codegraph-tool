@@ -157,6 +157,7 @@ Controls graph construction.
 | `driftThreshold` | `number` | `0.2` | Fraction (0–1). If incremental rebuild changes node or edge counts by more than this, codegraph warns and suggests `--no-incremental`. |
 | `smallFilesThreshold` | `number` | `5` | When ≤ this many files change in an incremental build, codegraph takes faster code paths (skips full rebuilds of structure metrics, scoped barrel re-parsing, JS fallback for inserts). |
 | `execMaxBufferBytes` | `number` | `104857600` | Max stdout buffer size (bytes) for the `git check-ignore` subprocess spawned while detecting gitignored files during native-orchestrator drop detection. |
+| `reverseDepAlignmentMaxGroupSize` | `number` | `200` | Max size of a same-(name, kind) sibling group (e.g. several `close() {}` methods in one file) that incremental rebuilds will line-align when reconnecting reverse-dependency call edges. Larger groups fall back to nearest-line matching. |
 
 ---
 

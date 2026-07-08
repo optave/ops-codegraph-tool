@@ -1394,6 +1394,14 @@ export interface CodegraphConfig {
      * files out of the dropped-language-gap detection). Default: 104857600 (100 MB).
      */
     execMaxBufferBytes: number;
+    /**
+     * Max size of a same-(name, kind) sibling group `reconnectReverseDepEdges`
+     * will run its line-alignment against (#1865). Groups above this size fall
+     * back to nearest-line matching to bound worst-case incremental-build cost.
+     * Mirrors `reverse_dep_alignment_max_group_size` in
+     * `crates/codegraph-core/src/infrastructure/config.rs`.
+     */
+    reverseDepAlignmentMaxGroupSize: number;
   };
 
   db: {
