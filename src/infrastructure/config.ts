@@ -181,11 +181,13 @@ export const DEFAULTS = deepFreeze({
     refinementTheta: 1.0,
     /**
      * Growth multiplier applied when a Leiden partition's per-community
-     * typed arrays need to be resized to fit a larger community count.
-     * Threaded through `communitiesData()` -> `louvainCommunities()` ->
-     * `detectClusters()` -> `makePartition()` to `ensureCommCapacity()` in
-     * `src/graph/algorithms/leiden/partition.ts`. Ignored by the native Rust
-     * Louvain path (classic Louvain doesn't use this Leiden-specific resize).
+     * arrays need to be resized to fit a larger community count. Threaded
+     * through `communitiesData()` -> `louvainCommunities()` to both engines:
+     * the JS path (`detectClusters()` -> `makePartition()` ->
+     * `ensureCommCapacity()` in `src/graph/algorithms/leiden/partition.ts`)
+     * and the native path (`leiden_communities()` ->
+     * `Partition::ensure_capacity()` in
+     * `crates/codegraph-core/src/graph/algorithms/leiden.rs`).
      */
     capacityGrowthFactor: 1.5,
   },

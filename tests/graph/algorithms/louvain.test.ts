@@ -201,4 +201,30 @@ describe('louvainCommunities', () => {
       }
     });
   });
+
+  // Regression guard for issue #1804: before that fix, the native Rust path
+  // ran classic Louvain and silently ignored maxLevels/maxLocalPasses/
+  // refinementTheta/capacityGrowthFactor entirely (native Leiden now honors
+  // all four, same as the JS fallback) — this just pins that passing them
+  // doesn't throw or change the shape of the result, on both engines.
+  it('accepts maxLevels/maxLocalPasses/refinementTheta/capacityGrowthFactor without error', () => {
+    const g = new CodeGraph();
+    g.addEdge('a', 'b');
+    g.addEdge('b', 'c');
+    g.addEdge('c', 'a');
+    g.addEdge('x', 'y');
+    g.addEdge('y', 'z');
+    g.addEdge('z', 'x');
+    g.addEdge('c', 'x');
+
+    const { assignments, modularity } = louvainCommunities(g, {
+      maxLevels: 50,
+      maxLocalPasses: 20,
+      refinementTheta: 1.0,
+      capacityGrowthFactor: 1.5,
+    });
+
+    expect(assignments.size).toBe(6);
+    expect(typeof modularity).toBe('number');
+  });
 });

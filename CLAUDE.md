@@ -128,7 +128,7 @@ Source is TypeScript in `src/`, compiled via `tsup`. The Rust native engine live
 | `features/boundaries.ts` | Architecture boundary rules with onion architecture preset |
 | `features/cfg.ts` | Control-flow graph generation |
 | `features/check.ts` | CI validation predicates (cycles, complexity, blast radius, boundaries) |
-| `features/communities.ts` | Louvain community detection, drift analysis (delegates to `graph/` subsystem) |
+| `features/communities.ts` | Leiden community detection, drift analysis (delegates to `graph/` subsystem) |
 | `features/complexity.ts` | Cognitive, cyclomatic, Halstead, MI computation from AST |
 | `features/dataflow.ts` | Dataflow analysis |
 | `features/export.ts` | Graph export orchestration: loads data from DB, delegates to `presentation/` serializers |
@@ -148,7 +148,7 @@ Source is TypeScript in `src/`, compiled via `tsup`. The Rust native engine live
 | `presentation/sequence-renderer.ts` | Mermaid sequence diagram rendering |
 | `presentation/table.ts`, `result-formatter.ts`, `colors.ts` | CLI table formatting, JSON/NDJSON output, color constants |
 | **`graph/`** | **Unified graph model** |
-| `graph/` | `CodeGraph` class (`model.ts`), algorithms (Tarjan SCC, Louvain, BFS, shortest path, centrality), classifiers (role, risk), builders (dependency, structure, temporal) |
+| `graph/` | `CodeGraph` class (`model.ts`), algorithms (Tarjan SCC, Leiden, BFS, shortest path, centrality), classifiers (role, risk), builders (dependency, structure, temporal) |
 | **`mcp/`** | **MCP server** |
 | `mcp/` | MCP server exposing graph queries to AI agents; single-repo by default, `--multi-repo` to enable cross-repo access |
 | `ast-analysis/` | Unified AST analysis framework: shared DFS walker (`visitor.ts`), engine orchestrator (`engine.ts`), extracted metrics (`metrics.ts`), and pluggable visitors for complexity, dataflow, and AST-store |
