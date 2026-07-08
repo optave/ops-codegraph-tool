@@ -1378,11 +1378,12 @@ function resolveFallbackTargets(
   // these positions is as likely to be a plain data reference
   // (`{ name: SOME_CONSTANT }`) as a real function/class, so drop any
   // other-kind match rather than fabricating a "calls" edge to a constant.
-  // `class` is included alongside function/method because `instanceof`'s
-  // right operand is always a class/constructor (#1784) — unlike the
-  // original #1771 object-literal case, which is function/method only.
-  // Applied once here, after every fallback tier above, so it covers
-  // whichever tier produced the match.
+  // `class` was added because `instanceof`'s right operand is always a
+  // class/constructor (#1784). The filter is keyed on `dynamicKind`, not on
+  // which site produced the call, so the #1771 object-literal and #1776 Lua
+  // sites also gain class-kind resolution as a side effect — not because
+  // either idiom commonly names a class. Applied once here, after every
+  // fallback tier above, so it covers whichever tier produced the match.
   if (call.dynamicKind === 'value-ref') {
     // `targets` is typed without `kind` when it flows straight through from
     // resolveCallTargets (call-resolver.ts's declared return type omits it),

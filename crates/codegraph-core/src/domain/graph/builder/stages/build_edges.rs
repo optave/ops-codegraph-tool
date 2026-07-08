@@ -791,13 +791,14 @@ fn process_file<'a>(
         // of these positions is as likely to be a plain data reference
         // (`{ name: SOME_CONSTANT }`) as a real function/class, so drop any
         // other-kind match rather than fabricating a "calls" edge to a
-        // constant. `class` is included alongside function/method because
-        // `instanceof`'s right operand is always a class/constructor
-        // (#1784) — unlike the original #1771 object-literal case, which is
-        // function/method only. Applied once here (after all
-        // resolve_call_targets tiers), mirroring the
-        // `dynamicKind === 'value-ref'` filter in resolveFallbackTargets
-        // (stages/build-edges.ts).
+        // constant. `class` was added because `instanceof`'s right operand
+        // is always a class/constructor (#1784). The filter is keyed on
+        // `dynamic_kind`, not on which site produced the call, so the #1771
+        // object-literal and #1776 Lua sites also gain class-kind
+        // resolution as a side effect — not because either idiom commonly
+        // names a class. Applied once here (after all resolve_call_targets
+        // tiers), mirroring the `dynamicKind === 'value-ref'` filter in
+        // resolveFallbackTargets (stages/build-edges.ts).
         if call.dynamic_kind.as_deref() == Some("value-ref") {
             targets.retain(|t| t.kind == "function" || t.kind == "method" || t.kind == "class");
         }
