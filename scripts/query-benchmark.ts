@@ -15,10 +15,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
 import { round1, timeMedian } from './lib/bench-timing.js';
+import { selectHubTargets, type HubTargets } from './lib/hub-selection.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -123,52 +123,6 @@ const WARMUP_RUNS = 3;
 // meaningless when barrel/type files get added or removed.
 const PINNED_HUB_CANDIDATES = ['buildGraph', 'openDb', 'loadConfig'];
 
-function selectTargets() {
-	const db = new Database(dbPath, { readonly: true });
-	try {
-
-	// Try pinned candidates first for a stable hub across versions
-	let hub = null;
-	for (const candidate of PINNED_HUB_CANDIDATES) {
-		const row = db
-			.prepare(
-				`SELECT n.name FROM nodes n
-         JOIN edges e ON e.source_id = n.id OR e.target_id = n.id
-         WHERE n.name = ? AND n.file NOT LIKE '%test%' AND n.file NOT LIKE '%spec%'
-         LIMIT 1`,
-			)
-			.get(candidate);
-		if (row) {
-			hub = row.name;
-			break;
-		}
-	}
-
-	const rows = db
-		.prepare(
-			`SELECT n.name, COUNT(e.id) AS cnt
-       FROM nodes n
-       JOIN edges e ON e.source_id = n.id OR e.target_id = n.id
-       WHERE n.file NOT LIKE '%test%' AND n.file NOT LIKE '%spec%'
-       GROUP BY n.id
-       ORDER BY cnt DESC`,
-		)
-		.all();
-
-	if (rows.length === 0) throw new Error('No nodes with edges found in graph');
-
-	// Fall back to most-connected if no pinned candidate found
-	if (!hub) hub = rows[0].name;
-
-	const mid = rows[Math.floor(rows.length / 2)].name;
-	const leaf = rows[rows.length - 1].name;
-	return { hub, mid, leaf };
-
-	} finally {
-		db.close();
-	}
-}
-
 async function benchDepths(fn, name, depths) {
 	const result = {};
 	for (const depth of depths) {
@@ -197,21 +151,18 @@ function resolveDbFile(rootDir: string, dbFile: string): string | null {
 	return null;
 }
 
-async function benchDiffImpact(hubName) {
-	const db = new Database(dbPath, { readonly: true });
-	const row = db
-		.prepare(`SELECT file FROM nodes WHERE name = ? LIMIT 1`)
-		.get(hubName);
-	db.close();
-
-	if (!row) return { latencyMs: 0, affectedFunctions: 0, affectedFiles: 0 };
-
-	// row.file is normally relative (e.g. 'src/domain/builder.ts'), but some
-	// environments store absolute-like paths without the leading '/'.  Handle
-	// both cases so the benchmark works regardless of DB path format.
-	const hubFile = resolveDbFile(root, row.file);
+async function benchDiffImpact(targets: HubTargets) {
+	// Reuse the exact physical node selectHubTargets already resolved for
+	// `targets.hub` instead of re-querying `nodes` by name — a second,
+	// independently unfiltered query can disagree with the first about which
+	// same-named node "the hub" is (#1904).
+	//
+	// targets.hubFile is normally relative (e.g. 'src/domain/builder.ts'), but
+	// some environments store absolute-like paths without the leading '/'.
+	// Handle both cases so the benchmark works regardless of DB path format.
+	const hubFile = resolveDbFile(root, targets.hubFile);
 	if (!hubFile) {
-		console.error(`[benchDiffImpact] Cannot find hub file for row.file=${row.file}`);
+		console.error(`[benchDiffImpact] Cannot find hub file for hubFile=${targets.hubFile}`);
 		return { latencyMs: 0, affectedFunctions: 0, affectedFiles: 0 };
 	}
 	const original = fs.readFileSync(hubFile, 'utf8');
@@ -242,7 +193,7 @@ async function benchDiffImpact(hubName) {
 if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 await buildGraph(root, { engine, incremental: false, exclude: [...resolveBenchmarkExcludes()] });
 
-const targets = workerTargets() || selectTargets();
+const targets: HubTargets = workerTargets() || selectHubTargets(dbPath, PINNED_HUB_CANDIDATES);
 console.error(`Targets: hub=${targets.hub}, mid=${targets.mid}, leaf=${targets.leaf}`);
 
 const fnDeps = {};
@@ -256,7 +207,7 @@ fnImpact.depth1Ms = (await benchDepths(fnImpactData, targets.hub, [1])).depth1Ms
 fnImpact.depth3Ms = (await benchDepths(fnImpactData, targets.hub, [3])).depth3Ms;
 fnImpact.depth5Ms = (await benchDepths(fnImpactData, targets.hub, [5])).depth5Ms;
 
-const diffImpact = await benchDiffImpact(targets.hub);
+const diffImpact = await benchDiffImpact(targets);
 
 // Restore console.log for JSON output
 console.log = origLog;

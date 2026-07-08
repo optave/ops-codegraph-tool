@@ -14,10 +14,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
 import { round1, timeMedian, timeMedianWithValue } from './lib/bench-timing.js';
+import { selectHubTargets } from './lib/hub-selection.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -98,24 +98,6 @@ const QUERY_WARMUP_RUNS = 3;
 const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 const BENCH_EXCLUDE = [...resolveBenchmarkExcludes()];
 
-function selectTargets() {
-	const db = new Database(dbPath, { readonly: true });
-	const rows = db
-		.prepare(
-			`SELECT n.name, COUNT(e.id) AS cnt
-       FROM nodes n
-       JOIN edges e ON e.source_id = n.id OR e.target_id = n.id
-       WHERE n.file NOT LIKE '%test%' AND n.file NOT LIKE '%spec%'
-       GROUP BY n.id
-       ORDER BY cnt DESC`,
-		)
-		.all();
-	db.close();
-
-	if (rows.length === 0) return { hub: 'buildGraph', leaf: 'median' };
-	return { hub: rows[0].name, leaf: rows[rows.length - 1].name };
-}
-
 // Redirect console.log to stderr so only JSON goes to stdout
 const origLog = console.log;
 console.log = (...args) => console.error(...args);
@@ -191,7 +173,7 @@ try {
 
 // ── Query benchmarks ────────────────────────────────────────────────
 console.error(`  [${engine}] Benchmarking queries...`);
-const targets = workerTargets() || selectTargets();
+const targets = workerTargets() || selectHubTargets(dbPath);
 console.error(`    hub=${targets.hub}, leaf=${targets.leaf}`);
 
 async function benchQuery(fn, ...args) {
