@@ -534,6 +534,24 @@ function directoryDistance(a: string, b: string): number {
 const JS_FAMILY_REGISTRY_IDS = new Set(['javascript', 'typescript', 'tsx']);
 
 /**
+ * Extensions excluded from the family map entirely, so `languageFamily`
+ * returns null for them and they fall through to the ambiguous-extension
+ * path (ordinary distance-based scoring, never rejected outright).
+ *
+ * `.h` is real-world ambiguous between C and C++: LANGUAGE_REGISTRY assigns
+ * it to the `c` entry alone (grammar selection needs one canonical parser),
+ * but the extremely common case of a `.cpp` file calling into its own
+ * project's `.h` header would otherwise be misclassified as cross-language
+ * and rejected outright (confidence 0) — a real regression from the
+ * pre-#1783 same-directory score of 0.7 (Greptile review). Treating `.h` as
+ * ambiguous — like an unrecognised extension — keeps the C/C++-header case
+ * working without merging C and C++ source-file families wholesale (`.c`
+ * vs `.cpp` intentionally do NOT merge — see
+ * is_same_language_family_does_not_merge_c_and_cpp).
+ */
+const AMBIGUOUS_EXTENSIONS = new Set(['.h']);
+
+/**
  * extension → language-family lookup, derived from LANGUAGE_REGISTRY (the
  * single source of truth for language definitions) so newly-added languages
  * are automatically covered without a second hand-maintained extension list.
@@ -542,6 +560,7 @@ const _extToLanguageFamily: Map<string, string> = new Map();
 for (const entry of LANGUAGE_REGISTRY) {
   const family = JS_FAMILY_REGISTRY_IDS.has(entry.id) ? 'javascript' : entry.id;
   for (const ext of entry.extensions) {
+    if (AMBIGUOUS_EXTENSIONS.has(ext)) continue;
     _extToLanguageFamily.set(ext, family);
   }
 }

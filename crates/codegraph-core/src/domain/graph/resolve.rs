@@ -317,8 +317,21 @@ fn directory_distance(a: &str, b: &str) -> usize {
 /// separate families would reject huge amounts of legitimate same-project
 /// resolution. Every other `LanguageKind` variant keeps its own family,
 /// preserving `from_extension`'s existing per-language extension groupings
-/// (e.g. C's `.c`+`.h`, C++'s `.cpp`/`.cc`/`.cxx`/`.hpp`).
+/// (e.g. C's `.c`+`.h`, C++'s `.cpp`/`.cc`/`.cxx`/`.hpp`) — EXCEPT `.h`,
+/// treated as ambiguous (returns `None`) rather than inheriting
+/// `from_extension`'s C-only mapping: `from_extension` needs one canonical
+/// grammar per extension, but a `.h` header is real-world ambiguous between
+/// C and C++, and the extremely common case of a `.cpp` file calling into
+/// its own project's `.h` header would otherwise be misclassified as
+/// cross-language and rejected outright — a real regression from the
+/// pre-#1783 same-directory score of 0.7 (Greptile review). This keeps the
+/// C/C++-header case working without merging C and C++ source-file families
+/// wholesale (`.c` vs `.cpp` intentionally do NOT merge — see
+/// is_same_language_family_does_not_merge_c_and_cpp).
 fn language_family(file: &str) -> Option<LanguageKind> {
+    if file.to_ascii_lowercase().ends_with(".h") {
+        return None;
+    }
     match LanguageKind::from_extension(file) {
         Some(LanguageKind::TypeScript) | Some(LanguageKind::Tsx) => Some(LanguageKind::JavaScript),
         other => other,
@@ -633,6 +646,15 @@ mod tests {
     #[test]
     fn is_same_language_family_merges_c_source_and_header() {
         assert!(is_same_language_family("src/a.c", "src/a.h"));
+    }
+
+    #[test]
+    fn is_same_language_family_treats_h_as_ambiguous_with_cpp() {
+        // Greptile follow-up to #1783: `.h` is real-world ambiguous between C
+        // and C++ (LANGUAGE_REGISTRY/from_extension assigns it to C alone for
+        // grammar-selection purposes), so a `.cpp` file calling into its own
+        // project's `.h` header must not be rejected as cross-language.
+        assert!(is_same_language_family("src/widget.cpp", "src/widget.h"));
     }
 
     #[test]
