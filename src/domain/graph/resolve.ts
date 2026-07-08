@@ -461,6 +461,63 @@ function resolveImportPathJS(
   return normalizePath(path.relative(rootDir, resolved));
 }
 
+/** All ancestor directories of `dir`, starting with `dir` itself, walking up to the root. */
+function ancestorChain(dir: string): string[] {
+  const chain = [dir];
+  let cur = dir;
+  for (;;) {
+    const parent = path.dirname(cur);
+    if (parent === cur) return chain; // reached root ('.', '/', or a drive root)
+    chain.push(parent);
+    cur = parent;
+  }
+}
+
+/**
+ * Directory-tree distance between two directories: hops up from `a` to the
+ * nearest ancestor shared with `b`, plus hops down from there to `b`.
+ *
+ * Symmetric and depth-independent — unlike a fixed-depth equality check
+ * (e.g. comparing `dirname(dirname(a))` to `dirname(dirname(b))`, as this
+ * function used to), this correctly scores both sibling directories (common
+ * parent) and direct ancestor/descendant directories (one nested inside the
+ * other) regardless of how deep either path is. The fixed-depth check only
+ * matched when both files sat at the *same* depth, so e.g. a file in
+ * `graph/algorithms/*.ts` calling a method declared in the shallower
+ * `graph/model.ts` was scored as maximally distant (issue #1769).
+ */
+// directoryDistance is on the hot path for every call-edge confidence score
+// (computeConfidence runs per candidate during ranking/filtering, not just
+// once per emitted edge — see call-resolver.ts, resolver/strategy.ts,
+// stages/build-edges.ts). The same directory pairs recur constantly across a
+// build, so memoizing avoids rebuilding both ancestor chains and the lookup
+// map on every call. distance(a, b) === distance(b, a) (symmetric tree
+// distance), so the key is order-independent to halve the effective cache
+// size. Never cleared: purely a function of two path strings, so a stale
+// entry can't exist, and even a large repo's directory count keeps this
+// bounded (#1769 perf regression — see PR discussion).
+const directoryDistanceCache = new Map<string, number>();
+
+function directoryDistance(a: string, b: string): number {
+  const key = a <= b ? `${a}|${b}` : `${b}|${a}`;
+  const cached = directoryDistanceCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const chainA = ancestorChain(a);
+  const chainB = ancestorChain(b);
+  const indexInB = new Map<string, number>(chainB.map((d, idx) => [d, idx]));
+  let dist = Infinity;
+  for (let i = 0; i < chainA.length; i++) {
+    const j = indexInB.get(chainA[i]!);
+    if (j !== undefined) {
+      dist = i + j;
+      break;
+    }
+  }
+  directoryDistanceCache.set(key, dist);
+  return dist;
+}
+
 function computeConfidenceJS(
   callerFile: string,
   targetFile: string,
@@ -471,10 +528,10 @@ function computeConfidenceJS(
   if (importedFrom === targetFile) return 1.0;
   // Workspace-resolved imports get high confidence even across package boundaries
   if (importedFrom && _workspaceResolvedPaths.has(importedFrom)) return 0.95;
-  if (path.dirname(callerFile) === path.dirname(targetFile)) return 0.7;
-  const callerParent = path.dirname(path.dirname(callerFile));
-  const targetParent = path.dirname(path.dirname(targetFile));
-  if (callerParent === targetParent) return 0.5;
+  const dist = directoryDistance(path.dirname(callerFile), path.dirname(targetFile));
+  if (dist === 0) return 0.7; // same directory
+  if (dist === 1) return 0.6; // direct parent/child directory
+  if (dist === 2) return 0.5; // sibling directories, or a grandparent/grandchild pair
   return 0.3;
 }
 
