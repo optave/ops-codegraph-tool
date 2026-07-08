@@ -254,14 +254,14 @@ describe('buildAstNodes — TypeScript extraction (#1729)', () => {
     // `name: string;` (line 3) must never surface as a bare, unquoted "string"
     // row — genuine literals are always quoted in `text` (e.g. "hello world").
     const nodes = queryTsAstNodes('string');
-    expect(nodes.some((n) => n.text === 'string')).toBe(false);
+    expect(nodes.some((n) => n.line === 3)).toBe(false);
   });
 
   test('does not misclassify parameter or return type annotations as kind:string', () => {
     // `greet(name: string): string` (param + return type, line 9) must not
     // contribute bare "string" rows.
     const nodes = queryTsAstNodes('string');
-    expect(nodes.filter((n) => n.text === 'string').length).toBe(0);
+    expect(nodes.some((n) => n.line === 9)).toBe(false);
   });
 
   test('does not misclassify array-of-primitive parameter type as kind:string', () => {

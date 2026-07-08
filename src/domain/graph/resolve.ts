@@ -487,14 +487,36 @@ function ancestorChain(dir: string): string[] {
  * `graph/algorithms/*.ts` calling a method declared in the shallower
  * `graph/model.ts` was scored as maximally distant (issue #1769).
  */
+// directoryDistance is on the hot path for every call-edge confidence score
+// (computeConfidence runs per candidate during ranking/filtering, not just
+// once per emitted edge — see call-resolver.ts, resolver/strategy.ts,
+// stages/build-edges.ts). The same directory pairs recur constantly across a
+// build, so memoizing avoids rebuilding both ancestor chains and the lookup
+// map on every call. distance(a, b) === distance(b, a) (symmetric tree
+// distance), so the key is order-independent to halve the effective cache
+// size. Never cleared: purely a function of two path strings, so a stale
+// entry can't exist, and even a large repo's directory count keeps this
+// bounded (#1769 perf regression — see PR discussion).
+const directoryDistanceCache = new Map<string, number>();
+
 function directoryDistance(a: string, b: string): number {
+  const key = a <= b ? `${a}|${b}` : `${b}|${a}`;
+  const cached = directoryDistanceCache.get(key);
+  if (cached !== undefined) return cached;
+
   const chainA = ancestorChain(a);
   const chainB = ancestorChain(b);
+  const indexInB = new Map<string, number>(chainB.map((d, idx) => [d, idx]));
+  let dist = Infinity;
   for (let i = 0; i < chainA.length; i++) {
-    const j = chainB.indexOf(chainA[i]!);
-    if (j !== -1) return i + j;
+    const j = indexInB.get(chainA[i]!);
+    if (j !== undefined) {
+      dist = i + j;
+      break;
+    }
   }
-  return Infinity;
+  directoryDistanceCache.set(key, dist);
+  return dist;
 }
 
 // ── Language-family scoping for global-by-name fallback resolution ─────────

@@ -27,6 +27,8 @@ fi
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+source "$(dirname "${BASH_SOURCE[0]}")/tracer-common.sh"
+
 cp "$FIXTURE_DIR"/*.go "$TMP_DIR/"
 
 # Create go.mod

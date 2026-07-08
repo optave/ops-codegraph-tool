@@ -290,7 +290,7 @@ export async function buildEmbeddings(
   persistEmbeddings(db, prepared, vectors as Float32Array[], dim, displayName, strategy, provider);
 
   info(
-    `Stored ${vectors.length} embeddings (${dim}d, ${displayName}, strategy: ${strategy}) in graph.db`,
+    `\nStored ${vectors.length} embeddings (${dim}d, ${displayName}, strategy: ${strategy}) in graph.db`,
   );
   closeDb(db);
 }
