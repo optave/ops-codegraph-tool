@@ -5,7 +5,60 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine, nodeStartLine } from './helpers.js';
+
+/**
+ * Lua base-library global function names and standard-library module
+ * tables. A plain `identifier = identifier` assignment whose LHS is one of
+ * these escapes local/lexical scoping entirely: the LHS names a language
+ * builtin rather than a locally declared variable that scope-based tracking
+ * could follow, so a function assigned here (`require = tracedRequire`, the
+ * monkey-patch pattern from issue #1776) becomes reachable through every
+ * later unqualified use of the builtin name — anywhere in the codebase,
+ * since it's a genuine global, not just within this file's call graph.
+ * Mirrors `LUA_BUILTIN_GLOBALS` in `crates/codegraph-core/src/extractors/lua.rs`.
+ */
+export const LUA_BUILTIN_GLOBALS: Set<string> = new Set([
+  'assert',
+  'collectgarbage',
+  'dofile',
+  'error',
+  'getfenv',
+  'getmetatable',
+  'ipairs',
+  'load',
+  'loadfile',
+  'loadstring',
+  'module',
+  'next',
+  'pairs',
+  'pcall',
+  'print',
+  'rawequal',
+  'rawget',
+  'rawlen',
+  'rawset',
+  'require',
+  'select',
+  'setfenv',
+  'setmetatable',
+  'tonumber',
+  'tostring',
+  'type',
+  'unpack',
+  'xpcall',
+  // Standard-library module tables — wholesale replacement (e.g. sandboxing)
+  // is the same "escapes local scope" shape as a single builtin function.
+  'string',
+  'table',
+  'math',
+  'io',
+  'os',
+  'coroutine',
+  'debug',
+  'utf8',
+  'bit32',
+]);
 
 /**
  * Extract symbols from Lua files.
@@ -34,6 +87,9 @@ function walkLuaNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       break;
     case 'function_call':
       handleLuaFunctionCall(node, ctx);
+      break;
+    case 'assignment_statement':
+      handleLuaAssignmentStatement(node, ctx);
       break;
   }
 
@@ -125,6 +181,68 @@ function checkForRequire(node: TreeSitterNode, ctx: ExtractorOutput): void {
         }
       }
     }
+  }
+}
+
+/**
+ * Detect `<builtin> = <identifier>` assignments — a locally declared
+ * function bound to a Lua global/builtin identifier (e.g.
+ * `require = tracedRequire`), the monkey-patch pattern from issue #1776.
+ * Every later unqualified call to the builtin name (`require(...)`)
+ * anywhere in the codebase actually invokes the RHS function, but that call
+ * site names the builtin, never the RHS function directly — so without
+ * this, the RHS function has no inbound edge at all and is misclassified
+ * dead-unresolved.
+ *
+ * Emits a dynamic `value-ref` call for the RHS identifier — the same
+ * classification #1771 uses for bare identifiers referenced as
+ * object-literal property values: a bare identifier used in a value
+ * position, not a call site. Resolution downstream (build-edges.ts /
+ * incremental.ts / build_edges.rs) already restricts `value-ref` calls to
+ * function/method-kind targets only, so a builtin reassigned to a
+ * non-function value (`unpack = someTable`) is silently dropped rather than
+ * fabricating a nonsensical edge — no further changes needed there.
+ *
+ * Scoped narrowly to plain `identifier = identifier` pairs where the LHS
+ * matches a known Lua builtin/stdlib-module name (`LUA_BUILTIN_GLOBALS`).
+ * General local-to-local variable aliasing (`local a = someFunc; a()`) is a
+ * much larger points-to/alias-tracking problem this fix does not attempt to
+ * solve — see #1776 for the scoping rationale.
+ *
+ * Handles both the bare top-level form (`require = tracedRequire`, a
+ * standalone `assignment_statement`) and the `local`-declared form
+ * (`local require = tracedRequire`, an `assignment_statement` nested inside
+ * `variable_declaration`) identically: shadowing a builtin name with
+ * `local` is the same "redirect every later unqualified use" idiom, just
+ * lexically scoped rather than truly global.
+ *
+ * Multi-assignment (`a, b = f, g`) is handled positionally, matching Lua's
+ * own assignment semantics — mixed variable kinds (`t.b, a = f, g`) do not
+ * shift the pairing, since each side is indexed independently by position
+ * rather than pre-filtered to identifiers first.
+ */
+function handleLuaAssignmentStatement(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const variableList = findChild(node, 'variable_list');
+  const expressionList = findChild(node, 'expression_list');
+  if (!variableList || !expressionList) return;
+
+  const variables = variableList.namedChildren;
+  const expressions = expressionList.namedChildren;
+  const pairCount = Math.min(variables.length, expressions.length);
+
+  for (let i = 0; i < pairCount; i++) {
+    const lhs = variables[i];
+    const rhs = expressions[i];
+    if (!lhs || !rhs) continue;
+    if (lhs.type !== 'identifier' || rhs.type !== 'identifier') continue;
+    if (!LUA_BUILTIN_GLOBALS.has(lhs.text) || LUA_BUILTIN_GLOBALS.has(rhs.text)) continue;
+
+    ctx.calls.push({
+      name: rhs.text,
+      line: nodeStartLine(rhs),
+      dynamic: true,
+      dynamicKind: 'value-ref',
+    });
   }
 }
 

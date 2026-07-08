@@ -488,7 +488,7 @@ export type DynamicKind =
   | 'reflection' // .call/.apply/.bind / Reflect.* / callable-ref — resolved when target is in codebase; sink edge emitted if unresolved
   | 'eval' // eval() / new Function() — undecidable; always flagged
   | 'unresolved-dynamic' // any other detected dynamic pattern; flagged
-  | 'value-ref'; // bare identifier used as an object-literal property value (dispatch-table pattern, e.g. `{ resolve: someFn }`) — resolved only against function/method-kind targets; unresolved (e.g. plain data references) are dropped silently, NOT flagged
+  | 'value-ref'; // bare identifier used as a value reference rather than a call site — object-literal property value (dispatch-table pattern, e.g. `{ resolve: someFn }`, #1771) or assignment to a Lua global/builtin identifier (e.g. `require = tracedRequire`, #1776) — resolved only against function/method-kind targets; unresolved (e.g. plain data references) are dropped silently, NOT flagged
 
 /** A function/method call detected by an extractor. */
 export interface Call {
