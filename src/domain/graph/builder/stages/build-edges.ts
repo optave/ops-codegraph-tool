@@ -46,6 +46,7 @@ import {
   isModuleScopedLanguage,
   resolveCallTargets,
   resolveDefinePropertyAccessorTarget,
+  resolveHierarchyTargets,
   resolveReceiverEdge,
   resolveSameClassQualifiedMethod,
 } from '../call-resolver.js';
@@ -963,7 +964,14 @@ function buildCallEdgesJS(
       importArtifactNames,
       importedOriginalNames,
     );
-    buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows);
+    buildClassHierarchyEdges(
+      lookup,
+      relPath,
+      symbols,
+      importedNames,
+      allEdgeRows,
+      importedOriginalNames,
+    );
   }
 }
 
@@ -1929,38 +1937,54 @@ const HIERARCHY_SOURCE_KINDS = new Set(['class', 'struct', 'record', 'enum']);
 const EXTENDS_TARGET_KINDS = new Set(['class', 'struct', 'trait', 'record']);
 const IMPLEMENTS_TARGET_KINDS = new Set(['interface', 'trait', 'class']);
 
+/**
+ * Emit `extends`/`implements` edges for class/struct/trait heritage clauses.
+ *
+ * Target resolution is scoped through `resolveHierarchyTargets` (#1812) —
+ * same-file declaration first, then the file's actually-resolved import,
+ * only falling back to a same-language-family global-by-name match as a
+ * last resort — instead of matching the heritage name against every node in
+ * the graph regardless of file or language.
+ */
 function buildClassHierarchyEdges(
-  ctx: PipelineContext,
+  lookup: CallNodeLookup,
   relPath: string,
   symbols: ExtractorOutput,
+  importedNames: ReadonlyMap<string, string>,
   allEdgeRows: EdgeRowTuple[],
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): void {
   for (const cls of symbols.classes) {
+    const sourceRow = lookup
+      .byNameAndFile(cls.name, relPath)
+      .find((n) => HIERARCHY_SOURCE_KINDS.has(n.kind ?? ''));
+    if (!sourceRow) continue;
+
     if (cls.extends) {
-      const sourceRow = (ctx.nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find((n) =>
-        HIERARCHY_SOURCE_KINDS.has(n.kind),
+      const targets = resolveHierarchyTargets(
+        lookup,
+        cls.extends,
+        relPath,
+        importedNames,
+        EXTENDS_TARGET_KINDS,
+        importedOriginalNames,
       );
-      const targetRows = (ctx.nodesByName.get(cls.extends) || []).filter((n) =>
-        EXTENDS_TARGET_KINDS.has(n.kind),
-      );
-      if (sourceRow) {
-        for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null, null]);
-        }
+      for (const t of targets) {
+        allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null, null]);
       }
     }
 
     if (cls.implements) {
-      const sourceRow = (ctx.nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find((n) =>
-        HIERARCHY_SOURCE_KINDS.has(n.kind),
+      const targets = resolveHierarchyTargets(
+        lookup,
+        cls.implements,
+        relPath,
+        importedNames,
+        IMPLEMENTS_TARGET_KINDS,
+        importedOriginalNames,
       );
-      const targetRows = (ctx.nodesByName.get(cls.implements) || []).filter((n) =>
-        IMPLEMENTS_TARGET_KINDS.has(n.kind),
-      );
-      if (sourceRow) {
-        for (const t of targetRows) {
-          allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null, null]);
-        }
+      for (const t of targets) {
+        allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null, null]);
       }
     }
   }
