@@ -27,8 +27,6 @@ import type {
   AnalysisTiming,
   ASTNodeRow,
   BetterSqlite3Database,
-  CfgBlock,
-  CfgEdge,
   DataflowResult,
   Definition,
   EngineOpts,
@@ -41,7 +39,7 @@ import type {
   WalkOptions,
   WalkResults,
 } from '../types.js';
-import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
+import { hasFuncBody, storeCfgResults, storeComplexityResults } from './apply-results.js';
 import {
   AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
@@ -61,24 +59,6 @@ import { createComplexityVisitor } from './visitors/complexity-visitor.js';
 import { createDataflowVisitor } from './visitors/dataflow-visitor.js';
 
 // ─── Visitor result shapes (internal, not exported) ──────────────────────
-
-interface ComplexityFuncResult {
-  funcNode: TreeSitterNode;
-  funcName: string | null;
-  metrics: {
-    cognitive: number;
-    cyclomatic: number;
-    maxNesting: number;
-    halstead?: { volume: number; difficulty: number; effort: number; bugs: number };
-  };
-}
-
-interface CfgFuncResult {
-  funcNode: TreeSitterNode;
-  blocks: CfgBlock[];
-  edges: CfgEdge[];
-  cyclomatic?: number;
-}
 
 interface SetupResult {
   visitors: Visitor[];
@@ -389,22 +369,6 @@ async function ensureWasmTreesIfNeeded(
 
 // ─── Per-file visitor setup ─────────────────────────────────────────────
 
-/** Check if a definition has a real function body (not a type signature). */
-function hasFuncBody(d: {
-  name: string;
-  kind: string;
-  line: number;
-  endLine?: number | null;
-}): boolean {
-  return (
-    (d.kind === 'function' || d.kind === 'method') &&
-    d.line > 0 &&
-    d.endLine != null &&
-    d.endLine > d.line &&
-    !d.name.includes('.')
-  );
-}
-
 /** Set up AST-store visitor if applicable. */
 function setupAstVisitor(
   db: BetterSqlite3Database,
@@ -507,76 +471,6 @@ function setupVisitors(
   }
 
   return { visitors, walkerOpts, astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor };
-}
-
-// ─── Result storage helpers ─────────────────────────────────────────────
-
-/** Index per-function results by start line for O(1) lookup. */
-function indexByLine<T extends { funcNode: TreeSitterNode }>(results: T[]): Map<number, T[]> {
-  const byLine = new Map<number, T[]>();
-  for (const r of results) {
-    if (!r.funcNode) continue;
-    const line = r.funcNode.startPosition.row + 1;
-    if (!byLine.has(line)) byLine.set(line, []);
-    byLine.get(line)?.push(r);
-  }
-  return byLine;
-}
-
-/** Find the best matching result for a definition by line + name. */
-function matchResultToDef<T extends { funcNode: TreeSitterNode }>(
-  candidates: T[] | undefined,
-  defName: string,
-): T | undefined {
-  if (!candidates) return undefined;
-  if (candidates.length === 1) return candidates[0];
-  return (
-    candidates.find((r) => {
-      const n = r.funcNode.childForFieldName('name');
-      return n && n.text === defName;
-    }) ?? candidates[0]
-  );
-}
-
-function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
-  const byLine = indexByLine((results.complexity || []) as ComplexityFuncResult[]);
-  for (const def of defs) {
-    if ((def.kind === 'function' || def.kind === 'method') && def.line && !def.complexity) {
-      const funcResult = matchResultToDef(byLine.get(def.line), def.name);
-      if (!funcResult) continue;
-      const { metrics } = funcResult;
-      const loc = computeLOCMetrics(funcResult.funcNode, langId);
-      const volume = metrics.halstead ? metrics.halstead.volume : 0;
-      const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-      const mi = computeMaintainabilityIndex(volume, metrics.cyclomatic, loc.sloc, commentRatio);
-      def.complexity = {
-        cognitive: metrics.cognitive,
-        cyclomatic: metrics.cyclomatic,
-        maxNesting: metrics.maxNesting,
-        halstead: metrics.halstead,
-        loc,
-        maintainabilityIndex: mi,
-      };
-    }
-  }
-}
-
-// Note: intentionally does not touch def.complexity.cyclomatic — see the
-// docblock on storeNativeCfgResults for why the CFG's block/edge count must
-// never override the AST-derived cyclomatic complexity (issue #1743).
-function storeCfgResults(results: WalkResults, defs: Definition[]): void {
-  const byLine = indexByLine((results.cfg || []) as CfgFuncResult[]);
-  for (const def of defs) {
-    if (
-      (def.kind === 'function' || def.kind === 'method') &&
-      def.line &&
-      !def.cfg?.blocks?.length
-    ) {
-      const cfgResult = matchResultToDef(byLine.get(def.line), def.name);
-      if (!cfgResult) continue;
-      def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
-    }
-  }
 }
 
 // ─── Build delegation ───────────────────────────────────────────────────

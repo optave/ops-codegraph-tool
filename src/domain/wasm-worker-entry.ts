@@ -26,7 +26,11 @@ import { fileURLToPath } from 'node:url';
 import { parentPort } from 'node:worker_threads';
 import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
-import { computeLOCMetrics, computeMaintainabilityIndex } from '../ast-analysis/metrics.js';
+import {
+  hasFuncBody,
+  storeCfgResults,
+  storeComplexityResults,
+} from '../ast-analysis/apply-results.js';
 import {
   AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
@@ -78,10 +82,7 @@ import {
   extractZigSymbols,
 } from '../extractors/index.js';
 import type {
-  CfgBlock,
-  CfgEdge,
   DataflowResult,
-  Definition,
   ExtractorOutput,
   LanguageId,
   LanguageRegistryEntry,
@@ -451,111 +452,6 @@ async function loadLanguageLazy(entry: LanguageRegistryEntry): Promise<Parser | 
     }
     _parsers.set(entry.id, null);
     return null;
-  }
-}
-
-// ── Per-function walk-result shapes (mirrors engine.ts, kept local) ─────────
-
-interface ComplexityFuncResult {
-  funcNode: TreeSitterNode;
-  funcName: string | null;
-  metrics: {
-    cognitive: number;
-    cyclomatic: number;
-    maxNesting: number;
-    halstead?: { volume: number; difficulty: number; effort: number; bugs: number };
-  };
-}
-
-interface CfgFuncResult {
-  funcNode: TreeSitterNode;
-  blocks: CfgBlock[];
-  edges: CfgEdge[];
-  cyclomatic?: number;
-}
-
-// ── Helpers mirroring engine.ts (copied, db-free) ───────────────────────────
-
-function hasFuncBody(d: {
-  name: string;
-  kind: string;
-  line: number;
-  endLine?: number | null;
-}): boolean {
-  return (
-    (d.kind === 'function' || d.kind === 'method') &&
-    d.line > 0 &&
-    d.endLine != null &&
-    d.endLine > d.line &&
-    !d.name.includes('.')
-  );
-}
-
-function indexByLine<T extends { funcNode: TreeSitterNode }>(results: T[]): Map<number, T[]> {
-  const byLine = new Map<number, T[]>();
-  for (const r of results) {
-    if (!r.funcNode) continue;
-    const line = r.funcNode.startPosition.row + 1;
-    if (!byLine.has(line)) byLine.set(line, []);
-    byLine.get(line)?.push(r);
-  }
-  return byLine;
-}
-
-function matchResultToDef<T extends { funcNode: TreeSitterNode }>(
-  candidates: T[] | undefined,
-  defName: string,
-): T | undefined {
-  if (!candidates) return undefined;
-  if (candidates.length === 1) return candidates[0];
-  return (
-    candidates.find((r) => {
-      const n = r.funcNode.childForFieldName('name');
-      return n && n.text === defName;
-    }) ?? candidates[0]
-  );
-}
-
-function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
-  const byLine = indexByLine((results.complexity || []) as ComplexityFuncResult[]);
-  for (const def of defs) {
-    if ((def.kind === 'function' || def.kind === 'method') && def.line && !def.complexity) {
-      const funcResult = matchResultToDef(byLine.get(def.line), def.name);
-      if (!funcResult) continue;
-      const { metrics } = funcResult;
-      const loc = computeLOCMetrics(funcResult.funcNode, langId);
-      const volume = metrics.halstead ? metrics.halstead.volume : 0;
-      const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-      const mi = computeMaintainabilityIndex(volume, metrics.cyclomatic, loc.sloc, commentRatio);
-      def.complexity = {
-        cognitive: metrics.cognitive,
-        cyclomatic: metrics.cyclomatic,
-        maxNesting: metrics.maxNesting,
-        halstead: metrics.halstead,
-        loc,
-        maintainabilityIndex: mi,
-      };
-    }
-  }
-}
-
-// Note: intentionally does not touch def.complexity.cyclomatic with the CFG's
-// block/edge count — the CFG doesn't model short-circuit logical operators,
-// optional chaining, or nested-function bodies the way the AST-derived
-// cyclomatic (storeComplexityResults, above) correctly does, so overriding it
-// silently corrupts the metric (issue #1743). Mirrors ast-analysis/engine.ts.
-function storeCfgResults(results: WalkResults, defs: Definition[]): void {
-  const byLine = indexByLine((results.cfg || []) as CfgFuncResult[]);
-  for (const def of defs) {
-    if (
-      (def.kind === 'function' || def.kind === 'method') &&
-      def.line &&
-      !def.cfg?.blocks?.length
-    ) {
-      const cfgResult = matchResultToDef(byLine.get(def.line), def.name);
-      if (!cfgResult) continue;
-      def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
-    }
   }
 }
 
