@@ -8,7 +8,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { closeDb } from '../../../../db/index.js';
+import {
+  clearDeletedExportAdvisories,
+  closeDb,
+  recordDeletedExportAdvisories,
+} from '../../../../db/index.js';
 import { debug, info } from '../../../../infrastructure/logger.js';
 import { normalizePath } from '../../../../shared/constants.js';
 import { toErrorMessage } from '../../../../shared/errors.js';
@@ -610,6 +614,11 @@ function handleScopedBuild(ctx: PipelineContext): void {
     reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir, ctx.nativeDb);
   }
   ctx.removedFileNeighbors = captureRemovedFileNeighbors(db, ctx.removed);
+  // A file about to be (re)inserted can no longer be "deleted" — clear any
+  // stale advisory left over from a prior removal at this same path before
+  // capturing this build's actual removals (#1938).
+  clearDeletedExportAdvisories(db, changePaths);
+  recordDeletedExportAdvisories(db, ctx.removed);
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
   info(
     `Scoped rebuild: ${changePaths.length} changed, ${ctx.removed.length} removed, ${reverseDeps.size} reverse-deps`,
@@ -653,6 +662,11 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
     (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
   );
   ctx.removedFileNeighbors = captureRemovedFileNeighbors(db, ctx.removed);
+  // A file about to be (re)inserted can no longer be "deleted" — clear any
+  // stale advisory left over from a prior removal at this same path before
+  // capturing this build's actual removals (#1938).
+  clearDeletedExportAdvisories(db, changePaths);
+  recordDeletedExportAdvisories(db, ctx.removed);
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
 }
 

@@ -814,6 +814,138 @@ pub fn capture_removed_file_neighbors(conn: &Connection, removed_files: &[String
     neighbors.into_iter().collect()
 }
 
+/// True if `table` can be queried without error. Used for
+/// `deleted_export_advisories` (added in migration v21), which an older,
+/// not-yet-migrated schema may not have.
+fn table_queryable(conn: &Connection, table: &str) -> bool {
+    // `query_row` returns `Err(QueryReturnedNoRows)` for a query that is
+    // syntactically/semantically valid but matches zero rows — e.g. a table
+    // that exists but is still empty — which is NOT the same as the table
+    // being absent (a real `SqliteFailure`/"no such table" error). Unlike
+    // `has_embeddings` (which genuinely wants "are there any rows" and can
+    // conflate the two), an existence probe must treat "exists but empty"
+    // as queryable, or every advisory capture on a freshly-migrated,
+    // still-empty table would silently no-op.
+    match conn.query_row(&format!("SELECT 1 FROM {table} LIMIT 1"), [], |_| Ok(())) {
+        Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => true,
+        Err(_) => false,
+    }
+}
+
+/// Current time in epoch milliseconds — mirrors `Date.now()` in the TS
+/// `detectChanges` pipeline, used to timestamp deleted-export advisory rows.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Snapshots, for each deleted export that still has an external consumer,
+/// one row per consumer into `deleted_export_advisories` — captured BEFORE
+/// `purge_changed_files` deletes the removed file's `nodes`/`edges` rows, so
+/// `codegraph check` can still see the violation regardless of whether some
+/// other, separate `codegraph build` invocation already purged the live
+/// rows by the time `check` runs. Mirrors `recordDeletedExportAdvisories` in
+/// `db/repository/deleted-export-advisories.ts` (#1938).
+///
+/// Replaces any pre-existing advisory rows for the same files first — the
+/// `file_hashes` row for a removed file is never purged on the incremental
+/// path (see `purge_changed_files`'s caller), so a subsequent build keeps
+/// re-detecting the same file as "removed" and would otherwise re-run this
+/// capture every time; querying live `nodes` for an already-purged file
+/// naturally returns nothing on those later runs, so this is a no-op after
+/// the first capture in practice — but replacing first keeps this correct
+/// even if that changes.
+pub fn record_deleted_export_advisories(conn: &Connection, removed_files: &[String]) {
+    if removed_files.is_empty() || !table_queryable(conn, "deleted_export_advisories") {
+        return;
+    }
+
+    let tx = match conn.unchecked_transaction() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+
+    for file in removed_files {
+        let _ = tx.execute("DELETE FROM deleted_export_advisories WHERE file = ?1", [file]);
+    }
+
+    let defs_result = tx.prepare(
+        "SELECT id, name, kind, line FROM nodes \
+         WHERE file = ?1 AND kind IN ('function', 'method', 'class') AND exported = 1 \
+         ORDER BY line",
+    );
+    let consumers_result = tx.prepare(
+        "SELECT DISTINCT caller.name, caller.file, caller.line \
+         FROM edges e JOIN nodes caller ON e.source_id = caller.id \
+         WHERE e.target_id = ?1 AND e.kind IN ('calls', 'imports-type') AND caller.file != ?2",
+    );
+    let insert_result = tx.prepare(
+        "INSERT INTO deleted_export_advisories \
+           (file, name, kind, line, consumer_name, consumer_file, consumer_line, deleted_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    );
+
+    if let (Ok(mut defs_stmt), Ok(mut consumers_stmt), Ok(mut insert_stmt)) =
+        (defs_result, consumers_result, insert_result)
+    {
+        let now = now_ms();
+        for file in removed_files {
+            let defs: Vec<(i64, String, String, i64)> = match defs_stmt.query_map([file], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            }) {
+                Ok(rows) => rows.flatten().collect(),
+                Err(_) => continue,
+            };
+            for (id, name, kind, line) in defs {
+                let consumers: Vec<(String, String, i64)> = match consumers_stmt
+                    .query_map(rusqlite::params![id, file], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    }) {
+                    Ok(rows) => rows.flatten().collect(),
+                    Err(_) => continue,
+                };
+                for (consumer_name, consumer_file, consumer_line) in consumers {
+                    let _ = insert_stmt.execute(rusqlite::params![
+                        file,
+                        name,
+                        kind,
+                        line,
+                        consumer_name,
+                        consumer_file,
+                        consumer_line,
+                        now
+                    ]);
+                }
+            }
+        }
+    }
+
+    let _ = tx.commit();
+}
+
+/// Clears advisory rows for files that are no longer deleted — e.g. a
+/// previously-removed file reappearing under the same path (a revert, or an
+/// unrelated new file created at the same location). Called for every file
+/// about to be (re)inserted, so a resolved deletion never lingers to
+/// misattribute a stale violation to whatever now lives at that path.
+/// Mirrors `clearDeletedExportAdvisories` in
+/// `deleted-export-advisories.ts` (#1938).
+pub fn clear_deleted_export_advisories(conn: &Connection, files: &[String]) {
+    if files.is_empty() || !table_queryable(conn, "deleted_export_advisories") {
+        return;
+    }
+    let tx = match conn.unchecked_transaction() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    for file in files {
+        let _ = tx.execute("DELETE FROM deleted_export_advisories WHERE file = ?1", [file]);
+    }
+    let _ = tx.commit();
+}
+
 /// Purge graph data for changed/removed files and delete outgoing edges for reverse deps.
 ///
 /// Deletion order: analysis dependents → edges → nodes (matches `connection::purge_files_data`).
@@ -1434,5 +1566,201 @@ mod tests {
             &["src/pkgA/a1.js".to_string(), "src/pkgA/a2.js".to_string()],
         );
         assert!(neighbors.is_empty());
+    }
+
+    // ── deleted-export advisories (#1938) ───────────────────────────────
+
+    /// Schema for the advisory tests: `test_conn()` plus the `exported`
+    /// column and `deleted_export_advisories` table neither
+    /// `record_deleted_export_advisories` nor `clear_deleted_export_advisories`
+    /// can do without.
+    fn test_conn_with_advisories() -> Connection {
+        let conn = test_conn();
+        conn.execute_batch(
+            "ALTER TABLE nodes ADD COLUMN exported INTEGER DEFAULT 0;
+             CREATE TABLE deleted_export_advisories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file TEXT NOT NULL,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                consumer_name TEXT NOT NULL,
+                consumer_file TEXT NOT NULL,
+                consumer_line INTEGER NOT NULL,
+                deleted_at INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_exported_node(conn: &Connection, name: &str, kind: &str, file: &str, line: i64) -> i64 {
+        conn.execute(
+            "INSERT INTO nodes (name, kind, file, line, exported) VALUES (?1, ?2, ?3, ?4, 1)",
+            rusqlite::params![name, kind, file, line],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn advisory_rows(conn: &Connection, file: &str) -> Vec<(String, String)> {
+        let mut stmt = conn
+            .prepare("SELECT consumer_name, consumer_file FROM deleted_export_advisories WHERE file = ?1 ORDER BY consumer_file")
+            .unwrap();
+        stmt.query_map([file], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn record_deleted_export_advisories_captures_one_row_per_external_consumer() {
+        let conn = test_conn_with_advisories();
+        let helper = insert_exported_node(&conn, "helper", "function", "src/gone.js", 1);
+        let caller_a = insert_node(&conn, "callerA", "function", "src/a.js", 1);
+        let caller_b = insert_node(&conn, "callerB", "function", "src/b.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![caller_a, helper],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'imports-type', 1.0, 0)",
+            rusqlite::params![caller_b, helper],
+        )
+        .unwrap();
+
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+
+        assert_eq!(
+            advisory_rows(&conn, "src/gone.js"),
+            vec![
+                ("callerA".to_string(), "src/a.js".to_string()),
+                ("callerB".to_string(), "src/b.js".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn record_deleted_export_advisories_skips_export_with_no_external_consumers() {
+        let conn = test_conn_with_advisories();
+        insert_exported_node(&conn, "unused", "function", "src/orphan.js", 1);
+
+        record_deleted_export_advisories(&conn, &["src/orphan.js".to_string()]);
+
+        assert!(advisory_rows(&conn, "src/orphan.js").is_empty());
+    }
+
+    #[test]
+    fn record_deleted_export_advisories_ignores_same_file_caller() {
+        let conn = test_conn_with_advisories();
+        let helper = insert_exported_node(&conn, "helper", "function", "src/gone.js", 1);
+        let sibling = insert_node(&conn, "sibling", "function", "src/gone.js", 10);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![sibling, helper],
+        )
+        .unwrap();
+
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+
+        assert!(advisory_rows(&conn, "src/gone.js").is_empty());
+    }
+
+    #[test]
+    fn record_deleted_export_advisories_replaces_prior_snapshot_for_same_file() {
+        let conn = test_conn_with_advisories();
+        let helper = insert_exported_node(&conn, "helper", "function", "src/gone.js", 1);
+        let caller_a = insert_node(&conn, "callerA", "function", "src/a.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![caller_a, helper],
+        )
+        .unwrap();
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+
+        // A second capture pass with a different consumer set must replace,
+        // not accumulate alongside, the first snapshot.
+        let caller_c = insert_node(&conn, "callerC", "function", "src/c.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![caller_c, helper],
+        )
+        .unwrap();
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+
+        assert_eq!(
+            advisory_rows(&conn, "src/gone.js"),
+            vec![
+                ("callerA".to_string(), "src/a.js".to_string()),
+                ("callerC".to_string(), "src/c.js".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn clear_deleted_export_advisories_removes_rows_for_reappeared_file() {
+        let conn = test_conn_with_advisories();
+        let helper = insert_exported_node(&conn, "helper", "function", "src/gone.js", 1);
+        let caller_a = insert_node(&conn, "callerA", "function", "src/a.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![caller_a, helper],
+        )
+        .unwrap();
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+        assert!(!advisory_rows(&conn, "src/gone.js").is_empty());
+
+        clear_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+
+        assert!(advisory_rows(&conn, "src/gone.js").is_empty());
+    }
+
+    #[test]
+    fn clear_deleted_export_advisories_leaves_other_files_untouched() {
+        let conn = test_conn_with_advisories();
+        let helper_a = insert_exported_node(&conn, "helperA", "function", "src/gone-a.js", 1);
+        let caller_a = insert_node(&conn, "callerA", "function", "src/a.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![caller_a, helper_a],
+        )
+        .unwrap();
+        let helper_b = insert_exported_node(&conn, "helperB", "function", "src/gone-b.js", 1);
+        let caller_b = insert_node(&conn, "callerB", "function", "src/b.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![caller_b, helper_b],
+        )
+        .unwrap();
+        record_deleted_export_advisories(
+            &conn,
+            &["src/gone-a.js".to_string(), "src/gone-b.js".to_string()],
+        );
+
+        clear_deleted_export_advisories(&conn, &["src/gone-a.js".to_string()]);
+
+        assert!(advisory_rows(&conn, "src/gone-a.js").is_empty());
+        assert!(!advisory_rows(&conn, "src/gone-b.js").is_empty());
+    }
+
+    #[test]
+    fn record_and_clear_deleted_export_advisories_are_noops_for_empty_input() {
+        let conn = test_conn_with_advisories();
+        // Must not panic or error when there is nothing to do.
+        record_deleted_export_advisories(&conn, &[]);
+        clear_deleted_export_advisories(&conn, &[]);
+    }
+
+    #[test]
+    fn record_deleted_export_advisories_noop_when_table_missing() {
+        // Older/not-yet-migrated schema: no `deleted_export_advisories` table.
+        // Must not panic or error — just silently skip.
+        let conn = test_conn();
+        conn.execute_batch("ALTER TABLE nodes ADD COLUMN exported INTEGER DEFAULT 0;")
+            .unwrap();
+        insert_exported_node(&conn, "helper", "function", "src/gone.js", 1);
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+        clear_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
     }
 }

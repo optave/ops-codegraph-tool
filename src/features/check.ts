@@ -1,7 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findDbPath, openReadonlyOrFail } from '../db/index.js';
+import {
+  findDbPath,
+  findExportedDefinitions,
+  findExternalConsumers,
+  getDeletedExportAdvisories,
+  openReadonlyOrFail,
+} from '../db/index.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import type { Cycle } from '../domain/graph/cycles.js';
 import { findCycles } from '../domain/graph/cycles.js';
@@ -576,14 +582,6 @@ export function checkNoSignatureChanges(
   return { passed: violations.length === 0, violations };
 }
 
-type DeletedDefRow = {
-  id: number;
-  name: string;
-  kind: string;
-  file: string;
-  line: number;
-};
-
 /**
  * Detects exported functions/methods/classes lost when a file is deleted in
  * its entirety, for deletions whose exports still have consumers elsewhere
@@ -601,15 +599,13 @@ type DeletedDefRow = {
  * some *other*, separate `codegraph build` invocation has already purged it
  * by the time `check` runs.
  *
- * This closes that gap for the common case: `db` still reflects pre-purge
- * state whenever `codegraph check --staged` runs before any rebuild has
- * observed the deletion (e.g. this repo's own pre-commit hook, which checks
- * staged changes without rebuilding first). Once some rebuild purges the
- * deleted file's rows, this predicate has nothing left to find for it — the
- * violation silently goes undetected, same as before this predicate
- * existed. See issue #1806 for the follow-up tracking a durable,
- * purge-order-independent fix (e.g. capturing this at purge time inside the
- * build pipeline itself, so it survives regardless of invocation order).
+ * For a file whose `nodes` rows are still live (no rebuild has purged it
+ * yet), this queries them directly. Once a rebuild purges them, it falls
+ * back to `deleted_export_advisories` — a durable snapshot the build
+ * pipeline captures at the exact point it computes the removed-file set,
+ * BEFORE purging (see `recordDeletedExportAdvisories` /
+ * `db/repository/deleted-export-advisories.ts`) — so the violation stays
+ * visible regardless of build/check invocation order (#1938).
  *
  * Unlike `checkNoSignatureChanges` (which flags any touched exported
  * declaration regardless of caller count, since editing an exported line is
@@ -636,36 +632,47 @@ export function checkNoDeletedExportsInUse(
   const violations: SignatureViolation[] = [];
   if (deletedFiles.size === 0) return { passed: true, violations };
 
-  const defsStmt = db.prepare(
-    `SELECT id, name, kind, file, line FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') AND exported = 1 ORDER BY line`,
-  );
-  const consumersStmt = db.prepare(
-    `SELECT DISTINCT caller.name, caller.file, caller.line
-     FROM edges e
-     JOIN nodes caller ON e.source_id = caller.id
-     WHERE e.target_id = ? AND e.kind IN ('calls', 'imports-type') AND caller.file != ?`,
-  );
-
   for (const file of deletedFiles) {
     if (noTests && isTestFile(file)) continue;
 
-    const defs = defsStmt.all(file) as DeletedDefRow[];
-    for (const def of defs) {
-      let consumers = consumersStmt.all(def.id, def.file) as ConsumerRef[];
-      // A caller that is itself among the files this same diff deletes isn't
-      // an external caller left dangling by the diff — it's being removed
-      // too. Mirrors checkNoSignatureChanges's exported-only filter: only a
-      // caller reachable from outside the set of files this diff removes can
-      // be a caller the diff doesn't already account for.
-      consumers = consumers.filter((c) => !deletedFiles.has(c.file));
+    const defs = findExportedDefinitions(db, file);
+    if (defs.length > 0) {
+      for (const def of defs) {
+        let consumers: ConsumerRef[] = findExternalConsumers(db, def.id, file);
+        // A caller that is itself among the files this same diff deletes isn't
+        // an external caller left dangling by the diff — it's being removed
+        // too. Mirrors checkNoSignatureChanges's exported-only filter: only a
+        // caller reachable from outside the set of files this diff removes can
+        // be a caller the diff doesn't already account for.
+        consumers = consumers.filter((c) => !deletedFiles.has(c.file));
+        if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
+        if (consumers.length === 0) continue;
+
+        violations.push({
+          name: def.name,
+          kind: def.kind,
+          file,
+          line: def.line,
+          reason: 'file-deleted',
+          consumers,
+        });
+      }
+      continue;
+    }
+
+    // `nodes` rows for `file` are already gone — some rebuild purged them
+    // before this check ran. Fall back to the pre-purge advisory snapshot.
+    const advisories = getDeletedExportAdvisories(db, [file], deletedFiles);
+    for (const advisory of advisories) {
+      let consumers = advisory.consumers;
       if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
       if (consumers.length === 0) continue;
 
       violations.push({
-        name: def.name,
-        kind: def.kind,
-        file: def.file,
-        line: def.line,
+        name: advisory.name,
+        kind: advisory.kind,
+        file: advisory.file,
+        line: advisory.line,
         reason: 'file-deleted',
         consumers,
       });

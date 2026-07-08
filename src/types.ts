@@ -208,6 +208,30 @@ export interface AdjacentEdgeRow {
   edge_kind: EdgeKind;
 }
 
+/**
+ * An exported function/method/class definition (from findExportedDefinitions).
+ * Narrower than `findExportedNodesByFile`'s "any exported kind" — this is the
+ * declaration-surface filter shared by check.ts's signature-change
+ * predicates (`checkNoSignatureChanges`, `checkNoDeletedExportsInUse`) and
+ * the deleted-export advisory capture that backs it (#1938).
+ */
+export interface ExportedDefRow {
+  id: number;
+  name: string;
+  kind: string;
+  line: number;
+}
+
+/**
+ * A cross-file consumer of an exported symbol (from findExternalConsumers),
+ * or a persisted deleted-export advisory's consumer row (#1938).
+ */
+export interface ExternalConsumerRow {
+  name: string;
+  file: string;
+  line: number;
+}
+
 /** Import target/source row. */
 export interface ImportEdgeRow {
   file: string;

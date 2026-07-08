@@ -331,6 +331,23 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_edges_dynamic_kind ON edges(dynamic_kind) WHERE dynamic_kind IS NOT NULL;
     `,
   },
+  {
+    version: 21,
+    up: `
+      CREATE TABLE IF NOT EXISTS deleted_export_advisories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        consumer_name TEXT NOT NULL,
+        consumer_file TEXT NOT NULL,
+        consumer_line INTEGER NOT NULL,
+        deleted_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_deleted_export_advisories_file ON deleted_export_advisories(file);
+    `,
+  },
 ];
 
 interface PragmaColumnInfo {

@@ -337,6 +337,25 @@ const MIGRATIONS: &[Migration] = &[
         // dataflow_vertices and dataflow_summary on the next `codegraph build`.
         up: "SELECT 1",
     },
+    // NOTE: TS migration v20 (edges.dynamic_kind) has no Rust counterpart yet — see #2066.
+    // v21 below is independent of it (a standalone new table), so this gap does not block it.
+    Migration {
+        version: 21,
+        up: r#"
+      CREATE TABLE IF NOT EXISTS deleted_export_advisories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        consumer_name TEXT NOT NULL,
+        consumer_file TEXT NOT NULL,
+        consumer_line INTEGER NOT NULL,
+        deleted_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_deleted_export_advisories_file ON deleted_export_advisories(file);
+    "#,
+    },
 ];
 
 // ── napi types ──────────────────────────────────────────────────────────
