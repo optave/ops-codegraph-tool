@@ -486,4 +486,73 @@ describe('classifyNodeRoles', () => {
     expect(getRole('ChaContext.implementors')).toBe('leaf');
     expect(getRole('trulyDeadHelper')).toBe('dead-unresolved');
   });
+
+  // ── Parameters and interface members are not dead-code targets (#1723) ──
+
+  it('excludes parameter-kind nodes from role classification entirely', () => {
+    // A parameter's liveness is a local dataflow question (is it referenced
+    // within its own function body), not a call-graph reachability question.
+    // "No incoming call edges" is guaranteed for every parameter regardless of
+    // usage, so parameters must never receive a `dead-*` role — or any role at
+    // all, the same treatment as file/directory nodes.
+    insertNode('src/helpers.ts', 'file', 'src/helpers.ts', 0);
+    const fn = insertNode('findChild', 'function', 'src/helpers.ts', 26);
+    insertNode('node', 'parameter', 'src/helpers.ts', 26);
+    insertNode('type', 'parameter', 'src/helpers.ts', 26);
+    // An external caller so findChild itself is not incidentally dead too —
+    // isolates the assertion to parameter handling specifically.
+    const caller = insertNode('caller', 'function', 'other.ts', 1);
+    insertEdge(caller, fn, 'calls');
+
+    classifyNodeRoles(db);
+
+    const paramRoles = db.prepare("SELECT role FROM nodes WHERE kind = 'parameter'").all() as {
+      role: string | null;
+    }[];
+    expect(paramRoles).toHaveLength(2);
+    for (const row of paramRoles) {
+      expect(row.role).toBeNull();
+    }
+  });
+
+  it('does not classify interface members as dead', () => {
+    // TS `interface ExtractParametersOptions { typeMap?: Map<...> }` extracts
+    // `typeMap` as a top-level `method`-kind definition named
+    // `ExtractParametersOptions.typeMap` (property-signature members are
+    // currently mislabeled `method` by the extractor — tracked separately).
+    // It has no callers by construction; it must not be flagged dead.
+    insertNode('src/helpers.ts', 'file', 'src/helpers.ts', 0);
+    insertNode('ExtractParametersOptions', 'interface', 'src/helpers.ts', 359);
+    insertNode('ExtractParametersOptions.typeMap', 'method', 'src/helpers.ts', 361);
+
+    classifyNodeRoles(db);
+
+    const role = db
+      .prepare("SELECT role FROM nodes WHERE name = 'ExtractParametersOptions.typeMap'")
+      .get() as { role: string | null };
+    expect(role.role).toBe('leaf');
+  });
+
+  it('regression: used parameters, interface members, and a genuinely dead function are classified correctly together', () => {
+    // Mirrors the exact issue #1723 repro: `findChild(node, type)` in
+    // src/extractors/helpers.ts, alongside an interface and a truly dead function.
+    insertNode('src/helpers.ts', 'file', 'src/helpers.ts', 0);
+    const findChildFn = insertNode('findChild', 'function', 'src/helpers.ts', 26);
+    insertNode('node', 'parameter', 'src/helpers.ts', 26);
+    insertNode('type', 'parameter', 'src/helpers.ts', 26);
+    insertNode('ChaContext', 'interface', 'src/helpers.ts', 18);
+    insertNode('ChaContext.implementors', 'method', 'src/helpers.ts', 20);
+    insertNode('trulyDeadHelper', 'function', 'src/helpers.ts', 400);
+
+    const caller = insertNode('caller', 'function', 'other.ts', 1);
+    insertEdge(caller, findChildFn, 'calls');
+
+    classifyNodeRoles(db);
+    const getRole = (name) => db.prepare('SELECT role FROM nodes WHERE name = ?').get(name)?.role;
+
+    expect(getRole('node')).toBeNull();
+    expect(getRole('type')).toBeNull();
+    expect(getRole('ChaContext.implementors')).toBe('leaf');
+    expect(getRole('trulyDeadHelper')).toBe('dead-unresolved');
+  });
 });

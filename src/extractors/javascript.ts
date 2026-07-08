@@ -3548,6 +3548,11 @@ const HTTP_VERB_CALLEES: ReadonlySet<string> = new Set([
  * callback-accepting (no separate {@link CALLBACK_ACCEPTING_CALLEES} entry
  * needed); only the arg at its listed index is eligible.
  *
+ * Invariant: this map and {@link CALLBACK_ACCEPTING_CALLEES} must stay
+ * disjoint. A callee name present in both would have its any-position intent
+ * silently narrowed to the single listed index (positional wins — see the
+ * gate in {@link extractCallbackReferenceCalls}), with no error or warning.
+ *
  * This is name-based, not receiver-typed (consistent with the rest of this
  * gate), so it can't distinguish `Array.from(x, mapFn)` from an unrelated
  * `.from(x, y)` on some other object shaped differently — e.g. `Buffer.from(data,
