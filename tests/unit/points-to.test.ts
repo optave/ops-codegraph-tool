@@ -477,3 +477,40 @@ describe('buildPointsToMap — maxIterations cap (issue #1753)', () => {
     expect(resolveViaPointsTo('a0', pts)).toEqual(['handler']);
   });
 });
+
+describe('buildPointsToMap — dispatch-table pts constraints (RES-2, #1897)', () => {
+  it('seeds wildcard for synthetic dispatch-table array elem bindings', () => {
+    const defNames = new Set(['dtFn1', 'dtFn2']);
+    const arrayElemBindings = [
+      { arrayName: '<dt_5_2>', index: 0, elemName: 'dtFn1' },
+      { arrayName: '<dt_5_2>', index: 1, elemName: 'dtFn2' },
+    ];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings);
+    expect(resolveViaPointsTo('<dt_5_2>[*]', pts)).toContain('dtFn1');
+    expect(resolveViaPointsTo('<dt_5_2>[*]', pts)).toContain('dtFn2');
+  });
+
+  it('resolves only identifier values, not string keys', () => {
+    const defNames = new Set(['fn1']);
+    const arrayElemBindings = [{ arrayName: '<dt_1_0>', index: 0, elemName: 'fn1' }];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings);
+    expect(resolveViaPointsTo('<dt_1_0>[*]', pts)).toEqual(['fn1']);
+  });
+
+  it('two dispatch tables in the same file use distinct synthetic names', () => {
+    const defNames = new Set(['fnA', 'fnB', 'fnC', 'fnD']);
+    const arrayElemBindings = [
+      { arrayName: '<dt_3_0>', index: 0, elemName: 'fnA' },
+      { arrayName: '<dt_3_0>', index: 1, elemName: 'fnB' },
+      { arrayName: '<dt_7_0>', index: 0, elemName: 'fnC' },
+      { arrayName: '<dt_7_0>', index: 1, elemName: 'fnD' },
+    ];
+    const pts = buildPointsToMap([], defNames, NO_IMPORTS, undefined, undefined, arrayElemBindings);
+    expect(resolveViaPointsTo('<dt_3_0>[*]', pts)).toContain('fnA');
+    expect(resolveViaPointsTo('<dt_3_0>[*]', pts)).toContain('fnB');
+    expect(resolveViaPointsTo('<dt_3_0>[*]', pts)).not.toContain('fnC');
+    expect(resolveViaPointsTo('<dt_7_0>[*]', pts)).toContain('fnC');
+    expect(resolveViaPointsTo('<dt_7_0>[*]', pts)).toContain('fnD');
+    expect(resolveViaPointsTo('<dt_7_0>[*]', pts)).not.toContain('fnA');
+  });
+});

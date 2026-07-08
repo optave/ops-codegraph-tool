@@ -1555,6 +1555,97 @@ function runDemo(users: string[]): void {
     });
   });
 
+  describe('inline object-literal dispatch table extraction (RES-2, #1897)', () => {
+    // Mirrors the Rust `dispatch_table_emits_dt_call_and_array_elem_bindings`
+    // / `dispatch_table_parenthesized_object_also_works` unit tests in
+    // crates/codegraph-core/src/extractors/javascript.rs.
+    it('emits a <dt_line_col>[*] call and array-elem bindings for each identifier value', () => {
+      const symbols = parseJS(`
+        function dtFn1() {}
+        function dtFn2() {}
+        function runDispatch(key) { ({ a: dtFn1, b: dtFn2 })[key](); }
+      `);
+      const dtCall = symbols.calls.find(
+        (c) => c.name.startsWith('<dt_') && c.name.endsWith('>[*]'),
+      );
+      expect(dtCall).toBeDefined();
+      expect(dtCall?.dynamic).toBe(true);
+      expect(dtCall?.dynamicKind).toBe('dispatch-table');
+      expect(dtCall?.keyExpr).toBe('key');
+
+      const tableName = dtCall!.name.slice(0, -3); // strip trailing "[*]"
+      expect(symbols.arrayElemBindings).toContainEqual({
+        arrayName: tableName,
+        index: 0,
+        elemName: 'dtFn1',
+      });
+      expect(symbols.arrayElemBindings).toContainEqual({
+        arrayName: tableName,
+        index: 1,
+        elemName: 'dtFn2',
+      });
+    });
+
+    it('also detects the pattern without wrapping parens in a non-ambiguous expression position', () => {
+      // `{...}` needs parens only where it would otherwise be parsed as a
+      // block (statement position). In a `return` expression it's already
+      // unambiguous, so the object node is not wrapped in a
+      // parenthesized_expression — exercising the non-unwrap branch of
+      // extractDispatchTableCall, the mirror image of the first test above.
+      const symbols = parseJS(`
+        function fnA() {}
+        function fnB() {}
+        function run(k) { return { a: fnA, b: fnB }[k](); }
+      `);
+      const dtCall = symbols.calls.find(
+        (c) => c.name.startsWith('<dt_') && c.name.endsWith('>[*]'),
+      );
+      expect(dtCall).toBeDefined();
+    });
+
+    it('resolves the shorthand-property form (`{ fnA, fnB }[k]()`)', () => {
+      const symbols = parseJS(`
+        function fnA() {}
+        function fnB() {}
+        function run(k) { ({ fnA, fnB })[k](); }
+      `);
+      const dtCall = symbols.calls.find(
+        (c) => c.name.startsWith('<dt_') && c.name.endsWith('>[*]'),
+      );
+      expect(dtCall).toBeDefined();
+      const tableName = dtCall!.name.slice(0, -3);
+      expect(symbols.arrayElemBindings).toContainEqual({
+        arrayName: tableName,
+        index: 0,
+        elemName: 'fnA',
+      });
+      expect(symbols.arrayElemBindings).toContainEqual({
+        arrayName: tableName,
+        index: 1,
+        elemName: 'fnB',
+      });
+    });
+
+    it('falls back to the generic computed-key classification for a non-literal object', () => {
+      const symbols = parseJS(`function run(handlers, key) { return handlers[key](); }`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: '<dynamic:computed-key>', dynamicKind: 'computed-key' }),
+      );
+      expect(symbols.calls.find((c) => c.dynamicKind === 'dispatch-table')).toBeUndefined();
+    });
+
+    it('does not treat a string-literal key on an object literal as a dispatch table', () => {
+      const symbols = parseJS(`
+        function fnA() {}
+        function run() { return ({ a: fnA })['a'](); }
+      `);
+      expect(symbols.calls.find((c) => c.dynamicKind === 'dispatch-table')).toBeUndefined();
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'a', dynamicKind: 'computed-literal' }),
+      );
+    });
+  });
+
   describe('instanceof value-ref extraction (#1784)', () => {
     it('extracts a value-ref call for `instanceof ClassName`', () => {
       const symbols = parseJS(`

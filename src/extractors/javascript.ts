@@ -331,6 +331,7 @@ function dispatchQueryMatch(
   classes: ClassRelation[],
   exps: Export[],
   callbackParamShapes: CallbackParamShapes,
+  arrayElemBindings: ArrayElemBinding[],
 ): void {
   if (c.fn_node) {
     handleFnCapture(c, definitions);
@@ -365,7 +366,7 @@ function dispatchQueryMatch(
     if (cbDef) definitions.push(cbDef);
     calls.push(...extractCallbackReferenceCalls(c.callmem_node, callbackParamShapes));
   } else if (c.callsub_node) {
-    const callInfo = extractCallInfo(c.callsub_fn!, c.callsub_node);
+    const callInfo = extractCallInfo(c.callsub_fn!, c.callsub_node, arrayElemBindings);
     if (callInfo) calls.push(callInfo);
     calls.push(...extractCallbackReferenceCalls(c.callsub_node, callbackParamShapes));
   } else if (c.newfn_node) {
@@ -421,7 +422,16 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     // Build capture lookup for this match (1-3 captures each, very fast)
     const c: Record<string, TreeSitterNode> = Object.create(null);
     for (const cap of match.captures) c[cap.name] = cap.node;
-    dispatchQueryMatch(c, definitions, calls, imports, classes, exps, callbackParamShapes);
+    dispatchQueryMatch(
+      c,
+      definitions,
+      calls,
+      imports,
+      classes,
+      exps,
+      callbackParamShapes,
+      arrayElemBindings,
+    );
   }
 
   // Extract top-level constants via targeted walk (query patterns don't cover these)
@@ -1630,7 +1640,7 @@ function handleCallExpr(
       ctx.calls.push({ name: 'this', line: nodeStartLine(node) });
       return; // no further processing needed for this()-style calls
     }
-    const callInfo = extractCallInfo(fn, node);
+    const callInfo = extractCallInfo(fn, node, ctx.arrayElemBindings);
     if (callInfo) ctx.calls.push(callInfo);
     if (fn.type === 'member_expression') {
       const cbDef = extractCallbackDefinition(node, fn);
@@ -3497,7 +3507,11 @@ function extractReceiverName(objNode: TreeSitterNode | null): string | undefined
   return objNode.text;
 }
 
-function extractCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | null {
+function extractCallInfo(
+  fn: TreeSitterNode,
+  callNode: TreeSitterNode,
+  arrayElemBindings?: ArrayElemBinding[],
+): Call | null {
   const fnType = fn.type;
   if (fnType === 'identifier') {
     if (fn.text === 'eval') {
@@ -3528,7 +3542,7 @@ function extractCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | n
     return extractMemberExprCallInfo(fn, callNode);
   }
   if (fnType === 'subscript_expression') {
-    return extractSubscriptCallInfo(fn, callNode);
+    return extractSubscriptCallInfo(fn, callNode, arrayElemBindings);
   }
   return null;
 }
@@ -3684,8 +3698,72 @@ function extractMemberExprCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode)
   return { name: propText, line: callLine, receiver };
 }
 
+/**
+ * RES-2: inline object-literal dispatch table — `({a:fnA,b:fnB})[key]()`.
+ *
+ * Mirrors `extract_dispatch_table_call` in
+ * `crates/codegraph-core/src/extractors/javascript.rs`. When the subscript's
+ * object is an object literal (optionally unwrapped from a parenthesized
+ * expression) and the index is a bare identifier, records each property's
+ * identifier value as an `ArrayElemBinding` under a synthetic `<dt_line_col>`
+ * name and returns a `<dt_line_col>[*]` call — the existing points-to
+ * wildcard resolution path (already used for `const arr = [f1, f2]; arr[i]()`
+ * patterns) then resolves it to each concrete target identically on both
+ * engines (#1897).
+ *
+ * Returns `null` when the object isn't an object literal, or none of its
+ * property values are resolvable bare identifiers.
+ */
+function extractDispatchTableCall(
+  obj: TreeSitterNode | null,
+  index: TreeSitterNode,
+  callNode: TreeSitterNode,
+  arrayElemBindings: ArrayElemBinding[],
+): Call | null {
+  if (!obj) return null;
+  // Unwrap parenthesized_expression: ({a:fn})[key]()
+  const objNode =
+    obj.type === 'parenthesized_expression'
+      ? (obj.childForFieldName('expression') ?? obj.child(1) ?? obj)
+      : obj;
+  if (objNode.type !== 'object') return null;
+
+  const line = nodeStartLine(callNode);
+  const col = callNode.startPosition.column;
+  const tableName = `<dt_${line}_${col}>`;
+  let idx = 0;
+  for (let i = 0; i < objNode.childCount; i++) {
+    const child = objNode.child(i);
+    if (!child) continue;
+    if (child.type === 'shorthand_property_identifier') {
+      if (!BUILTIN_GLOBALS.has(child.text)) {
+        arrayElemBindings.push({ arrayName: tableName, index: idx, elemName: child.text });
+        idx++;
+      }
+    } else if (child.type === 'pair') {
+      const val = child.childForFieldName('value');
+      if (val?.type === 'identifier' && !BUILTIN_GLOBALS.has(val.text)) {
+        arrayElemBindings.push({ arrayName: tableName, index: idx, elemName: val.text });
+        idx++;
+      }
+    }
+  }
+  if (idx === 0) return null;
+  return {
+    name: `${tableName}[*]`,
+    line,
+    dynamic: true,
+    dynamicKind: 'dispatch-table',
+    keyExpr: index.text,
+  };
+}
+
 /** Extract call info from a subscript_expression function node (obj[key]()). */
-function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | null {
+function extractSubscriptCallInfo(
+  fn: TreeSitterNode,
+  callNode: TreeSitterNode,
+  arrayElemBindings?: ArrayElemBinding[],
+): Call | null {
   const obj = fn.childForFieldName('object');
   const index = fn.childForFieldName('index');
   if (!index) return null;
@@ -3705,8 +3783,12 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
     }
   }
 
-  // obj[variable]() — key is a variable; may be resolvable via pts (RES-1), else flagged
+  // obj[variable]() — key is a variable; may be resolvable via pts (RES-1/RES-2), else flagged
   if (indexType === 'identifier') {
+    if (arrayElemBindings) {
+      const dispatchCall = extractDispatchTableCall(obj, index, callNode, arrayElemBindings);
+      if (dispatchCall) return dispatchCall;
+    }
     const receiver = extractReceiverName(obj);
     return {
       name: '<dynamic:computed-key>',

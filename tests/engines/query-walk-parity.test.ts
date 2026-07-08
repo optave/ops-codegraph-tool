@@ -276,6 +276,23 @@ function runDemo(users: string[]): void {
 }
 `,
   },
+  {
+    // Regression guard for #1897: inline object-literal dispatch-table
+    // subscript calls (`({a:fnA,b:fnB})[key]()`) must produce the same
+    // synthetic `<dt_line_col>[*]` call on both extraction paths — the query
+    // path threads `arrayElemBindings` through `dispatchQueryMatch`'s
+    // `callsub_node` branch, the walk path through `handleCallExpr`'s
+    // `ctx.arrayElemBindings`.
+    name: 'inline object-literal dispatch table (#1897)',
+    file: 'test.js',
+    code: `
+function fnA() {}
+function fnB() {}
+function run(key) {
+  return ({ a: fnA, b: fnB })[key]();
+}
+`,
+  },
   // TSX
   {
     name: 'TSX component with extends',
