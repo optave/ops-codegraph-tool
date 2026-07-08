@@ -9,7 +9,7 @@
 
 import type { GraphAdapter } from './adapter.js';
 import { accumulateInternalEdgeWeights, accumulateNodeAggregates } from './aggregate-helpers.js';
-import { fget, iget, u8get } from './typed-array-helpers.js';
+import { fget, fgetOrZero, iget, igetOrZero, u8get } from './typed-array-helpers.js';
 
 export interface CompactOptions {
   keepOldOrder?: boolean;
@@ -368,6 +368,22 @@ function compactIds(s: PartitionState, opts: CompactOptions = {}): void {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Extracted: community membership listing                            */
+/* ------------------------------------------------------------------ */
+
+/** Group node indices [0, n) by their current community id. */
+function buildCommunityMembers(
+  s: PartitionState,
+  n: number,
+  nodeCommunity: Int32Array,
+): number[][] {
+  const comms: number[][] = new Array(s.communityCount);
+  for (let i = 0; i < s.communityCount; i++) comms[i] = [];
+  for (let i = 0; i < n; i++) comms[iget(nodeCommunity, i)]!.push(i);
+  return comms;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Factory: thin wrapper that wires state to extracted functions      */
 /* ------------------------------------------------------------------ */
 
@@ -435,21 +451,14 @@ export function makePartition(graph: GraphAdapter, options: MakePartitionOptions
     accumulateNeighborCommunityEdgeWeights: (v: number) => accumulateNeighborWeights(s, v),
     getCandidateCommunityAt: (i: number): number => iget(s.candidateCommunities, i),
     getNeighborEdgeWeightToCommunity: (c: number): number =>
-      fget(s.neighborEdgeWeightToCommunity, c) || 0,
-    getOutEdgeWeightToCommunity: (c: number): number => fget(s.outEdgeWeightToCommunity, c) || 0,
-    getInEdgeWeightFromCommunity: (c: number): number => fget(s.inEdgeWeightFromCommunity, c) || 0,
+      fgetOrZero(s.neighborEdgeWeightToCommunity, c),
+    getOutEdgeWeightToCommunity: (c: number): number => fgetOrZero(s.outEdgeWeightToCommunity, c),
+    getInEdgeWeightFromCommunity: (c: number): number => fgetOrZero(s.inEdgeWeightFromCommunity, c),
     moveNodeToCommunity: (v: number, newC: number) => moveNode(s, v, newC),
     compactCommunityIds: (opts?: CompactOptions) => compactIds(s, opts),
-    getCommunityMembers(): number[][] {
-      const comms: number[][] = new Array(s.communityCount);
-      for (let i = 0; i < s.communityCount; i++) comms[i] = [];
-      for (let i = 0; i < n; i++) comms[iget(nodeCommunity, i)]!.push(i);
-      return comms;
-    },
-    getCommunityTotalSize: (c: number): number =>
-      c < s.communityTotalSize.length ? fget(s.communityTotalSize, c) : 0,
-    getCommunityNodeCount: (c: number): number =>
-      c < s.communityNodeCount.length ? iget(s.communityNodeCount, c) : 0,
+    getCommunityMembers: () => buildCommunityMembers(s, n, nodeCommunity),
+    getCommunityTotalSize: (c: number): number => fgetOrZero(s.communityTotalSize, c),
+    getCommunityNodeCount: (c: number): number => igetOrZero(s.communityNodeCount, c),
     graph: undefined,
   };
 }

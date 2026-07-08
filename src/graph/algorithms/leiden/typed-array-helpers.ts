@@ -26,3 +26,20 @@ export function u8get(a: Uint8Array, i: number): number {
 export function taAdd(a: Float64Array, i: number, v: number): void {
   a[i] = fget(a, i) + v;
 }
+
+/**
+ * Bounds-safe zero-fallback read: collapses both an out-of-range index and a
+ * falsy (0/NaN) in-range value to `0`. Typed arrays already return `undefined`
+ * for an out-of-range index, and `undefined || 0` lands on the same `0` as a
+ * falsy in-range read, so this single helper replaces the two hand-rolled
+ * guards previously duplicated at call sites: `i < a.length ? fget(a, i) : 0`
+ * and `fget(a, i) || 0`.
+ */
+export function fgetOrZero(a: Float64Array, i: number): number {
+  return (a[i] as number) || 0;
+}
+
+/** `fgetOrZero`, for `Int32Array`. */
+export function igetOrZero(a: Int32Array, i: number): number {
+  return (a[i] as number) || 0;
+}
