@@ -28,6 +28,7 @@ import { parseArgs } from 'node:util';
 import { ISSUES, extractAgentOutput, validateResult } from './token-benchmark-issues.js';
 import { getBenchmarkVersion } from './bench-version.js';
 import { median, round1, timeMedian } from './lib/bench-timing.js';
+import { extractUsageMetrics, tallyToolCalls } from './lib/session-metrics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -167,21 +168,15 @@ async function buildCodegraph(nextjsDir) {
 // ── Session runner ────────────────────────────────────────────────────────
 
 /**
- * Run a single agent session using the Claude Agent SDK.
+ * Build the Agent SDK `options` for a single session.
+ * Codegraph mode additionally wires up the codegraph MCP server against
+ * the graph already built for `nextjsDir`.
  *
  * @param {'baseline'|'codegraph'} mode
- * @param {import('./token-benchmark-issues.js').BenchmarkIssue} issue
  * @param {string} nextjsDir
- * @returns {Promise<object>} session metrics
+ * @returns {object} Agent SDK options
  */
-async function runSession(mode, issue, nextjsDir) {
-	// Lazy-load the SDK
-	const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-	const dbPath = path.join(nextjsDir, '.codegraph', 'graph.db');
-	const cliPath = path.join(root, 'src', 'cli.js');
-	const issuePrompt = makeIssuePrompt(issue);
-
+function buildSessionOptions(mode, nextjsDir) {
 	const options = {
 		cwd: nextjsDir,
 		model: MODEL,
@@ -193,6 +188,8 @@ async function runSession(mode, issue, nextjsDir) {
 	};
 
 	if (mode === 'codegraph') {
+		const dbPath = path.join(nextjsDir, '.codegraph', 'graph.db');
+		const cliPath = path.join(root, 'src', 'cli.js');
 		options.mcpServers = {
 			codegraph: {
 				type: 'stdio',
@@ -202,38 +199,31 @@ async function runSession(mode, issue, nextjsDir) {
 		};
 	}
 
+	return options;
+}
+
+/**
+ * Run a single agent session using the Claude Agent SDK.
+ *
+ * @param {'baseline'|'codegraph'} mode
+ * @param {import('./token-benchmark-issues.js').BenchmarkIssue} issue
+ * @param {string} nextjsDir
+ * @returns {Promise<object>} session metrics
+ */
+async function runSession(mode, issue, nextjsDir) {
+	// Lazy-load the SDK
+	const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+	const options = buildSessionOptions(mode, nextjsDir);
+	const issuePrompt = makeIssuePrompt(issue);
+
 	const start = performance.now();
 	const result = await query({ prompt: issuePrompt, options });
 	const durationMs = Math.round(performance.now() - start);
 
-	// Extract metrics from the SDK result
-	const usage = result.usage || {};
-	const inputTokens = usage.input_tokens || usage.inputTokens || 0;
-	const outputTokens = usage.output_tokens || usage.outputTokens || 0;
-	const cacheReadInputTokens =
-		usage.cache_read_input_tokens || usage.cacheReadInputTokens || 0;
-	const totalCostUsd = usage.total_cost_usd || usage.totalCostUsd || 0;
-	const numTurns = result.num_turns || result.numTurns || 0;
-
-	// Count tool calls by type
+	const usage = extractUsageMetrics(result);
 	const messages = result.messages || [];
-	const toolCalls = {};
-	let uniqueFilesRead = new Set();
-
-	for (const msg of messages) {
-		if (msg.role !== 'assistant') continue;
-		const blocks = Array.isArray(msg.content) ? msg.content : [];
-		for (const block of blocks) {
-			if (block.type === 'tool_use') {
-				const name = block.name || 'unknown';
-				toolCalls[name] = (toolCalls[name] || 0) + 1;
-				// Track unique files read
-				if (name === 'Read' && block.input?.file_path) {
-					uniqueFilesRead.add(block.input.file_path);
-				}
-			}
-		}
-	}
+	const { toolCalls, uniqueFilesRead } = tallyToolCalls(messages);
 
 	// Extract identified files from agent output
 	const agentOutput = extractAgentOutput(messages);
@@ -241,14 +231,10 @@ async function runSession(mode, issue, nextjsDir) {
 	const validation = validateResult(issue.id, filesIdentified);
 
 	return {
-		inputTokens,
-		outputTokens,
-		cacheReadInputTokens,
-		totalCostUsd: round2(totalCostUsd),
-		numTurns,
+		...usage,
 		durationMs,
 		toolCalls,
-		uniqueFilesRead: uniqueFilesRead.size,
+		uniqueFilesRead,
 		filesIdentified,
 		hitRate: validation.hitRate,
 		matched: validation.matched,
