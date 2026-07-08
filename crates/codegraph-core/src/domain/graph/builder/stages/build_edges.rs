@@ -153,10 +153,18 @@ struct EdgeContext<'a> {
     nodes_by_file: HashMap<&'a str, Vec<&'a NodeInfo>>,
     builtin_set: HashSet<&'a str>,
     receiver_kinds: HashSet<&'a str>,
+    /// Property/method names ever invoked via member-call syntax
+    /// (`x.name(...)`) across every file in this build pass — see
+    /// `collect_invoked_property_names` for the #1895 liveness rationale.
+    invoked_property_names: HashSet<&'a str>,
 }
 
 impl<'a> EdgeContext<'a> {
-    fn new(all_nodes: &'a [NodeInfo], builtin_receivers: &'a [String]) -> Self {
+    fn new(
+        all_nodes: &'a [NodeInfo],
+        builtin_receivers: &'a [String],
+        files: &'a [FileEdgeInput],
+    ) -> Self {
         let mut nodes_by_name: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
         let mut nodes_by_name_and_file: HashMap<(&str, &str), Vec<&NodeInfo>> = HashMap::new();
         let mut nodes_by_file: HashMap<&str, Vec<&NodeInfo>> = HashMap::new();
@@ -177,8 +185,41 @@ impl<'a> EdgeContext<'a> {
             nodes_by_file,
             builtin_set,
             receiver_kinds,
+            invoked_property_names: collect_invoked_property_names(files),
         }
     }
+}
+
+/// Collect the set of property/method names ever invoked via member-call
+/// syntax (`x.name(...)`) across every file currently being processed —
+/// regardless of whether the receiver `x` itself resolves to anything.
+///
+/// Used as the "one hop further" liveness check for object-literal-property
+/// value-refs (#1895): a function referenced as `{ resolve: someFn }` should
+/// only be credited with a `calls` edge from that reference when something,
+/// somewhere, actually invokes a `.resolve(...)`-shaped call — otherwise the
+/// property is wired up but never read, and `someFn` is genuinely dead.
+///
+/// Scope matches whatever `files` the caller passes to `build_call_edges`:
+/// the full codebase for a full build, or just the changed file(s) on an
+/// incremental one. The incremental case is a narrower, same-build-pass view
+/// (a cross-file consumer added in an untouched file won't be seen until the
+/// next full rebuild) — the same scoping trade-off already accepted
+/// elsewhere in this codebase's incremental classification
+/// (`has_active_file_siblings`, exported-via-reexport, and median fan-in/out
+/// all recompute from the affected file set only, not the whole graph, in
+/// `graph/classifiers/roles.rs`'s incremental path). Mirrors
+/// `collectInvokedPropertyNames` in `src/domain/graph/builder/call-resolver.ts`.
+fn collect_invoked_property_names(files: &[FileEdgeInput]) -> HashSet<&str> {
+    let mut names = HashSet::new();
+    for file in files {
+        for call in &file.calls {
+            if call.receiver.is_some() {
+                names.insert(call.name.as_str());
+            }
+        }
+    }
+    names
 }
 
 // ── Phase 8.3: points-to analysis ─────────────────────────────────────────
@@ -467,7 +508,7 @@ pub fn build_call_edges(
     builtin_receivers: Vec<String>,
     max_iterations: u32,
 ) -> Vec<ComputedEdge> {
-    let ctx = EdgeContext::new(&all_nodes, &builtin_receivers);
+    let ctx = EdgeContext::new(&all_nodes, &builtin_receivers, &files);
     let mut edges = Vec::new();
 
     for file_input in &files {
@@ -799,6 +840,17 @@ fn process_file<'a>(
         // (stages/build-edges.ts).
         if call.dynamic_kind.as_deref() == Some("value-ref") {
             targets.retain(|t| t.kind == "function" || t.kind == "method" || t.kind == "class");
+            // #1895: object-literal-property value-refs (key_expr set — see
+            // handle_object_literal_pair_value_ref / shorthand handler)
+            // additionally require independent evidence that the property is
+            // actually invoked somewhere (`x.key_expr(...)`) — merely being
+            // wired into an object literal is not liveness. instanceof/Lua
+            // value-refs never set key_expr, so they are unaffected.
+            if let Some(key_expr) = call.key_expr.as_deref() {
+                if !ctx.invoked_property_names.contains(key_expr) {
+                    targets.clear();
+                }
+            }
         }
         sort_targets_by_confidence(&mut targets, fc.rel_path, imported_from);
         emit_call_edges(&targets, caller_id, is_dynamic, fc.rel_path, imported_from, &mut seen_edges, &mut pts_edge_map, edges);
@@ -2902,6 +2954,72 @@ mod call_edge_tests {
         let re = receiver_edge.unwrap();
         assert_eq!(re.source_id, 1, "receiver edge source should be main (id=1)");
         assert_eq!(re.target_id, 2, "receiver edge target should be Calculator (id=2)");
+    }
+
+    /// Issue #1895: an object-literal-property value-ref call whose property
+    /// key (`key_expr`) is never independently confirmed to be invoked
+    /// anywhere (`x.resolve(...)`) must NOT produce a `calls` edge — merely
+    /// being wired into the object literal is not liveness. A sibling
+    /// property whose key IS invoked elsewhere (`table.reject(...)`) keeps
+    /// its edge.
+    #[test]
+    fn value_ref_edge_requires_key_invoked_elsewhere() {
+        let all_nodes = vec![
+            node(1, "makeTable", "function", "factory.js", 1),
+            node(2, "neverRead",  "function", "factory.js", 2),
+            node(3, "isRead",     "function", "factory.js", 3),
+            node(4, "run",        "function", "consumer.js", 1),
+        ];
+
+        let mut resolve_call = call("neverRead", 5, None);
+        resolve_call.dynamic = Some(true);
+        resolve_call.dynamic_kind = Some("value-ref".to_string());
+        resolve_call.key_expr = Some("resolve".to_string());
+
+        let mut reject_call = call("isRead", 6, None);
+        reject_call.dynamic = Some(true);
+        reject_call.dynamic_kind = Some("value-ref".to_string());
+        reject_call.key_expr = Some("reject".to_string());
+
+        let factory_file = make_file(
+            "factory.js",
+            10,
+            vec![def("makeTable", "function", 1, 8)],
+            vec![resolve_call, reject_call],
+            vec![],
+            vec![],
+        );
+
+        // Evidence that `.reject(...)` is genuinely invoked somewhere, but
+        // `.resolve(...)` never is.
+        let consumer_file = make_file(
+            "consumer.js",
+            20,
+            vec![def("run", "function", 1, 3)],
+            vec![call("reject", 2, Some("table"))],
+            vec![],
+            vec![],
+        );
+
+        let edges = build_call_edges(
+            vec![factory_file, consumer_file],
+            all_nodes,
+            vec![],
+            MAX_SOLVER_ITERATIONS,
+        );
+
+        let calls_never_read = edges.iter().any(|e| e.kind == "calls" && e.target_id == 2);
+        let calls_is_read = edges.iter().any(|e| e.kind == "calls" && e.target_id == 3);
+        assert!(
+            !calls_never_read,
+            "expected no calls edge to neverRead (key 'resolve' never invoked); got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+        assert!(
+            calls_is_read,
+            "expected a calls edge to isRead (key 'reject' invoked in consumer.js); got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
     }
 
     /// Regression: when the same file has a `kind="function"` node for the

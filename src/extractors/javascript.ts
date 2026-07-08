@@ -1500,6 +1500,20 @@ function handleConstObjectPatternAssignment(
 }
 
 /**
+ * Resolve an object-literal `pair`'s key node to its plain string name.
+ * Computed string-literal keys (e.g. `['foo']: fn`) are unwrapped the same way as
+ * method_definition's name field; non-string computed keys (e.g. `[Symbol.iterator]: fn`)
+ * resolve to '' (no resolvable name), mirroring the method_definition branch.
+ */
+function resolveObjectLiteralKeyName(keyNode: TreeSitterNode): string {
+  return keyNode.type === 'string'
+    ? keyNode.text.replace(/^['"]|['"]$/g, '')
+    : keyNode.type === 'computed_property_name'
+      ? resolveComputedKeyName(keyNode)
+      : keyNode.text;
+}
+
+/**
  * Phase 8.3f: extract function/arrow function properties from an object literal as standalone
  * definitions so that `this.method()` calls inside Object.defineProperty accessor functions can
  * resolve them via the same-file definition lookup.
@@ -1531,15 +1545,7 @@ function extractObjectLiteralFunctions(
       const keyNode = child.childForFieldName('key');
       const valueNode = child.childForFieldName('value');
       if (!keyNode || !valueNode) continue;
-      // Computed string-literal keys (e.g. `['foo']: fn`) are unwrapped the same way as
-      // method_definition's name field; non-string computed keys (e.g. `[Symbol.iterator]: fn`)
-      // resolve to '' and are skipped below, mirroring the method_definition branch.
-      const keyName =
-        keyNode.type === 'string'
-          ? keyNode.text.replace(/^['"]|['"]$/g, '')
-          : keyNode.type === 'computed_property_name'
-            ? resolveComputedKeyName(keyNode)
-            : keyNode.text;
+      const keyName = resolveObjectLiteralKeyName(keyNode);
       if (!keyName) continue;
       if (
         valueNode.type === 'arrow_function' ||
@@ -3413,15 +3419,24 @@ function collectObjectPropBindings(node: TreeSitterNode, bindings: ObjectPropBin
  * incremental.ts) against function/method-kind targets ONLY, so plain data
  * references (`{ name: SOME_CONSTANT }`) naturally fail to resolve into an
  * edge rather than needing a structural allowlist gate here.
+ *
+ * `keyExpr` carries the property KEY (e.g. `resolve`), distinct from `name`
+ * (the referenced value's own identifier, e.g. `someFunction`) — the
+ * downstream "is this property ever invoked" liveness check (#1895) needs the
+ * key, since that's the name a dispatch consumer would actually call
+ * (`table.resolve(...)`), not the function's own declared name.
  */
 function collectObjectLiteralValueRefCall(pairNode: TreeSitterNode, calls: Call[]): void {
   const valueNode = pairNode.childForFieldName('value');
   if (valueNode?.type !== 'identifier' || BUILTIN_GLOBALS.has(valueNode.text)) return;
+  const keyNode = pairNode.childForFieldName('key');
+  const keyExpr = keyNode ? resolveObjectLiteralKeyName(keyNode) || undefined : undefined;
   calls.push({
     name: valueNode.text,
     line: nodeStartLine(valueNode),
     dynamic: true,
     dynamicKind: 'value-ref',
+    keyExpr,
   });
 }
 
@@ -4291,12 +4306,15 @@ function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTarget
         break;
       case 'shorthand_property_identifier':
         // #1771: shorthand form of the same pattern, e.g. `{ someFunction }`.
+        // keyExpr equals name here — the property key and the referenced
+        // value are the same identifier in shorthand form (#1895).
         if (!BUILTIN_GLOBALS.has(node.text)) {
           targets.valueRefCalls.push({
             name: node.text,
             line: nodeStartLine(node),
             dynamic: true,
             dynamicKind: 'value-ref',
+            keyExpr: node.text,
           });
         }
         break;

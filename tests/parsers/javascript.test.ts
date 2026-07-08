@@ -1504,6 +1504,57 @@ function runDemo(users: string[]): void {
     });
   });
 
+  describe('object-literal value-ref keyExpr capture (#1895)', () => {
+    it('captures the property key, distinct from the referenced value name', () => {
+      const symbols = parseJS(`const table = { resolve: someFunction };`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({
+          name: 'someFunction',
+          dynamicKind: 'value-ref',
+          keyExpr: 'resolve',
+        }),
+      );
+    });
+
+    it('captures a string-literal key with quotes stripped', () => {
+      const symbols = parseJS(`const table = { 'resolve': someFunction };`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'someFunction', keyExpr: 'resolve' }),
+      );
+    });
+
+    it('captures a computed string-literal key', () => {
+      const symbols = parseJS(`const table = { ['resolve']: someFunction };`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'someFunction', keyExpr: 'resolve' }),
+      );
+    });
+
+    it('leaves keyExpr unset for a non-string computed key', () => {
+      const symbols = parseJS(`const table = { [Symbol.iterator]: someFunction };`);
+      const call = symbols.calls.find(
+        (c) => c.dynamicKind === 'value-ref' && c.name === 'someFunction',
+      );
+      expect(call?.keyExpr).toBeUndefined();
+    });
+
+    it('sets keyExpr equal to name for a shorthand property', () => {
+      const symbols = parseJS(`const table = { someFunction };`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'someFunction', keyExpr: 'someFunction' }),
+      );
+    });
+
+    it('leaves keyExpr unset for instanceof value-refs (no property key exists)', () => {
+      const symbols = parseJS(`if (err instanceof CodegraphError) {}`);
+      const call = symbols.calls.find(
+        (c) => c.dynamicKind === 'value-ref' && c.name === 'CodegraphError',
+      );
+      expect(call).toBeDefined();
+      expect(call?.keyExpr).toBeUndefined();
+    });
+  });
+
   describe('instanceof value-ref extraction (#1784)', () => {
     it('extracts a value-ref call for `instanceof ClassName`', () => {
       const symbols = parseJS(`

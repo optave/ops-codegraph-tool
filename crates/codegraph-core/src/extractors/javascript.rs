@@ -2874,6 +2874,12 @@ fn extract_callback_reference_calls(
 /// (`{ name: SOME_CONSTANT }`) naturally fail to resolve into an edge rather
 /// than needing a structural allowlist gate here.
 ///
+/// `key_expr` carries the property KEY (e.g. `resolve`), distinct from `name`
+/// (the referenced value's own identifier, e.g. `someFunction`) — the
+/// downstream "is this property ever invoked" liveness check (#1895) needs
+/// the key, since that's the name a dispatch consumer would actually call
+/// (`table.resolve(...)`), not the function's own declared name.
+///
 /// Mirrors `collectObjectLiteralValueRefCall` in `src/extractors/javascript.ts`.
 fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], calls: &mut Vec<Call>) {
     let Some(value_n) = node.child_by_field_name("value") else { return };
@@ -2884,11 +2890,13 @@ fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], calls: &mut 
     if JS_BUILTIN_GLOBALS.contains(&text) {
         return;
     }
+    let key_expr = node.child_by_field_name("key").and_then(|k| resolve_pair_key_name(&k, source));
     calls.push(Call {
         name: text.to_string(),
         line: start_line(&value_n),
         dynamic: Some(true),
         dynamic_kind: Some("value-ref".to_string()),
+        key_expr,
         ..Default::default()
     });
 }
@@ -2899,6 +2907,9 @@ fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], calls: &mut 
 /// EXPRESSIONS in this grammar (destructuring patterns use the distinct
 /// `shorthand_property_identifier_pattern` kind), so this can't misfire on
 /// destructuring targets.
+///
+/// `key_expr` equals `name` here — the property key and the referenced value
+/// are the same identifier in shorthand form (#1895).
 ///
 /// Mirrors the walk path's `shorthand_property_identifier` handling in
 /// `src/extractors/javascript.ts`'s `runCollectorWalk` (issue #1771).
@@ -2912,6 +2923,7 @@ fn handle_object_literal_shorthand_value_ref(node: &Node, source: &[u8], calls: 
         line: start_line(node),
         dynamic: Some(true),
         dynamic_kind: Some("value-ref".to_string()),
+        key_expr: Some(text.to_string()),
         ..Default::default()
     });
 }
@@ -5066,6 +5078,75 @@ mod tests {
             .filter(|c| c.dynamic_kind.as_deref() == Some("value-ref"))
             .collect();
         assert!(value_refs.iter().any(|c| c.name == "someFunction"));
+    }
+
+    // #1895: key_expr capture — the property key, distinct from the
+    // referenced value's own name, is what a dispatch consumer would
+    // actually call (`table.resolve(...)`).
+    #[test]
+    fn value_ref_captures_property_key_distinct_from_referenced_name() {
+        let s = parse_js("const table = { resolve: someFunction };");
+        let call = s
+            .calls
+            .iter()
+            .find(|c| c.dynamic_kind.as_deref() == Some("value-ref") && c.name == "someFunction")
+            .expect("expected a value-ref call");
+        assert_eq!(call.key_expr.as_deref(), Some("resolve"));
+    }
+
+    #[test]
+    fn value_ref_captures_string_literal_key_with_quotes_stripped() {
+        let s = parse_js("const table = { 'resolve': someFunction };");
+        let call = s
+            .calls
+            .iter()
+            .find(|c| c.dynamic_kind.as_deref() == Some("value-ref") && c.name == "someFunction")
+            .expect("expected a value-ref call");
+        assert_eq!(call.key_expr.as_deref(), Some("resolve"));
+    }
+
+    #[test]
+    fn value_ref_captures_computed_string_literal_key() {
+        let s = parse_js("const table = { ['resolve']: someFunction };");
+        let call = s
+            .calls
+            .iter()
+            .find(|c| c.dynamic_kind.as_deref() == Some("value-ref") && c.name == "someFunction")
+            .expect("expected a value-ref call");
+        assert_eq!(call.key_expr.as_deref(), Some("resolve"));
+    }
+
+    #[test]
+    fn value_ref_leaves_key_expr_unset_for_non_string_computed_key() {
+        let s = parse_js("const table = { [Symbol.iterator]: someFunction };");
+        let call = s
+            .calls
+            .iter()
+            .find(|c| c.dynamic_kind.as_deref() == Some("value-ref") && c.name == "someFunction")
+            .expect("expected a value-ref call");
+        assert_eq!(call.key_expr, None);
+    }
+
+    #[test]
+    fn value_ref_key_expr_equals_name_for_shorthand_property() {
+        let s = parse_js("const table = { someFunction };");
+        let call = s
+            .calls
+            .iter()
+            .find(|c| c.dynamic_kind.as_deref() == Some("value-ref") && c.name == "someFunction")
+            .expect("expected a value-ref call");
+        assert_eq!(call.key_expr.as_deref(), Some("someFunction"));
+    }
+
+    #[test]
+    fn instanceof_value_ref_leaves_key_expr_unset() {
+        let s = parse_js("if (err instanceof CodegraphError) {}");
+        let call = s
+            .calls
+            .iter()
+            .find(|c| c.dynamic_kind.as_deref() == Some("value-ref") && c.name == "CodegraphError")
+            .expect("expected a value-ref call");
+        assert_eq!(call.key_expr, None);
     }
 
     #[test]

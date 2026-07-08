@@ -40,6 +40,7 @@ import { unwrapTypeEntry } from '../../resolver/strategy.js';
 import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
   type CallNodeLookup,
+  collectInvokedPropertyNames,
   findCaller,
   isModuleScopedLanguage,
   resolveCallTargets,
@@ -951,6 +952,12 @@ function buildCallEdgesJS(
 ): void {
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
   const lookup = makeContextLookup(ctx, getNodeIdStmt);
+  // #1895: computed once from every file in this build pass (all files on a
+  // full build, just the affected files on an incremental one) — see
+  // collectInvokedPropertyNames doc comment for the scoping rationale.
+  const invokedPropertyNames = collectInvokedPropertyNames(
+    Array.from(fileSymbols.values(), (s) => s.calls),
+  );
 
   for (const [relPath, symbols] of fileSymbols) {
     if (barrelOnlyFiles.has(relPath)) continue;
@@ -1019,6 +1026,7 @@ function buildCallEdgesJS(
       lookup,
       allEdgeRows,
       typeMap,
+      invokedPropertyNames,
       ptsMap,
       chaCtx,
       importArtifactNames,
@@ -1289,6 +1297,7 @@ function resolveFallbackTargets(
   lookup: CallNodeLookup,
   typeMap: Map<string, TypeMapEntry | string>,
   definePropertyReceivers: Map<string, string> | undefined,
+  invokedPropertyNames: ReadonlySet<string>,
   importedOriginalNames?: ReadonlyMap<string, string>,
 ): {
   targets: ReadonlyArray<{ id: number; file: string; kind?: string }>;
@@ -1368,6 +1377,15 @@ function resolveFallbackTargets(
     targets = (targets as ReadonlyArray<{ id: number; file: string; kind?: string }>).filter(
       (t) => t.kind === 'function' || t.kind === 'method' || t.kind === 'class',
     );
+    // #1895: object-literal-property value-refs (keyExpr set — see
+    // collectObjectLiteralValueRefCall / shorthand collector) additionally
+    // require independent evidence that the property is actually invoked
+    // somewhere (`x.keyExpr(...)`) — merely being wired into an object
+    // literal is not liveness. instanceof/Lua value-refs never set keyExpr,
+    // so they are unaffected by this stricter check.
+    if (call.keyExpr && !invokedPropertyNames.has(call.keyExpr)) {
+      targets = [];
+    }
   }
 
   return { targets, importedFrom };
@@ -1719,6 +1737,7 @@ function buildFileCallEdges(
   lookup: CallNodeLookup,
   allEdgeRows: EdgeRowTuple[],
   typeMap: Map<string, TypeMapEntry | string>,
+  invokedPropertyNames: ReadonlySet<string>,
   ptsMap?: PointsToMap | null,
   chaCtx?: ChaContext,
   importArtifactNames?: ReadonlyMap<string, string>,
@@ -1760,6 +1779,7 @@ function buildFileCallEdges(
       lookup,
       typeMap,
       symbols.definePropertyReceivers,
+      invokedPropertyNames,
       importedOriginalNames,
     );
 
