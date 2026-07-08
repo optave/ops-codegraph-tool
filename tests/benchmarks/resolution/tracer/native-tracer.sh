@@ -598,12 +598,12 @@ CSTRACE
             done
 
             # Inject Dump at end of Main
-            sedi '/public static void Main/,/^\s*\}/ {
-                /^\s*\}/ i\        CallTracer.Dump();
-            }' "$TMP_DIR/Program.cs" 2>/dev/null || true
+            sedi_insert_before_end '/public static void Main/' '/^[[:space:]]*\}/' '/^[[:space:]]*\}/' \
+                '        CallTracer.Dump();' "$TMP_DIR/Program.cs" 2>/dev/null || true
 
             # Also call RunWithValidation if it exists
-            sedi '/CallTracer.Dump/i\        RunWithValidation();' "$TMP_DIR/Program.cs" 2>/dev/null || true
+            sedi_insert_before '/CallTracer.Dump/' '        RunWithValidation();' \
+                "$TMP_DIR/Program.cs" 2>/dev/null || true
 
             # Redirect Console.WriteLine in fixture code to stderr
             for csfile in "$TMP_DIR"/*.cs; do
@@ -702,9 +702,8 @@ SWTRACE
 
     # Inject dump at end of main (top-level code or main function)
     if grep -q 'func main' "$TMP_DIR/main.swift" 2>/dev/null; then
-        sedi '/^func main/,/^\}/ {
-            /^\}/ i\    CallTracer.shared.dump()
-        }' "$TMP_DIR/main.swift"
+        sedi_insert_before_end '/^func main/' '/^\}/' '/^\}/' \
+            '    CallTracer.shared.dump()' "$TMP_DIR/main.swift"
     else
         echo 'CallTracer.shared.dump()' >> "$TMP_DIR/main.swift"
     fi
@@ -800,9 +799,8 @@ DARTTRACE
         '    } finally { CallTracer.instance.traceReturn(); }'
 
     # Inject dump at end of main
-    sedi '/^void main/,/^\}/ {
-        /^\}/ i\  CallTracer.instance.dump();
-    }' "$TMP_DIR/main.dart" 2>/dev/null || true
+    sedi_insert_before_end '/^void main/' '/^\}/' '/^\}/' \
+        '  CallTracer.instance.dump();' "$TMP_DIR/main.dart" 2>/dev/null || true
 
     # Redirect print to stderr in fixture files (trace_support.dart excluded
     # because its dump() must write JSON to stdout; main.dart is NOT excluded
@@ -912,9 +910,8 @@ ZIGTRACE
         '    trace_support.traceCall("%s", "%s"); defer trace_support.traceReturn();'
 
     # Inject dump at end of main
-    sedi '/^pub fn main/,/^\}/ {
-        /^\}/ i\    trace_support.dumpTrace();
-    }' "$TMP_DIR/main.zig" 2>/dev/null || true
+    sedi_insert_before_end '/^pub fn main/' '/^\}/' '/^\}/' \
+        '    trace_support.dumpTrace();' "$TMP_DIR/main.zig" 2>/dev/null || true
 
     cd "$TMP_DIR"
     if zig build-exe main.zig 2>/dev/null; then
