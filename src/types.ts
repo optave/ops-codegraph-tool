@@ -429,6 +429,16 @@ export interface Definition {
   children?: SubDeclaration[];
   visibility?: 'public' | 'private' | 'protected';
   decorators?: string[];
+  /**
+   * Set by the extractor when the underlying AST node structurally has no
+   * executable body (e.g. a TS `method_signature`, a Go interface
+   * `method_elem`, an abstract/interface method with no block, a Rust trait
+   * `function_signature_item`). This is a direct signal from the grammar —
+   * not inferred from name shape — so it stays correct for dotted names that
+   * denote real bodied methods (Lua's `M.foo`, Go/Java/C#/PHP/Rust receiver
+   * or impl methods, any `Class.method` qualified name).
+   */
+  bodyless?: boolean;
   /** Populated post-analysis by the complexity visitor. */
   complexity?: DefinitionComplexity;
   /** Populated post-analysis by the CFG visitor. */

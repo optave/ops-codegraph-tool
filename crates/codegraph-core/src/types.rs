@@ -99,6 +99,14 @@ pub struct Definition {
     pub cfg: Option<CfgData>,
     #[napi(ts_type = "Definition[] | undefined")]
     pub children: Option<Vec<Definition>>,
+    /// Set when the underlying AST node structurally has no executable body
+    /// (an interface/protocol/trait method signature, an abstract method with
+    /// no block, a Rust trait `function_signature_item`, etc). Mirrors the TS
+    /// `Definition.bodyless` signal — see `hasFuncBody` in
+    /// `src/ast-analysis/apply-results.ts` (issue #1922). A dotted name alone
+    /// does not imply this: it's the normal qualified name for real bodied
+    /// class/struct/impl/module methods across every extractor.
+    pub bodyless: Option<bool>,
 }
 
 #[napi(object)]

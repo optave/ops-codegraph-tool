@@ -52,8 +52,25 @@ describe('hasFuncBody', () => {
     expect(hasFuncBody({ name: 'foo', kind: 'function', line: 5, endLine: 5 })).toBe(false);
   });
 
-  it('is false for dotted names (e.g. synthetic Class.member defs)', () => {
-    expect(hasFuncBody({ name: 'Foo.bar', kind: 'method', line: 5, endLine: 10 })).toBe(false);
+  it('is true for a dotted name with a real body (Class.method, module-table function, receiver method) — issue #1922', () => {
+    // A dotted name alone must never disqualify a real, bodied function: it's the normal
+    // qualified name for class/struct/impl methods (`Class.method`) and module-table
+    // functions (Lua's `M.foo`, Go/Java/C#/PHP/Rust receiver or impl methods) across every
+    // extractor. Regression guard for the bug where the file-level "does this file need
+    // complexity" gate (`defs.some(hasFuncBody)`) went false for an entire file when every
+    // function in it happened to have a dotted name.
+    expect(hasFuncBody({ name: 'Foo.bar', kind: 'method', line: 5, endLine: 10 })).toBe(true);
+    expect(hasFuncBody({ name: 'M.foo', kind: 'method', line: 5, endLine: 10 })).toBe(true);
+  });
+
+  it('is false when the extractor marks the definition bodyless (interface/trait/abstract signature)', () => {
+    expect(
+      hasFuncBody({ name: 'Foo.bar', kind: 'method', line: 5, endLine: 10, bodyless: true }),
+    ).toBe(false);
+    // Even a non-dotted signature-only declaration is excluded via `bodyless`.
+    expect(
+      hasFuncBody({ name: 'bar', kind: 'function', line: 5, endLine: 10, bodyless: true }),
+    ).toBe(false);
   });
 });
 

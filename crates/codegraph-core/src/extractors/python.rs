@@ -56,6 +56,7 @@ fn handle_function_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: compute_all_metrics(node, source, "python"),
         cfg: build_function_cfg(node, "python", source),
         children: opt_children(children),
+        bodyless: None,
     });
 }
 
@@ -72,6 +73,7 @@ fn handle_class_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
     let superclasses = node
         .child_by_field_name("superclasses")
@@ -109,6 +111,7 @@ fn handle_expr_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 

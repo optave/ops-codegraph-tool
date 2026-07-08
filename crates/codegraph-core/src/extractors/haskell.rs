@@ -48,6 +48,7 @@ fn handle_haskell_function(node: &Node, source: &[u8], symbols: &mut FileSymbols
         complexity: compute_all_metrics(node, source, "haskell"),
         cfg: build_function_cfg(node, "haskell", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -136,6 +137,7 @@ fn handle_haskell_bind(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -174,6 +176,7 @@ fn handle_haskell_data_type(node: &Node, source: &[u8], symbols: &mut FileSymbol
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
 }
 
@@ -192,6 +195,7 @@ fn handle_haskell_newtype(node: &Node, source: &[u8], symbols: &mut FileSymbols)
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -210,6 +214,7 @@ fn handle_haskell_type_synonym(node: &Node, source: &[u8], symbols: &mut FileSym
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -228,6 +233,7 @@ fn handle_haskell_class(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -246,6 +252,7 @@ fn handle_haskell_instance(node: &Node, source: &[u8], symbols: &mut FileSymbols
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 

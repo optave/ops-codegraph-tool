@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { hasFuncBody } from '../ast-analysis/apply-results.js';
 import {
   computeLOCMetrics as _computeLOCMetrics,
   computeMaintainabilityIndex as _computeMaintainabilityIndex,
@@ -389,6 +390,7 @@ interface FileSymbols {
     kind: string;
     line: number;
     endLine?: number;
+    bodyless?: boolean;
     complexity?: {
       cognitive: number;
       cyclomatic: number;
@@ -407,18 +409,11 @@ async function initWasmParsersIfNeeded(
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
       if (!COMPLEXITY_EXTENSIONS.has(ext)) continue;
-      // Only consider definitions with real function bodies (non-dotted names,
-      // multi-line span). Interface/type property signatures are extracted as
-      // methods but correctly lack complexity data from the native engine.
-      const hasPrecomputed = symbols.definitions.every(
-        (d) =>
-          (d.kind !== 'function' && d.kind !== 'method') ||
-          d.complexity ||
-          d.name.includes('.') ||
-          !d.endLine ||
-          d.endLine <= d.line,
-      );
-      if (!hasPrecomputed) {
+      // Only consider definitions with real function bodies. Signature-only
+      // declarations (interface/abstract method stubs, marked `bodyless` by
+      // the extractor) correctly lack complexity data from the native engine.
+      const needsWasmComplexity = symbols.definitions.some((d) => hasFuncBody(d) && !d.complexity);
+      if (needsWasmComplexity) {
         const { createParsers } = await import('../domain/parser.js');
         const parsers = await createParsers();
         const extToLang = buildExtToLangMap();
@@ -552,11 +547,12 @@ function classifyDefinitionForNativeBulk(
   if (def.kind !== 'function' && def.kind !== 'method') return 'skip';
   if (!def.line) return 'skip';
   if (!def.complexity) {
-    // Interface/type property signatures and single-line stubs are extracted
-    // as methods but the native engine correctly never assigns complexity.
+    // Signature-only declarations (interface/abstract method stubs, marked
+    // `bodyless` by the extractor) and single-line stubs are extracted as
+    // methods but the native engine correctly never assigns complexity.
     // Mirror the leniency in initWasmParsersIfNeeded to avoid bailing out
     // of the native bulk-insert path for every TypeScript codebase (#846).
-    if (def.name.includes('.') || !def.endLine || def.endLine <= def.line) return 'skip';
+    if (!hasFuncBody(def)) return 'skip';
     // Languages without complexity rules will never have data — skip them
     // rather than bailing out of the entire native bulk path.
     if (!langSupported) return 'skip';

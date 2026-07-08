@@ -83,6 +83,7 @@ fn handle_lua_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbol
         complexity: compute_all_metrics(node, source, "lua"),
         cfg: build_function_cfg(node, "lua", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 

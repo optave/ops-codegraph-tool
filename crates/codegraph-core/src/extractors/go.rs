@@ -44,6 +44,7 @@ fn handle_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: compute_all_metrics(node, source, "go"),
             cfg: build_function_cfg(node, "go", source),
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -66,6 +67,7 @@ fn handle_method_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: compute_all_metrics(node, source, "go"),
         cfg: build_function_cfg(node, "go", source),
         children: opt_children(children),
+        bodyless: Some(node.child_by_field_name("body").is_none()),
     });
 }
 
@@ -105,6 +107,7 @@ fn handle_type_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     complexity: None,
                     cfg: None,
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
             "interface_type" => {
@@ -117,6 +120,7 @@ fn handle_type_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     complexity: None,
                     cfg: None,
                     children: None,
+                    bodyless: None,
                 });
                 extract_go_interface_methods(&type_node, &name, source, symbols);
             }
@@ -130,6 +134,7 @@ fn handle_type_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     complexity: None,
                     cfg: None,
                     children: None,
+                    bodyless: None,
                 });
             }
         }
@@ -150,6 +155,7 @@ fn extract_go_interface_methods(type_node: &Node, iface_name: &str, source: &[u8
                 complexity: None,
                 cfg: None,
                 children: None,
+                bodyless: Some(member.child_by_field_name("body").is_none()),
             });
         }
     }
@@ -169,6 +175,7 @@ fn handle_const_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 complexity: None,
                 cfg: None,
                 children: None,
+                bodyless: None,
             });
         }
     }
@@ -501,6 +508,10 @@ mod tests {
         let names: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"Server"));
         assert!(names.contains(&"Server.Start"));
+        // A real receiver method has a body — must not be marked bodyless (#1922:
+        // a dotted name alone must never be treated as a signature-only stub).
+        let start = s.definitions.iter().find(|d| d.name == "Server.Start").unwrap();
+        assert_ne!(start.bodyless, Some(true));
     }
 
     #[test]
@@ -509,6 +520,33 @@ mod tests {
         let names: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"Reader"));
         assert!(names.contains(&"Reader.Read"));
+        // An interface method_elem structurally has no body field — must be marked
+        // bodyless so the WASM/native "needs complexity" gate correctly skips it
+        // instead of forcing an unnecessary fallback (#1922).
+        let read = s.definitions.iter().find(|d| d.name == "Reader.Read").unwrap();
+        assert_eq!(read.bodyless, Some(true));
+    }
+
+    #[test]
+    fn receiver_only_file_has_no_bodyless_methods() {
+        // Reproduces the exact #1922 report: a file with only receiver methods
+        // (no free functions), each with a real body.
+        let s = parse_go(
+            "package main\n\
+             type Repo struct{ items map[string]int }\n\
+             func (r *Repo) Save(id string, v int) bool { return true }\n\
+             func (r *Repo) Find(id string) (int, bool) { return 0, false }\n",
+        );
+        let methods: Vec<_> = s
+            .definitions
+            .iter()
+            .filter(|d| d.kind == "method")
+            .collect();
+        assert_eq!(methods.len(), 2);
+        for m in methods {
+            assert_ne!(m.bodyless, Some(true), "{} should not be bodyless", m.name);
+            assert!(m.complexity.is_some(), "{} should have complexity computed", m.name);
+        }
     }
 
     #[test]
