@@ -1749,6 +1749,22 @@ mod tests {
     }
 
     #[test]
+    fn lua_method_declaration() {
+        // Greptile follow-up to #1782: colon-syntax method declarations
+        // (`function Obj:method(x)`) have a `method_index_expression` name
+        // field but are still `function_declaration` nodes, so `function_nodes`
+        // already covers them — this pins that native/TS parity explicitly.
+        // Mirrors the TS test 'method declaration (colon syntax) is
+        // recognized as a function'.
+        let m = compute_lua(
+            "local Obj = {}\nfunction Obj:method(x)\n  if x > 0 then\n    return x\n  end\nend",
+        );
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
     fn lua_nested_if() {
         let m = compute_lua(
             "local function f(x, y)\n  if x > 0 then\n    if y > 0 then\n      return 1\n    end\n  end\nend",

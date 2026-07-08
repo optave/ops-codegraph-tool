@@ -193,7 +193,9 @@ export async function hybridSearchData(
   if (!ftsAvailable) return null;
 
   const queries = parseQueries(query);
-  const rankedLists = await collectRankedLists(queries, customDbPath, opts, topK);
+  // Pass the already-resolved config through so ftsSearchData (via
+  // collectRankedLists) doesn't re-run loadConfig() for the same path (#1943 review).
+  const rankedLists = await collectRankedLists(queries, customDbPath, { ...opts, config }, topK);
   const results = fuseResults(rankedLists, k, limit);
 
   return { results };

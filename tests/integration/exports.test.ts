@@ -438,3 +438,61 @@ describe('exportsData — reexportedSymbols scoped to named specifiers (#1742)',
     expect(data.totalReexported).toBe(4);
   });
 });
+
+// ─── Named + wildcard reexport of the SAME target file (#1849 review) ────
+//
+// Greptile flagged that `collectReexportedSymbols`'s `namedByFile.get(file)
+// ?? findExportedNodesByFile(...)` selection is winner-takes-all per target
+// file: if a named reexport edge exists for a file, the wildcard fallback
+// was unconditionally suppressed — even when a *different* statement in the
+// same barrel also does `export * from` that exact target. The builder now
+// emits a dedicated `reexports-wildcard` file-level marker edge whenever a
+// wildcard statement exists, and the query layer always prefers the full
+// export list for any target carrying that marker, regardless of whether
+// named symbol-level edges also exist for it.
+
+describe('exportsData — named + wildcard reexport of the same target file (#1849 review)', () => {
+  let tmpDir4: string, dbPath4: string;
+
+  beforeAll(() => {
+    tmpDir4 = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-exports-reexport-mixed-'));
+    fs.mkdirSync(path.join(tmpDir4, '.codegraph'));
+    dbPath4 = path.join(tmpDir4, '.codegraph', 'graph.db');
+
+    const db = new Database(dbPath4);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+
+    const fUtils = insertNode(db, 'utils.ts', 'file', 'utils.ts', 0);
+    const fBarrel = insertNode(db, 'mixed-barrel.ts', 'file', 'mixed-barrel.ts', 0);
+
+    const foo = insertNode(db, 'foo', 'function', 'utils.ts', 1);
+    const bar = insertNode(db, 'bar', 'function', 'utils.ts', 10);
+
+    const markExported = db.prepare('UPDATE nodes SET exported = 1 WHERE id = ?');
+    markExported.run(foo);
+    markExported.run(bar);
+
+    // mixed-barrel.ts:
+    //   export { foo } from './utils';   (named)
+    //   export * from './utils';         (wildcard, same target)
+    insertEdge(db, fBarrel, fUtils, 'reexports');
+    insertEdge(db, fBarrel, foo, 'reexports');
+    insertEdge(db, fBarrel, fUtils, 'reexports-wildcard');
+
+    db.close();
+  });
+
+  afterAll(() => {
+    if (tmpDir4) fs.rmSync(tmpDir4, { recursive: true, force: true });
+  });
+
+  test('reports every export of the target, not just the named specifier', () => {
+    const data = exportsData('mixed-barrel.ts', dbPath4);
+    const names = data.reexportedSymbols.map((s) => s.name).sort();
+    // Both foo (named) and bar (only reachable via the wildcard) must be
+    // present — the pre-fix bug would report only ['foo'].
+    expect(names).toEqual(['bar', 'foo']);
+    expect(data.totalReexported).toBe(2);
+  });
+});

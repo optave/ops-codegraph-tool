@@ -81,6 +81,9 @@ export async function timeMedianWithValue<T>(
 		const value = await fn(i);
 		samples.push({ ms: performance.now() - start, value });
 	}
+	if (samples.length === 0) {
+		throw new Error('timeMedianWithValue: runs must be >= 1');
+	}
 	samples.sort((a, b) => a.ms - b.ms);
 	return samples[Math.floor(samples.length / 2)];
 }

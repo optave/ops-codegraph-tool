@@ -488,7 +488,7 @@ export type DynamicKind =
   | 'reflection' // .call/.apply/.bind / Reflect.* / callable-ref — resolved when target is in codebase; sink edge emitted if unresolved
   | 'eval' // eval() / new Function() — undecidable; always flagged
   | 'unresolved-dynamic' // any other detected dynamic pattern; flagged
-  | 'value-ref'; // bare identifier used as a value reference rather than a call site — object-literal property value (dispatch-table pattern, e.g. `{ resolve: someFn }`, #1771), assignment to a Lua global/builtin identifier (e.g. `require = tracedRequire`, #1776), or the right operand of an `instanceof` check (e.g. `err instanceof CodegraphError`, #1784) — resolved only against function/method/class-kind targets (class only relevant for the instanceof site); unresolved (e.g. plain data references) are dropped silently, NOT flagged
+  | 'value-ref'; // bare identifier used as a value reference rather than a call site — object-literal property value (dispatch-table pattern, e.g. `{ resolve: someFn }`, #1771), assignment to a Lua global/builtin identifier (e.g. `require = tracedRequire`, #1776), or the right operand of an `instanceof` check (e.g. `err instanceof CodegraphError`, #1784) — resolved against function/method/class-kind targets; class was added for instanceof, but the filter is per-kind rather than per-site, so all three sites share the same allow-list; unresolved (e.g. plain data references) are dropped silently, NOT flagged
 
 /** A function/method call detected by an extractor. */
 export interface Call {

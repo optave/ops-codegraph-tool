@@ -150,9 +150,19 @@ class DiffLineTracker {
       this.newLineCursor++;
       return;
     }
-    // A context line or a "\ No newline" marker ends both runs.
+    // A context line or a "\ No newline" marker ends both runs. Also clear
+    // any staged `pendingRemovedText`: `flushAdded` only pairs it with an
+    // added run that starts flushing right here, immediately adjacent (no
+    // intervening line) to the removal that staged it. A context line breaks
+    // that adjacency, so a later, unrelated added run must not be paired
+    // with a removal that sat on the other side of unchanged context. This
+    // only matters for diffs with non-zero context (`getGitDiff` always
+    // passes `--unified=0`, so it never fires in production) — but
+    // `parseDiffOutput` is a public export and must stay correct for any
+    // diff input.
     this.flushRemoved(file, oldRanges);
     this.flushAdded(file, changedRanges, changedEdits);
+    this.pendingRemovedText = [];
     if (line.startsWith(' ')) {
       this.oldLineCursor++;
       this.newLineCursor++;
@@ -354,6 +364,15 @@ function defEndLine(def: DefRow, nextDef: DefRow | undefined): number {
 // referenced in its body counts its absolute caller count toward the gate.
 
 /**
+ * Matches a quoted string/template literal (double, single, or backtick
+ * delimited, with `\`-escaping honored). Stripped from a line before token
+ * extraction so that call-shaped text living inside string content (e.g. a
+ * log message mentioning `bar(x)`) doesn't masquerade as an actual call
+ * target — see `parenTokens`.
+ */
+const STRING_LITERAL_RE = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
+
+/**
  * Matches an identifier immediately followed by `(`. Used only to compare
  * the SET of such tokens between an edit's removed and added text — not to
  * classify any single line as "a call" — which sidesteps having to tell a
@@ -362,18 +381,24 @@ function defEndLine(def: DefRow, nextDef: DefRow | undefined): number {
  * sides, it nets out and isn't treated as a change; only a token gained or
  * lost between the two sides counts.
  *
- * Known limitation: paren-less call syntax (e.g. Ruby's `foo x, y`, Lua's
- * `foo "arg"`) is invisible to this heuristic, so a newly introduced
- * paren-less call could be missed and its function wrongly exempted. This is
- * a deliberate, documented trade-off for a mechanical, non-parsing check —
- * see issue #1740.
+ * Known limitations, both deliberate, documented trade-offs for a
+ * mechanical, non-parsing check — see issue #1740:
+ * - Paren-less call syntax (e.g. Ruby's `foo x, y`, Lua's `foo "arg"`) is
+ *   invisible to this heuristic, so a newly introduced paren-less call could
+ *   be missed and its function wrongly exempted.
+ * - Only quoted string/template literals are stripped before matching, not
+ *   comments — comment syntax varies too widely across the 34 supported
+ *   languages to strip safely with a single regex. An `identifier(` pattern
+ *   inside a comment can still affect the token-set comparison.
  */
 const PAREN_TOKEN_RE = /([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g;
 
 function parenTokens(lines: string[]): Set<string> {
   const tokens = new Set<string>();
   for (const line of lines) {
-    for (const m of line.matchAll(PAREN_TOKEN_RE)) tokens.add(m[1]!);
+    for (const m of line.replace(STRING_LITERAL_RE, '').matchAll(PAREN_TOKEN_RE)) {
+      tokens.add(m[1]!);
+    }
   }
   return tokens;
 }
@@ -385,9 +410,32 @@ function sameTokenSet(a: Set<string>, b: Set<string>): boolean {
 }
 
 /**
+ * Returns the highest line number among `defId`'s own `parameter` children
+ * (or `defLine` if it has none — e.g. a zero-arg function, or a `class` def,
+ * whose parameters if any belong to its methods, not the class itself).
+ * Lets `callGraphShapeChanged` treat the declaration as spanning the whole
+ * parameter list, not just `def.line` — otherwise an edit to a parameter on
+ * line 2+ of a multi-line TypeScript signature is invisible to the
+ * declaration-line guard, and since a parameter list contains no
+ * `identifier(` patterns, `parenTokens` sees equal (empty) sets on both
+ * sides too, silently exempting a genuine signature change. See issue #1740.
+ */
+function signatureEndLine(db: BetterSqlite3Database, defId: number, defLine: number): number {
+  const row = db
+    .prepare(
+      `SELECT MAX(n.line) AS maxLine FROM nodes n
+       JOIN edges e ON e.source_id = n.id
+       WHERE e.kind = 'parameter_of' AND e.target_id = ?`,
+    )
+    .get(defId) as { maxLine: number | null };
+  return Math.max(defLine, row.maxLine ?? defLine);
+}
+
+/**
  * Returns true if the diff altered `def`'s call graph shape: an overlapping
- * edit touches the declaration line itself (signature/name risk — existing
- * callers may need to change), or changes the set of paren-preceded tokens
+ * edit touches the declaration — anywhere from its own line through the end
+ * of its parameter list, per `sigEndLine` (signature/name risk — existing
+ * callers may need to change) — or changes the set of paren-preceded tokens
  * referenced in its body (call-target risk — a callee was added, removed, or
  * swapped). A range that overlaps the def but has no matching entry in
  * `edits` (e.g. hand-built ranges in tests, or any future caller that only
@@ -396,13 +444,14 @@ function sameTokenSet(a: Set<string>, b: Set<string>): boolean {
  */
 function callGraphShapeChanged(
   defLine: number,
+  sigEndLine: number,
   endLine: number,
   ranges: DiffRange[],
   edits: DiffTextEdit[],
 ): boolean {
   for (const range of ranges) {
     if (range.start > endLine || range.end < defLine) continue;
-    if (defLine >= range.start && defLine <= range.end) return true;
+    if (range.start <= sigEndLine && range.end >= defLine) return true;
     const edit = edits.find((e) => e.start === range.start && e.end === range.end);
     if (!edit) return true;
     if (!sameTokenSet(parenTokens(edit.removedText), parenTokens(edit.addedText))) return true;
@@ -438,7 +487,8 @@ export function checkMaxBlastRadius(
       // The diff touched this def, but not its call graph shape — its
       // absolute caller count is pre-existing risk, not risk this diff
       // introduced. Skip the (potentially expensive) BFS entirely.
-      if (!callGraphShapeChanged(def.line, endLine, ranges, edits)) {
+      const sigEndLine = signatureEndLine(db, def.id, def.line);
+      if (!callGraphShapeChanged(def.line, sigEndLine, endLine, ranges, edits)) {
         exemptedCount++;
         continue;
       }
