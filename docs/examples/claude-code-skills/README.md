@@ -25,6 +25,8 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
       │       │
       │       └─→ /titan-gate (validates each commit)
       │
+      ├─→ /titan-grind → adopts dead helpers from forge (Phase 4.5)
+      │
       └─→ /titan-close → PRs + titan-report.md
 
 /titan-reset (escape hatch: clean up everything)
@@ -40,6 +42,7 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
 | `/titan-sync` | GLOBAL SYNC | Dependency clusters, code ownership, shared abstractions, ordered execution plan with logical commits | `sync.json` |
 | `/titan-forge` | FORGE | Executes the sync plan — makes code changes, validates with `/titan-gate`, commits, advances state. One phase per invocation | `titan-state.json` |
 | `/titan-gate` | STATE MACHINE | `codegraph check --staged --cycles --blast-radius 30 --boundaries` + lint/build/test. Snapshot restore on failure | `gate-log.ndjson` |
+| `/titan-grind` | GRIND | Finds dead symbols from forge, wires them into consumers, replaces duplicated inline patterns, gates on dead-symbol delta | `grind-targets.ndjson` |
 | `/titan-close` | CLOSE | Splits branch commits into focused PRs, captures final metrics, generates comprehensive audit report with before/after comparison | `titan-report-*.md` |
 | `/titan-reset` | ESCAPE HATCH | Restores baseline snapshot, deletes all artifacts and snapshots, rebuilds graph | — |
 
