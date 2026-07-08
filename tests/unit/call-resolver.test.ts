@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import type { CallNodeLookup } from '../../src/domain/graph/builder/call-resolver.js';
 import {
   resolveByMethodOrGlobal,
+  resolveCallTargets,
   resolveDefinePropertyAccessorTarget,
   resolveReceiverEdge,
 } from '../../src/domain/graph/builder/call-resolver.js';
@@ -325,6 +326,54 @@ describe('resolveByMethodOrGlobal — resolveByGlobal exact-name fan-out (#1863)
   });
 });
 
+describe('resolveByMethodOrGlobal — resolveByGlobal exact-name kind filter (#1888)', () => {
+  // this.bar() is logically "invoke a member of the current instance" — a
+  // class declaration can never satisfy that, so an unrelated same-named
+  // class must not win the exact-global-match tier just because no
+  // function/method candidate exists.
+  it('does not resolve this.bar() to a same-named global class', () => {
+    const cls = { id: 1, file: 'a.js', kind: 'class' };
+    const lookup = makeLookup({ bar: [cls] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'bar', receiver: 'this' },
+      'a.js',
+      new Map(),
+      'getter',
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('still resolves this.bar() to a same-named global function/method', () => {
+    const fn = { id: 2, file: 'a.js', kind: 'function' };
+    const lookup = makeLookup({ bar: [fn] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'bar', receiver: 'this' },
+      'a.js',
+      new Map(),
+      'getter',
+    );
+    expect(result).toEqual([fn]);
+  });
+
+  it('still resolves a genuinely bare call (no receiver at all) to a same-named class', () => {
+    // A bare `Registry()` call is indistinguishable, at this layer, from a
+    // `new Registry()` constructor invocation — kind-filtering it would break
+    // constructor-call resolution, so it stays unfiltered.
+    const cls = { id: 3, file: 'a.js', kind: 'class' };
+    const lookup = makeLookup({ Registry: [cls] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'Registry', receiver: null },
+      'a.js',
+      new Map(),
+      null,
+    );
+    expect(result).toEqual([cls]);
+  });
+});
+
 // ── resolveReceiverEdge ──────────────────────────────────────────────────────
 
 /**
@@ -585,5 +634,88 @@ describe('resolveByMethodOrGlobal — self.field receiver parity with this.field
       'Service.getUser',
     );
     expect(result).toEqual([tsMethod]);
+  });
+});
+
+// ── resolveCallTargets ─────────────────────────────────────────────────────
+
+/**
+ * Regression tests for #1888: the same-file bare-name lookup
+ * (`lookup.byNameAndFile(call.name, relPath)`) in `resolveCallTargets` ran
+ * unconditionally for every call, unfiltered by kind. A call with a receiver
+ * (`this.bar()`, `obj.bar()`) is logically "invoke a member of some
+ * instance" — a same-file class/interface/struct/etc. that merely shares the
+ * call's bare name could win outright, before any more specific resolution
+ * tier (receiver typing, the Object.defineProperty accessor fallback, etc.)
+ * ever got a chance to run.
+ *
+ * The literal repro from the issue: `this.bar()` inside a function `getter`
+ * resolved to a same-file `class bar {}` instead of the correctly-typed
+ * `Registry.bar` method reachable via the Object.defineProperty accessor
+ * fallback (see `issue-1888-same-file-bare-name-kind-filter.test.ts` for the
+ * full end-to-end reproduction on both engines).
+ *
+ * A genuinely bare call (no receiver at all) must stay unfiltered: at this
+ * layer it is indistinguishable from a `new ClassName()` constructor
+ * invocation, which legitimately targets a class-kind definition.
+ */
+describe('resolveCallTargets — same-file bare-name lookup kind filter (#1888)', () => {
+  it('does not resolve this.bar() to an unrelated same-file class', () => {
+    const unrelatedClass = { id: 1, file: 'a.js', kind: 'class' };
+    const lookup = makeReceiverLookup({ 'bar:a.js': [unrelatedClass] }, {});
+    const { targets } = resolveCallTargets(
+      lookup,
+      { name: 'bar', receiver: 'this' },
+      'a.js',
+      new Map(),
+      new Map(),
+      'getter',
+    );
+    expect(targets).toEqual([]);
+  });
+
+  it('still resolves this.bar() to a same-file function/method when both exist', () => {
+    const unrelatedClass = { id: 1, file: 'a.js', kind: 'class' };
+    const fn = { id: 2, file: 'a.js', kind: 'function' };
+    const lookup = makeReceiverLookup({ 'bar:a.js': [unrelatedClass, fn] }, {});
+    const { targets } = resolveCallTargets(
+      lookup,
+      { name: 'bar', receiver: 'this' },
+      'a.js',
+      new Map(),
+      new Map(),
+      'getter',
+    );
+    expect(targets).toEqual([fn]);
+  });
+
+  it('does not resolve obj.bar() to an unrelated same-file class', () => {
+    const unrelatedClass = { id: 3, file: 'a.js', kind: 'class' };
+    const lookup = makeReceiverLookup({ 'bar:a.js': [unrelatedClass] }, {});
+    const { targets } = resolveCallTargets(
+      lookup,
+      { name: 'bar', receiver: 'obj' },
+      'a.js',
+      new Map(),
+      new Map(),
+      null,
+    );
+    expect(targets).toEqual([]);
+  });
+
+  it('still resolves a genuinely bare call (no receiver) to a same-file class — constructor calls', () => {
+    // `new Registry()` is captured as a bare call with no receiver, so it
+    // must still be able to resolve to the class definition.
+    const cls = { id: 4, file: 'a.js', kind: 'class' };
+    const lookup = makeReceiverLookup({ 'Registry:a.js': [cls] }, {});
+    const { targets } = resolveCallTargets(
+      lookup,
+      { name: 'Registry', receiver: undefined },
+      'a.js',
+      new Map(),
+      new Map(),
+      null,
+    );
+    expect(targets).toEqual([cls]);
   });
 });

@@ -947,14 +947,26 @@ fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_i
 /// confidence (e.g. several files at the same directory depth from the
 /// caller) is genuinely ambiguous and returns nothing, letting the caller
 /// fall through to the narrower same-class-sibling fallback.
+///
+/// A `this`/`self`/`super` call is additionally restricted to callable kinds
+/// (`is_callable_kind`): such a call is logically "invoke a member of the
+/// current instance", which a class/interface/struct/etc. declaration can
+/// never satisfy, so an unrelated same-named type declaration must never
+/// substitute for a real callable target just because no other candidate
+/// exists (#1888). A genuinely bare call (no receiver at all) is left
+/// unfiltered — at this layer it is indistinguishable from a `new
+/// ClassName()` constructor invocation, which legitimately targets a
+/// class-kind definition.
 fn resolve_exact_global_match<'a>(
     ctx: &EdgeContext<'a>,
     call_name: &str,
     rel_path: &str,
+    receiver: Option<&str>,
 ) -> Vec<&'a NodeInfo> {
     let scored: Vec<(&'a NodeInfo, f64)> = ctx.nodes_by_name
         .get(call_name)
         .map(|v| v.iter()
+            .filter(|&&n| receiver.is_none() || is_callable_kind(&n.kind))
             .map(|&n| (n, resolve::compute_confidence(rel_path, &n.file, None)))
             .filter(|&(_, confidence)| confidence >= 0.5)
             .collect())
@@ -1024,10 +1036,27 @@ fn resolve_call_targets<'a>(
         if !pre_qualified.is_empty() { return pre_qualified; }
     }
 
-    // 2. Same-file resolution
-    let targets = ctx.nodes_by_name_and_file
+    // 2. Same-file resolution. A receiver — concrete (`obj.x()`) or
+    // `this`/`self`/`super` — means the call is logically "invoke a member of
+    // some instance", which a class/interface/struct/etc. declaration can
+    // never satisfy; restrict those to definitively callable kinds
+    // (`is_callable_kind`) so an unrelated same-file type declaration that
+    // merely shares the call's name can never pre-empt a legitimate target
+    // that a more specific resolution tier (receiver typing, the
+    // Object.defineProperty accessor fallback, etc.) would otherwise find. A
+    // genuinely bare call (no receiver at all) is left unfiltered: at this
+    // layer it is indistinguishable from a `new ClassName()` constructor
+    // invocation, which legitimately targets a class-kind definition —
+    // kind-filtering it would break constructor-call resolution (#1888).
+    // Mirrors resolveCallTargets in call-resolver.ts.
+    let bare_matches = ctx.nodes_by_name_and_file
         .get(&(call.name.as_str(), rel_path))
         .cloned().unwrap_or_default();
+    let targets: Vec<&NodeInfo> = if call.receiver.is_some() {
+        bare_matches.into_iter().filter(|n| is_callable_kind(&n.kind)).collect()
+    } else {
+        bare_matches
+    };
     if !targets.is_empty() { return targets; }
 
     // 3. Type-aware resolution via receiver → type map.
@@ -1212,7 +1241,7 @@ fn resolve_call_targets<'a>(
         }
 
         // First try exact name match (e.g. an unqualified function named "area").
-        let exact = resolve_exact_global_match(ctx, call.name.as_str(), rel_path);
+        let exact = resolve_exact_global_match(ctx, call.name.as_str(), rel_path, call.receiver.as_deref());
         if !exact.is_empty() { return exact; }
 
         // Class-scoped exact lookup: prefer `ClassName.method` when the caller is a qualified
