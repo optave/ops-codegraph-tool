@@ -879,6 +879,40 @@ describe('checkNoDeletedExportsInUse', () => {
     const result = checkNoDeletedExportsInUse(db, new Set(['tests/math.test.js']), true);
     expect(result.passed).toBe(true);
   });
+
+  test('suppresses a violation when noTests is true and every consumer of a deleted non-test file is a test file', () => {
+    // onlyTestConsumer (exported, src/only-test-consumer.js) is called only
+    // from a test file — a real violation with noTests=false, but the
+    // consumer-side filter (`consumers.filter((c) => !isTestFile(c.file))`)
+    // must drop that lone consumer when noTests=true, leaving zero
+    // consumers and suppressing the violation entirely. Distinct from the
+    // test above, which skips a *deleted test file*, not a deleted
+    // non-test file whose consumers are all tests.
+    const onlyTestConsumer = insertNode(
+      db,
+      'onlyTestConsumer',
+      'function',
+      'src/only-test-consumer.js',
+      1,
+      3,
+      1,
+    );
+    const callerTest = insertNode(
+      db,
+      'callsOnlyTestConsumer',
+      'function',
+      'tests/only-test-consumer.test.js',
+      1,
+      3,
+    );
+    insertEdge(db, callerTest, onlyTestConsumer, 'calls');
+
+    const withTests = checkNoDeletedExportsInUse(db, new Set(['src/only-test-consumer.js']), false);
+    expect(withTests.violations.map((v) => v.name)).toContain('onlyTestConsumer');
+
+    const noTests = checkNoDeletedExportsInUse(db, new Set(['src/only-test-consumer.js']), true);
+    expect(noTests.violations.map((v) => v.name)).not.toContain('onlyTestConsumer');
+  });
 });
 
 // ─── checkNoBoundaryViolations ────────────────────────────────────────
