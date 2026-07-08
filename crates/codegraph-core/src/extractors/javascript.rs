@@ -1534,14 +1534,11 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     }
                 }
             }
-        } else if is_const
-            && (name_n.kind() == "identifier" || name_n.kind() == "array_pattern")
-            && !in_function_scope
-        {
+        } else if is_const && name_n.kind() == "identifier" && !in_function_scope {
             // Any other initializer shape becomes a "constant" Definition, regardless of
             // complexity (call/member/parenthesized expressions, etc.) — mirroring how
             // function declarations are captured regardless of body complexity, and the
-            // WASM/TS extractor's unconditional identifier + array_pattern branches (#1819).
+            // WASM/TS extractor's unconditional identifier branch (#1819).
             symbols.definitions.push(Definition {
                 name: node_text(&name_n, source).to_string(),
                 kind: "constant".to_string(),
@@ -1555,10 +1552,14 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             // Phase 8.3f: extract function/arrow properties from object literals and seed
             // typeMap composite keys so that this.method() inside Object.defineProperty
             // accessor functions can resolve them.
-            if value_n.kind() == "object" && name_n.kind() == "identifier" {
+            if value_n.kind() == "object" {
                 let var_name = node_text(&name_n, source);
                 extract_object_literal_functions(&value_n, source, var_name, symbols);
             }
+        } else if is_const && name_n.kind() == "array_pattern" && !in_function_scope {
+            // Array destructuring: `const [x, y] = ...` — one constant Definition per
+            // bound identifier (#1901). Scope guard mirrors the object_pattern branch above.
+            extract_array_pattern_bindings(&name_n, source, start_line(node), end_line(node), &mut symbols.definitions);
         } else if !is_const && value_n.kind() == "object" && name_n.kind() == "identifier" && !in_function_scope {
             // `let`/`var` object literals get no "constant" definition of their own (mirrors
             // WASM extractLetVarObjLiteralDeclarators) but still need their function/method
@@ -3019,6 +3020,80 @@ fn extract_destructured_bindings(
                             cfg: None,
                             children: None,
                         });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Extract a per-element "constant" Definition from each bound identifier in
+/// an array-destructuring pattern (`const [a, b] = fn()`) — the array-pattern
+/// counterpart to `extract_destructured_bindings`'s per-property handling of
+/// object patterns (#1773). Each bound name becomes its own resolvable node,
+/// superseding the prior single-node-named-by-raw-pattern-text approach
+/// (`[a, b]` as one unresolvable node), which was never a real identifier and
+/// could never be a call target (#1901). Mirrors the TS extractor's
+/// `extractArrayPatternBindings`.
+fn extract_array_pattern_bindings(
+    pattern: &Node,
+    source: &[u8],
+    line: u32,
+    end_line: u32,
+    definitions: &mut Vec<Definition>,
+) {
+    for i in 0..pattern.child_count() {
+        let Some(child) = pattern.child(i) else { continue };
+        match child.kind() {
+            "identifier" => {
+                definitions.push(Definition {
+                    name: node_text(&child, source).to_string(),
+                    kind: "constant".to_string(),
+                    line,
+                    end_line: Some(end_line),
+                    decorators: None,
+                    complexity: None,
+                    cfg: None,
+                    children: None,
+                });
+            }
+            "assignment_pattern" => {
+                if let Some(left) = child.child_by_field_name("left") {
+                    if left.kind() == "identifier" {
+                        definitions.push(Definition {
+                            name: node_text(&left, source).to_string(),
+                            kind: "constant".to_string(),
+                            line,
+                            end_line: Some(end_line),
+                            decorators: None,
+                            complexity: None,
+                            cfg: None,
+                            children: None,
+                        });
+                    }
+                }
+            }
+            "rest_pattern" | "rest_element" => {
+                // The identifier is at child index 1 (index 0 is the `...`
+                // token itself) — mirroring extract_js_parameters' own
+                // rest_pattern handling, which scans all children for the
+                // identifier rather than assuming a fixed index.
+                for j in 0..child.child_count() {
+                    if let Some(inner) = child.child(j) {
+                        if inner.kind() == "identifier" {
+                            definitions.push(Definition {
+                                name: node_text(&inner, source).to_string(),
+                                kind: "constant".to_string(),
+                                line,
+                                end_line: Some(end_line),
+                                decorators: None,
+                                complexity: None,
+                                cfg: None,
+                                children: None,
+                            });
+                            break;
+                        }
                     }
                 }
             }
@@ -4653,14 +4728,34 @@ mod tests {
     #[test]
     fn extracts_const_array_pattern_with_call_expression_initializer() {
         // Parity with the identifier case above: array-pattern names must also
-        // be discoverable regardless of initializer complexity.
+        // be discoverable regardless of initializer complexity — one
+        // definition per bound identifier (#1901), not a single node named
+        // by the raw pattern text.
         let s = parse_js("const [a, b] = computePair();");
-        let def = s
-            .definitions
-            .iter()
-            .find(|d| d.name == "[a, b]")
-            .unwrap_or_else(|| panic!("[a, b] should be extracted as a definition"));
-        assert_eq!(def.kind, "constant");
+        for name in ["a", "b"] {
+            let def = s
+                .definitions
+                .iter()
+                .find(|d| d.name == name)
+                .unwrap_or_else(|| panic!("{name} should be extracted as a definition"));
+            assert_eq!(def.kind, "constant");
+        }
+        assert!(!s.definitions.iter().any(|d| d.name == "[a, b]"));
+    }
+
+    #[test]
+    fn extracts_array_pattern_default_and_rest_bindings_as_own_definitions() {
+        // #1901: array-pattern default-value and rest bindings each become
+        // their own "constant" Definition, matching the plain-identifier case.
+        let s = parse_js("const [a = 1, ...rest] = computeList();");
+        for name in ["a", "rest"] {
+            let def = s
+                .definitions
+                .iter()
+                .find(|d| d.name == name)
+                .unwrap_or_else(|| panic!("{name} should be extracted as a definition"));
+            assert_eq!(def.kind, "constant");
+        }
     }
 
     #[test]

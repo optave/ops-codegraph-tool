@@ -2341,16 +2341,34 @@ function runDemo(users: string[]): void {
     });
   });
 
-  describe('array destructuring constant extraction (#1471)', () => {
-    it('extracts const array pattern as a single constant node', () => {
+  describe('array destructuring constant extraction (#1471, #1901)', () => {
+    it('extracts one constant definition per bound identifier in a const array pattern', () => {
+      // Per-element extraction (#1901) supersedes the prior single-node
+      // ("[x, y]" as one unresolvable name) approach — `[x, y]` was never a
+      // real identifier and could never be a call target.
       const symbols = parseJS(`const [x, y] = new Set([() => {}, () => {}]);`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: '[x, y]', kind: 'constant' }),
+        expect.objectContaining({ name: 'x', kind: 'constant' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'y', kind: 'constant' }),
+      );
+      expect(symbols.definitions.every((d) => d.name !== '[x, y]')).toBe(true);
+    });
+
+    it('extracts the default-value binding and the rest binding as their own constants', () => {
+      const symbols = parseJS(`const [a = 1, ...rest] = computeList();`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'a', kind: 'constant' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'rest', kind: 'constant' }),
       );
     });
 
     it('does not extract let or var array destructuring', () => {
       const symbols = parseJS(`let [a, b] = [1, 2];`);
+      expect(symbols.definitions.every((d) => d.name !== 'a' && d.name !== 'b')).toBe(true);
       expect(symbols.definitions.every((d) => d.name !== '[a, b]')).toBe(true);
     });
   });
@@ -2496,7 +2514,10 @@ function runDemo(users: string[]): void {
     it('extracts a const array pattern with a call-expression initializer (parity with identifier case)', () => {
       const symbols = parseJS(`const [a, b] = computePair();`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: '[a, b]', kind: 'constant' }),
+        expect.objectContaining({ name: 'a', kind: 'constant' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'b', kind: 'constant' }),
       );
     });
   });
