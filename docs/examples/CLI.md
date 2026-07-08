@@ -370,21 +370,23 @@ Impact analysis for files matching "src/parser.js":
 
 ## diff-impact — Impact of git changes
 
+Compares the working tree, staged changes, or a git ref against the current graph and reports which functions were edited and how far their impact reaches.
+
 ```bash
-codegraph diff-impact main -T
+codegraph diff-impact --staged -T
 ```
 
 ```
-  Changed files:
-    M src/structure.js    (structureCmd, computeStructure)
-    M src/queries.js      (findNodeByName)
+diff-impact: 2 files changed
 
-  Impacted functions:
-    -- Level 1:
-        ^ resolveNoTests  src/cli.js:59
-        ^ structureTool   src/mcp.js:312
+  2 functions changed:
 
-  Total: 2 functions affected by this diff
+  f resolveNoTests -- src/cli/shared/options.ts:39
+    ^ 1 transitive callers
+  f renderNoCallEdgesFallback -- src/presentation/call-ref-sections.ts:70
+    ^ 6 transitive callers
+
+  Summary: 2 functions changed -> 7 callers affected across 4 files
 ```
 
 Also available as a Mermaid diagram (`-f mermaid`) for visual impact graphs.
@@ -1059,32 +1061,60 @@ codegraph check -T
 Combines structural summary + fn-impact + complexity metrics into one structured report per function. Use `--quick` for structural summary only (skip impact and health metrics).
 
 ```bash
-codegraph audit src/builder.js -T
+codegraph audit diffImpactData -T -f src/domain/analysis/diff-impact.ts
 ```
 
 ```
-# Audit: src/builder.js
+# Audit: diffImpactData (function)
+  1 function(s) analyzed
 
-## buildGraph (function) — src/builder.js:335
-  Parameters: (rootDir, opts = {})
-  Complexity: cognitive=495 cyclomatic=185 nesting=9 MI=0 ⚠
-  Impact: 1 transitive callers
-    ^ resolveNoTests  src/cli.js:59
-  Calls: openDb, initSchema, loadConfig, collectFiles, getChangedFiles, ...
+## f diffImpactData (function) [utility]
+  src/domain/analysis/diff-impact.ts:259-389 (131 lines)
+  Compute diff-impact analysis between two git refs (or staged changes).
 
-## collectFiles (function) — src/builder.js:45
-  Complexity: cognitive=12 cyclomatic=8 nesting=3 MI=45
-  Impact: 1 transitive callers
-    ^ buildGraph  src/builder.js:335
-  Calls: isTestFile, normalizePath
+  Health:
+    Cognitive: 11  Cyclomatic: 13  Nesting: 1
+    MI: 40.2
+    Halstead: vol=2989.57 diff=36.62 effort=109477.32 bugs=0.9965
+    LOC: 131  SLOC: 111  Comments: 8
 
-  ... (8 more functions)
+  Threshold Breaches:
+    [WARN] cyclomatic: 13 >= 10
+
+  Impact: 3 transitive dependent(s)
+  -- Level 1 (2 functions):
+      ^ f diffImpactMermaid  src/presentation/diff-impact-mermaid.ts:127
+      ^ f diffImpact  src/presentation/queries-cli/impact.ts:298
+  ---- Level 2 (1 functions):
+        ^ o execute  src/cli/commands/diff-impact.ts:20
+
+  Calls (12):
+    f loadConfig  src/infrastructure/config.ts:771
+    f openReadonlyOrFail  src/db/connection.ts:376
+    f findDbPath  src/db/connection.ts:358
+    f findGitRoot  src/domain/analysis/diff-impact.ts:24
+    f runGitDiff  src/domain/analysis/diff-impact.ts:41
+    f parseGitDiff  src/domain/analysis/diff-impact.ts:65
+    f findAffectedFunctions  src/domain/analysis/diff-impact.ts:102
+    f checkBoundaryViolations  src/domain/analysis/diff-impact.ts:227
+    f paginateResult  src/shared/paginate.ts:80
+    f buildFunctionImpactResults  src/domain/analysis/diff-impact.ts:133
+    f lookupCoChanges  src/domain/analysis/diff-impact.ts:176
+    f lookupOwnership  src/domain/analysis/diff-impact.ts:201
+
+  Called by (2):
+    f diffImpactMermaid  src/presentation/diff-impact-mermaid.ts:127
+    f diffImpact  src/presentation/queries-cli/impact.ts:298
+
+  Tests (2 files):
+    tests/unit/queries-unit.test.ts
+    tests/integration/queries.test.ts
 ```
 
-Single function:
+Audit an entire file — same per-function block repeated once for every function/method in the file:
 
 ```bash
-codegraph audit buildGraph -T
+codegraph audit src/domain/analysis/diff-impact.ts -T
 ```
 
 ---

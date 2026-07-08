@@ -252,46 +252,92 @@ Impact analysis for files matching "src/parser.js":
 ```json
 {
   "tool": "diff_impact",
-  "arguments": { "staged": true, "no_tests": true }
+  "arguments": { "staged": true, "no_tests": true, "depth": 1 }
 }
 ```
 
 ```json
 {
-  "changedFiles": ["src/structure.js", "src/queries.js"],
-  "changedFunctions": [
-    { "name": "structureCmd", "file": "src/structure.js", "line": 42 },
-    { "name": "findNodeByName", "file": "src/queries.js", "line": 180 }
+  "changedFiles": 2,
+  "newFiles": [],
+  "affectedFunctions": [
+    {
+      "name": "resolveNoTests",
+      "kind": "function",
+      "file": "src/cli/shared/options.ts",
+      "line": 39,
+      "transitiveCallers": 1,
+      "levels": {
+        "1": [
+          { "name": "resolveQueryOpts", "kind": "function", "file": "src/cli/shared/options.ts", "line": 51 }
+        ]
+      },
+      "edges": [
+        { "from": "src/cli/shared/options.ts::resolveNoTests:39", "to": "src/cli/shared/options.ts::resolveQueryOpts:51" }
+      ]
+    },
+    {
+      "name": "renderNoCallEdgesFallback",
+      "kind": "function",
+      "file": "src/presentation/call-ref-sections.ts",
+      "line": 70,
+      "transitiveCallers": 2,
+      "levels": {
+        "1": [
+          { "name": "renderAuditFunction", "kind": "function", "file": "src/presentation/audit.ts", "line": 77 },
+          { "name": "renderExplainEdges", "kind": "function", "file": "src/presentation/queries-cli/inspect.ts", "line": 484 }
+        ]
+      },
+      "edges": [
+        { "from": "src/presentation/call-ref-sections.ts::renderNoCallEdgesFallback:70", "to": "src/presentation/audit.ts::renderAuditFunction:77" },
+        { "from": "src/presentation/call-ref-sections.ts::renderNoCallEdgesFallback:70", "to": "src/presentation/queries-cli/inspect.ts::renderExplainEdges:484" }
+      ]
+    }
   ],
-  "impacted": [
-    { "name": "resolveNoTests", "file": "src/cli.js", "level": 1 },
-    { "name": "structureTool", "file": "src/mcp.js", "level": 1 }
-  ],
-  "totalImpacted": 2
+  "affectedFiles": ["src/cli/shared/options.ts", "src/presentation/audit.ts", "src/presentation/queries-cli/inspect.ts"],
+  "historicallyCoupled": [],
+  "ownership": null,
+  "boundaryViolations": [],
+  "boundaryViolationCount": 0,
+  "summary": {
+    "functionsChanged": 2,
+    "callersAffected": 3,
+    "filesAffected": 3,
+    "historicallyCoupledCount": 0,
+    "ownersAffected": 0,
+    "boundaryViolationCount": 0
+  }
 }
 ```
 
-With `format: "mermaid"`, returns a flowchart for visual rendering:
+With `format: "mermaid"`, returns a flowchart for visual rendering — each changed file becomes a subgraph, and callers not directly reachable from a changed function are grouped into a "blast radius" subgraph:
 
 ```json
 {
   "tool": "diff_impact",
-  "arguments": { "ref": "main", "no_tests": true, "format": "mermaid" }
+  "arguments": { "staged": true, "no_tests": true, "format": "mermaid", "depth": 1 }
 }
 ```
 
 ```mermaid
 flowchart TB
-    subgraph Changed
-        structureCmd["structureCmd\nsrc/structure.js:42"]
-        findNodeByName["findNodeByName\nsrc/queries.js:180"]
+    subgraph sg0["src/cli/shared/options.ts **(modified)**"]
+        n0["resolveNoTests"]
     end
-    subgraph Impacted
-        resolveNoTests["resolveNoTests\nsrc/cli.js:59"]
-        structureTool["structureTool\nsrc/mcp.js:312"]
+    style sg0 fill:#fff3e0,stroke:#ff9800
+    subgraph sg1["src/presentation/call-ref-sections.ts **(modified)**"]
+        n2["renderNoCallEdgesFallback"]
     end
-    structureCmd --> resolveNoTests
-    findNodeByName --> structureTool
+    style sg1 fill:#fff3e0,stroke:#ff9800
+    subgraph sg2["Callers **(blast radius)**"]
+        n1["resolveQueryOpts"]
+        n3["renderAuditFunction"]
+        n4["renderExplainEdges"]
+    end
+    style sg2 fill:#f3e5f5,stroke:#9c27b0
+    n0 --> n1
+    n2 --> n3
+    n2 --> n4
 ```
 
 ---
@@ -753,30 +799,91 @@ Function-level community detection:
 
 ## audit — Composite risk report
 
-Combines explain + impact + complexity metrics in one call — gives an agent everything it needs to assess a function.
+Combines explain + impact + complexity metrics in one call — gives an agent everything it needs to assess a function. Unlike the CLI, the MCP tool returns the raw `{ target, kind, functions: [...] }` JSON payload rather than rendered text.
 
 ```json
 {
   "tool": "audit",
-  "arguments": { "target": "buildGraph", "no_tests": true }
+  "arguments": { "target": "diffImpactData", "file": "src/domain/analysis/diff-impact.ts", "no_tests": true }
 }
 ```
 
-```
-# Audit: buildGraph (function) — src/builder.js:335
-  Parameters: (rootDir, opts = {})
-  Complexity: cognitive=495 cyclomatic=185 nesting=9 MI=0 ⚠
-  Impact: 1 transitive callers
-    ^ resolveNoTests  src/cli.js:59
-  Calls: openDb, initSchema, loadConfig, collectFiles, getChangedFiles, ...
+```json
+{
+  "target": "diffImpactData",
+  "kind": "function",
+  "functions": [
+    {
+      "name": "diffImpactData",
+      "kind": "function",
+      "file": "src/domain/analysis/diff-impact.ts",
+      "line": 259,
+      "endLine": 389,
+      "role": "utility",
+      "lineCount": 131,
+      "summary": "Compute diff-impact analysis between two git refs (or staged changes).",
+      "signature": null,
+      "callees": [
+        { "name": "loadConfig", "kind": "function", "file": "src/infrastructure/config.ts", "line": 771 },
+        { "name": "openReadonlyOrFail", "kind": "function", "file": "src/db/connection.ts", "line": 376 },
+        { "name": "findDbPath", "kind": "function", "file": "src/db/connection.ts", "line": 358 },
+        { "name": "findGitRoot", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 24 },
+        { "name": "runGitDiff", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 41 },
+        { "name": "parseGitDiff", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 65 },
+        { "name": "findAffectedFunctions", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 102 },
+        { "name": "checkBoundaryViolations", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 227 },
+        { "name": "paginateResult", "kind": "function", "file": "src/shared/paginate.ts", "line": 80 },
+        { "name": "buildFunctionImpactResults", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 133 },
+        { "name": "lookupCoChanges", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 176 },
+        { "name": "lookupOwnership", "kind": "function", "file": "src/domain/analysis/diff-impact.ts", "line": 201 }
+      ],
+      "callers": [
+        { "name": "diffImpactMermaid", "kind": "function", "file": "src/presentation/diff-impact-mermaid.ts", "line": 127 },
+        { "name": "diffImpact", "kind": "function", "file": "src/presentation/queries-cli/impact.ts", "line": 298 }
+      ],
+      "relatedTests": [
+        { "file": "tests/unit/queries-unit.test.ts" },
+        { "file": "tests/integration/queries.test.ts" }
+      ],
+      "impact": {
+        "totalDependents": 3,
+        "levels": {
+          "1": [
+            { "name": "diffImpactMermaid", "kind": "function", "file": "src/presentation/diff-impact-mermaid.ts", "line": 127 },
+            { "name": "diffImpact", "kind": "function", "file": "src/presentation/queries-cli/impact.ts", "line": 298 }
+          ],
+          "2": [
+            { "name": "execute", "kind": "method", "file": "src/cli/commands/diff-impact.ts", "line": 20 }
+          ]
+        }
+      },
+      "health": {
+        "cognitive": 11,
+        "cyclomatic": 13,
+        "maxNesting": 1,
+        "maintainabilityIndex": 40.2,
+        "halstead": { "volume": 2989.57, "difficulty": 36.62, "effort": 109477.32, "bugs": 0.9965 },
+        "loc": 131,
+        "sloc": 111,
+        "commentLines": 8,
+        "thresholdBreaches": [
+          { "metric": "cyclomatic", "value": 13, "threshold": 10, "level": "warn" }
+        ]
+      },
+      "riskScore": null,
+      "complexityNotes": null,
+      "sideEffects": null
+    }
+  ]
+}
 ```
 
-Audit an entire file:
+Audit an entire file — `functions` contains one entry per function/method in the file, each with the same shape:
 
 ```json
 {
   "tool": "audit",
-  "arguments": { "target": "src/builder.js", "no_tests": true }
+  "arguments": { "target": "src/domain/analysis/diff-impact.ts", "no_tests": true }
 }
 ```
 
