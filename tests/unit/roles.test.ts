@@ -398,6 +398,29 @@ describe('classifyNodeRoles', () => {
     expect(role).toBe('dead-unresolved');
   });
 
+  it('promotes function with fanIn=0, fanOut>0 to leaf when a real active sibling exists in the file (#1911)', () => {
+    // Counterpart to the #1586 self-sibling boundary tests above: this time the
+    // file has a genuine OTHER callable with fanIn > 0, so hasActiveFileSiblings
+    // must be populated (true) for the function/method group, not left
+    // `undefined` as the stale JSDoc on RoleClassificationNode.hasActiveFileSiblings
+    // used to claim for "regular callables (functions, methods, classes, etc.)".
+    insertNode('src/helpers/mixed.ts', 'file', 'src/helpers/mixed.ts', 0);
+    const isolated = insertNode('isolatedHelper', 'function', 'src/helpers/mixed.ts', 5);
+    const callee = insertNode('callee', 'function', 'src/helpers/other3.ts', 10);
+    insertEdge(isolated, callee, 'calls');
+    // A genuine sibling in the same file that IS called (fanIn > 0).
+    const sibling = insertNode('activeSibling', 'function', 'src/helpers/mixed.ts', 15);
+    const caller = insertNode('caller', 'function', 'src/helpers/other3.ts', 20);
+    insertEdge(caller, sibling, 'calls');
+
+    classifyNodeRoles(db);
+
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'isolatedHelper'").get()?.role;
+    // isolatedHelper has fanIn=0, fanOut=1, and a real active sibling in its
+    // file — must be promoted to leaf, not dead-unresolved.
+    expect(role).toBe('leaf');
+  });
+
   it('incremental path: does not classify exported interface as dead when used only as same-file type annotation (#1583)', () => {
     // Exercises classifyNodeRolesIncremental (triggered by passing changedFiles).
     // An exported=1 interface with no cross-file edges must be promoted to leaf,

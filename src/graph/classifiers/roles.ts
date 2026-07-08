@@ -187,14 +187,24 @@ export interface RoleClassificationNode {
   testOnlyFanIn?: number;
   productionFanIn?: number;
   /**
-   * True when the same file contains at least one callable connected to the graph
-   * (fanIn > 0 or fanOut > 0) that is not itself an annotation-only kind.
-   * Annotation-only kinds are `constant` and all members of `TYPE_DEF_KINDS`
-   * (struct, enum, trait, type, interface, record) — these are excluded because
-   * they are consumed via references/type-annotations rather than call edges and
-   * would otherwise produce a circular dependency in the active-file heuristic.
-   * Populated only for `constant` and `TYPE_DEF_KINDS` nodes; `undefined` for
-   * regular callables (functions, methods, classes, etc.) which don't need it.
+   * True when the file also contains at least one *other* connected,
+   * non-annotation-only callable. Annotation-only kinds are `constant` and all
+   * members of `TYPE_DEF_KINDS` (struct, enum, trait, type, interface, record)
+   * — these are excluded from the "active" side of the check because they are
+   * consumed via references/type-annotations rather than call edges, and
+   * including them would make the active-file heuristic circular.
+   *
+   * Populated for two groups, each using a different source set (see
+   * `buildActiveFilesSet`/`buildClassifierInput` in `features/structure.ts`) to
+   * avoid a self-sibling false positive:
+   *  - `constant` and `TYPE_DEF_KINDS` nodes: true if the file has a
+   *    non-annotation-only callable with `fanIn > 0 || fanOut > 0`.
+   *  - `method` and `function` nodes: true only if the file has a
+   *    non-annotation-only callable with `fanIn > 0` (strictly called) —
+   *    using `fanOut > 0` here would let a node with `fanIn === 0, fanOut > 0`
+   *    count itself as its own "active sibling" and wrongly promote itself.
+   *
+   * `undefined` for all other kinds (e.g. `class`), which don't use this field.
    */
   hasActiveFileSiblings?: boolean;
 }
