@@ -964,7 +964,14 @@ function buildCallEdgesJS(
       importArtifactNames,
       importedOriginalNames,
     );
-    buildClassHierarchyEdges(lookup, relPath, symbols, importedNames, allEdgeRows);
+    buildClassHierarchyEdges(
+      lookup,
+      relPath,
+      symbols,
+      importedNames,
+      allEdgeRows,
+      importedOriginalNames,
+    );
   }
 }
 
@@ -1945,6 +1952,7 @@ function buildClassHierarchyEdges(
   symbols: ExtractorOutput,
   importedNames: ReadonlyMap<string, string>,
   allEdgeRows: EdgeRowTuple[],
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): void {
   for (const cls of symbols.classes) {
     const sourceRow = lookup
@@ -1959,6 +1967,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         EXTENDS_TARGET_KINDS,
+        importedOriginalNames,
       );
       for (const t of targets) {
         allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null, null]);
@@ -1972,6 +1981,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         IMPLEMENTS_TARGET_KINDS,
+        importedOriginalNames,
       );
       for (const t of targets) {
         allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null, null]);

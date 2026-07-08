@@ -838,7 +838,7 @@ fn process_file<'a>(
         }
     }
 
-    emit_hierarchy_edges(ctx, file_input, fc.rel_path, &fc.imported_names, edges);
+    emit_hierarchy_edges(ctx, file_input, fc.rel_path, &fc.imported_names, &fc.imported_original_names, edges);
 }
 
 /// Callable definition kinds — only function/method bodies act as enclosing
@@ -1382,7 +1382,11 @@ fn emit_receiver_edge(
 /// the graph regardless of file or language, producing false cross-file
 /// (even cross-language) hierarchy edges for common type names. Priority:
 /// 1. Same-file declaration, when `name` is not itself an import artifact.
-/// 2. The file's actually-resolved import for `name` (barrel-traced).
+/// 2. The file's actually-resolved import for `name` (barrel-traced). For a
+///    renamed import (`import { Base as MyBase }`), the imported file stores
+///    the symbol under its original exported name, not the local alias — so
+///    `imported_original_name` resolves `MyBase` back to `Base` before the
+///    lookup, mirroring `resolve_call_targets` (#1730).
 /// 3. Last resort: a same-language-family global-by-name match (#1783),
 ///    first candidate only — a heritage clause names exactly one type.
 fn resolve_hierarchy_targets<'a>(
@@ -1391,6 +1395,7 @@ fn resolve_hierarchy_targets<'a>(
     rel_path: &str,
     imported_names: &HashMap<&str, &str>,
     target_kinds: &[&str],
+    imported_original_names: &HashMap<&str, &str>,
 ) -> Vec<&'a NodeInfo> {
     let samefile_all: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
         .get(&(name, rel_path))
@@ -1403,8 +1408,9 @@ fn resolve_hierarchy_targets<'a>(
     }
 
     if let Some(imported_from) = imported_names.get(name) {
+        let target_name = imported_original_names.get(name).copied().unwrap_or(name);
         let imported_candidates: Vec<&NodeInfo> = ctx.nodes_by_name_and_file
-            .get(&(name, *imported_from))
+            .get(&(target_name, *imported_from))
             .cloned().unwrap_or_default()
             .into_iter()
             .filter(|n| target_kinds.contains(&n.kind.as_str()))
@@ -1425,6 +1431,7 @@ fn resolve_hierarchy_targets<'a>(
 fn emit_hierarchy_edges(
     ctx: &EdgeContext, file_input: &FileEdgeInput, rel_path: &str,
     imported_names: &HashMap<&str, &str>,
+    imported_original_names: &HashMap<&str, &str>,
     edges: &mut Vec<ComputedEdge>,
 ) {
     for cls in &file_input.classes {
@@ -1435,7 +1442,7 @@ fn emit_hierarchy_edges(
         let Some(source) = source_row else { continue };
 
         if let Some(ref extends_name) = cls.extends {
-            let targets = resolve_hierarchy_targets(ctx, extends_name, rel_path, imported_names, EXTENDS_TARGET_KINDS);
+            let targets = resolve_hierarchy_targets(ctx, extends_name, rel_path, imported_names, EXTENDS_TARGET_KINDS, imported_original_names);
             for t in targets {
                 edges.push(ComputedEdge {
                     source_id: source.id, target_id: t.id,
@@ -1445,7 +1452,7 @@ fn emit_hierarchy_edges(
             }
         }
         if let Some(ref implements_name) = cls.implements {
-            let targets = resolve_hierarchy_targets(ctx, implements_name, rel_path, imported_names, IMPLEMENTS_TARGET_KINDS);
+            let targets = resolve_hierarchy_targets(ctx, implements_name, rel_path, imported_names, IMPLEMENTS_TARGET_KINDS, imported_original_names);
             for t in targets {
                 edges.push(ComputedEdge {
                     source_id: source.id, target_id: t.id,

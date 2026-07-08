@@ -237,7 +237,14 @@ function rebuildReverseDepEdges(
     importedNames,
     importedOriginalNames,
   );
-  edgesAdded += buildClassHierarchyEdges(db, stmts, depRelPath, symbols, importedNames);
+  edgesAdded += buildClassHierarchyEdges(
+    db,
+    stmts,
+    depRelPath,
+    symbols,
+    importedNames,
+    importedOriginalNames,
+  );
   return edgesAdded;
 }
 
@@ -521,6 +528,7 @@ function buildClassHierarchyEdges(
   relPath: string,
   symbols: ExtractorOutput,
   importedNames: ReadonlyMap<string, string>,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): number {
   let edgesAdded = 0;
   const lookup = makeIncrementalLookup(db, stmts);
@@ -537,6 +545,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         EXTENDS_TARGET_KINDS,
+        importedOriginalNames,
       )) {
         stmts.insertEdge.run(sourceRow.id, t.id, 'extends', 1.0, 0);
         edgesAdded++;
@@ -549,6 +558,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         IMPLEMENTS_TARGET_KINDS,
+        importedOriginalNames,
       )) {
         stmts.insertEdge.run(sourceRow.id, t.id, 'implements', 1.0, 0);
         edgesAdded++;
@@ -921,7 +931,14 @@ function rebuildEdgesForTargetFile(
     importedNames,
     importedOriginalNames,
   );
-  edgesAdded += buildClassHierarchyEdges(db, stmts, relPath, symbols, importedNames);
+  edgesAdded += buildClassHierarchyEdges(
+    db,
+    stmts,
+    relPath,
+    symbols,
+    importedNames,
+    importedOriginalNames,
+  );
   return edgesAdded;
 }
 
