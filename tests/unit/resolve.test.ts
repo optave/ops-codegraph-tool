@@ -15,6 +15,7 @@ import {
   computeConfidence,
   computeConfidenceJS,
   convertAliasesForNative,
+  isSameLanguageFamily,
   isWorkspaceResolved,
   parseBareSpecifier,
   resolveImportPathJS,
@@ -726,5 +727,99 @@ describe('computeConfidenceJS workspace confidence', () => {
       'some/other/import.js',
     );
     expect(conf).toBeLessThan(0.95);
+  });
+});
+
+// ─── Cross-language fallback rejection (#1783) ───────────────────────
+
+// Regression tests for #1783: the global-by-name call-resolution fallback
+// had no language-consistency check at all, so a bare-name call with no
+// import/receiver match could resolve against a same-named symbol in a
+// completely unrelated language — e.g. a Ruby file's builtin `Kernel#load`
+// call matched a JS ESM loader hook's unrelated `load` export purely because
+// both files sat in the same directory (confidence 0.7 from proximity alone).
+describe('isSameLanguageFamily (#1783)', () => {
+  it('returns false for a Ruby file and a JS file', () => {
+    expect(isSameLanguageFamily('tracer/ruby-tracer.rb', 'tracer/loader-hooks.mjs')).toBe(false);
+  });
+
+  it('returns false for a Python file and a Go file', () => {
+    expect(isSameLanguageFamily('src/main.py', 'src/main.go')).toBe(false);
+  });
+
+  it('returns true for two files with the same extension', () => {
+    expect(isSameLanguageFamily('src/a.rb', 'lib/b.rb')).toBe(true);
+  });
+
+  it('treats JavaScript and TypeScript as the same family', () => {
+    expect(isSameLanguageFamily('src/a.ts', 'src/b.js')).toBe(true);
+    expect(isSameLanguageFamily('src/a.tsx', 'src/b.mjs')).toBe(true);
+    expect(isSameLanguageFamily('src/a.cjs', 'src/b.jsx')).toBe(true);
+  });
+
+  it('treats C and its own header extension as the same family', () => {
+    expect(isSameLanguageFamily('src/a.c', 'src/a.h')).toBe(true);
+  });
+
+  it('treats .h as ambiguous with C++ (Greptile follow-up)', () => {
+    // `.h` is real-world ambiguous between C and C++ (LANGUAGE_REGISTRY
+    // assigns it to C alone for grammar-selection purposes), so a `.cpp`
+    // file calling into its own project's `.h` header must not be rejected
+    // as cross-language.
+    expect(isSameLanguageFamily('src/widget.cpp', 'src/widget.h')).toBe(true);
+  });
+
+  it('treats C++ source and header extensions as the same family', () => {
+    expect(isSameLanguageFamily('src/a.cpp', 'src/a.hpp')).toBe(true);
+    expect(isSameLanguageFamily('src/a.cc', 'src/a.cxx')).toBe(true);
+  });
+
+  it('does not treat C and C++ as the same family', () => {
+    expect(isSameLanguageFamily('src/a.c', 'src/a.cpp')).toBe(false);
+  });
+
+  it('returns true (does not reject) when either extension is unrecognised', () => {
+    expect(isSameLanguageFamily('README', 'src/b.rb')).toBe(true);
+    expect(isSameLanguageFamily('src/a.rb', 'Makefile')).toBe(true);
+  });
+});
+
+describe('computeConfidenceJS — cross-language rejection (#1783)', () => {
+  it('returns 0 for same-directory files in different languages (the #1783 repro shape)', () => {
+    // ruby-tracer.rb's bare `load` call must never match loader-hooks.mjs's
+    // `load` export just because both files live in the same directory.
+    const conf = computeConfidenceJS(
+      'tests/benchmarks/resolution/tracer/ruby-tracer.rb',
+      'tests/benchmarks/resolution/tracer/loader-hooks.mjs',
+      undefined,
+    );
+    expect(conf).toBe(0);
+  });
+
+  it('still returns same-directory confidence for a same-language pair', () => {
+    const conf = computeConfidenceJS(
+      'tests/benchmarks/resolution/tracer/ruby-tracer.rb',
+      'tests/benchmarks/resolution/tracer/other-tracer.rb',
+      undefined,
+    );
+    expect(conf).toBe(0.7);
+  });
+
+  it('does not regress same-project JS/TS cross-file resolution', () => {
+    // A .ts caller resolving a same-directory .js target must be unaffected —
+    // TS/JS are one family despite being different LANGUAGE_REGISTRY entries.
+    const conf = computeConfidenceJS('src/graph/a.ts', 'src/graph/b.js', undefined);
+    expect(conf).toBe(0.7);
+  });
+
+  it('rejects a cross-language match even when same-file/importedFrom shortcuts do not apply', () => {
+    const conf = computeConfidenceJS('src/main.py', 'src/main.go', undefined);
+    expect(conf).toBeLessThan(0.5);
+    expect(conf).toBe(0);
+  });
+
+  it('does not reject when the target extension is unrecognised (falls through to distance scoring)', () => {
+    const conf = computeConfidenceJS('src/a.rb', 'src/README', undefined);
+    expect(conf).toBeGreaterThan(0);
   });
 });

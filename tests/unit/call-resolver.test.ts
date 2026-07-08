@@ -213,6 +213,50 @@ describe('resolveByMethodOrGlobal — bare-call JS/TS module-scope guard (#1407)
   });
 });
 
+describe('resolveByMethodOrGlobal — cross-language global fallback rejection (#1783)', () => {
+  // Mirrors the #1783 repro: ruby-tracer.rb's bare `Kernel#load` call has no
+  // static relationship to loader-hooks.mjs's unrelated `load` export, even
+  // though both files live in the same directory (which would otherwise
+  // score confidence 0.7 — well above the resolver's 0.5 threshold).
+  it('does not resolve a bare call to a same-directory, same-named symbol in a different language', () => {
+    const jsExport = { id: 1, file: 'tracer/loader-hooks.mjs', kind: 'function' };
+    const lookup = makeLookup({ load: [jsExport] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'load', receiver: null },
+      'tracer/ruby-tracer.rb',
+      new Map(),
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('still resolves a bare call to a same-directory, same-named symbol in the SAME language', () => {
+    const rbTarget = { id: 2, file: 'tracer/other-tracer.rb', kind: 'function' };
+    const lookup = makeLookup({ load: [rbTarget] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'load', receiver: null },
+      'tracer/ruby-tracer.rb',
+      new Map(),
+    );
+    expect(result).toEqual([rbTarget]);
+  });
+
+  it('does not resolve a typed-method lookup to a same-named type in a different language', () => {
+    // receiver 'w' typed to 'Widget' via typeMap; a same-directory JS 'Widget.render'
+    // method must not satisfy a Python caller's 'w.render()' call.
+    const jsMethod = { id: 3, file: 'lib/widget.js', kind: 'method' };
+    const lookup = makeLookup({ 'Widget.render': [jsMethod] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'render', receiver: 'w' },
+      'lib/widget.py',
+      new Map([['w', 'Widget']]),
+    );
+    expect(result).toEqual([]);
+  });
+});
+
 // ── resolveReceiverEdge ──────────────────────────────────────────────────────
 
 /**
@@ -285,6 +329,44 @@ describe('resolveReceiverEdge — local function constructor blocks global class
     );
     // isLocalDefinition=false → candidates = global byName filtered by RECEIVER_KINDS
     // globalClass.kind='class' IS in RECEIVER_KINDS → edge to id=2
+    expect(result).not.toBeNull();
+    expect(result?.receiverId).toBe(2);
+  });
+});
+
+describe('resolveReceiverEdge — cross-language global fallback rejection (#1783)', () => {
+  // The global (cross-file) receiver-resolution branch used no confidence or
+  // language check at all, so `new Widget()` in one language could resolve
+  // to an unrelated same-named class declared in a completely different
+  // language. Only the global branch needs the check — sameFileCandidates
+  // are already scoped to the caller's own file (trivially same-language).
+  it('does not resolve a receiver to a same-named class in a different language', () => {
+    const jsClass = { id: 1, file: 'lib/Widget.js', kind: 'class' };
+    const lookup = makeReceiverLookup({}, { Widget: [jsClass] });
+    const result = resolveReceiverEdge(
+      lookup,
+      { name: 'render', receiver: 'Widget' },
+      { id: 99 },
+      'lib/widget.py',
+      new Map(),
+      new Set(),
+      new Map(),
+    );
+    expect(result).toBeNull();
+  });
+
+  it('still resolves a receiver to a same-named class in the SAME language', () => {
+    const pyClass = { id: 2, file: 'lib/widget_impl.py', kind: 'class' };
+    const lookup = makeReceiverLookup({}, { Widget: [pyClass] });
+    const result = resolveReceiverEdge(
+      lookup,
+      { name: 'render', receiver: 'Widget' },
+      { id: 99 },
+      'lib/widget.py',
+      new Map(),
+      new Set(),
+      new Map(),
+    );
     expect(result).not.toBeNull();
     expect(result?.receiverId).toBe(2);
   });
