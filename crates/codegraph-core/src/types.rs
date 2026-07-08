@@ -584,6 +584,32 @@ pub struct AliasMapping {
     pub targets: Vec<String>,
 }
 
+/// A single monorepo workspace package, mirroring `WorkspaceEntry` in
+/// `src/infrastructure/config.ts`. `entry` is `None` when no resolvable
+/// entry point was found for the package (missing `main`/`source`/index
+/// file). Serves double duty: passed as a napi array argument to
+/// `resolve_import`/`resolve_imports` for the per-call FFI path, and
+/// deserialized from the `workspaces_json` blob `NativeDatabase::build_graph`
+/// receives for the full Rust orchestrator path (both use the same
+/// `{ packageName, dir, entry }` JSON shape).
+///
+/// `#[serde(rename_all = "camelCase")]` is required here even though
+/// `#[napi(object)]` already camelCases fields for direct FFI calls — that
+/// conversion is a separate mechanism from `serde_json`, which only sees the
+/// literal Rust field names unless told otherwise. Without it,
+/// `serde_json::from_str` on `workspaces_json` (camelCase, produced by
+/// `JSON.stringify(getWorkspacesForNative(...))`) fails with "missing field
+/// `package_name`" (mirrors `BuildPathAliases`'s reason for existing
+/// alongside `PathAliases` in infrastructure/config.rs).
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePackage {
+    pub package_name: String,
+    pub dir: String,
+    pub entry: Option<String>,
+}
+
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportResolutionInput {

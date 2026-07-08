@@ -4,7 +4,13 @@ import { debug } from '../../infrastructure/logger.js';
 import { loadNative } from '../../infrastructure/native.js';
 import { normalizePath } from '../../shared/constants.js';
 import { toErrorMessage } from '../../shared/errors.js';
-import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } from '../../types.js';
+import type {
+  BareSpecifier,
+  BatchResolvedMap,
+  ImportBatchItem,
+  NativeWorkspacePackage,
+  PathAliases,
+} from '../../types.js';
 import { LANGUAGE_REGISTRY } from '../parser.js';
 
 // ── package.json exports resolution ─────────────────────────────────
@@ -213,6 +219,22 @@ export function setWorkspaces(
  */
 function getWorkspaces(rootDir: string): Map<string, { dir: string; entry: string | null }> {
   return _workspaceCache.get(rootDir) || new Map();
+}
+
+/**
+ * Convert the workspace map registered for `rootDir` into the array shape
+ * the native FFI boundary expects (`resolve_import`/`resolve_imports` in
+ * crates/codegraph-core/src/lib.rs). The native engine has no workspace
+ * *detection* of its own — see `resolveViaWorkspace()`'s doc comment — so
+ * every native resolve call must carry the already-detected map explicitly
+ * (issue #1927).
+ */
+export function getWorkspacesForNative(rootDir: string): NativeWorkspacePackage[] {
+  return [...getWorkspaces(rootDir).entries()].map(([packageName, info]) => ({
+    packageName,
+    dir: info.dir,
+    entry: info.entry,
+  }));
 }
 
 /**
@@ -600,6 +622,7 @@ export function resolveImportPath(
         importSource,
         rootDir,
         convertAliasesForNative(aliases),
+        getWorkspacesForNative(rootDir),
       );
       const normalized = normalizePath(path.normalize(result));
       // The native resolver's .js → .ts remap fails when paths contain
@@ -660,6 +683,7 @@ export function resolveImportsBatch(
       rootDir,
       convertAliasesForNative(aliases),
       knownFiles || null,
+      getWorkspacesForNative(rootDir),
     );
     const map: BatchResolvedMap = new Map();
     for (const r of results) {

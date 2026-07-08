@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use rayon::prelude::*;
 
 use crate::domain::parser::LanguageKind;
-use crate::types::{ImportResolutionInput, PathAliases, ResolvedImport};
+use crate::types::{ImportResolutionInput, PathAliases, ResolvedImport, WorkspacePackage};
 
 /// Check file existence using known_files set when available, falling back to FS.
 ///
@@ -124,14 +125,191 @@ fn resolve_via_alias(
     None
 }
 
+// ── Monorepo workspace resolution ───────────────────────────────────
+//
+// Mirrors `resolveViaWorkspace()`/`setWorkspaces()`/`isWorkspaceResolved()`
+// in `src/domain/graph/resolve.ts`. The JS side owns workspace *detection*
+// (parsing pnpm-workspace.yaml / package.json / lerna.json — no equivalent
+// exists in Rust, matching the established split documented in
+// `infrastructure/config.rs`); this module only consumes the already-detected
+// `{ packageName -> { dir, entry } }` map, passed in from JS on every call.
+
+/// A single workspace package's resolution data. Mirrors the `WorkspaceEntry`
+/// interface in `src/infrastructure/config.ts`. Plain (non-napi) struct built
+/// from the napi-facing [`WorkspacePackage`] list.
+#[derive(Debug, Clone)]
+pub struct WorkspaceEntry {
+    pub dir: String,
+    pub entry: Option<String>,
+}
+
+/// Convert the napi-facing workspace package list into a lookup map, keyed
+/// by package name.
+pub fn workspaces_from_packages(packages: &[WorkspacePackage]) -> HashMap<String, WorkspaceEntry> {
+    packages
+        .iter()
+        .map(|p| {
+            (
+                p.package_name.clone(),
+                WorkspaceEntry {
+                    dir: p.dir.clone(),
+                    entry: p.entry.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Parse a bare specifier into `(packageName, subpath)`. Mirrors
+/// `parseBareSpecifier()` in resolve.ts.
+/// Scoped:  `"@scope/pkg/sub"` → `("@scope/pkg", "./sub")`
+/// Plain:   `"pkg/sub"`        → `("pkg", "./sub")`
+/// No sub:  `"pkg"`            → `("pkg", ".")`
+fn parse_bare_specifier(specifier: &str) -> Option<(String, String)> {
+    let (package_name, rest) = if specifier.starts_with('@') {
+        let parts: Vec<&str> = specifier.splitn(3, '/').collect();
+        if parts.len() < 2 {
+            return None;
+        }
+        let package_name = format!("{}/{}", parts[0], parts[1]);
+        let rest = parts.get(2).copied().unwrap_or("").to_string();
+        (package_name, rest)
+    } else {
+        match specifier.find('/') {
+            None => (specifier.to_string(), String::new()),
+            Some(idx) => (
+                specifier[..idx].to_string(),
+                specifier[idx + 1..].to_string(),
+            ),
+        }
+    };
+    let subpath = if rest.is_empty() {
+        ".".to_string()
+    } else {
+        format!("./{rest}")
+    };
+    Some((package_name, subpath))
+}
+
+/// Extensions probed when resolving a workspace subpath import against the
+/// filesystem. Mirrors the extension list in `resolveViaWorkspace()`.
+const WORKSPACE_PROBE_EXTENSIONS: &[&str] = &[
+    "",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    "/index.ts",
+    "/index.tsx",
+    "/index.js",
+];
+
+/// Resolve a bare specifier through monorepo workspace packages.
+///
+/// For `"@myorg/utils"` → finds the workspace package dir → resolves to its
+/// entry point. For `"@myorg/utils/sub"` → finds the package dir → filesystem
+/// probes `dir/sub` then `dir/src/sub`.
+///
+/// Unlike `resolveViaWorkspace()` in resolve.ts, this does not attempt a
+/// `package.json` `exports`-field lookup first — the native engine has no
+/// `exports`-field resolver at all (tracked separately; see
+/// `resolveViaExports()`'s absence from this module). This only affects
+/// workspace packages that rely on a conditional `exports` map instead of
+/// `main`/`source`/index-file resolution.
+fn resolve_via_workspace(
+    specifier: &str,
+    workspaces: &HashMap<String, WorkspaceEntry>,
+    root_dir: &str,
+    known_files: Option<&HashSet<String>>,
+) -> Option<String> {
+    if workspaces.is_empty() {
+        return None;
+    }
+    let (package_name, subpath) = parse_bare_specifier(specifier)?;
+    let info = workspaces.get(&package_name)?;
+
+    if subpath == "." {
+        return info.entry.clone();
+    }
+
+    let sub_rel = &subpath[2..]; // strip leading "./"
+
+    let base = format!("{}/{}", info.dir.trim_end_matches('/'), sub_rel);
+    for ext in WORKSPACE_PROBE_EXTENSIONS {
+        let candidate = format!("{base}{ext}");
+        if file_exists(&candidate, known_files, root_dir) {
+            return Some(candidate);
+        }
+    }
+
+    let src_base = format!("{}/src/{}", info.dir.trim_end_matches('/'), sub_rel);
+    for ext in WORKSPACE_PROBE_EXTENSIONS {
+        let candidate = format!("{src_base}{ext}");
+        if file_exists(&candidate, known_files, root_dir) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+/// Process-lifetime cache of root-relative paths resolved via a workspace
+/// import. Mirrors `_workspaceResolvedPaths` in resolve.ts — read by
+/// `compute_confidence()` to grant workspace-resolved imports a 0.95
+/// confidence floor regardless of directory distance.
+///
+/// Populated as a side effect of `resolve_import_path`/`resolve_imports_batch`
+/// and reset once per build by the callers that own "start of build" timing:
+/// `resolve_imports` (the per-call FFI entry point, called exactly once per
+/// JS-driven build by `resolveImportsBatch()`) and `pipeline_setup` (the Rust
+/// orchestrator's once-per-build setup stage). Later same-build calls (e.g.
+/// the barrel re-parse loop, which calls `resolve_imports_batch` repeatedly)
+/// only add to the set, matching `setWorkspaces()`'s clear-once-then-accumulate
+/// contract on the JS side.
+fn workspace_resolved_cache() -> &'static Mutex<HashSet<String>> {
+    static CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Clear the workspace-resolved-paths cache. Call once per build, before any
+/// resolution runs, mirroring `_workspaceResolvedPaths.clear()` inside
+/// `setWorkspaces()`.
+pub fn reset_workspace_resolved_paths() {
+    if let Ok(mut set) = workspace_resolved_cache().lock() {
+        set.clear();
+    }
+}
+
+fn mark_workspace_resolved(path: &str) {
+    if let Ok(mut set) = workspace_resolved_cache().lock() {
+        set.insert(path.to_string());
+    }
+}
+
+fn is_workspace_resolved(path: &str) -> bool {
+    workspace_resolved_cache()
+        .lock()
+        .map(|set| set.contains(path))
+        .unwrap_or(false)
+}
+
 /// Resolve a single import path, mirroring `resolveImportPath()` in builder.js.
 pub fn resolve_import_path(
     from_file: &str,
     import_source: &str,
     root_dir: &str,
     aliases: &PathAliases,
+    workspaces: Option<&HashMap<String, WorkspaceEntry>>,
 ) -> String {
-    resolve_import_path_inner(from_file, import_source, root_dir, aliases, None)
+    resolve_import_path_inner(
+        from_file,
+        import_source,
+        root_dir,
+        aliases,
+        None,
+        workspaces,
+    )
 }
 
 /// Inner implementation with optional known_files cache.
@@ -147,16 +325,31 @@ fn relativize_to_root(candidate: &str, root_dir: &str) -> String {
     }
 }
 
-/// Resolve a non-relative (alias or bare) import source. Returns the
-/// resolved path or the raw source if no alias matches (bare specifier).
+/// Resolve a non-relative (alias, workspace, or bare) import source. Returns
+/// the resolved path or the raw source if nothing matches (bare specifier).
+///
+/// Order mirrors `resolveImportPathJS()`: aliases take priority (tsconfig/
+/// jsconfig path mappings), then workspace packages ("workspace packages
+/// take priority over node_modules" — resolve.ts), then the raw specifier is
+/// returned unresolved.
 fn resolve_non_relative_import(
     import_source: &str,
     root_dir: &str,
     aliases: &PathAliases,
     known_files: Option<&HashSet<String>>,
+    workspaces: Option<&HashMap<String, WorkspaceEntry>>,
 ) -> String {
     if let Some(alias_resolved) = resolve_via_alias(import_source, aliases, root_dir, known_files) {
         return relativize_to_root(&alias_resolved, root_dir);
+    }
+    if let Some(workspaces) = workspaces {
+        if let Some(ws_resolved) =
+            resolve_via_workspace(import_source, workspaces, root_dir, known_files)
+        {
+            let rel = relativize_to_root(&ws_resolved, root_dir);
+            mark_workspace_resolved(&rel);
+            return rel;
+        }
     }
     import_source.to_string()
 }
@@ -227,9 +420,16 @@ fn resolve_import_path_inner(
     root_dir: &str,
     aliases: &PathAliases,
     known_files: Option<&HashSet<String>>,
+    workspaces: Option<&HashMap<String, WorkspaceEntry>>,
 ) -> String {
     if !import_source.starts_with('.') {
-        return resolve_non_relative_import(import_source, root_dir, aliases, known_files);
+        return resolve_non_relative_import(
+            import_source,
+            root_dir,
+            aliases,
+            known_files,
+            workspaces,
+        );
     }
 
     let dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
@@ -333,6 +533,14 @@ pub fn compute_confidence(
         if imp == target_file {
             return 1.0;
         }
+        // Workspace-resolved imports get high confidence even across package
+        // boundaries — mirrors the `_workspaceResolvedPaths` check in
+        // `computeConfidenceJS()` (resolve.ts), backed here by the
+        // process-lifetime cache populated by `resolve_import_path`/
+        // `resolve_imports_batch` (issue #1927).
+        if is_workspace_resolved(imp) {
+            return 0.95;
+        }
     }
     // Cross-language candidates are never legitimate call targets (#1783) —
     // reject before scoring proximity so a same-directory, same-named symbol
@@ -364,6 +572,7 @@ pub fn resolve_imports_batch(
     root_dir: &str,
     aliases: &PathAliases,
     known_files: Option<&HashSet<String>>,
+    workspaces: Option<&HashMap<String, WorkspaceEntry>>,
 ) -> Vec<ResolvedImport> {
     inputs
         .par_iter()
@@ -374,6 +583,7 @@ pub fn resolve_imports_batch(
                 root_dir,
                 aliases,
                 known_files,
+                workspaces,
             );
             ResolvedImport {
                 from_file: input.from_file.clone(),
@@ -469,6 +679,7 @@ mod tests {
             "/project",
             &aliases,
             Some(&known),
+            None,
         );
         assert_eq!(result, "src/bar.ts");
     }
@@ -490,6 +701,7 @@ mod tests {
             "/project",
             &aliases,
             Some(&known),
+            None,
         );
         assert_eq!(result, "src/utils.ts");
     }
@@ -654,5 +866,227 @@ mod tests {
         // TS/JS are one family despite being different LanguageKind variants.
         let conf = compute_confidence("src/graph/a.ts", "src/graph/b.js", None);
         assert_eq!(conf, 0.7);
+    }
+
+    // Regression tests for #1927: `resolve_import_path_inner` had no
+    // workspace-awareness at all, so a bare monorepo-package specifier (e.g.
+    // `import "@myorg/lib"`) fell straight through to `resolve_non_relative_import`'s
+    // raw-specifier fallback under the native engine, unlike the WASM/JS engine's
+    // `resolveViaWorkspace()`.
+
+    fn make_workspaces(entries: &[(&str, &str, Option<&str>)]) -> HashMap<String, WorkspaceEntry> {
+        entries
+            .iter()
+            .map(|(name, dir, entry)| {
+                (
+                    name.to_string(),
+                    WorkspaceEntry {
+                        dir: dir.to_string(),
+                        entry: entry.map(|e| e.to_string()),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parse_bare_specifier_scoped_package_root() {
+        assert_eq!(
+            parse_bare_specifier("@myorg/core"),
+            Some(("@myorg/core".to_string(), ".".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_bare_specifier_scoped_package_subpath() {
+        assert_eq!(
+            parse_bare_specifier("@myorg/core/src/helpers"),
+            Some(("@myorg/core".to_string(), "./src/helpers".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_bare_specifier_plain_package() {
+        assert_eq!(
+            parse_bare_specifier("lodash"),
+            Some(("lodash".to_string(), ".".to_string()))
+        );
+        assert_eq!(
+            parse_bare_specifier("lodash/fp"),
+            Some(("lodash".to_string(), "./fp".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_bare_specifier_rejects_malformed_scoped_specifier() {
+        assert_eq!(parse_bare_specifier("@myorg"), None);
+    }
+
+    #[test]
+    fn resolve_via_workspace_resolves_root_import_to_entry() {
+        let workspaces = make_workspaces(&[(
+            "@myorg/core",
+            "packages/core",
+            Some("packages/core/src/index.js"),
+        )]);
+        let result = resolve_via_workspace("@myorg/core", &workspaces, "/project", None);
+        assert_eq!(result, Some("packages/core/src/index.js".to_string()));
+    }
+
+    #[test]
+    fn resolve_via_workspace_returns_none_when_entry_missing() {
+        let workspaces = make_workspaces(&[("@myorg/broken", "packages/broken", None)]);
+        let result = resolve_via_workspace("@myorg/broken", &workspaces, "/project", None);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn resolve_via_workspace_resolves_subpath_via_known_files_probe() {
+        let mut known = HashSet::new();
+        known.insert("packages/core/src/helpers.js".to_string());
+        let workspaces = make_workspaces(&[("@myorg/core", "packages/core", None)]);
+        let result = resolve_via_workspace(
+            "@myorg/core/src/helpers",
+            &workspaces,
+            "/project",
+            Some(&known),
+        );
+        assert_eq!(result, Some("packages/core/src/helpers.js".to_string()));
+    }
+
+    #[test]
+    fn resolve_via_workspace_resolves_subpath_via_src_convention() {
+        let mut known = HashSet::new();
+        known.insert("packages/core/src/helpers.js".to_string());
+        let workspaces = make_workspaces(&[("@myorg/core", "packages/core", None)]);
+        let result =
+            resolve_via_workspace("@myorg/core/helpers", &workspaces, "/project", Some(&known));
+        assert_eq!(result, Some("packages/core/src/helpers.js".to_string()));
+    }
+
+    #[test]
+    fn resolve_via_workspace_returns_none_for_unknown_package() {
+        let workspaces = make_workspaces(&[("@myorg/core", "packages/core", None)]);
+        assert_eq!(
+            resolve_via_workspace("@myorg/unknown", &workspaces, "/project", None),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_via_workspace_returns_none_when_no_workspaces_registered() {
+        let workspaces: HashMap<String, WorkspaceEntry> = HashMap::new();
+        assert_eq!(
+            resolve_via_workspace("@myorg/core", &workspaces, "/project", None),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_non_relative_import_prefers_workspace_over_raw_specifier() {
+        let workspaces = make_workspaces(&[(
+            "@myorg/lib",
+            "packages/lib",
+            Some("/project/packages/lib/src/index.js"),
+        )]);
+        let aliases = PathAliases {
+            base_url: None,
+            paths: vec![],
+        };
+        let resolved = resolve_non_relative_import(
+            "@myorg/lib",
+            "/project",
+            &aliases,
+            None,
+            Some(&workspaces),
+        );
+        assert_eq!(resolved, "packages/lib/src/index.js");
+    }
+
+    #[test]
+    fn resolve_non_relative_import_falls_back_to_raw_specifier_without_workspace_match() {
+        let workspaces = make_workspaces(&[("@myorg/lib", "packages/lib", None)]);
+        let aliases = PathAliases {
+            base_url: None,
+            paths: vec![],
+        };
+        let resolved =
+            resolve_non_relative_import("lodash", "/project", &aliases, None, Some(&workspaces));
+        assert_eq!(resolved, "lodash");
+    }
+
+    // Serializes access to the process-lifetime workspace-resolved-paths
+    // cache: `cargo test` runs tests in parallel threads within one process,
+    // and `reset_workspace_resolved_paths()` would otherwise race with
+    // concurrent assertions in other tests below.
+    static WORKSPACE_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_workspace_cache_lock<F: FnOnce()>(f: F) {
+        let guard = WORKSPACE_CACHE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_workspace_resolved_paths();
+        f();
+        reset_workspace_resolved_paths();
+        drop(guard);
+    }
+
+    #[test]
+    fn resolve_import_path_marks_workspace_resolved_paths() {
+        with_workspace_cache_lock(|| {
+            let workspaces = make_workspaces(&[(
+                "@myorg/lib",
+                "packages/lib",
+                Some("/project/packages/lib/src/index.js"),
+            )]);
+            let aliases = PathAliases {
+                base_url: None,
+                paths: vec![],
+            };
+            let resolved = resolve_import_path(
+                "/project/apps/web/src/app.js",
+                "@myorg/lib",
+                "/project",
+                &aliases,
+                Some(&workspaces),
+            );
+            assert_eq!(resolved, "packages/lib/src/index.js");
+            assert!(is_workspace_resolved("packages/lib/src/index.js"));
+        });
+    }
+
+    #[test]
+    fn compute_confidence_returns_0_95_for_workspace_resolved_import() {
+        with_workspace_cache_lock(|| {
+            mark_workspace_resolved("packages/lib/src/index.js");
+            let conf = compute_confidence(
+                "apps/web/src/app.js",
+                "packages/lib/src/utils.js",
+                Some("packages/lib/src/index.js"),
+            );
+            assert_eq!(conf, 0.95);
+        });
+    }
+
+    #[test]
+    fn compute_confidence_does_not_boost_non_workspace_imports() {
+        with_workspace_cache_lock(|| {
+            let conf = compute_confidence(
+                "apps/web/src/app.js",
+                "some/distant/file.js",
+                Some("some/other/import.js"),
+            );
+            assert!(conf < 0.95);
+        });
+    }
+
+    #[test]
+    fn reset_workspace_resolved_paths_clears_previously_marked_entries() {
+        with_workspace_cache_lock(|| {
+            mark_workspace_resolved("packages/lib/src/index.js");
+            assert!(is_workspace_resolved("packages/lib/src/index.js"));
+            reset_workspace_resolved_paths();
+            assert!(!is_workspace_resolved("packages/lib/src/index.js"));
+        });
     }
 }

@@ -92,27 +92,47 @@ pub fn parse_files_full(
 }
 
 /// Resolve a single import path.
+///
+/// `workspaces` carries the caller's already-detected monorepo workspace
+/// packages (see `detectWorkspaces()`/`setWorkspaces()` in
+/// `src/infrastructure/config.ts` — the native engine has no workspace
+/// *detection* of its own, only resolution against a supplied map; issue #1927).
 #[napi]
 pub fn resolve_import(
     from_file: String,
     import_source: String,
     root_dir: String,
     aliases: Option<PathAliases>,
+    workspaces: Option<Vec<WorkspacePackage>>,
 ) -> String {
     let aliases = aliases.unwrap_or(PathAliases {
         base_url: None,
         paths: vec![],
     });
-    domain::graph::resolve::resolve_import_path(&from_file, &import_source, &root_dir, &aliases)
+    let workspace_map = workspaces.map(|w| domain::graph::resolve::workspaces_from_packages(&w));
+    domain::graph::resolve::resolve_import_path(
+        &from_file,
+        &import_source,
+        &root_dir,
+        &aliases,
+        workspace_map.as_ref(),
+    )
 }
 
 /// Batch resolve multiple imports.
+///
+/// Resets the process-lifetime workspace-resolved-paths cache (read by
+/// `compute_confidence()`) before resolving — this is the once-per-build
+/// entry point on the per-call FFI path (called exactly once per build by
+/// `resolveImportsBatch()` in resolve.ts); see
+/// `reset_workspace_resolved_paths()`'s doc comment for the full contract.
 #[napi]
 pub fn resolve_imports(
     inputs: Vec<ImportResolutionInput>,
     root_dir: String,
     aliases: Option<PathAliases>,
     known_files: Option<Vec<String>>,
+    workspaces: Option<Vec<WorkspacePackage>>,
 ) -> Vec<ResolvedImport> {
     let aliases = aliases.unwrap_or(PathAliases {
         base_url: None,
@@ -120,7 +140,15 @@ pub fn resolve_imports(
     });
     let known_set =
         known_files.map(|v| v.into_iter().collect::<std::collections::HashSet<String>>());
-    domain::graph::resolve::resolve_imports_batch(&inputs, &root_dir, &aliases, known_set.as_ref())
+    let workspace_map = workspaces.map(|w| domain::graph::resolve::workspaces_from_packages(&w));
+    domain::graph::resolve::reset_workspace_resolved_paths();
+    domain::graph::resolve::resolve_imports_batch(
+        &inputs,
+        &root_dir,
+        &aliases,
+        known_set.as_ref(),
+        workspace_map.as_ref(),
+    )
 }
 
 /// Compute proximity-based confidence for call resolution.
