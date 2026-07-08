@@ -373,6 +373,10 @@ function resolveBarrelImportEdges(
  * so the loop is a no-op for them; the query layer falls back to the
  * target's full export list for anything reached only by the file-level
  * edge. Mirrors `emitNamedSymbolEdges` in build-edges.ts (full-build path).
+ *
+ * For `edgeKind === 'imports-type'`, only specifiers actually marked
+ * type-only (whole-statement or inline per-specifier, #1813) get an edge —
+ * a mixed `import { value, type Foo }` must not credit `value`.
  */
 function emitNamedSymbolEdges(
   db: BetterSqlite3Database | null,
@@ -383,7 +387,8 @@ function emitNamedSymbolEdges(
   edgeKind: 'imports-type' | 'reexports',
 ): number {
   let edgesAdded = 0;
-  for (const { original } of importNamePairs(imp)) {
+  for (const { original, typeOnly } of importNamePairs(imp)) {
+    if (edgeKind === 'imports-type' && !typeOnly) continue;
     let targetFile = resolvedPath;
     if (db && isBarrelFile(db, resolvedPath)) {
       const actual = resolveBarrelTarget(db, resolvedPath, original);
@@ -427,7 +432,7 @@ function emitEdgesForImport(
   stmts.insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
   let edgesAdded = 1;
 
-  if (imp.typeOnly) {
+  if (imp.typeOnly || (imp.typeOnlyNames && imp.typeOnlyNames.length > 0)) {
     edgesAdded += emitNamedSymbolEdges(db, stmts, imp, resolvedPath, fileNodeId, 'imports-type');
   }
   if (imp.reexport && !imp.wildcardReexport) {

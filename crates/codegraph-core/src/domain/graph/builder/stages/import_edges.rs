@@ -121,21 +121,44 @@ impl BarrelContext for ImportEdgeContext {
 /// target-file symbol lookups must search using the *original* name — the
 /// renamed local alias only exists in the importing file, not in the file
 /// being imported from (#1730). Mirrors `importNamePairs` in build-edges.ts.
-pub(crate) fn import_name_pairs(imp: &crate::types::Import) -> Vec<(String, String)> {
+///
+/// Also reports, per name, whether it should be treated as type-only —
+/// either because the whole statement is (`import type { X }`) or because
+/// this specific specifier carries the inline modifier
+/// (`import { type X }`, #1813).
+pub(crate) fn import_name_pairs(imp: &crate::types::Import) -> Vec<(String, String, bool)> {
     let mut original_name_for: HashMap<&str, &str> = HashMap::new();
     if let Some(renamed) = &imp.renamed_imports {
         for r in renamed {
             original_name_for.insert(&r.local, &r.imported);
         }
     }
+    let statement_type_only = imp.type_only.unwrap_or(false);
+    let type_only_names: HashSet<&str> = imp
+        .type_only_names
+        .as_ref()
+        .map(|v| v.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
     imp.names
         .iter()
         .map(|name| {
             let local = name.strip_prefix("* as ").unwrap_or(name);
             let original = original_name_for.get(local).copied().unwrap_or(local);
-            (local.to_string(), original.to_string())
+            let type_only = statement_type_only || type_only_names.contains(local);
+            (local.to_string(), original.to_string(), type_only)
         })
         .collect()
+}
+
+/// True when an import carries any type-only signal — a whole-statement
+/// `import type { X }` or at least one inline per-specifier `type` modifier
+/// (`import { type X }`, #1813).
+fn has_type_only_names(imp: &crate::types::Import) -> bool {
+    imp.type_only.unwrap_or(false)
+        || imp
+            .type_only_names
+            .as_ref()
+            .is_some_and(|names| !names.is_empty())
 }
 
 /// Build the reexport map from parsed file symbols.
@@ -290,11 +313,15 @@ fn collect_symbol_lookup_pairs(ctx: &ImportEdgeContext) -> HashSet<(String, Stri
         let abs_file = Path::new(&ctx.root_dir).join(rel_path);
         let abs_str = abs_file.to_str().unwrap_or("");
         for imp in &symbols.imports {
-            if !imp.type_only.unwrap_or(false) && !is_named_reexport(imp) {
+            let is_reexport = is_named_reexport(imp);
+            if !has_type_only_names(imp) && !is_reexport {
                 continue;
             }
             let resolved_path = ctx.get_resolved(abs_str, &imp.source);
-            for (_local, original) in import_name_pairs(imp) {
+            for (_local, original, type_only) in import_name_pairs(imp) {
+                if !is_reexport && !type_only {
+                    continue;
+                }
                 let mut target_file = resolved_path.clone();
                 if ctx.is_barrel_file(&resolved_path) {
                     let mut visited = HashSet::new();
@@ -339,6 +366,10 @@ fn classify_import_kind(imp: &crate::types::Import) -> &'static str {
 /// dead (`imports-type`, #1724), or so `codegraph exports` can report the
 /// precise re-export surface instead of the target's full export list
 /// (`reexports`, #1742). `kind` selects which edge kind to emit.
+///
+/// For `kind == "imports-type"`, only specifiers actually marked type-only
+/// (whole-statement or inline per-specifier, #1813) get an edge — a mixed
+/// `import { value, type Foo }` must not credit `value`.
 fn emit_named_symbol_rows(
     edges: &mut Vec<EdgeRow>,
     file_node_id: i64,
@@ -348,7 +379,10 @@ fn emit_named_symbol_rows(
     ctx: &ImportEdgeContext,
     symbol_node_ids: &HashMap<(String, String), i64>,
 ) {
-    for (_local, original) in import_name_pairs(imp) {
+    for (_local, original, type_only) in import_name_pairs(imp) {
+        if kind == "imports-type" && !type_only {
+            continue;
+        }
         let mut target_file = resolved_path.to_string();
         if ctx.is_barrel_file(resolved_path) {
             let mut visited = HashSet::new();
@@ -390,7 +424,7 @@ fn emit_barrel_through_rows(
         _ => "imports",
     };
     let mut resolved_sources: HashSet<String> = HashSet::new();
-    for (_local, original) in import_name_pairs(imp) {
+    for (_local, original, _type_only) in import_name_pairs(imp) {
         let mut visited = HashSet::new();
         let actual_source = match ctx.resolve_barrel_export(resolved_path, &original, &mut visited)
         {
@@ -440,7 +474,7 @@ fn emit_edges_for_import(
         confidence: 1.0,
         dynamic: 0,
     });
-    if imp.type_only.unwrap_or(false) {
+    if has_type_only_names(imp) {
         emit_named_symbol_rows(
             edges,
             file_node_id,
@@ -681,5 +715,53 @@ mod tests {
         assert!(ctx.is_barrel_file("src/index.ts"));
         assert!(!ctx.is_barrel_file("src/utils.ts"));
         assert!(!ctx.is_barrel_file("nonexistent.ts"));
+    }
+
+    #[test]
+    fn import_name_pairs_flags_inline_per_specifier_type_only_names() {
+        // `import { value, type Foo } from './mixed'` — only `Foo` carries the
+        // inline modifier, so only its pair should report `type_only = true` (#1813).
+        let mut imp = Import::new(
+            "./mixed".to_string(),
+            vec!["value".to_string(), "Foo".to_string()],
+            1,
+        );
+        imp.type_only_names = Some(vec!["Foo".to_string()]);
+
+        let pairs = import_name_pairs(&imp);
+        assert_eq!(
+            pairs,
+            vec![
+                ("value".to_string(), "value".to_string(), false),
+                ("Foo".to_string(), "Foo".to_string(), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn import_name_pairs_whole_statement_type_only_flags_all_names() {
+        // `import type { A, B } from './types'` — every name is type-only,
+        // regardless of `type_only_names` (which stays unset for this form).
+        let mut imp = Import::new(
+            "./types".to_string(),
+            vec!["A".to_string(), "B".to_string()],
+            1,
+        );
+        imp.type_only = Some(true);
+
+        let pairs = import_name_pairs(&imp);
+        assert!(pairs.iter().all(|(_, _, type_only)| *type_only));
+    }
+
+    #[test]
+    fn import_name_pairs_plain_value_import_flags_no_names() {
+        let imp = Import::new(
+            "./utils".to_string(),
+            vec!["helper".to_string()],
+            1,
+        );
+
+        let pairs = import_name_pairs(&imp);
+        assert!(pairs.iter().all(|(_, _, type_only)| !*type_only));
     }
 }

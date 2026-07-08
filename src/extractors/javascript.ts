@@ -312,13 +312,15 @@ function handleImportCapture(c: Record<string, TreeSitterNode>, imports: Import[
   const isTypeOnly = impNode.text.startsWith('import type');
   const modPath = c.imp_source!.text.replace(/['"]/g, '');
   const renamedImports: Array<{ local: string; imported: string }> = [];
-  const names = extractImportNames(impNode, renamedImports);
+  const typeOnlyNames: string[] = [];
+  const names = extractImportNames(impNode, renamedImports, typeOnlyNames);
   imports.push({
     source: modPath,
     names,
     line: nodeStartLine(impNode),
     typeOnly: isTypeOnly,
     ...(renamedImports.length > 0 ? { renamedImports } : {}),
+    ...(typeOnlyNames.length > 0 ? { typeOnlyNames } : {}),
   });
 }
 
@@ -1509,13 +1511,15 @@ function handleImportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (source) {
     const modPath = source.text.replace(/['"]/g, '');
     const renamedImports: Array<{ local: string; imported: string }> = [];
-    const names = extractImportNames(node, renamedImports);
+    const typeOnlyNames: string[] = [];
+    const names = extractImportNames(node, renamedImports, typeOnlyNames);
     ctx.imports.push({
       source: modPath,
       names,
       line: nodeStartLine(node),
       typeOnly: isTypeOnly,
       ...(renamedImports.length > 0 ? { renamedImports } : {}),
+      ...(typeOnlyNames.length > 0 ? { typeOnlyNames } : {}),
     });
   }
 }
@@ -4039,6 +4043,14 @@ function findParentClass(node: TreeSitterNode): string | null {
  * `renamedOut`, when passed, collects `{ local, imported }` pairs for
  * `import_specifier` nodes that rename a binding (`import { X as Y }`).
  *
+ * `typeOnlyOut`, when passed, collects the local binding name of every
+ * `import_specifier` carrying an inline `type`/`typeof` modifier
+ * (`import { type X }`) — the per-specifier form of type-only, distinct
+ * from a whole-statement `import type { X }` (#1813). Per the
+ * tree-sitter-typescript grammar, `import_specifier` is
+ * `optional(choice('type', 'typeof'))` followed by the name/alias fields,
+ * so the modifier — when present — is always the specifier's first child.
+ *
  * Grammar note (see tree-sitter-javascript): for `import_specifier`, the
  * `name` field is *always* present — it holds the name as declared by the
  * source module. `alias` is only present for `X as Y` and holds the *local*
@@ -4050,6 +4062,7 @@ function findParentClass(node: TreeSitterNode): string | null {
 function extractImportNames(
   node: TreeSitterNode,
   renamedOut?: Array<{ local: string; imported: string }>,
+  typeOnlyOut?: string[],
 ): string[] {
   const names: string[] = [];
   function scan(n: TreeSitterNode): void {
@@ -4061,6 +4074,10 @@ function extractImportNames(
         names.push(localNode.text);
         if (aliasNode && sourceNameNode && aliasNode.text !== sourceNameNode.text) {
           renamedOut?.push({ local: aliasNode.text, imported: sourceNameNode.text });
+        }
+        const modifier = n.child(0);
+        if (modifier && (modifier.type === 'type' || modifier.type === 'typeof')) {
+          typeOnlyOut?.push(localNode.text);
         }
       } else {
         names.push(n.text);

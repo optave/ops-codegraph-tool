@@ -522,6 +522,16 @@ export interface Import {
    * — barrel/reexport tracing is a distinct mechanism (see resolveBarrelExport).
    */
   renamedImports?: Array<{ local: string; imported: string }>;
+  /**
+   * Local binding names (post-alias, matching entries in `names`) that carry
+   * an inline per-specifier `type`/`typeof` modifier (`import { type X }`),
+   * as distinct from a whole-statement `import type { X }` (already covered
+   * by `typeOnly`). Only populated for specifiers that actually use the
+   * modifier — mirrors `renamedImports`'s sparse-population convention.
+   * Lets a mixed statement (`import { value, type Foo }`) still credit `Foo`
+   * with a symbol-level `imports-type` edge (#1813).
+   */
+  typeOnlyNames?: string[];
   // Language-specific flags (mutually exclusive at runtime)
   pythonImport?: boolean;
   goImport?: boolean;

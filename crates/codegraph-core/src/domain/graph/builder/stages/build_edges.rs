@@ -1477,6 +1477,12 @@ pub struct ImportInfo {
     pub dynamic_import: bool,
     #[napi(js_name = "wildcardReexport")]
     pub wildcard_reexport: bool,
+    /// Local names (subset of `names`) marked type-only via an inline
+    /// per-specifier `type`/`typeof` modifier (`import { type X }`), as
+    /// distinct from a whole-statement `import type { X }` (already covered
+    /// by `type_only`, #1813).
+    #[napi(js_name = "typeOnlyNames")]
+    pub type_only_names: Vec<String>,
 }
 
 #[napi(object)]
@@ -1677,6 +1683,13 @@ fn is_named_reexport(imp: &ImportInfo) -> bool {
     imp.reexport && !imp.wildcard_reexport
 }
 
+/// True when an import carries any type-only signal — a whole-statement
+/// `import type { X }` or at least one inline per-specifier `type` modifier
+/// (`import { type X }`, #1813).
+fn has_type_only_names(imp: &ImportInfo) -> bool {
+    imp.type_only || !imp.type_only_names.is_empty()
+}
+
 /// True for a genuine wildcard re-export (`export * from 'Y'`). Emitted as a
 /// distinct file-level marker edge (`reexports-wildcard`) alongside the
 /// generic `reexports` edge so the query layer can tell a target reached
@@ -1693,6 +1706,10 @@ fn is_wildcard_reexport(imp: &ImportInfo) -> bool {
 /// (`imports-type`, #1724), or so `codegraph exports` can report the
 /// precise re-export surface instead of the target's full export list
 /// (`reexports`, #1742). `kind` selects which edge kind to emit.
+///
+/// For `kind == "imports-type"`, only specifiers actually marked type-only
+/// (whole-statement or inline per-specifier, #1813) get an edge — a mixed
+/// `import { value, type Foo }` must not credit `value`.
 ///
 /// `imp.names` holds the *original* declaration name for export specifiers
 /// (see `extractImportNames` in the JS extractor) even when renamed
@@ -1712,6 +1729,12 @@ fn emit_named_symbol_edges(
     }
     for name in &imp.names {
         let clean_name = strip_star_as_prefix(name);
+        if kind == "imports-type"
+            && !imp.type_only
+            && !imp.type_only_names.iter().any(|n| n == clean_name)
+        {
+            continue;
+        }
         let barrel_target = if ctx.barrel_set.contains(resolved_path) {
             let mut visited = HashSet::new();
             barrel_resolution::resolve_barrel_export(ctx, resolved_path, clean_name, &mut visited)
@@ -1816,7 +1839,7 @@ fn process_single_import(
         dynamic: 0,
         dynamic_kind: None,
     });
-    if imp.type_only {
+    if has_type_only_names(imp) {
         emit_named_symbol_edges(edges, file_input, imp, resolved_path, "imports-type", ctx);
     }
     if is_named_reexport(imp) {
@@ -1856,6 +1879,25 @@ mod import_edge_tests {
             type_only,
             dynamic_import: dynamic,
             wildcard_reexport: false,
+            type_only_names: vec![],
+        }
+    }
+
+    /// A mixed import (`import { value, type Foo } from 'src'`) where only
+    /// `type_only_names` carries the inline-modifier names (#1813).
+    fn make_import_with_type_only_names(
+        source: &str,
+        names: Vec<&str>,
+        type_only_names: Vec<&str>,
+    ) -> ImportInfo {
+        ImportInfo {
+            source: source.to_string(),
+            names: names.into_iter().map(|s| s.to_string()).collect(),
+            reexport: false,
+            type_only: false,
+            dynamic_import: false,
+            wildcard_reexport: false,
+            type_only_names: type_only_names.into_iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -1950,6 +1992,7 @@ mod import_edge_tests {
                 type_only: false,
                 dynamic_import: false,
                 wildcard_reexport: true,
+                type_only_names: vec![],
             },
         ], vec![])];
         let resolved = vec![make_resolved("/root/src/index.ts", "./utils", "src/utils.ts")];
@@ -1994,6 +2037,7 @@ mod import_edge_tests {
                 type_only: false,
                 dynamic_import: false,
                 wildcard_reexport: true,
+                type_only_names: vec![],
             },
         ], vec![])];
         let resolved = vec![make_resolved("/root/src/index.ts", "./utils", "src/utils.ts")];
@@ -2068,6 +2112,38 @@ mod import_edge_tests {
         let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string(), None);
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, "imports-type");
+    }
+
+    #[test]
+    fn mixed_import_inline_type_modifier_credits_only_flagged_name() {
+        // `import { value, type Foo } from './mixed'` — only `Foo` carries
+        // the inline per-specifier `type` modifier, so only `Foo` should get
+        // a symbol-level `imports-type` edge; `value` must not (#1813). The
+        // file-level edge stays `imports` since the statement as a whole
+        // isn't fully type-only.
+        let files = vec![make_file("src/app.ts", 1, vec![
+            make_import_with_type_only_names("./mixed", vec!["value", "Foo"], vec!["Foo"]),
+        ], vec![])];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./mixed", "src/mixed.ts")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/mixed.ts", 2)];
+        let symbol_nodes = vec![
+            SymbolNodeEntry { name: "Foo".to_string(), file: "src/mixed.ts".to_string(), node_id: 50 },
+            SymbolNodeEntry { name: "value".to_string(), file: "src/mixed.ts".to_string(), node_id: 51 },
+        ];
+
+        let edges = build_import_edges(
+            files,
+            resolved,
+            vec![],
+            node_ids,
+            vec![],
+            "/root".to_string(),
+            Some(symbol_nodes),
+        );
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].kind, "imports");
+        assert_eq!(edges[1].kind, "imports-type");
+        assert_eq!(edges[1].target_id, 50);
     }
 
     #[test]

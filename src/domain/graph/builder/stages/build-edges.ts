@@ -188,6 +188,10 @@ function importEdgeKind(imp: Import): string {
  * only gets a precise symbol-level edge when a name is actually spelled
  * out; the query layer falls back to the target's full export list for
  * anything reached only by the file-level edge (genuine wildcard semantics).
+ *
+ * For `edgeKind === 'imports-type'`, only specifiers actually marked
+ * type-only (whole-statement or inline per-specifier, #1813) get an edge —
+ * a mixed `import { value, type Foo }` must not credit `value`.
  */
 function emitNamedSymbolEdges(
   ctx: PipelineContext,
@@ -198,7 +202,8 @@ function emitNamedSymbolEdges(
   edgeKind: 'imports-type' | 'reexports',
 ): void {
   if (!ctx.nodesByNameAndFile) return;
-  for (const { original } of importNamePairs(imp)) {
+  for (const { original, typeOnly } of importNamePairs(imp)) {
+    if (edgeKind === 'imports-type' && !typeOnly) continue;
     let targetFile = resolvedPath;
     if (isBarrelFile(ctx, resolvedPath)) {
       const actual = resolveBarrelExportCached(ctx, resolvedPath, original);
@@ -230,7 +235,7 @@ function emitEdgesForImport(
   const edgeKind = importEdgeKind(imp);
   allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0, null, null]);
 
-  if (imp.typeOnly) {
+  if (imp.typeOnly || (imp.typeOnlyNames && imp.typeOnlyNames.length > 0)) {
     emitNamedSymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows, 'imports-type');
   }
   if (imp.reexport && !imp.wildcardReexport) {
@@ -309,6 +314,8 @@ interface NativeImportInfo {
   typeOnly: boolean;
   dynamicImport: boolean;
   wildcardReexport: boolean;
+  /** Local names (subset of `names`) marked type-only via inline `type`/`typeof` modifier (#1813). */
+  typeOnlyNames: string[];
 }
 
 /** Native FFI input shape for a single file. */
@@ -359,6 +366,7 @@ function toNativeImportInfo(imp: Import): NativeImportInfo {
     typeOnly: !!imp.typeOnly,
     dynamicImport: !!imp.dynamicImport,
     wildcardReexport: !!imp.wildcardReexport,
+    typeOnlyNames: imp.typeOnlyNames ?? [],
   };
 }
 
