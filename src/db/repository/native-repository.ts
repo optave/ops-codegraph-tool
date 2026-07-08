@@ -9,6 +9,7 @@
  */
 
 import Database from 'better-sqlite3';
+import { warn } from '../../infrastructure/logger.js';
 import { ConfigError } from '../../shared/errors.js';
 import type {
   AdjacentEdgeRow,
@@ -306,7 +307,15 @@ export class NativeRepository extends Repository {
     // Unlike findNodesWithFanIn/fnDeps, this native binding only accepts a single
     // file (no CLI command currently wires -f/--file to it); take the first value
     // rather than crash if a caller ever passes the repeatable-flag array form.
-    const [file] = normalizeFileFilter(opts.file);
+    // TODO(#1815): widen the native binding to Vec<String> so multi-file scoping
+    // isn't silently truncated once a caller wires -f/--file to this method.
+    const files = normalizeFileFilter(opts.file);
+    if (files.length > 1) {
+      warn(
+        `findNodesByScope: received ${files.length} files, only using the first ("${files[0]}") — multi-file scoping not yet supported natively (see #1815)`,
+      );
+    }
+    const [file] = files;
     return this.#ndb.findNodesByScope(scopeName, opts.kind ?? null, file ?? null).map(toNodeRow);
   }
 
