@@ -13,7 +13,12 @@ impl SymbolExtractor for RustExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_rust_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &RUST_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_rust_type_map);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_rust_return_type_map);
+        // Must run after type_map is populated — resolves `receiver.method()` call
+        // assignments against locally-typed receivers (mirrors javascript.rs's ordering).
+        walk_tree(&tree.root_node(), source, &mut symbols, match_rust_call_assignments);
         dedup_type_map(&mut symbols.type_map);
+        dedup_type_map(&mut symbols.return_type_map);
         symbols
     }
 }
@@ -77,9 +82,10 @@ fn handle_function_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_struct_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name_node) = node.child_by_field_name("name") {
+        let struct_name = node_text(&name_node, source).to_string();
         let children = extract_rust_struct_fields(node, source);
         symbols.definitions.push(Definition {
-            name: node_text(&name_node, source).to_string(),
+            name: struct_name.clone(),
             kind: "struct".to_string(),
             line: start_line(node),
             end_line: Some(end_line(node)),
@@ -88,6 +94,27 @@ fn handle_struct_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             cfg: None,
             children: opt_children(children),
         });
+        seed_rust_struct_field_types(node, &struct_name, source, symbols);
+    }
+}
+
+/// Seed `${StructName}.${fieldName}` → field-type entries in `symbols.type_map`
+/// so `self.field.method()` inside the struct's own impl methods resolves via
+/// the class-scoped receiver lookup — mirrors JS's `this.field` class-scoped
+/// typing (issues #1323, #1458) and fixes #1876's `self.field` false negatives.
+fn seed_rust_struct_field_types(node: &Node, struct_name: &str, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(body) = node.child_by_field_name("body") else { return };
+    for i in 0..body.child_count() {
+        let Some(field) = body.child(i) else { continue };
+        if field.kind() != "field_declaration" { continue }
+        let Some(field_name) = field.child_by_field_name("name") else { continue };
+        let Some(type_node) = field.child_by_field_name("type") else { continue };
+        let Some(type_name) = extract_rust_type_name(&type_node, source) else { continue };
+        push_type_map_entry(
+            symbols,
+            format!("{}.{}", struct_name, node_text(&field_name, source)),
+            type_name,
+        );
     }
 }
 
@@ -401,6 +428,20 @@ fn match_rust_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _d
                                 confidence: 0.9,
                             });
                         }
+                    } else if let Some(value_node) = node.child_by_field_name("value") {
+                        // let x = TypeName;  — a bare capitalized identifier value binds
+                        // a unit-struct instance (e.g. `let v = NameValidator;` for
+                        // `struct NameValidator;`), not a reference to another variable (#1876).
+                        if value_node.kind() == "identifier" {
+                            let type_name = node_text(&value_node, source);
+                            if type_name.starts_with(|c: char| c.is_uppercase()) {
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: node_text(&pattern, source).to_string(),
+                                    type_name: type_name.to_string(),
+                                    confidence: 0.7,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -420,6 +461,105 @@ fn match_rust_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _d
                             }
                         }
                     }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// ── Return-type map extraction (Phase 8.2 parity, #1876) ────────────────────
+
+/// Populate `symbols.return_type_map` with declared `-> ReturnType` return
+/// types for free functions and impl methods, resolving `Self` to the
+/// enclosing impl's type name. Mirrors `extractRustReturnTypeMap` in
+/// `src/extractors/rust.ts`. Consumed by `propagate_return_types_across_files`
+/// (Phase 8.2) — the same generic cross-file mechanism the JS/TS extractor
+/// feeds — so a local var typed from a cross-file call's return value
+/// (`let service = build_service();`) resolves without any Rust-specific
+/// propagation logic.
+fn match_rust_return_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    if node.kind() != "function_item" { return }
+    // Skip default-impl functions inside traits, matching handle_function_item —
+    // their return type is not tied to a concrete implementing type.
+    if node.parent().and_then(|p| p.parent()).map_or(false, |gp| gp.kind() == "trait_item") {
+        return;
+    }
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let Some(return_type_node) = node.child_by_field_name("return_type") else { return };
+    let Some(raw_type) = extract_rust_type_name(&return_type_node, source) else { return };
+    let impl_type = find_current_impl(node, source);
+    // `-> Self` inside an impl block returns the concrete implementing type.
+    let type_name = if raw_type == "Self" {
+        impl_type.as_deref().unwrap_or(raw_type)
+    } else {
+        raw_type
+    };
+    let full_name = match &impl_type {
+        Some(t) => format!("{}.{}", t, node_text(&name_node, source)),
+        None => node_text(&name_node, source).to_string(),
+    };
+    let existing_confidence = symbols.return_type_map.iter()
+        .find(|e| e.name == full_name)
+        .map(|e| e.confidence);
+    if existing_confidence.map_or(true, |c| c < 1.0) {
+        symbols.return_type_map.push(TypeMapEntry {
+            name: full_name,
+            type_name: type_name.to_string(),
+            confidence: 1.0,
+        });
+    }
+}
+
+// ── Call-assignment extraction (Phase 8.2 parity, #1876) ─────────────────────
+
+/// Record `let x = callee(...);` bindings into `symbols.call_assignments` so
+/// `propagate_return_types_across_files` can type `x` from `callee`'s
+/// declared return type. Mirrors `extractRustCallAssignments` in
+/// `src/extractors/rust.ts` — see that function's doc comment for the three
+/// call shapes handled (bare function call, `Type::assoc_fn()`, and method
+/// call on a locally-typed receiver).
+fn match_rust_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    if node.kind() != "let_declaration" { return }
+    let Some(pattern) = node.child_by_field_name("pattern") else { return };
+    if pattern.kind() != "identifier" { return }
+    let Some(value) = node.child_by_field_name("value") else { return };
+    if value.kind() != "call_expression" { return }
+    let Some(fn_node) = value.child_by_field_name("function") else { return };
+    let var_name = node_text(&pattern, source).to_string();
+
+    match fn_node.kind() {
+        "identifier" => {
+            symbols.call_assignments.push(NativeCallAssignment {
+                var_name,
+                callee_name: node_text(&fn_node, source).to_string(),
+                receiver_type_name: None,
+            });
+        }
+        "scoped_identifier" => {
+            let name = fn_node.child_by_field_name("name");
+            let path = fn_node.child_by_field_name("path");
+            if let (Some(name), Some(path)) = (name, path) {
+                symbols.call_assignments.push(NativeCallAssignment {
+                    var_name,
+                    callee_name: node_text(&name, source).to_string(),
+                    receiver_type_name: Some(node_text(&path, source).to_string()),
+                });
+            }
+        }
+        "field_expression" => {
+            let field = fn_node.child_by_field_name("field");
+            let receiver = fn_node.child_by_field_name("value");
+            if let (Some(field), Some(receiver)) = (field, receiver) {
+                if receiver.kind() == "identifier" {
+                    let receiver_type = symbols.type_map.iter()
+                        .find(|e| e.name == node_text(&receiver, source))
+                        .map(|e| e.type_name.clone());
+                    symbols.call_assignments.push(NativeCallAssignment {
+                        var_name,
+                        callee_name: node_text(&field, source).to_string(),
+                        receiver_type_name: receiver_type,
+                    });
                 }
             }
         }
@@ -491,5 +631,68 @@ mod tests {
         let children = bar.children.as_ref().unwrap();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].name, "x");
+    }
+
+    // ── #1876: receiver-typed locals + self.field type map ──────────────────
+
+    #[test]
+    fn seeds_struct_field_type_map() {
+        let s = parse_rust("struct UserService { repo: UserRepository }");
+        let entry = s.type_map.iter().find(|e| e.name == "UserService.repo").unwrap();
+        assert_eq!(entry.type_name, "UserRepository");
+    }
+
+    #[test]
+    fn seeds_unit_struct_value_type_map() {
+        let s = parse_rust("struct NameValidator;\nfn f() { let v = NameValidator; }");
+        let entry = s.type_map.iter().find(|e| e.name == "v").unwrap();
+        assert_eq!(entry.type_name, "NameValidator");
+    }
+
+    #[test]
+    fn does_not_type_lowercase_bare_identifier_binding() {
+        let s = parse_rust("fn f() { let a = 1; let b = a; }");
+        assert!(s.type_map.iter().all(|e| e.name != "b"));
+    }
+
+    #[test]
+    fn stores_return_type_for_free_function() {
+        let s = parse_rust("fn build_service() -> UserService { todo!() }");
+        let entry = s.return_type_map.iter().find(|e| e.name == "build_service").unwrap();
+        assert_eq!(entry.type_name, "UserService");
+        assert_eq!(entry.confidence, 1.0);
+    }
+
+    #[test]
+    fn resolves_self_return_type_to_impl_type() {
+        let s = parse_rust("struct UserRepository;\nimpl UserRepository {\n  fn new() -> Self { UserRepository }\n}");
+        let entry = s.return_type_map.iter().find(|e| e.name == "UserRepository.new").unwrap();
+        assert_eq!(entry.type_name, "UserRepository");
+    }
+
+    #[test]
+    fn records_call_assignment_for_bare_function_call() {
+        let s = parse_rust("fn f() { let service = build_service(); }");
+        let ca = s.call_assignments.iter().find(|c| c.var_name == "service").unwrap();
+        assert_eq!(ca.callee_name, "build_service");
+        assert_eq!(ca.receiver_type_name, None);
+    }
+
+    #[test]
+    fn records_call_assignment_for_associated_function_call() {
+        let s = parse_rust("fn f() { let repo = UserRepository::new(); }");
+        let ca = s.call_assignments.iter().find(|c| c.var_name == "repo").unwrap();
+        assert_eq!(ca.callee_name, "new");
+        assert_eq!(ca.receiver_type_name.as_deref(), Some("UserRepository"));
+    }
+
+    #[test]
+    fn records_call_assignment_for_method_call_on_typed_receiver() {
+        let s = parse_rust(
+            "fn f() {\n  let repo: UserRepository = make();\n  let user = repo.find_by_id(1);\n}",
+        );
+        let ca = s.call_assignments.iter().find(|c| c.var_name == "user").unwrap();
+        assert_eq!(ca.callee_name, "find_by_id");
+        assert_eq!(ca.receiver_type_name.as_deref(), Some("UserRepository"));
     }
 }

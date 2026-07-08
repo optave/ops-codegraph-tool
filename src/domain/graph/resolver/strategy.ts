@@ -78,10 +78,27 @@ export function unwrapTypeEntry(entry: unknown): string | null {
 // ── resolveByReceiver ─────────────────────────────────────────────────────────
 
 /**
+ * Instance-reference prefixes that qualify a receiver chain as "this object's
+ * own field" (`this.repo`, `self.repo`) — `this` for JS/TS/Java/C#-family
+ * languages, `self` for Python/Rust/Swift-family languages. Stripped the same
+ * way so `X.repo.method()` resolves via typeMap["repo"] regardless of which
+ * keyword the source language uses (#1876).
+ */
+const INSTANCE_RECEIVER_PREFIXES = ['this.', 'self.'] as const;
+
+/** Strip a leading `this.`/`self.` prefix from a receiver chain, if present. */
+function stripInstancePrefix(receiver: string): string {
+  for (const prefix of INSTANCE_RECEIVER_PREFIXES) {
+    if (receiver.startsWith(prefix)) return receiver.slice(prefix.length);
+  }
+  return receiver;
+}
+
+/**
  * Steps 1-3 of the resolveByReceiver cascade: resolve the type name for a
  * concrete-object receiver.
  *
- *   1. typeMap class-scoped lookup (`ClassName.prop` key) for `this.prop` receivers.
+ *   1. typeMap class-scoped lookup (`ClassName.prop` key) for `this.prop`/`self.prop` receivers.
  *   2. typeMap bare key, full-receiver key, callee-scoped rest-param key.
  *   3. Inline `new Ctor()` heuristic for un-normalised receiver text.
  */
@@ -91,13 +108,13 @@ function resolveReceiverTypeName(
   effectiveReceiver: string,
   callerName?: string | null,
 ): string | null {
-  // For this.prop receivers, prefer the class-scoped key (ClassName.prop) seeded by
+  // For this.prop/self.prop receivers, prefer the class-scoped key (ClassName.prop) seeded by
   // handlePropWriteTypeMap / handleFieldDefTypeMap — prevents false edges when multiple
   // classes define the same property name (issues #1323, #1458).
   // Class-scoped lookup runs first so bare fallback keys (confidence 0.6) don't shadow
   // the correct per-class entry when callerName is available.
   let typeEntry: unknown;
-  if (receiver.startsWith('this.') && callerName) {
+  if (effectiveReceiver !== receiver && callerName) {
     const dotIdx = callerName.lastIndexOf('.');
     if (dotIdx > -1) {
       const callerClass = callerName.slice(0, dotIdx);
@@ -228,11 +245,10 @@ export function resolveByReceiver(
   callerName?: string | null,
   importedOriginalNames?: ReadonlyMap<string, string>,
 ): ReadonlyArray<{ id: number; file: string }> {
-  // Strip "this." so `this.repo.method()` resolves via typeMap["repo"]
-  // (or the "this.repo" key seeded directly by the TSC property-declaration enricher).
-  const effectiveReceiver = call.receiver.startsWith('this.')
-    ? call.receiver.slice('this.'.length)
-    : call.receiver;
+  // Strip "this."/"self." so `this.repo.method()` / `self.repo.method()` resolves via
+  // typeMap["repo"] (or the "this.repo" key seeded directly by the TSC property-declaration
+  // enricher, or the "StructName.repo" struct-field key seeded by the Rust extractor, #1876).
+  const effectiveReceiver = stripInstancePrefix(call.receiver);
 
   const typeName = resolveReceiverTypeName(typeMap, call.receiver, effectiveReceiver, callerName);
 

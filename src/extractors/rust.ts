@@ -25,10 +25,16 @@ export function extractRustSymbols(tree: TreeSitterTree, _filePath: string): Ext
     classes: [],
     exports: [],
     typeMap: new Map(),
+    returnTypeMap: new Map(),
+    callAssignments: [],
   };
 
   walkRustNode(tree.rootNode, ctx);
   extractRustTypeMap(tree.rootNode, ctx);
+  extractRustReturnTypeMap(tree.rootNode, ctx);
+  // Must run after typeMap is populated — resolves `receiver.method()` call
+  // assignments against locally-typed receivers (mirrors javascript.ts's ordering).
+  extractRustCallAssignments(tree.rootNode, ctx);
   return ctx;
 }
 
@@ -102,6 +108,32 @@ function handleRustStructItem(node: TreeSitterNode, ctx: ExtractorOutput): void 
     children: fields.length > 0 ? fields : undefined,
     visibility: rustVisibility(node),
   });
+  seedRustStructFieldTypes(node, nameNode.text, ctx);
+}
+
+/**
+ * Seed `${StructName}.${fieldName}` → field-type entries in ctx.typeMap so
+ * `self.field.method()` inside the struct's own impl methods resolves via the
+ * class-scoped receiver lookup — mirrors JS's `this.field` class-scoped typing
+ * (issues #1323, #1458) and fixes #1876's `self.field` false negatives.
+ */
+function seedRustStructFieldTypes(
+  structNode: TreeSitterNode,
+  structName: string,
+  ctx: ExtractorOutput,
+): void {
+  if (!ctx.typeMap) return;
+  const body = structNode.childForFieldName('body');
+  if (!body) return;
+  for (let i = 0; i < body.childCount; i++) {
+    const field = body.child(i);
+    if (field?.type !== 'field_declaration') continue;
+    const fieldName = field.childForFieldName('name');
+    const typeNode = field.childForFieldName('type');
+    if (!fieldName || !typeNode) continue;
+    const typeName = extractRustTypeName(typeNode);
+    if (typeName) setTypeMapEntry(ctx.typeMap, `${structName}.${fieldName.text}`, typeName, 0.9);
+  }
 }
 
 function handleRustEnumItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -273,6 +305,14 @@ function extractRustTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, dep
     if (pattern && pattern.type === 'identifier' && typeNode) {
       const typeName = extractRustTypeName(typeNode);
       if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, pattern.text, typeName, 0.9);
+    } else if (pattern && pattern.type === 'identifier' && !typeNode) {
+      // let x = TypeName;  — a bare capitalized identifier value binds a
+      // unit-struct instance (e.g. `let v = NameValidator;` for `struct
+      // NameValidator;`), not a reference to another variable (#1876).
+      const valueNode = node.childForFieldName('value');
+      if (valueNode?.type === 'identifier' && /^[A-Z]/.test(valueNode.text) && ctx.typeMap) {
+        setTypeMapEntry(ctx.typeMap, pattern.text, valueNode.text, 0.7);
+      }
     }
   }
 
@@ -315,6 +355,123 @@ function extractRustTypeName(typeNode: TreeSitterNode): string | null {
     return first ? first.text : null;
   }
   return null;
+}
+
+// ── Return-type map extraction (Phase 8.2 parity, #1876) ────────────────────
+
+/**
+ * Populate ctx.returnTypeMap with declared `-> ReturnType` return types for
+ * free functions and impl methods, resolving `Self` to the enclosing impl's
+ * type name. Consumed by build-edges.ts's `propagateReturnTypesAcrossFiles`
+ * (Phase 8.2) — the same generic cross-file mechanism the JS/TS extractor
+ * feeds — so a local var typed from a cross-file call's return value
+ * (`let service = build_service();`) resolves without any Rust-specific
+ * propagation logic.
+ */
+function extractRustReturnTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  extractRustReturnTypeMapDepth(node, ctx, 0);
+}
+
+function extractRustReturnTypeMapDepth(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  depth: number,
+): void {
+  if (depth >= MAX_WALK_DEPTH) return;
+  // Skip default-impl functions inside traits, matching handleRustFuncItem —
+  // their return type is not tied to a concrete implementing type.
+  if (node.type === 'function_item' && node.parent?.parent?.type !== 'trait_item') {
+    storeRustReturnType(node, ctx);
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractRustReturnTypeMapDepth(child, ctx, depth + 1);
+  }
+}
+
+/** Extract the return type of a function/method node and store it in ctx.returnTypeMap. */
+function storeRustReturnType(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  if (!ctx.returnTypeMap) return;
+  const nameNode = node.childForFieldName('name');
+  const returnTypeNode = node.childForFieldName('return_type');
+  if (!nameNode || !returnTypeNode) return;
+  const rawType = extractRustTypeName(returnTypeNode);
+  if (!rawType) return;
+  const implType = findCurrentImpl(node);
+  // `-> Self` inside an impl block returns the concrete implementing type.
+  const typeName = rawType === 'Self' && implType ? implType : rawType;
+  const fullName = implType ? `${implType}.${nameNode.text}` : nameNode.text;
+  const existing = ctx.returnTypeMap.get(fullName);
+  if (!existing || existing.confidence < 1.0) {
+    ctx.returnTypeMap.set(fullName, { type: typeName, confidence: 1.0 });
+  }
+}
+
+// ── Call-assignment extraction (Phase 8.2 parity, #1876) ─────────────────────
+
+/**
+ * Record `let x = callee(...);` bindings into ctx.callAssignments so
+ * build-edges.ts's cross-file return-type propagation can type `x` from
+ * `callee`'s declared return type. Handles three call shapes:
+ *   - bare function call (`build_service()`) — calleeName only, resolved
+ *     against the file's imports by the generic propagation pass.
+ *   - associated-function call (`Type::assoc_fn()`) — the type is already
+ *     spelled out in the call syntax, so receiverTypeName is the literal
+ *     path text (no typeMap lookup needed).
+ *   - method call on a locally-typed receiver (`x.method()`) — receiverTypeName
+ *     is resolved from ctx.typeMap at extraction time, mirroring the
+ *     JS/TS extractor's member_expression case.
+ */
+function extractRustCallAssignments(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  extractRustCallAssignmentsDepth(node, ctx, 0);
+}
+
+function extractRustCallAssignmentsDepth(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  depth: number,
+): void {
+  if (depth >= MAX_WALK_DEPTH) return;
+  if (node.type === 'let_declaration') {
+    recordRustCallAssignment(node, ctx);
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractRustCallAssignmentsDepth(child, ctx, depth + 1);
+  }
+}
+
+function recordRustCallAssignment(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  if (!ctx.callAssignments) return;
+  const pattern = node.childForFieldName('pattern');
+  const value = node.childForFieldName('value');
+  if (pattern?.type !== 'identifier' || value?.type !== 'call_expression') return;
+  const fn = value.childForFieldName('function');
+  if (!fn) return;
+  const varName = pattern.text;
+
+  if (fn.type === 'identifier') {
+    ctx.callAssignments.push({ varName, calleeName: fn.text });
+    return;
+  }
+  if (fn.type === 'scoped_identifier') {
+    const name = fn.childForFieldName('name');
+    const path = fn.childForFieldName('path');
+    if (name && path) {
+      ctx.callAssignments.push({ varName, calleeName: name.text, receiverTypeName: path.text });
+    }
+    return;
+  }
+  if (fn.type === 'field_expression') {
+    const field = fn.childForFieldName('field');
+    const receiver = fn.childForFieldName('value');
+    if (field && receiver?.type === 'identifier') {
+      const receiverEntry = ctx.typeMap?.get(receiver.text);
+      const receiverTypeName =
+        typeof receiverEntry === 'string' ? receiverEntry : receiverEntry?.type;
+      ctx.callAssignments.push({ varName, calleeName: field.text, receiverTypeName });
+    }
+  }
 }
 
 /** Collect names from a scoped_use_list's list node. */

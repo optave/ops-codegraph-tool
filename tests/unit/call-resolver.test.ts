@@ -538,3 +538,52 @@ describe('resolveDefinePropertyAccessorTarget — kind filter parity (#1766)', (
     expect(result).toEqual([qualifiedMethod]);
   });
 });
+
+describe('resolveByMethodOrGlobal — self.field receiver parity with this.field (#1876)', () => {
+  const method = { id: 9, file: 'service.rs', kind: 'method' };
+
+  it('resolves self.repo.find_by_id() via the class-scoped struct-field type map', () => {
+    // Mirrors the Rust extractor's `${StructName}.${fieldName}` typeMap seeding
+    // for `struct UserService { repo: UserRepository }`.
+    const lookup = makeLookup({ 'UserRepository.find_by_id': [method] });
+    const typeMap = new Map([['UserService.repo', { type: 'UserRepository', confidence: 0.9 }]]);
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'find_by_id', receiver: 'self.repo' },
+      'service.rs',
+      typeMap,
+      'UserService.get_user',
+    );
+    expect(result).toEqual([method]);
+  });
+
+  it('does not resolve self.repo.find_by_id() when only an unrelated class owns the field name', () => {
+    // The class-scoped key must be consulted — an unscoped 'repo' key belonging
+    // to a different struct must not leak across classes (mirrors #1323/#1458
+    // for `this.field`).
+    const lookup = makeLookup({ 'UserRepository.find_by_id': [method] });
+    const typeMap = new Map([['OtherService.repo', { type: 'UserRepository', confidence: 0.9 }]]);
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'find_by_id', receiver: 'self.repo' },
+      'service.rs',
+      typeMap,
+      'UserService.get_user',
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('still resolves this.field.method() unaffected by the self. addition', () => {
+    const tsMethod = { id: 10, file: 'service.ts', kind: 'method' };
+    const lookup = makeLookup({ 'Repository.findById': [tsMethod] });
+    const typeMap = new Map([['Service.repo', { type: 'Repository', confidence: 0.9 }]]);
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'findById', receiver: 'this.repo' },
+      'service.ts',
+      typeMap,
+      'Service.getUser',
+    );
+    expect(result).toEqual([tsMethod]);
+  });
+});
