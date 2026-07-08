@@ -257,6 +257,74 @@ describe('resolveByMethodOrGlobal — cross-language global fallback rejection (
   });
 });
 
+describe('resolveByMethodOrGlobal — resolveByGlobal exact-name fan-out (#1863)', () => {
+  // Mirrors the exact #1863 repro: several object-literal `close() {}` methods
+  // scattered under sibling directories two levels below the caller all score
+  // the same 0.5 "grandparent proximity" confidence, so a bare `close()` call
+  // must not fan out into a `calls` edge to every one of them.
+  it('does not resolve a bare call when multiple candidates tie at the same confidence', () => {
+    const t1 = { id: 1, file: 'src/db/connection.ts', kind: 'function' };
+    const t2 = { id: 2, file: 'src/domain/target2.ts', kind: 'function' };
+    const t3 = { id: 3, file: 'src/features/target3.ts', kind: 'function' };
+    const lookup = makeLookup({ close: [t1, t2, t3] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'close', receiver: null },
+      'src/presentation/caller.ts',
+      new Map(),
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('resolves to the single unambiguous highest-confidence candidate among several', () => {
+    // t1 lives in the SAME directory as the caller (confidence 0.7); t2 and t3
+    // are two directories away (confidence 0.5, tied with each other but not
+    // with t1). The clear single winner must not be dropped by the ambiguity
+    // guard — only genuine top-confidence ties are treated as unresolved.
+    const t1 = { id: 1, file: 'src/presentation/sibling.ts', kind: 'function' };
+    const t2 = { id: 2, file: 'src/domain/target2.ts', kind: 'function' };
+    const t3 = { id: 3, file: 'src/features/target3.ts', kind: 'function' };
+    const lookup = makeLookup({ close: [t1, t2, t3] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'close', receiver: null },
+      'src/presentation/caller.ts',
+      new Map(),
+    );
+    expect(result).toEqual([t1]);
+  });
+
+  it('still resolves a bare call with exactly one same-named candidate', () => {
+    const t1 = { id: 1, file: 'src/db/connection.ts', kind: 'function' };
+    const lookup = makeLookup({ close: [t1] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'close', receiver: null },
+      'src/presentation/caller.ts',
+      new Map(),
+    );
+    expect(result).toEqual([t1]);
+  });
+
+  it('falls through to the same-class sibling fallback when the exact match is ambiguous', () => {
+    // The bare exact-name lookup ties across two unrelated files, so it must
+    // yield nothing — but the caller is a qualified class method, so the
+    // narrower same-class-sibling fallback (`Shape.area`) still applies.
+    const unrelated1 = { id: 1, file: 'src/domain/target1.ts', kind: 'function' };
+    const unrelated2 = { id: 2, file: 'src/features/target2.ts', kind: 'function' };
+    const method = { id: 3, file: 'shapes.js', kind: 'method' };
+    const lookup = makeLookup({ area: [unrelated1, unrelated2], 'Shape.area': [method] });
+    const result = resolveByMethodOrGlobal(
+      lookup,
+      { name: 'area', receiver: 'this' },
+      'shapes.js',
+      new Map(),
+      'Shape.describe',
+    );
+    expect(result).toEqual([method]);
+  });
+});
+
 // ── resolveReceiverEdge ──────────────────────────────────────────────────────
 
 /**

@@ -326,13 +326,46 @@ function resolveViaSameClassSibling(
 }
 
 /**
+ * Step 2: exact global name lookup.
+ *
+ * Unlike `resolveByReceiver`'s cascade, a bare (no-receiver) or `this`/`self`/
+ * `super` call carries no type qualifier to narrow the search — `lookup.byName`
+ * can return every unrelated symbol in the codebase that happens to share the
+ * name, filtered only by the loose directory-proximity confidence threshold.
+ * Emitting a `calls` edge to every one of those turns a single real call site
+ * into N-1 false edges (#1863). With no receiver/type info to break a tie,
+ * only a single highest-confidence candidate is trustworthy:
+ *   - a unique highest-confidence candidate wins outright.
+ *   - a tie at the highest confidence (e.g. several files at the same
+ *     directory depth from the caller — the exact #1863 repro) is genuinely
+ *     ambiguous: there is no principled way to prefer one over another, so
+ *     the match is dropped rather than fanning out, letting the caller fall
+ *     through to the narrower resolveViaSameClassSibling fallback.
+ */
+function resolveExactGlobalMatch(
+  lookup: StrategyLookup,
+  call: { name: string },
+  relPath: string,
+): ReadonlyArray<{ id: number; file: string }> {
+  const scored = lookup
+    .byName(call.name)
+    .map((target) => ({ target, confidence: computeConfidence(relPath, target.file, null) }))
+    .filter((candidate) => candidate.confidence >= 0.5);
+  if (scored.length === 0) return [];
+
+  const bestConfidence = Math.max(...scored.map((candidate) => candidate.confidence));
+  const best = scored.filter((candidate) => candidate.confidence === bestConfidence);
+  return best.length === 1 ? [best[0]!.target] : [];
+}
+
+/**
  * Resolve a call site with no receiver, or whose receiver is `this`, `self`,
  * or `super`.
  *
  * Resolution cascade:
  *   1. resolveViaAccessorThisDispatch — Object.defineProperty this-dispatch (Phase 8.3f).
- *   2. Exact global name lookup with confidence filter.
- *   3. resolveViaSameClassSibling — same-class sibling method fallback.
+ *   2. resolveExactGlobalMatch        — exact global name lookup, unambiguous best match only.
+ *   3. resolveViaSameClassSibling     — same-class sibling method fallback.
  */
 export function resolveByGlobal(
   lookup: StrategyLookup,
@@ -344,9 +377,7 @@ export function resolveByGlobal(
   const viaAccessor = resolveViaAccessorThisDispatch(lookup, typeMap, call, relPath, callerName);
   if (viaAccessor.length > 0) return viaAccessor;
 
-  const exact = lookup
-    .byName(call.name)
-    .filter((t) => computeConfidence(relPath, t.file, null) >= 0.5);
+  const exact = resolveExactGlobalMatch(lookup, call, relPath);
   if (exact.length > 0) return exact;
 
   const sameClass = resolveViaSameClassSibling(lookup, call, relPath, callerName);

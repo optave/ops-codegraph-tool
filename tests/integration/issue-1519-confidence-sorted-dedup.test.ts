@@ -5,16 +5,31 @@
  * buildFileCallEdges (build-edges.ts lines 1126-1132) before the emit loop,
  * and matching sorts to the Phase 8.3 pts alias loops.
  *
- * WHAT THESE TESTS GUARD
- * ──────────────────────
- * Both fixtures resolve multiple candidates with distinct node IDs (different
- * files → different graph nodes). The `seenCallEdges` / `ptsEdgeRows` dedup key
- * is `${caller.id}|${t.id}`, so dedup never fires across distinct nodes.
+ * WHAT THE byName SUITE GUARDS (updated for #1863)
+ * ──────────────────────────────────────────────────
+ * `resolveByGlobal`'s exact-name lookup (the byName fixture below) used to
+ * emit a `calls` edge to every same-named candidate it found, regardless of
+ * how many there were. #1863 fixed this: when candidates have a unique
+ * highest-confidence winner, only that one resolves — a lower-confidence
+ * candidate is dropped rather than fanning out into a false edge. A genuine
+ * tie at the top confidence (no candidate strictly wins) resolves to no edge
+ * at all, since there is no receiver/type info to break it.
  *
- * These tests therefore verify the confidence SCORING invariant:
- *   • A near-directory target always receives a higher confidence value than a
- *     far-directory target for the same call site.
- *   • Both edges are emitted (neither is suppressed by sort logic).
+ * The byName suite below now verifies:
+ *   • The near-directory (higher-confidence) candidate is the one that
+ *     resolves, with confidence ≥ 0.7.
+ *   • The far-directory (lower-confidence) candidate does NOT get an edge —
+ *     it is a strictly worse match, not a genuine tie.
+ *
+ * WHAT THE pts-alias SUITE GUARDS (unchanged by #1863)
+ * ──────────────────────────────────────────────────────
+ * The pts alias fixture resolves through a separate points-to alias
+ * mechanism (Phase 8.3), not `resolveByGlobal` — #1863 does not touch it.
+ * That fixture can still resolve multiple candidates with distinct node IDs;
+ * the `ptsEdgeRows` dedup key is `${caller.id}|${t.id}`, so dedup never fires
+ * across distinct nodes there. It verifies the confidence SCORING invariant:
+ * the local, highest-confidence alias target wins the `ptsEdgeRows` slot
+ * ahead of a lower-confidence one.
  *
  * WHAT THESE TESTS DO NOT GUARD
  * ──────────────────────────────
@@ -42,12 +57,14 @@ import { buildGraph } from '../../src/domain/graph/builder.js';
 // src/consumer.js calls helper() without importing it.
 // Two files define helper(): one in the same directory (high confidence),
 // one in a different directory (low confidence).
-// Both edges are expected, each with the correct confidence for its file proximity.
+// Since #1863, only the unambiguous highest-confidence candidate (near)
+// resolves — the far, lower-confidence candidate is dropped rather than
+// fanning out into a false edge.
 
 const MULTI_TARGET_FIXTURE: Record<string, string> = {
   'src/consumer.js': `
 export function process() {
-  helper(); // no import — resolves via byName to both src/helper.js and other/helper.js
+  helper(); // no import — resolves via byName; only the near candidate wins (#1863)
 }
 `.trimStart(),
 
@@ -127,7 +144,7 @@ function writeFixture(baseDir: string, files: Record<string, string>): void {
 
 // ── Multi-target byName suite ──────────────────────────────────────────────────
 
-describe('confidence-sorted dedup: multi-target byName resolution (#1519)', () => {
+describe('confidence-sorted dedup: multi-target byName resolution (#1519, #1863)', () => {
   let tmpDir: string;
 
   beforeAll(async () => {
@@ -166,31 +183,24 @@ describe('confidence-sorted dedup: multi-target byName resolution (#1519)', () =
     expect(nearEdge!.confidence).toBeGreaterThanOrEqual(0.7);
   });
 
-  it('far-target edge (other/helper.js) has confidence < 0.7 (different-directory proximity)', () => {
+  it('does not emit an edge to the far, lower-confidence helper (other/helper.js) (#1863)', () => {
     const edges = readEdgesWithConfidence(path.join(tmpDir, '.codegraph', 'graph.db'));
     const farEdge = edges.find(
       (e) => e.source === 'process' && e.target === 'helper' && e.target_file === 'other/helper.js',
     );
-    expect(farEdge).toBeDefined();
-    // computeConfidence: different parent directory → 0.3 or 0.5.
-    // The far target must score lower than the near target.
-    expect(farEdge!.confidence).toBeLessThan(0.7);
+    // computeConfidence: different parent directory → 0.3 or 0.5, strictly below
+    // the near candidate's 0.7. Since #1863, a strictly-worse candidate is
+    // dropped rather than emitted alongside the winner as a false edge.
+    expect(farEdge).toBeUndefined();
   });
 
-  it('near-target confidence is strictly greater than far-target confidence', () => {
+  it('emits exactly one calls edge for the ambiguous helper() call site (#1863)', () => {
     const edges = readEdgesWithConfidence(path.join(tmpDir, '.codegraph', 'graph.db'));
-    const nearEdge = edges.find(
-      (e) => e.source === 'process' && e.target === 'helper' && e.target_file === 'src/helper.js',
-    );
-    const farEdge = edges.find(
-      (e) => e.source === 'process' && e.target === 'helper' && e.target_file === 'other/helper.js',
-    );
-    expect(nearEdge).toBeDefined();
-    expect(farEdge).toBeDefined();
-    // The sort at build-edges.ts:1126-1132 processes high-confidence targets first.
-    // Both edges are stored (different node IDs); this assertion verifies the
-    // confidence ordering invariant that the sort enforces.
-    expect(nearEdge!.confidence).toBeGreaterThan(farEdge!.confidence);
+    const helperEdges = edges.filter((e) => e.source === 'process' && e.target === 'helper');
+    // Only the unambiguous highest-confidence candidate resolves — no fan-out
+    // to every same-named candidate the global fallback finds.
+    expect(helperEdges).toHaveLength(1);
+    expect(helperEdges[0]!.target_file).toBe('src/helper.js');
   });
 });
 

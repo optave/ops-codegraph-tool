@@ -31,20 +31,31 @@
  * rebuild of the identical final source: node tables were byte-identical,
  * but 5 reverse-dep callers ended up wired to `close@line 433` instead of
  * the correct `close@line 580`. Reproduced in miniature here: a caller that
- * destructures `close` off four candidate `open*()` functions resolves (via
- * the global by-name fallback, confidence-gated by directory proximity —
- * `resolveByGlobal` in `resolver/strategy.ts`) to all four same-named `close`
- * siblings at once, exactly mirroring the real edge shape found in this
- * repo's own graph.db. (That any-candidate-clearing-confidence resolution
- * breadth is a separate, pre-existing concern — filed independently — this
- * test only relies on the resulting edge *set* being stable across rebuilds,
- * not on how many edges resolveByGlobal produces.)
+ * destructures `close` off four candidate `open*()` functions used to
+ * resolve (via the global by-name fallback, confidence-gated by directory
+ * proximity — `resolveByGlobal` in `resolver/strategy.ts`) to all four
+ * same-named `close` siblings at once, exactly mirroring the real edge shape
+ * found in this repo's own graph.db.
  *
  * Fixed by recording each target's 1-based ordinal rank (by line) among its
  * same-(name,kind) siblings at save time, and using that ordinal — not line
  * proximity — to re-select the correct candidate after purge+reinsert,
  * falling back to nearest-line only when the sibling count itself changed
  * (a genuinely ambiguous case, e.g. a sibling added/removed since save).
+ *
+ * #1863 follow-up: `resolveByGlobal`'s exact-name lookup no longer fans out
+ * to every same-named candidate — a genuine top-confidence tie (as here, since
+ * all four `close` siblings live in the same file and therefore score
+ * identical directory-proximity confidence against the caller) now resolves
+ * to NO edge rather than betting on all four. That eliminates this fixture's
+ * false edges at the root, so the reverse-dep reconnect logic below has
+ * nothing to reconnect for this exact shape — the tests instead assert the
+ * (now empty) edge set stays IDENTICAL across a full vs. incremental rebuild,
+ * preserving #1752's real invariant: whatever `resolveByGlobal` produces,
+ * incremental rebuilds must never disagree with a from-scratch rebuild of the
+ * same source. The ordinal-based reconnect mechanism itself remains directly
+ * covered by the Rust unit tests below (unaffected by the #1863 change, since
+ * they operate on synthetic pre-resolved edge fixtures).
  *
  * WASM engine only: the native mirror fix in `reconnect_reverse_dep_edges`
  * (Rust) requires rebuilding the native addon to take effect. Covered
@@ -192,12 +203,17 @@ describe('Issue #1752: reverse-dep call edges survive same-named-sibling line sh
     for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('baseline: useC resolves at least one close() edge, including openC’s own', () => {
+  it('baseline: useC’s ambiguous close() call resolves to no edge (#1863)', () => {
+    // All four `close` siblings live in the same file, so they score an
+    // identical directory-proximity confidence against the caller — a
+    // genuine tie with no receiver/type info to break it. Since #1863,
+    // `resolveByGlobal` treats that as unresolved rather than fanning out
+    // a false `calls` edge to every sibling.
     const lines = findUseCCloseTargetLines(dbPath());
-    expect(lines.length).toBeGreaterThanOrEqual(1);
+    expect(lines).toEqual([]);
   });
 
-  it('useC keeps the exact same set of close() target lines after an incremental rebuild ' +
+  it('useC keeps the exact same (empty) set of close() target lines after an incremental rebuild ' +
     'that only inserts an unrelated function above all four open*/close() pairs ' +
     '(matches a from-scratch full rebuild)', async () => {
     // Edit conn.ts only — shifts every close() sibling's line number
@@ -214,22 +230,25 @@ describe('Issue #1752: reverse-dep call edges survive same-named-sibling line sh
     const refDbPath = path.join(refDir, '.codegraph', 'graph.db');
     const referenceLines = findUseCCloseTargetLines(refDbPath);
 
+    // Post-#1863, the ambiguous tie resolves to no edge in a full rebuild too.
     expect(
-      referenceLines.length,
-      'reference full rebuild: useC -> close edges missing',
-    ).toBeGreaterThanOrEqual(1);
+      referenceLines,
+      'reference full rebuild: useC -> close should resolve to no edge (#1863 ambiguity guard)',
+    ).toEqual([]);
 
     expect(
       incrementalLines,
-      'useC’s close() call edges were reconnected to the wrong same-named siblings ' +
-        `after an incremental rebuild (#1752) — incremental target lines=[${incrementalLines}], ` +
+      'useC’s close() call edges must agree between an incremental rebuild and a ' +
+        `from-scratch rebuild of identical source — incremental target lines=[${incrementalLines}], ` +
         `full-rebuild ground truth=[${referenceLines}]`,
     ).toEqual(referenceLines);
 
     // The old nearest-line heuristic didn't just pick a wrong candidate —
     // it could collapse two distinct saved edges onto the SAME new node
     // (via INSERT OR IGNORE) while leaving another candidate un-targeted.
-    // Guard against that regression shape explicitly.
+    // Guard against that regression shape explicitly (trivially holds for
+    // an empty set, but keeps this invariant checked if the fixture ever
+    // gains an unambiguous edge again).
     expect(new Set(incrementalLines).size).toBe(incrementalLines.length);
   }, 60_000);
 });
