@@ -2474,6 +2474,39 @@ function runDemo(reporter: Reporter, users: string[]): void {
     });
   });
 
+  describe('bare super(...) constructor call extraction (#1929)', () => {
+    it('records bare super(...) as a constructor call with receiver=super', () => {
+      const symbols = parseJS(
+        `class Base { constructor(a) { this.a = a; } }
+         class Derived extends Base { constructor(a, b) { super(a); this.b = b; } }`,
+      );
+      const superCall = symbols.calls.find(
+        (c) => c.name === 'constructor' && c.receiver === 'super',
+      );
+      expect(superCall).toBeDefined();
+      expect(superCall!.dynamic).toBeFalsy();
+    });
+
+    it('records bare super(...) from a class expression constructor', () => {
+      const symbols = parseJS(
+        `function mixin() { return class PostMixin extends A { constructor() { super(); } }; }`,
+      );
+      const superCall = symbols.calls.find(
+        (c) => c.name === 'constructor' && c.receiver === 'super',
+      );
+      expect(superCall).toBeDefined();
+    });
+
+    it('does not emit super(...) arguments as spurious callback-reference calls', () => {
+      const symbols = parseJS(
+        `class Base { constructor(a, b) { this.a = a; this.b = b; } }
+         class Derived extends Base { constructor(a, b) { super(a, b); } }`,
+      );
+      expect(symbols.calls.some((c) => c.name === 'a')).toBe(false);
+      expect(symbols.calls.some((c) => c.name === 'b')).toBe(false);
+    });
+  });
+
   describe('array destructuring constant extraction (#1471, #1901)', () => {
     it('extracts one constant definition per bound identifier in a const array pattern', () => {
       // Per-element extraction (#1901) supersedes the prior single-node
