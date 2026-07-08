@@ -273,8 +273,10 @@ fn ancestor_chain(dir: &str) -> Vec<String> {
 fn directory_distance(a: &str, b: &str) -> usize {
     let chain_a = ancestor_chain(a);
     let chain_b = ancestor_chain(b);
+    let index_in_b: std::collections::HashMap<&str, usize> =
+        chain_b.iter().enumerate().map(|(j, d)| (d.as_str(), j)).collect();
     for (i, dir_a) in chain_a.iter().enumerate() {
-        if let Some(j) = chain_b.iter().position(|dir_b| dir_b == dir_a) {
+        if let Some(&j) = index_in_b.get(dir_a.as_str()) {
             return i + j;
         }
     }

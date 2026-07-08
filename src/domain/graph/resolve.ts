@@ -489,9 +489,10 @@ function ancestorChain(dir: string): string[] {
 function directoryDistance(a: string, b: string): number {
   const chainA = ancestorChain(a);
   const chainB = ancestorChain(b);
+  const indexInB = new Map<string, number>(chainB.map((d, idx) => [d, idx]));
   for (let i = 0; i < chainA.length; i++) {
-    const j = chainB.indexOf(chainA[i]!);
-    if (j !== -1) return i + j;
+    const j = indexInB.get(chainA[i]!);
+    if (j !== undefined) return i + j;
   }
   return Infinity;
 }
