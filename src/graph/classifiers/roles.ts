@@ -4,7 +4,9 @@
  * Roles: entry, core, utility, adapter, leaf, dead-*, test-only
  *
  * Dead sub-categories refine the coarse "dead" bucket:
- *   dead-leaf       — properties, constants (leaf nodes by definition)
+ *   dead-leaf       — constants (leaf nodes by definition; parameters and
+ *                     genuine class/struct properties are excluded from
+ *                     classification entirely rather than landing here — see below)
  *   dead-entry      — framework dispatch: CLI commands, MCP tools, event handlers
  *   dead-ffi        — cross-language FFI boundaries (e.g. Rust napi-rs bindings)
  *   dead-unresolved — genuinely unreferenced callables (the real dead code)
@@ -15,6 +17,12 @@
  * nodes. A parameter's liveness is a local dataflow question (is it referenced
  * within its own function body), not a call-graph reachability question, so
  * "no incoming call edges" carries zero dead-code signal for it (#1723).
+ *
+ * `property`-kind nodes that are genuine (non-interface) class/struct/object
+ * fields also never reach this module in production, for the same reason and
+ * with the same treatment (role left unset) — a field's liveness is a question
+ * of whether it's read/written anywhere in its owning class, which codegraph
+ * has no property-access/write edge tracking to answer (#1810).
  *
  * `method`/`property`-kind members of an interface/type declaration (e.g.
  * `interface Foo { bar: string }`) DO reach this module, but are recognized by

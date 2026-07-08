@@ -155,24 +155,32 @@ fn is_type_declaration_member(
         .is_some_and(|names| names.contains(owner_name))
 }
 
-/// Split raw `kind = 'property'` rows into genuine dead-leaf class/struct/object
-/// fields and interface/type property-signature members (#1809). Property rows
-/// never reach `classify_rows` (they're excluded from the `rows` query), so
-/// `is_type_declaration_member` must be applied to them here explicitly —
-/// otherwise every property-kind interface member would be misclassified
-/// `dead-leaf` instead of `leaf`, the same bug #1723 fixed for `method`-kind
-/// members. Returns `(dead_leaf_ids, type_member_leaf_ids)`.
-fn partition_property_rows(
+/// Filter raw `kind = 'property'` rows down to interface/type
+/// property-signature members (#1809) — the only property rows that receive a
+/// role (`leaf`). Property rows never reach `classify_rows` (they're excluded
+/// from the `rows` query), so `is_type_declaration_member` must be applied to
+/// them here explicitly — otherwise every property-kind interface member
+/// would be misclassified instead of `leaf`, the same bug #1723 fixed for
+/// `method`-kind members.
+///
+/// Genuine (non-interface) class/struct/object fields are deliberately left
+/// out of the returned ids — they get no role at all (`NULL`), the same
+/// treatment `parameter` receives (#1723). A field's liveness is a question
+/// of whether it's read/written anywhere in its owning class, which is a
+/// dataflow question this crate has no property-access/write edge tracking
+/// to answer, so "zero inbound `calls` edges" (guaranteed by construction)
+/// carries zero dead-code signal for it (#1810).
+fn filter_type_member_property_rows(
     leaf_rows: Vec<(i64, String, String)>,
     type_def_names_by_file: &HashMap<String, std::collections::HashSet<String>>,
-) -> (Vec<i64>, Vec<i64>) {
-    let (type_member_rows, dead_rows): (Vec<_>, Vec<_>) = leaf_rows.into_iter().partition(
-        |(_, name, file)| is_type_declaration_member(name, "property", file, type_def_names_by_file),
-    );
-    (
-        dead_rows.into_iter().map(|(id, _, _)| id).collect(),
-        type_member_rows.into_iter().map(|(id, _, _)| id).collect(),
-    )
+) -> Vec<i64> {
+    leaf_rows
+        .into_iter()
+        .filter(|(_, name, file)| {
+            is_type_declaration_member(name, "property", file, type_def_names_by_file)
+        })
+        .map(|(id, _, _)| id)
+        .collect()
 }
 
 /// Dead sub-role classification matching JS `classifyDeadSubRole`.
@@ -368,10 +376,11 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     let tx = conn.unchecked_transaction()?;
     let mut summary = RoleSummary::default();
 
-    // 1. Property kind (class/struct/object fields) -> dead-leaf, except
-    // interface/type property-signature members (#1809) — partitioned out
-    // below via `is_type_declaration_member` once `type_def_names_by_file` is
-    // available and classified `leaf` instead.
+    // 1. Property kind (class/struct/object fields). Interface/type
+    // property-signature members (#1809) are filtered out below via
+    // `is_type_declaration_member` once `type_def_names_by_file` is available
+    // and classified `leaf`. Genuine (non-interface) fields get no role at
+    // all (#1810) — see `filter_type_member_property_rows`.
     // `parameter` is deliberately NOT included here (#1723): a parameter's liveness
     // is a local dataflow question, not a call-graph reachability question, so
     // "no incoming call edges" carries zero dead-code signal for it. Parameters are
@@ -535,13 +544,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     // 6. Classify and collect IDs by role
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
-    let (dead_leaf_ids, type_member_leaf_ids) =
-        partition_property_rows(leaf_rows, &type_def_names_by_file);
-    if !dead_leaf_ids.is_empty() {
-        summary.dead += dead_leaf_ids.len() as u32;
-        summary.dead_leaf += dead_leaf_ids.len() as u32;
-        ids_by_role.insert("dead-leaf", dead_leaf_ids);
-    }
+    let type_member_leaf_ids = filter_type_member_property_rows(leaf_rows, &type_def_names_by_file);
     if !type_member_leaf_ids.is_empty() {
         summary.leaf += type_member_leaf_ids.len() as u32;
         ids_by_role
@@ -900,8 +903,8 @@ fn find_neighbour_files(
 /// Query leaf kind node rows and callable node rows for a set of files.
 /// `parameter` is intentionally excluded from the leaf query (#1723) — see
 /// `do_classify_full`'s leaf_rows comment for the rationale. Leaf rows carry
-/// `name`/`file` (not just `id`) so callers can partition out interface/type
-/// property-signature members (#1809) via `partition_property_rows`.
+/// `name`/`file` (not just `id`) so callers can filter down to interface/type
+/// property-signature members (#1809) via `filter_type_member_property_rows`.
 fn query_nodes_for_files(
     tx: &rusqlite::Transaction,
     files: &[&str],
@@ -1094,15 +1097,10 @@ pub(crate) fn do_classify_incremental(
 
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
-    // Partition property rows: interface/type members (#1809) -> leaf, genuine
-    // class/struct/object fields -> dead-leaf. See do_classify_full/`partition_property_rows`.
-    let (dead_leaf_ids, type_member_leaf_ids) =
-        partition_property_rows(leaf_rows, &type_def_names_by_file);
-    if !dead_leaf_ids.is_empty() {
-        summary.dead += dead_leaf_ids.len() as u32;
-        summary.dead_leaf += dead_leaf_ids.len() as u32;
-        ids_by_role.insert("dead-leaf", dead_leaf_ids);
-    }
+    // Filter property rows: interface/type members (#1809) -> leaf; genuine
+    // class/struct/object fields get no role at all (#1810). See
+    // do_classify_full/`filter_type_member_property_rows`.
+    let type_member_leaf_ids = filter_type_member_property_rows(leaf_rows, &type_def_names_by_file);
     if !type_member_leaf_ids.is_empty() {
         summary.leaf += type_member_leaf_ids.len() as u32;
         ids_by_role
