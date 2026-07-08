@@ -1,6 +1,7 @@
 import type {
   AdjacentEdgeRow,
   BetterSqlite3Database,
+  ExternalConsumerRow,
   ImportEdgeRow,
   IntraFileCallEdge,
   NodeRow,
@@ -22,6 +23,7 @@ const _findImportSourcesStmt: StmtCache<ImportEdgeRow> = new WeakMap();
 const _findImportDependentsStmt: StmtCache<NodeRow> = new WeakMap();
 const _findCrossFileCallTargetsStmt: StmtCache<{ target_id: number }> = new WeakMap();
 const _countCrossFileCallersStmt: StmtCache<{ cnt: number }> = new WeakMap();
+const _findExternalConsumersStmt: StmtCache<ExternalConsumerRow> = new WeakMap();
 const _getClassAncestorsStmt: StmtCache<{ id: number; name: string }> = new WeakMap();
 const _findIntraFileCallEdgesStmt: StmtCache<IntraFileCallEdge> = new WeakMap();
 const _findImplementorsStmt: StmtCache<RelatedNodeRow> = new WeakMap();
@@ -206,6 +208,28 @@ export function countCrossFileCallers(
      WHERE e.target_id = ? AND e.kind = 'calls' AND n.file != ?`,
     ).get(nodeId, file)?.cnt ?? 0
   );
+}
+
+/**
+ * Find distinct cross-file consumers of a node — callers of a `calls` edge
+ * or importers of an `imports-type` edge whose own file differs from
+ * `file`. Backs `checkNoDeletedExportsInUse`'s live-DB path and the
+ * pre-purge advisory snapshot the build pipeline captures for it before a
+ * removed file's rows are purged (#1938).
+ */
+export function findExternalConsumers(
+  db: BetterSqlite3Database,
+  nodeId: number,
+  file: string,
+): ExternalConsumerRow[] {
+  return cachedStmt(
+    _findExternalConsumersStmt,
+    db,
+    `SELECT DISTINCT caller.name, caller.file, caller.line
+     FROM edges e
+     JOIN nodes caller ON e.source_id = caller.id
+     WHERE e.target_id = ? AND e.kind IN ('calls', 'imports-type') AND caller.file != ?`,
+  ).all(nodeId, file);
 }
 
 /**

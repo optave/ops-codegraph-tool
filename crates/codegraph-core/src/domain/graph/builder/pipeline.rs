@@ -253,6 +253,13 @@ fn save_and_purge_changed(
     let removed_file_neighbors =
         detect_changes::capture_removed_file_neighbors(conn, &change_result.removed);
 
+    // A file about to be (re)inserted can no longer be "deleted" — clear any
+    // stale advisory left over from a prior removal at this same path before
+    // capturing this build's actual removals, and before purging deletes the
+    // live evidence `record_deleted_export_advisories` reads (#1938).
+    detect_changes::clear_deleted_export_advisories(conn, &changed_paths);
+    detect_changes::record_deleted_export_advisories(conn, &change_result.removed);
+
     let files_to_purge: Vec<String> = change_result
         .removed
         .iter()

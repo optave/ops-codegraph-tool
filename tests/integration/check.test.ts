@@ -934,6 +934,101 @@ describe('checkNoDeletedExportsInUse', () => {
   });
 });
 
+// ─── checkNoDeletedExportsInUse: advisory fallback (issue #1938) ───────
+//
+// `src/purged.js` deliberately has NO rows in `nodes` — simulating a file
+// whose exported-symbol rows were already purged by an intervening rebuild
+// before `codegraph check` ran. Its persisted `deleted_export_advisories`
+// snapshot (captured by that rebuild, before the purge) is what
+// `checkNoDeletedExportsInUse` must fall back to.
+
+function insertAdvisory(db, file, name, kind, line, consumerName, consumerFile, consumerLine) {
+  db.prepare(
+    `INSERT INTO deleted_export_advisories
+       (file, name, kind, line, consumer_name, consumer_file, consumer_line, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(file, name, kind, line, consumerName, consumerFile, consumerLine, Date.now());
+}
+
+describe('checkNoDeletedExportsInUse: advisory fallback after purge (issue #1938)', () => {
+  test('flags a violation from the persisted advisory snapshot once live nodes are already purged', () => {
+    insertAdvisory(
+      db,
+      'src/purged.js',
+      'purgedHelper',
+      'function',
+      3,
+      'useIt',
+      'src/other-consumer.js',
+      5,
+    );
+
+    const result = checkNoDeletedExportsInUse(db, new Set(['src/purged.js']), false);
+    expect(result.passed).toBe(false);
+    const violation = result.violations.find((v) => v.name === 'purgedHelper');
+    expect(violation).toBeDefined();
+    expect(violation.reason).toBe('file-deleted');
+    expect(violation.consumers.map((c) => c.file)).toEqual(['src/other-consumer.js']);
+  });
+
+  test('excludes an advisory consumer that is itself part of the current deletion batch', () => {
+    insertAdvisory(
+      db,
+      'src/purged-2.js',
+      'purgedHelper2',
+      'function',
+      1,
+      'useIt2',
+      'src/purged-2-consumer.js',
+      2,
+    );
+
+    const result = checkNoDeletedExportsInUse(
+      db,
+      new Set(['src/purged-2.js', 'src/purged-2-consumer.js']),
+      false,
+    );
+    expect(result.violations.map((v) => v.name)).not.toContain('purgedHelper2');
+  });
+
+  test('respects noTests when filtering advisory consumers', () => {
+    insertAdvisory(
+      db,
+      'src/purged-3.js',
+      'purgedHelper3',
+      'function',
+      1,
+      'testOnlyCaller',
+      'tests/purged-3.test.js',
+      2,
+    );
+
+    const result = checkNoDeletedExportsInUse(db, new Set(['src/purged-3.js']), true);
+    expect(result.violations.map((v) => v.name)).not.toContain('purgedHelper3');
+  });
+
+  test('prefers the live query over a stale advisory when nodes still exist', () => {
+    // src/math.js DOES have live nodes in the fixture DB — a stale advisory
+    // row for it (as if left over from a since-resolved earlier deletion)
+    // must not be surfaced instead of (or in addition to) the live result.
+    insertAdvisory(
+      db,
+      'src/math.js',
+      'stalePhantomExport',
+      'function',
+      99,
+      'staleCaller',
+      'src/stale-caller.js',
+      1,
+    );
+
+    const result = checkNoDeletedExportsInUse(db, new Set(['src/math.js']), false);
+    expect(result.violations.map((v) => v.name)).not.toContain('stalePhantomExport');
+    // The real live violation (`add`) must still be reported normally.
+    expect(result.violations.map((v) => v.name)).toContain('add');
+  });
+});
+
 // ─── checkNoBoundaryViolations ────────────────────────────────────────
 
 describe('checkNoBoundaryViolations', () => {

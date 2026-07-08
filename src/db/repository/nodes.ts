@@ -3,6 +3,7 @@ import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../shared/kinds.js';
 import type {
   BetterSqlite3Database,
   ChildNodeRow,
+  ExportedDefRow,
   ListFunctionOpts,
   NativeDatabase,
   NodeIdRow,
@@ -238,6 +239,27 @@ export function findExportedNodesByFile(
   const symbols = knownSymbols ?? findNodesByFile(db, file);
   const exportedIds = findCrossFileCallTargets(db, file);
   return symbols.filter((s) => exportedIds.has(s.id));
+}
+
+const _findExportedDefinitionsStmt: StmtCache<ExportedDefRow> = new WeakMap();
+
+/**
+ * Find exported function/method/class definitions in `file` — the narrower
+ * "declaration surface" filter used by `check.ts`'s signature-change
+ * predicates (`checkNoSignatureChanges`, `checkNoDeletedExportsInUse`), as
+ * distinct from `findExportedNodesByFile`'s broader "any exported kind" used
+ * by `codegraph exports`/`where --file`. Also backs the deleted-export
+ * advisory snapshot the build pipeline captures before purging a removed
+ * file's rows (#1938).
+ */
+export function findExportedDefinitions(db: BetterSqlite3Database, file: string): ExportedDefRow[] {
+  return cachedStmt(
+    _findExportedDefinitionsStmt,
+    db,
+    `SELECT id, name, kind, line FROM nodes
+     WHERE file = ? AND kind IN ('function', 'method', 'class') AND exported = 1
+     ORDER BY line`,
+  ).all(file);
 }
 
 /**

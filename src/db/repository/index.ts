@@ -8,6 +8,12 @@ export { deleteCfgForNode, getCfgBlocks, getCfgEdges, hasCfgTables } from './cfg
 export { getCoChangeMeta, hasCoChanges, upsertCoChangeMeta } from './cochange.js';
 export { getComplexityForNode } from './complexity.js';
 export { hasDataflowTable, hasDataflowVertices } from './dataflow.js';
+export type { DeletedExportAdvisoryEntry } from './deleted-export-advisories.js';
+export {
+  clearDeletedExportAdvisories,
+  getDeletedExportAdvisories,
+  recordDeletedExportAdvisories,
+} from './deleted-export-advisories.js';
 export {
   countCrossFileCallers,
   findAllIncomingEdges,
@@ -18,6 +24,7 @@ export {
   findCallers,
   findCrossFileCallTargets,
   findDistinctCallers,
+  findExternalConsumers,
   findImplementors,
   findImportDependents,
   findImportSources,
@@ -35,6 +42,7 @@ export {
   countEdges,
   countFiles,
   countNodes,
+  findExportedDefinitions,
   findExportedNodesByFile,
   findFileNodes,
   findNodeById,

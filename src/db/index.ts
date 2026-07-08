@@ -26,8 +26,10 @@ export {
   NodeQuery,
   testFilterSQL,
 } from './query-builder.js';
+export type { DeletedExportAdvisoryEntry } from './repository/index.js';
 export {
   bulkNodeIdsByFile,
+  clearDeletedExportAdvisories,
   countCrossFileCallers,
   countEdges,
   countFiles,
@@ -41,7 +43,9 @@ export {
   findCallers,
   findCrossFileCallTargets,
   findDistinctCallers,
+  findExportedDefinitions,
   findExportedNodesByFile,
+  findExternalConsumers,
   findFileNodes,
   findImplementors,
   findImportDependents,
@@ -63,6 +67,7 @@ export {
   getClassHierarchy,
   getCoChangeMeta,
   getComplexityForNode,
+  getDeletedExportAdvisories,
   getEmbeddingCount,
   getEmbeddingMeta,
   getFileNodesAll,
@@ -82,6 +87,7 @@ export {
   purgeFileData,
   purgeFilesData,
   Repository,
+  recordDeletedExportAdvisories,
   SqliteRepository,
   upsertCoChangeMeta,
 } from './repository/index.js';
