@@ -1751,17 +1751,29 @@ fn handle_call_expr(
         handle_dynamic_import(node, &fn_node, source, symbols);
         return;
     }
-    // `this(args)` and `super(args)` — the callee is `this`/`super` used as a
-    // function, not a named identifier.  The `this` call record is emitted by
+    // `this(args)` — the callee is `this` used as a function, not a named
+    // identifier.  The `this` call record is emitted by
     // collect_this_call_and_bindings (called from match_js_pts_bindings).
-    // Neither case should emit callback-reference calls for the arguments, because
-    // those arguments are values passed *to* the rebound function — not callbacks
-    // of the enclosing scope.  Without this guard, identifier arguments like `b`
-    // in `this(b)` or `a` in `super(a)` become spurious dynamic calls that the
-    // pts resolver resolves to globally-defined functions with the same name in
-    // other files, producing false cross-file call edges.
-    // Mirrors the early-return guard in the TS handleCallExpr (javascript.ts:1135).
-    if fn_node.kind() == "this" || fn_node.kind() == "super" {
+    // Callback-reference-call extraction is skipped for the arguments, because
+    // those arguments are values passed *to* the rebound function — not
+    // callbacks of the enclosing scope.  Without this guard, an identifier
+    // argument like `b` in `this(b)` becomes a spurious dynamic call that the
+    // pts resolver resolves to a globally-defined function with the same name
+    // in another file, producing a false cross-file call edge.
+    if fn_node.kind() == "this" {
+        return;
+    }
+    // Bare `super(args)` — invokes the parent class's constructor. Modeled as
+    // a `constructor` call with receiver `super` (mirrors the `super` branch
+    // in extractCallInfo, src/extractors/javascript.ts) so it flows through
+    // the same this/super hierarchy dispatch that already resolves
+    // `super.method()` to the parent class (#1929). Callback-reference-call
+    // extraction on the arguments is skipped for the same reason as
+    // `this(args)` above.
+    if fn_node.kind() == "super" {
+        if let Some(call_info) = extract_call_info(&fn_node, node, source) {
+            symbols.calls.push(call_info);
+        }
         return;
     }
     // RES-2: {a:fnA,b:fnB}[k]() — inline object literal dispatch table.
@@ -3412,6 +3424,14 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             }
             None
         }
+        // Bare `super(...)` — see the early dispatch in `handle_call_expr` for why
+        // callback-reference-call extraction is skipped for the arguments here.
+        "super" => Some(Call {
+            name: "constructor".to_string(),
+            line: start_line(call_node),
+            receiver: Some("super".to_string()),
+            ..Default::default()
+        }),
         _ => None,
     }
 }
@@ -6796,6 +6816,29 @@ mod tests {
             !s.calls.iter().any(|c| c.name == "b"),
             "argument `b` of super(a, b) must not become a callback-reference call; got: {:?}",
             s.calls.iter().map(|c| (&c.name, c.dynamic)).collect::<Vec<_>>()
+        );
+    }
+
+    /// Bare `super(...)` must be extracted as a `constructor` call with
+    /// receiver `super`, mirroring `super.method()` — the this/super hierarchy
+    /// dispatch (WASM-mirrored `resolveThisDispatch`) then attributes it to the
+    /// parent class's constructor (#1929).
+    #[test]
+    fn bare_super_call_extracted_as_constructor_call() {
+        let s = parse_js(
+            "class E { constructor(c) { this.cc = c; } }\n\
+             class G extends E {\n\
+               constructor(a) { super(a); }\n\
+             }",
+        );
+        let super_call = s
+            .calls
+            .iter()
+            .find(|c| c.name == "constructor" && c.receiver.as_deref() == Some("super"));
+        assert!(
+            super_call.is_some(),
+            "bare super(...) must be recorded as a constructor call with receiver=super; got: {:?}",
+            s.calls.iter().map(|c| (&c.name, &c.receiver)).collect::<Vec<_>>()
         );
     }
 

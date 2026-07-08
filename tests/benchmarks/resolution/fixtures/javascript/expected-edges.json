@@ -249,6 +249,20 @@
       "notes": "static super.count() in DoubleCounter.count resolves to Counter.count via CHA parents map"
     },
     {
+      "source": { "name": "Car.constructor", "file": "inheritance.js" },
+      "target": { "name": "Vehicle.constructor", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "bare super(make) in Car.constructor resolves to Vehicle.constructor via CHA parents map (#1929)"
+    },
+    {
+      "source": { "name": "SportsCar.constructor", "file": "inheritance.js" },
+      "target": { "name": "Car.constructor", "file": "inheritance.js" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "bare super(make, model) in SportsCar.constructor resolves to Car.constructor (nearest parent) (#1929)"
+    },
+    {
       "source": { "name": "runPrototypes", "file": "prototypes.js" },
       "target": { "name": "C", "file": "prototypes.js" },
       "kind": "calls",

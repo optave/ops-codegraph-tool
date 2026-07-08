@@ -387,6 +387,11 @@ function dispatchQueryMatch(
   } else if (c.newmem_node) {
     const callInfo = extractCallInfo(c.newmem_fn!, c.newmem_node);
     if (callInfo) calls.push(callInfo);
+  } else if (c.callsuper_node) {
+    // Bare `super(...)` constructor call — see extractCallInfo's 'super' branch.
+    const callInfo = extractCallInfo(c.callsuper_fn!, c.callsuper_node);
+    if (callInfo) calls.push(callInfo);
+    calls.push(...extractCallbackReferenceCalls(c.callsuper_node, callbackParamShapes));
   } else if (c.assign_node) {
     handleCommonJSAssignment(c.assign_left!, c.assign_right!, c.assign_node, imports);
     handleFuncPropAssignment(c.assign_left!, c.assign_right!, definitions);
@@ -3576,6 +3581,14 @@ function extractCallInfo(
   }
   if (fnType === 'subscript_expression') {
     return extractSubscriptCallInfo(fn, callNode, arrayElemBindings);
+  }
+  if (fnType === 'super') {
+    // Bare `super(...)` — invokes the parent class's constructor. Modeled as a
+    // `constructor` call with receiver `super` so it flows through the same
+    // this/super hierarchy dispatch as `super.method()` (resolveThisDispatch
+    // in cha.ts walks to the caller's parent class and looks up
+    // `ParentClass.constructor`), rather than needing a bespoke resolution path.
+    return { name: 'constructor', line: nodeStartLine(callNode), receiver: 'super' };
   }
   return null;
 }

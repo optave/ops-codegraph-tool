@@ -200,6 +200,13 @@
       "notes": "shape.describe() — shape typed as Shape"
     },
     {
+      "source": { "name": "Ellipse.constructor", "file": "hierarchy.ts" },
+      "target": { "name": "Circle.constructor", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "bare super(rx) in Ellipse.constructor resolves to Circle.constructor via CHA parents map (#1929). Circle/Rectangle's own super() calls resolve to Shape's implicit default constructor, which has no declared node to attribute to, so they correctly produce no edge."
+    },
+    {
       "source": { "name": "makeCircle", "file": "hierarchy.ts" },
       "target": { "name": "Circle", "file": "hierarchy.ts" },
       "kind": "calls",
@@ -331,6 +338,13 @@
       "kind": "calls",
       "mode": "class-inheritance",
       "notes": "super.log() in PrefixLogger.log resolves to TimestampLogger.log (nearest parent)"
+    },
+    {
+      "source": { "name": "Box.constructor", "file": "super-dispatch.ts" },
+      "target": { "name": "Container.constructor", "file": "super-dispatch.ts" },
+      "kind": "calls",
+      "mode": "class-inheritance",
+      "notes": "bare super(label) in Box.constructor resolves to Container.constructor via CHA parents map (#1929)"
     }
   ]
 }
