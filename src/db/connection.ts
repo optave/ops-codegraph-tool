@@ -303,13 +303,16 @@ function resolveDbSearchCeiling(rawCeiling: string | null): string | null {
   }
 }
 
-/** Resolve symlinks in cwd (e.g. macOS /var → /private/var) so dir matches ceiling from git. */
-function resolveDbSearchStartDir(): string {
+/**
+ * Resolve symlinks in the search start dir (e.g. macOS /var → /private/var) so
+ * it matches the ceiling from git. Defaults to cwd when no `dir` hint is given.
+ */
+function resolveDbSearchStartDir(dir: string = process.cwd()): string {
   try {
-    return fs.realpathSync(process.cwd());
+    return fs.realpathSync(dir);
   } catch (e) {
-    debug(`realpathSync failed for cwd: ${toErrorMessage(e)}`);
-    return process.cwd();
+    debug(`realpathSync failed for "${dir}": ${toErrorMessage(e)}`);
+    return dir;
   }
 }
 
@@ -342,24 +345,40 @@ function walkUpForDbPath(startDir: string, ceiling: string | null): string | nul
   }
 }
 
-export function findDbPath(customPath?: string): string {
+/**
+ * Locate `.codegraph/graph.db` for the current command.
+ *
+ * When `customPath` is set (e.g. `--db`), it wins outright.
+ * Otherwise the search starts at `rootDirHint` when the caller has one
+ * (e.g. the positional `dir` argument on commands like `embed [dir]`) —
+ * mirroring `build [dir]`'s convention of resolving the DB relative to
+ * that directory — and falls back to `process.cwd()` when there is no hint,
+ * walking upward toward the enclosing git repo root either way.
+ */
+export function findDbPath(customPath?: string, rootDirHint?: string): string {
   if (customPath) {
     return resolveCustomDbPath(customPath);
   }
-  const ceiling = resolveDbSearchCeiling(findRepoRoot());
-  const startDir = resolveDbSearchStartDir();
+  const ceiling = resolveDbSearchCeiling(findRepoRoot(rootDirHint));
+  const startDir = resolveDbSearchStartDir(rootDirHint);
   const found = walkUpForDbPath(startDir, ceiling);
   if (found) return found;
-  const base = ceiling || process.cwd();
+  const base = ceiling || rootDirHint || process.cwd();
   return path.join(base, '.codegraph', 'graph.db');
 }
 
-/** Open a database in readonly mode, with a user-friendly error if the DB doesn't exist. */
+/**
+ * Open a database in readonly mode, with a user-friendly error if the DB doesn't exist.
+ * `rootDirHint` is forwarded to `findDbPath()` for callers that know the project
+ * root (e.g. a command's positional `dir` argument) but weren't passed an explicit
+ * `--db`; it has no effect when `customPath` is set.
+ */
 export function openReadonlyOrFail(
   customPath?: string,
   busyTimeoutMs: number = DEFAULTS.db.busyTimeoutMs,
+  rootDirHint?: string,
 ): BetterSqlite3Database {
-  const dbPath = findDbPath(customPath);
+  const dbPath = findDbPath(customPath, rootDirHint);
   if (!fs.existsSync(dbPath)) {
     throw new DbError(
       `No codegraph database found at ${dbPath}.\nRun "codegraph build" first to analyze your codebase.`,

@@ -576,6 +576,66 @@ describe('findDbPath with git ceiling', () => {
   });
 });
 
+describe('findDbPath with rootDirHint (#1869)', () => {
+  let targetDir: string, unrelatedCwdDir: string;
+
+  beforeAll(() => {
+    // A project with its own graph.db — the intended target (e.g. `embed <dir>`'s
+    // positional argument).
+    targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-roothint-target-'));
+    fs.mkdirSync(path.join(targetDir, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(targetDir, '.codegraph', 'graph.db'), '');
+    // An unrelated directory with its OWN graph.db, standing in for whatever
+    // cwd the command happens to be invoked from.
+    unrelatedCwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-roothint-cwd-'));
+    fs.mkdirSync(path.join(unrelatedCwdDir, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(unrelatedCwdDir, '.codegraph', 'graph.db'), '');
+    // Resolve symlinks (macOS /tmp → /private/tmp) so expected paths match
+    // findDbPath's internal realpathSync'd start dir.
+    targetDir = fs.realpathSync(targetDir);
+    unrelatedCwdDir = fs.realpathSync(unrelatedCwdDir);
+  });
+
+  afterAll(() => {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+    fs.rmSync(unrelatedCwdDir, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    _resetRepoRootCache();
+  });
+
+  it('searches from rootDirHint instead of cwd when no customPath is given', () => {
+    const origCwd = process.cwd;
+    process.cwd = () => unrelatedCwdDir;
+    try {
+      _resetRepoRootCache();
+      const result = findDbPath(undefined, targetDir);
+      expect(result).toBe(path.join(targetDir, '.codegraph', 'graph.db'));
+    } finally {
+      process.cwd = origCwd;
+    }
+  });
+
+  it('still lets an explicit customPath win over rootDirHint', () => {
+    const explicit = path.join(tmpDir, 'explicit-override.db');
+    const result = findDbPath(explicit, targetDir);
+    expect(result).toBe(path.resolve(explicit));
+  });
+
+  it('falls back to cwd when rootDirHint is not provided (unchanged default behavior)', () => {
+    const origCwd = process.cwd;
+    process.cwd = () => unrelatedCwdDir;
+    try {
+      _resetRepoRootCache();
+      const result = findDbPath();
+      expect(result).toBe(path.join(unrelatedCwdDir, '.codegraph', 'graph.db'));
+    } finally {
+      process.cwd = origCwd;
+    }
+  });
+});
+
 describe('openReadonlyOrFail', () => {
   it('throws DbError when DB does not exist', () => {
     expect.assertions(4);
@@ -615,5 +675,38 @@ describe('openReadonlyOrFail', () => {
     const timeout = readDb.pragma('busy_timeout', { simple: true });
     expect(timeout).toBe(5000);
     readDb.close();
+  });
+
+  it('resolves against rootDirHint instead of cwd when no explicit path is given (#1869)', () => {
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-readonly-roothint-target-'));
+    const unrelatedCwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-readonly-roothint-cwd-'));
+    try {
+      const dbDir = path.join(targetDir, '.codegraph');
+      fs.mkdirSync(dbDir, { recursive: true });
+      const db = openDb(path.join(dbDir, 'graph.db'));
+      initSchema(db);
+      closeDb(db);
+      // A DB at the unrelated cwd must be ignored in favor of rootDirHint.
+      fs.mkdirSync(path.join(unrelatedCwdDir, '.codegraph'), { recursive: true });
+      fs.writeFileSync(path.join(unrelatedCwdDir, '.codegraph', 'graph.db'), '');
+
+      const origCwd = process.cwd;
+      process.cwd = () => unrelatedCwdDir;
+      try {
+        _resetRepoRootCache();
+        const readDb = openReadonlyOrFail(undefined, undefined, targetDir);
+        const tables = readDb
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all()
+          .map((r) => r.name);
+        expect(tables).toContain('nodes');
+        readDb.close();
+      } finally {
+        process.cwd = origCwd;
+      }
+    } finally {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+      fs.rmSync(unrelatedCwdDir, { recursive: true, force: true });
+    }
   });
 });

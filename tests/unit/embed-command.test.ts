@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../src/domain/search/index.js', async (importOriginal) => {
@@ -8,11 +9,13 @@ vi.mock('../../src/db/index.js', () => ({
   openReadonlyOrFail: vi.fn(() => {
     throw new Error('no db in this test');
   }),
+  resolveBusyTimeoutMs: vi.fn(() => 5000),
 }));
 vi.mock('../../src/db/repository/embeddings.js', () => ({ getEmbeddingMeta: vi.fn() }));
 
 const { command } = await import('../../src/cli/commands/embed.js');
 const { buildEmbeddings } = await import('../../src/domain/search/index.js');
+const { openReadonlyOrFail } = await import('../../src/db/index.js');
 
 function fakeCtx(embeddings: Record<string, unknown>, llm: Record<string, unknown> = {}) {
   return {
@@ -81,6 +84,7 @@ describe('embed command validate()', () => {
 describe('embed command execute()', () => {
   beforeEach(() => {
     vi.mocked(buildEmbeddings).mockClear();
+    vi.mocked(openReadonlyOrFail).mockClear();
   });
 
   afterEach(() => {
@@ -114,5 +118,22 @@ describe('embed command execute()', () => {
     expect(buildEmbeddings).toHaveBeenCalledTimes(1);
     const [, , , options] = vi.mocked(buildEmbeddings).mock.calls[0]!;
     expect(options.remote).toBeUndefined();
+  });
+
+  it('resolves the sticky-model DB lookup and buildEmbeddings against the positional dir, not cwd (#1869)', async () => {
+    const ctx = fakeCtx({});
+    const targetDir = path.join('some', 'other', 'project');
+
+    await command.execute!([targetDir], { strategy: 'structured' } as never, ctx);
+
+    // resolveStickyModel() must open the DB relative to the resolved dir, not
+    // whatever the process's cwd happens to be.
+    expect(openReadonlyOrFail).toHaveBeenCalledTimes(1);
+    const [, , rootDirHint] = vi.mocked(openReadonlyOrFail).mock.calls[0]!;
+    expect(rootDirHint).toBe(path.resolve(targetDir));
+
+    expect(buildEmbeddings).toHaveBeenCalledTimes(1);
+    const [rootArg] = vi.mocked(buildEmbeddings).mock.calls[0]!;
+    expect(rootArg).toBe(path.resolve(targetDir));
   });
 });

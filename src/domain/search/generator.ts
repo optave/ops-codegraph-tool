@@ -226,7 +226,10 @@ export async function buildEmbeddings(
   options: BuildEmbeddingsOptions = {},
 ): Promise<void> {
   const strategy = options.strategy || 'structured';
-  const dbPath = customDbPath || findDbPath(undefined);
+  // Search from rootDir (mirrors build's <rootDir>/.codegraph/graph.db convention),
+  // not process.cwd() — otherwise embed silently attaches to whatever unrelated
+  // .codegraph/graph.db happens to be found walking up from the current directory.
+  const dbPath = customDbPath || findDbPath(undefined, rootDir);
 
   if (!fs.existsSync(dbPath)) {
     throw new DbError(

@@ -459,6 +459,77 @@ describe('embed resolves source files from DB root, not cwd (#983)', () => {
   });
 });
 
+describe('buildEmbeddings resolves default DB from rootDir, not cwd (#1869)', () => {
+  let targetDir: string, unrelatedCwdDir: string, targetDbPath: string, unrelatedDbPath: string;
+  let originalCwd: string;
+
+  beforeAll(() => {
+    // The project embed is asked to operate on (positional `dir`, no --db).
+    targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-embed1869-target-'));
+    // An unrelated directory that happens to have its own graph.db — simulates
+    // running `embed <dir>` from inside a different, larger repo checkout.
+    unrelatedCwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-embed1869-cwd-'));
+
+    fs.writeFileSync(path.join(targetDir, 'c.js'), 'export function gamma() { return 3; }\n');
+
+    const targetDbDir = path.join(targetDir, '.codegraph');
+    fs.mkdirSync(targetDbDir, { recursive: true });
+    targetDbPath = path.join(targetDbDir, 'graph.db');
+    const targetDb = new Database(targetDbPath);
+    targetDb.pragma('journal_mode = WAL');
+    initSchema(targetDb);
+    insertNode(targetDb, 'gamma', 'function', 'c.js', 1, 1);
+    targetDb
+      .prepare('INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)')
+      .run('root_dir', path.resolve(targetDir));
+    targetDb.close();
+
+    // A DB at the unrelated cwd, which must never be touched by this run.
+    const unrelatedDbDir = path.join(unrelatedCwdDir, '.codegraph');
+    fs.mkdirSync(unrelatedDbDir, { recursive: true });
+    unrelatedDbPath = path.join(unrelatedDbDir, 'graph.db');
+    const unrelatedDb = new Database(unrelatedDbPath);
+    unrelatedDb.pragma('journal_mode = WAL');
+    initSchema(unrelatedDb);
+    unrelatedDb.close();
+
+    originalCwd = process.cwd();
+  });
+
+  afterAll(() => {
+    try {
+      process.chdir(originalCwd);
+    } catch {
+      /* ignore */
+    }
+    if (targetDir) fs.rmSync(targetDir, { recursive: true, force: true });
+    if (unrelatedCwdDir) fs.rmSync(unrelatedCwdDir, { recursive: true, force: true });
+  });
+
+  test('writes to <dir>/.codegraph/graph.db, not the cwd DB, when --db is omitted', async () => {
+    EMBEDDED_TEXTS.length = 0;
+    process.chdir(unrelatedCwdDir);
+
+    // Simulates `codegraph embed <targetDir>` with no --db flag: buildEmbeddings
+    // must default the DB path relative to targetDir, exactly like `build <dir>`.
+    await buildEmbeddings(targetDir, 'minilm', undefined);
+
+    expect(EMBEDDED_TEXTS.length).toBe(1);
+
+    const targetCount = new Database(targetDbPath, { readonly: true })
+      .prepare('SELECT COUNT(*) as c FROM embeddings')
+      .get().c;
+    expect(targetCount).toBe(1);
+
+    // The unrelated cwd DB was never opened for writing — it doesn't even
+    // have an `embeddings` table, since buildEmbeddings creates it lazily.
+    const unrelatedTables = new Database(unrelatedDbPath, { readonly: true })
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'embeddings'")
+      .all();
+    expect(unrelatedTables).toHaveLength(0);
+  });
+});
+
 describe('context window overflow detection', () => {
   let bigDir: string, bigDbPath: string;
 

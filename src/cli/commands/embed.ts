@@ -11,9 +11,9 @@ import {
 import { info, warn } from '../../infrastructure/logger.js';
 import type { CommandDefinition } from '../types.js';
 
-function resolveStickyModel(dbPath: string | undefined): string | null {
+function resolveStickyModel(dbPath: string | undefined, rootDir: string): string | null {
   try {
-    const db = openReadonlyOrFail(dbPath, resolveBusyTimeoutMs(dbPath));
+    const db = openReadonlyOrFail(dbPath, resolveBusyTimeoutMs(dbPath), rootDir);
     try {
       const storedName = getEmbeddingMeta(db, 'model');
       if (!storedName) return null;
@@ -47,7 +47,7 @@ export const command: CommandDefinition = {
       `Embedding strategy: ${EMBEDDING_STRATEGIES.join(', ')}. "structured" uses graph context (callers/callees), "source" embeds raw code`,
       'structured',
     ],
-    ['-d, --db <path>', 'Path to graph.db'],
+    ['-d, --db <path>', 'Path to graph.db (default: <dir>/.codegraph/graph.db)'],
   ],
   validate([_dir], opts, ctx) {
     if (!(EMBEDDING_STRATEGIES as readonly string[]).includes(opts.strategy)) {
@@ -85,7 +85,7 @@ export const command: CommandDefinition = {
       // before execute() runs — but keeps this branch type-safe.
       model = DEFAULT_MODEL;
     } else {
-      const sticky = resolveStickyModel(dbPath);
+      const sticky = resolveStickyModel(dbPath, root);
       if (sticky) {
         info(
           `Reusing previously-stored embedding model "${sticky}". Pass --model to switch, or set embeddings.model in your config.`,
