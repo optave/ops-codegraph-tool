@@ -68,6 +68,13 @@
     },
     {
       "source": { "name": "Program.Main", "file": "Program.cs" },
+      "target": { "name": "UserService.UserService", "file": "Service.cs" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService(repo) — also attributes to the constructor method itself (#1892)"
+    },
+    {
+      "source": { "name": "Program.Main", "file": "Program.cs" },
       "target": { "name": "User", "file": "Repository.cs" },
       "kind": "calls",
       "mode": "constructor",
@@ -114,6 +121,13 @@
       "kind": "calls",
       "mode": "constructor",
       "notes": "new UserService(repo) — constructor with dependency injection"
+    },
+    {
+      "source": { "name": "Program.RunWithValidation", "file": "Program.cs" },
+      "target": { "name": "UserService.UserService", "file": "Service.cs" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService(repo) — also attributes to the constructor method itself (#1892)"
     },
     {
       "source": { "name": "Program.RunWithValidation", "file": "Program.cs" },

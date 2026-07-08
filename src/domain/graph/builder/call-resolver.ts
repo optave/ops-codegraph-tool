@@ -12,6 +12,7 @@
 import { CALLABLE_SYMBOL_KINDS } from '../../../shared/kinds.js';
 import { computeConfidence, isSameLanguageFamily } from '../resolve.js';
 import {
+  attachConstructorTargets,
   isModuleScopedLanguage,
   resolveByGlobal,
   resolveByReceiver,
@@ -322,7 +323,13 @@ export function resolveCallTargets(
     }
   }
 
-  const resolved = [...(targets ?? [])];
+  let resolved = [...(targets ?? [])];
+  // #1892: `new ClassName()` / bare `ClassName()` (keyword-less languages)
+  // always resolves as a bare (no-receiver) call — augment any class-kind
+  // match with the class's own constructor method, if it declares one.
+  if (!call.receiver) {
+    resolved = attachConstructorTargets(lookup, resolved, targetName);
+  }
   if (resolved.length > 1) {
     resolved.sort((a, b) => {
       const confA = computeConfidence(relPath, a.file, importedFrom ?? null);

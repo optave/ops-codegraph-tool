@@ -40,6 +40,13 @@
     },
     {
       "source": { "name": "run", "file": "main.py" },
+      "target": { "name": "Order.__init__", "file": "models.py" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "Order('o1', ...) — also attributes to the constructor method itself (#1892)"
+    },
+    {
+      "source": { "name": "run", "file": "main.py" },
       "target": { "name": "Order.validate", "file": "models.py" },
       "kind": "calls",
       "mode": "receiver-typed",
@@ -58,6 +65,13 @@
       "kind": "calls",
       "mode": "constructor",
       "notes": "User(user_id, name, email) — class instantiation via import"
+    },
+    {
+      "source": { "name": "UserService.create_user", "file": "service.py" },
+      "target": { "name": "User.__init__", "file": "models.py" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "User(user_id, name, email) — also attributes to the constructor method itself (#1892)"
     },
     {
       "source": { "name": "UserService.create_user", "file": "service.py" },
@@ -102,11 +116,25 @@
       "notes": "UserService(repo) — same-file class instantiation"
     },
     {
+      "source": { "name": "build_service", "file": "service.py" },
+      "target": { "name": "UserService.__init__", "file": "service.py" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "UserService(repo) — also attributes to the constructor method itself (#1892)"
+    },
+    {
       "source": { "name": "create_repository", "file": "repository.py" },
       "target": { "name": "UserRepository", "file": "repository.py" },
       "kind": "calls",
       "mode": "constructor",
       "notes": "UserRepository() — same-file class instantiation"
+    },
+    {
+      "source": { "name": "create_repository", "file": "repository.py" },
+      "target": { "name": "UserRepository.__init__", "file": "repository.py" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "UserRepository() — also attributes to the constructor method itself (#1892)"
     }
   ]
 }

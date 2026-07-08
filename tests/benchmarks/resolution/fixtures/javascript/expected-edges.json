@@ -116,6 +116,13 @@
       "notes": "new UserService() — class instantiation tracked as consumption"
     },
     {
+      "source": { "name": "directInstantiation", "file": "index.js" },
+      "target": { "name": "UserService.constructor", "file": "service.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService() — also attributes to the constructor method itself (#1892)"
+    },
+    {
       "source": { "name": "UserService.constructor", "file": "service.js" },
       "target": { "name": "Logger", "file": "logger.js" },
       "kind": "calls",
@@ -123,11 +130,25 @@
       "notes": "new Logger('UserService') — class instantiation in constructor"
     },
     {
+      "source": { "name": "UserService.constructor", "file": "service.js" },
+      "target": { "name": "Logger.constructor", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new Logger('UserService') — also attributes to the constructor method itself (#1892)"
+    },
+    {
       "source": { "name": "buildService", "file": "service.js" },
       "target": { "name": "UserService", "file": "service.js" },
       "kind": "calls",
       "mode": "constructor",
       "notes": "new UserService() — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "buildService", "file": "service.js" },
+      "target": { "name": "UserService.constructor", "file": "service.js" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService() — also attributes to the constructor method itself (#1892)"
     },
     {
       "source": { "name": "_defProp", "file": "define-property.js" },

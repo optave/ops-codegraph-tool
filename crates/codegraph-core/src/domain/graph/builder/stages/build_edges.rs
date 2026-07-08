@@ -985,7 +985,37 @@ fn resolve_exact_global_match<'a>(
 /// `caller_name` is the enclosing function/method name (e.g. `"Shape.describe"`) used to scope
 /// `this`/`self`/`super` dispatch to the caller's own class before falling back to a broader scan.
 /// Mirrors `resolveCallTargets` / `resolveByMethodOrGlobal` in call-resolver.ts.
+///
+/// Thin wrapper around `resolve_call_targets_core`: additionally attaches
+/// constructor-call attribution (#1892) for bare (no-receiver) calls — see
+/// `attach_constructor_targets`. Split out because the core resolver has many
+/// early-return tiers, so a single post-processing pass at the call site is
+/// simpler than threading the augmentation through every tier.
 fn resolve_call_targets<'a>(
+    ctx: &EdgeContext<'a>,
+    call: &CallInfo,
+    rel_path: &str,
+    imported_from: Option<&str>,
+    type_map: &HashMap<&str, (&str, f64)>,
+    caller_name: &str,
+    imported_original_names: &HashMap<&str, &str>,
+) -> Vec<&'a NodeInfo> {
+    let targets = resolve_call_targets_core(
+        ctx, call, rel_path, imported_from, type_map, caller_name, imported_original_names,
+    );
+    if call.receiver.is_some() {
+        return targets;
+    }
+    let class_name = imported_original_names
+        .get(call.name.as_str())
+        .copied()
+        .unwrap_or(call.name.as_str());
+    attach_constructor_targets(ctx, targets, class_name)
+}
+
+/// Core multi-strategy call target resolution — see `resolve_call_targets` for
+/// the public entry point (which additionally applies constructor attribution).
+fn resolve_call_targets_core<'a>(
     ctx: &EdgeContext<'a>,
     call: &CallInfo,
     rel_path: &str,
@@ -1303,6 +1333,82 @@ fn resolve_call_targets<'a>(
     }
 
     Vec::new()
+}
+
+// ── Constructor-call attribution (#1892) ──────────────────────────────────
+
+/// Per-language constructor method identifier, keyed by file extension. Used
+/// to build the qualified `ClassName.<ctorLocalName>` lookup key that
+/// attributes a `new ClassName()` (or bare `ClassName()`, for the keyword-less
+/// languages below) call site to the class's own constructor **method**,
+/// rather than only the class declaration node it already resolves to.
+/// Returns `None` when the extension is unrecognised (or has no extension at
+/// all). For Java/C#/Dart/Groovy the constructor's own identifier equals the
+/// class name (`class Foo { Foo(...) {} }`), so those arms return
+/// `class_name` itself rather than a fixed keyword. Mirrors
+/// `CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION` in strategy.ts.
+///
+/// Deliberately excludes languages whose extractor does not emit an explicit
+/// constructor definition at all (Kotlin, Swift, Scala) or does not track
+/// object-construction call sites at all (C++) — for those, the class-node
+/// edge already produced by `resolve_call_targets_core` is the only
+/// attribution possible.
+fn constructor_local_name<'b>(file: &str, class_name: &'b str) -> Option<&'b str> {
+    let ext = file.rsplit_once('.').map(|(_, e)| e)?;
+    match ext {
+        "js" | "mjs" | "cjs" | "jsx" | "ts" | "tsx" | "mts" | "cts" => Some("constructor"),
+        "py" | "pyi" => Some("__init__"),
+        "php" | "phtml" => Some("__construct"),
+        "java" | "cs" | "dart" | "groovy" | "gvy" => Some(class_name),
+        _ => None,
+    }
+}
+
+/// Resolve the constructor **method** node for a class target, if the class
+/// declares one explicitly. Scoped to the class's own file (`file`) so an
+/// unrelated same-named constructor elsewhere can never match.
+fn resolve_constructor_target<'a>(
+    ctx: &EdgeContext<'a>,
+    file: &str,
+    class_name: &str,
+) -> Option<&'a NodeInfo> {
+    let local_name = constructor_local_name(file, class_name)?;
+    let qualified = format!("{}.{}", class_name, local_name);
+    ctx.nodes_by_name_and_file
+        .get(&(qualified.as_str(), file))
+        .and_then(|v| v.iter().find(|n| n.kind == "method"))
+        .copied()
+}
+
+/// Additive constructor-call attribution: for every `class`-kind target in
+/// `targets`, also resolve that class's own constructor method (if one is
+/// explicitly declared) and append it. Mirrors `attachConstructorTargets` in
+/// strategy.ts.
+///
+/// Additive, not a replacement: the class-node target is always left standing
+/// — the DB-driven RTA fallback (incremental rebuilds, see `cha.ts`'s
+/// `buildChaContextFromDb`) reads instantiation evidence from `calls` edges
+/// targeting class-kind nodes, and a class with no explicit constructor
+/// legitimately has nothing else to attribute the call to.
+fn attach_constructor_targets<'a>(
+    ctx: &EdgeContext<'a>,
+    mut targets: Vec<&'a NodeInfo>,
+    class_name: &str,
+) -> Vec<&'a NodeInfo> {
+    let mut seen_ids: HashSet<u32> = targets.iter().map(|t| t.id).collect();
+    let mut extra = Vec::new();
+    for target in &targets {
+        if target.kind != "class" {
+            continue;
+        }
+        if let Some(ctor) = resolve_constructor_target(ctx, target.file.as_str(), class_name) {
+            if seen_ids.insert(ctor.id) {
+                extra.push(ctor);
+            }
+        }
+    }
+    targets.extend(extra);
+    targets
 }
 
 /// Languages where bare `foo()` calls inside a class method are lexically scoped

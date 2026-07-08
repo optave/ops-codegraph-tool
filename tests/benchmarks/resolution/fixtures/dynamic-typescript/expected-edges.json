@@ -18,6 +18,13 @@
       "notes": "Reflect.construct(UserService, args) — reflection kind, resolves to UserService class"
     },
     {
+      "source": { "name": "runReflectConstruct", "file": "reflect.ts" },
+      "target": { "name": "UserService.constructor", "file": "reflect.ts" },
+      "kind": "calls",
+      "mode": "dynamic",
+      "notes": "Reflect.construct(UserService, args) — also attributes to the constructor method itself (#1892)"
+    },
+    {
       "source": { "name": "runReflectGetLiteral", "file": "reflect.ts" },
       "target": { "name": "greet", "file": "reflect.ts" },
       "kind": "calls",

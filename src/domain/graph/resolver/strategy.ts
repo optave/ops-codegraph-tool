@@ -58,6 +58,111 @@ export function isModuleScopedLanguage(relPath: string): boolean {
   return MODULE_SCOPED_BARE_CALL_EXTENSIONS.has(ext);
 }
 
+// ── Constructor-call attribution (#1892) ──────────────────────────────────
+
+/**
+ * Sentinel meaning "this language's constructor is named identically to its
+ * class" — Java, C#, Dart, and Groovy all require `class Foo { Foo(...) {} }`;
+ * the constructor's own identifier is the class name, not a fixed keyword.
+ */
+const CTOR_NAME_SAME_AS_CLASS = Symbol('ctor-name-same-as-class');
+
+/**
+ * Per-language constructor method identifier, keyed by file extension. Used
+ * to build the qualified `ClassName.<ctorLocalName>` lookup key that
+ * attributes a `new ClassName()` (or bare `ClassName()`, for the keyword-less
+ * languages below) call site to the class's own constructor **method**,
+ * rather than only the class declaration node it already resolves to (#1892).
+ * Mirrors `constructor_local_name` in build_edges.rs.
+ *
+ * Deliberately excludes languages whose extractor does not emit an explicit
+ * constructor definition at all (Kotlin, Swift, Scala — verified via their
+ * extractors' AST walk switches) or does not track object-construction call
+ * sites at all (C++) — for those, the class-node edge already produced by
+ * the tiers above is the only attribution possible.
+ */
+const CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION = new Map<
+  string,
+  string | typeof CTOR_NAME_SAME_AS_CLASS
+>([
+  ['.js', 'constructor'],
+  ['.mjs', 'constructor'],
+  ['.cjs', 'constructor'],
+  ['.jsx', 'constructor'],
+  ['.ts', 'constructor'],
+  ['.tsx', 'constructor'],
+  ['.mts', 'constructor'],
+  ['.cts', 'constructor'],
+  ['.py', '__init__'],
+  ['.pyi', '__init__'],
+  ['.php', '__construct'],
+  ['.phtml', '__construct'],
+  ['.java', CTOR_NAME_SAME_AS_CLASS],
+  ['.cs', CTOR_NAME_SAME_AS_CLASS],
+  ['.dart', CTOR_NAME_SAME_AS_CLASS],
+  ['.groovy', CTOR_NAME_SAME_AS_CLASS],
+  ['.gvy', CTOR_NAME_SAME_AS_CLASS],
+]);
+
+function constructorLocalName(file: string, className: string): string | null {
+  const dotIdx = file.lastIndexOf('.');
+  if (dotIdx === -1) return null;
+  const entry = CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION.get(file.slice(dotIdx));
+  if (!entry) return null;
+  return entry === CTOR_NAME_SAME_AS_CLASS ? className : entry;
+}
+
+/**
+ * Resolve the constructor **method** node for a class target, if the class
+ * declares one explicitly. Scoped to the class's own file (`classTarget.file`)
+ * so an unrelated same-named constructor elsewhere can never match.
+ */
+function resolveConstructorTarget(
+  lookup: StrategyLookup,
+  classTarget: { file: string },
+  className: string,
+): { id: number; file: string; kind?: string } | null {
+  const ctorLocalName = constructorLocalName(classTarget.file, className);
+  if (!ctorLocalName) return null;
+  const found = lookup
+    .byNameAndFile(`${className}.${ctorLocalName}`, classTarget.file)
+    .find((n) => n.kind === 'method');
+  return found ?? null;
+}
+
+/**
+ * Additive constructor-call attribution (#1892): for every `class`-kind
+ * target in `targets`, also resolve that class's own constructor method (if
+ * one is explicitly declared) and append it.
+ *
+ * Additive, not a replacement: the class-node target is always left standing
+ * — `buildChaContextFromDb`'s RTA fallback (incremental rebuilds, see
+ * `builder/cha.ts`) reads instantiation evidence from `calls` edges targeting
+ * class-kind nodes, and a class with no explicit constructor legitimately has
+ * nothing else to attribute the call to.
+ *
+ * Only meaningful for bare (no-receiver) calls — a `new ClassName()` /
+ * `ClassName()` construction call never carries a receiver — so callers must
+ * gate on `!call.receiver` before invoking this.
+ */
+export function attachConstructorTargets<T extends { id: number; file: string; kind?: string }>(
+  lookup: StrategyLookup,
+  targets: readonly T[],
+  className: string,
+): T[] {
+  const augmented = [...targets];
+  const seenIds = new Set(targets.map((t) => t.id));
+  for (const target of targets) {
+    if (target.kind !== 'class') continue;
+    const ctorTarget = resolveConstructorTarget(lookup, target, className);
+    if (ctorTarget && !seenIds.has(ctorTarget.id)) {
+      augmented.push(ctorTarget as T);
+      seenIds.add(ctorTarget.id);
+    }
+  }
+  return augmented;
+}
+
 // ── typeMap entry unwrapping ──────────────────────────────────────────────────
 
 /**
