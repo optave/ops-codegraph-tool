@@ -1,9 +1,22 @@
 import path from 'node:path';
 import { getBuildMeta, getNodeId, setBuildMeta, testFilterSQL } from '../db/index.js';
+import { cachedStmt } from '../db/repository/cached-stmt.js';
 import { debug } from '../infrastructure/logger.js';
 import { getOrCreateChunkStmt } from '../shared/chunked-stmt-cache.js';
 import { getAncestorDirs, normalizePath } from '../shared/constants.js';
-import type { BetterSqlite3Database, SqliteStatement as DbSqliteStatement } from '../types.js';
+import type {
+  BetterSqlite3Database,
+  SqliteStatement as DbSqliteStatement,
+  StmtCache,
+} from '../types.js';
+
+// isBarrelProdReachable's two queries are identical text on every call (the
+// interpolated test-file filter is a fixed set of LIKE patterns keyed only
+// by column name) — cache them per-db so repeated calls (1-3 barrels per
+// incremental build) skip re-preparing the same statement. Mirrors
+// `prepare_cached` in the Rust `is_barrel_prod_reachable`.
+const _barrelDirectStmt: StmtCache<{ reachable: number }> = new WeakMap();
+const _barrelBackwardStmt: StmtCache<{ reachable: number }> = new WeakMap();
 
 // ─── Build-time helpers ───────────────────────────────────────────────
 
@@ -991,6 +1004,84 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
 }
 
 /**
+ * Direct barrels: files that directly re-export (one hop) into any of the
+ * given target files. Used by `classifyNodeRolesIncremental`'s scoped
+ * alternative to the full `prod_reachable` recursive CTE — see
+ * `isBarrelProdReachable`. Mirrors Rust `find_direct_reexport_barrels`.
+ */
+function findDirectReexportBarrels(
+  db: BetterSqlite3Database,
+  allAffectedFiles: string[],
+): string[] {
+  const placeholders = allAffectedFiles.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT n1.file AS file FROM edges e
+         JOIN nodes n1 ON e.source_id = n1.id
+         JOIN nodes n2 ON e.target_id = n2.id
+       WHERE e.kind = 'reexports' AND n2.file IN (${placeholders})`,
+    )
+    .all(...allAffectedFiles) as { file: string }[];
+  return rows.map((r) => r.file);
+}
+
+/**
+ * True when `barrelFile` is production-reachable — i.e. a member of the same
+ * `prod_reachable` set `classifyNodeRolesFull`'s recursive CTE computes
+ * globally (a non-test file directly imports it, or reaches it transitively
+ * through a chain of `reexports` edges) — but answered for one specific file
+ * instead of materializing the whole graph's closure. Mirrors Rust
+ * `is_barrel_prod_reachable` — see that function's doc comment for the
+ * measured cost difference (#1855) and the reachability argument.
+ */
+function isBarrelProdReachable(db: BetterSqlite3Database, barrelFile: string): boolean {
+  // Fast path: barrelFile itself is directly imported by a non-test file
+  // (the base case of the original `prod_reachable` definition).
+  const direct = cachedStmt(
+    _barrelDirectStmt,
+    db,
+    `SELECT EXISTS(
+         SELECT 1 FROM edges e
+           JOIN nodes src ON e.source_id = src.id
+           JOIN nodes tgt ON e.target_id = tgt.id
+         WHERE e.kind IN ('imports', 'dynamic-imports', 'imports-type')
+           AND src.kind = 'file' AND tgt.kind = 'file' AND tgt.file = ?
+           ${testFilterSQL('src.file')}
+       ) AS reachable`,
+  ).get(barrelFile) as { reachable: number };
+  if (direct.reachable) return true;
+
+  // Slow path: walk `reexports` edges backward from barrelFile (who
+  // re-exports INTO barrelFile, transitively) looking for an ancestor
+  // that's directly imported by production. `UNION` (not `UNION ALL`)
+  // dedupes on `file`, which both bounds the search to barrelFile's own
+  // chain and guarantees termination if the chain contains a cycle.
+  const backward = cachedStmt(
+    _barrelBackwardStmt,
+    db,
+    `WITH RECURSIVE ancestors(file) AS (
+         SELECT ? AS file
+         UNION
+         SELECT DISTINCT n1.file FROM edges e
+           JOIN nodes n1 ON e.source_id = n1.id
+           JOIN nodes n2 ON e.target_id = n2.id
+           JOIN ancestors a ON n2.file = a.file
+         WHERE e.kind = 'reexports'
+       )
+       SELECT EXISTS(
+         SELECT 1 FROM ancestors a
+           JOIN nodes af ON af.file = a.file AND af.kind = 'file'
+           JOIN edges e2 ON e2.target_id = af.id
+           JOIN nodes src2 ON e2.source_id = src2.id
+         WHERE e2.kind IN ('imports', 'dynamic-imports', 'imports-type')
+           AND src2.kind = 'file'
+           ${testFilterSQL('src2.file')}
+       ) AS reachable`,
+  ).get(barrelFile) as { reachable: number };
+  return !!backward.reachable;
+}
+
+/**
  * Incremental role classification: only reclassify nodes from changed files
  * plus their immediate edge neighbours (callers and callees in other files).
  *
@@ -1009,18 +1100,39 @@ function classifyNodeRolesIncremental(
   // Expand affected set: include files containing nodes that are edge neighbours
   // of changed-file nodes. This ensures that removing a call from file A to a
   // node in file B causes B's roles to be recalculated (fan_in changed).
+  //
+  // Written as a UNION of two directional joins rather than a single
+  // OR-based self-join (`JOIN nodes n1 ON (e.source_id = n1.id OR
+  // e.target_id = n1.id)`, likewise for `n2`). The OR-join can't be served
+  // by an index on either side of the OR, so better-sqlite3/SQLite falls
+  // back to scanning every edge matching `e.kind IN (...)` and probing both
+  // endpoints per row. Each directional half below is a plain equi-join on
+  // source_id/target_id, letting the planner drive the scan from
+  // idx_edges_kind_source/idx_edges_kind_target directly. `UNION` (not
+  // `UNION ALL`) dedupes the combined result the same way the original
+  // query's `DISTINCT` did. Same result set, measured ~2.4x faster
+  // (#1855 — this query's cost, compounded by the symbol-level
+  // `reexports` edges added in #1849, was a major contributor to the
+  // "1-file rebuild" benchmark regression when the changed file is itself
+  // a barrel/re-export hub).
   const seedPlaceholders = changedFiles.map(() => '?').join(',');
   const neighbourFiles = db
     .prepare(
-      `SELECT DISTINCT n2.file FROM edges e
-       JOIN nodes n1 ON (e.source_id = n1.id OR e.target_id = n1.id)
-       JOIN nodes n2 ON (e.source_id = n2.id OR e.target_id = n2.id)
-       WHERE e.kind IN ('calls', 'imports-type', 'reexports')
-         AND n1.file IN (${seedPlaceholders})
-         AND n2.file NOT IN (${seedPlaceholders})
-         AND n2.kind NOT IN ('file', 'directory')`,
+      `SELECT n2.file AS file FROM edges e
+         JOIN nodes n1 ON e.source_id = n1.id
+         JOIN nodes n2 ON e.target_id = n2.id
+         WHERE e.kind IN ('calls', 'imports-type', 'reexports')
+           AND n1.file IN (${seedPlaceholders}) AND n2.file NOT IN (${seedPlaceholders})
+           AND n2.kind NOT IN ('file', 'directory')
+       UNION
+       SELECT n1.file AS file FROM edges e
+         JOIN nodes n1 ON e.source_id = n1.id
+         JOIN nodes n2 ON e.target_id = n2.id
+         WHERE e.kind IN ('calls', 'imports-type', 'reexports')
+           AND n2.file IN (${seedPlaceholders}) AND n1.file NOT IN (${seedPlaceholders})
+           AND n1.kind NOT IN ('file', 'directory')`,
     )
-    .all(...changedFiles, ...changedFiles) as { file: string }[];
+    .all(...changedFiles, ...changedFiles, ...changedFiles, ...changedFiles) as { file: string }[];
   const allAffectedFiles = [...changedFiles, ...neighbourFiles.map((r) => r.file)];
   const placeholders = allAffectedFiles.map(() => '?').join(',');
 
@@ -1083,36 +1195,38 @@ function classifyNodeRolesIncremental(
   );
 
   // 3b. Mark symbols as exported when their files are targets of reexports edges
-  // from production-reachable barrels (traces through multi-level chains) (#837)
+  // from production-reachable barrels (traces through multi-level chains) (#837).
+  //
+  // classifyNodeRolesFull's step 3b answers this by materializing the global
+  // `prod_reachable` closure (every file reachable from any production
+  // import, extended through reexports chains) because it has no smaller
+  // scope to exploit — it's already processing every file. Here, only
+  // `allAffectedFiles` (the changed files plus their one-hop neighbours) can
+  // possibly be reexport targets we care about, so instead: find the small
+  // set of barrels that directly reexport into `allAffectedFiles` (typically
+  // 1-3 files), then answer "is this specific barrel production-reachable"
+  // with a backward-scoped check instead of the whole-graph forward closure
+  // (see `isBarrelProdReachable`).
+  //
   // `method` is excluded (#1780) — see classifyNodeRolesFull for rationale.
-  const reexportExported = db
-    .prepare(
-      `WITH RECURSIVE prod_reachable(file_id) AS (
-        SELECT DISTINCT e.target_id
-        FROM edges e
-        JOIN nodes src ON e.source_id = src.id
-        WHERE e.kind IN ('imports', 'dynamic-imports', 'imports-type')
-          AND src.kind = 'file'
-          ${testFilterSQL('src.file')}
-        UNION
-        SELECT e.target_id
-        FROM edges e
-        JOIN prod_reachable pr ON e.source_id = pr.file_id
-        WHERE e.kind = 'reexports'
+  const reexportBarrels = findDirectReexportBarrels(db, allAffectedFiles);
+  const reachableBarrels = reexportBarrels.filter((b) => isBarrelProdReachable(db, b));
+  if (reachableBarrels.length > 0) {
+    const barrelPlaceholders = reachableBarrels.map(() => '?').join(',');
+    const reexportExported = db
+      .prepare(
+        `SELECT DISTINCT n.id
+        FROM nodes n
+        JOIN nodes f ON f.file = n.file AND f.kind = 'file'
+        JOIN edges e ON e.target_id = f.id
+        JOIN nodes b ON e.source_id = b.id
+        WHERE e.kind = 'reexports' AND b.file IN (${barrelPlaceholders})
+          AND n.kind NOT IN ('file', 'directory', 'parameter', 'property', 'method')
+          AND n.file IN (${placeholders})`,
       )
-      SELECT DISTINCT n.id
-      FROM nodes n
-      JOIN nodes f ON f.file = n.file AND f.kind = 'file'
-      WHERE f.id IN (
-        SELECT e.target_id FROM edges e
-        WHERE e.kind = 'reexports'
-          AND e.source_id IN (SELECT file_id FROM prod_reachable)
-      )
-      AND n.kind NOT IN ('file', 'directory', 'parameter', 'property', 'method')
-      AND n.file IN (${placeholders})`,
-    )
-    .all(...allAffectedFiles) as { id: number }[];
-  for (const r of reexportExported) exportedIds.add(r.id);
+      .all(...reachableBarrels, ...allAffectedFiles) as { id: number }[];
+    for (const r of reexportExported) exportedIds.add(r.id);
+  }
 
   // 3c. Mark symbols with exported=1 as exported — the extractor sets this flag when the
   // author writes `export interface Foo { }` / `export type Bar = ...` / `export function`.

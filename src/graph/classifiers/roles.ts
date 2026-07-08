@@ -171,7 +171,7 @@ export function median(sorted: number[]): number {
 export interface RoleClassificationNode {
   id: string;
   name: string;
-  kind?: string;
+  kind: string;
   file?: string;
   fanIn: number;
   fanOut: number;
