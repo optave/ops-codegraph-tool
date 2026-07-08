@@ -159,5 +159,27 @@ describe.skipIf(!isNativeAvailable())(
     it('classifies renamed and non-renamed destructured bindings as kind constant, not dead-unresolved', () => {
       expectFixedKindAndRole(path.join(tmpDir, '.codegraph', 'graph.db'));
     });
+
+    it('still resolves calls made through a destructured callback-style binding', () => {
+      // `flags.runs`/`flags.model` are property reads, not calls, but `flags`
+      // itself must still show up as the attributed caller of `parseArgs` — the
+      // fix must not break caller attribution for the top-level binding.
+      const dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare(
+            `SELECT COUNT(*) AS cnt
+             FROM edges e
+             JOIN nodes s ON e.source_id = s.id
+             JOIN nodes t ON e.target_id = t.id
+             WHERE s.name = 'flags' AND t.name = 'parseArgs' AND e.kind = 'calls'`,
+          )
+          .get() as { cnt: number };
+        expect(row.cnt, 'expected flags -> parseArgs calls edge to survive the kind fix').toBe(1);
+      } finally {
+        db.close();
+      }
+    });
   },
 );
