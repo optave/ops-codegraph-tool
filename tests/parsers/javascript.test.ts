@@ -211,6 +211,16 @@ describe('JavaScript parser', () => {
       expect(symbols.imports[0].names).toEqual(['a', 'b']);
     });
 
+    it('extracts destructured names through a TypeScript `satisfies {...}` assertion', () => {
+      // TS 4.9+ `satisfies` is structurally identical to `as` here (Greptile
+      // follow-up to #1781) — same walk-up gap would otherwise reproduce.
+      const symbols = parseTS(
+        `const { a, b } = await import('./foo.js') satisfies { a: Fn; b: Fn };`,
+      );
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'b']);
+    });
+
     it('extracts destructured names through parens + `as`-cast combined (exact repro shape)', () => {
       // Matches native-orchestrator.ts's actual production pattern:
       //   const { X, Y } = (await import('./mod.js')) as { X: Fn; Y: Fn };
@@ -1036,6 +1046,27 @@ describe('JavaScript parser', () => {
         expect.objectContaining({ name: 'mapCallback', dynamic: true }),
       );
       expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+    });
+
+    it('applies the Array.from positional gate to member_expression args too', () => {
+      // Greptile follow-up: the old member_expression guard was an explicit
+      // `&& memberExprArgsAllowed` inline check; the positional restructuring
+      // moved that responsibility to the shared early-return above the loop.
+      // `Array.from(arr, obj.mapper)` exercises that a member_expression at
+      // the positional index (1) is still emitted with its receiver, while
+      // one at index 0 is not — guarding against a future refactor that
+      // re-adds an inline guard on member_expression only.
+      const symbols = parseJS(`Array.from(arr, obj.mapper);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapper', receiver: 'obj', dynamic: true }),
+      );
+      expect(symbols.calls.filter((c) => c.dynamic && c.name === 'arr')).toHaveLength(0);
+
+      const symbols2 = parseJS(`Array.from(obj.arrayLike, mapCallback);`);
+      expect(symbols2.calls.filter((c) => c.dynamic && c.name === 'arrayLike')).toHaveLength(0);
+      expect(symbols2.calls).toContainEqual(
+        expect.objectContaining({ name: 'mapCallback', dynamic: true }),
+      );
     });
 
     it('extracts callback in plain function calls like setTimeout', () => {
