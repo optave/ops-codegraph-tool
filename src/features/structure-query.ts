@@ -11,9 +11,10 @@ import {
   openReadonlyOrFail,
   openReadonlyWithNative,
   resolveBusyTimeoutMs,
+  resolveConfigForDbPath,
   testFilterSQL,
 } from '../db/index.js';
-import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { normalizePath } from '../shared/constants.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -384,8 +385,10 @@ export function moduleBoundariesData(
   // Resolve config before opening the DB so config.db.busyTimeoutMs can be
   // threaded through to openReadonlyOrFail() (mirrors resolveDbSettings()'s
   // ordering in db/connection.ts — loadConfig can throw, and an already-open
-  // handle at that point would never be closed).
-  const config = opts.config || loadConfig();
+  // handle at that point would never be closed). Derives rootDir from
+  // customDbPath (not process.cwd()) so `--db /other/repo/...` reads that
+  // repo's .codegraphrc.json (issue #1881).
+  const config = opts.config || resolveConfigForDbPath(customDbPath);
   const db = openReadonlyOrFail(
     customDbPath,
     config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,

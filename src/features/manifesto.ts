@@ -1,7 +1,7 @@
-import { openReadonlyOrFail } from '../db/index.js';
+import { openReadonlyOrFail, resolveConfigForDbPath } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { findCycles } from '../domain/graph/cycles.js';
-import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { BetterSqlite3Database, CodegraphConfig, ThresholdRule } from '../types.js';
@@ -482,8 +482,10 @@ export function manifestoData(
   // Resolve config before opening the DB so config.db.busyTimeoutMs can be
   // threaded through to openReadonlyOrFail() (mirrors resolveDbSettings()'s
   // ordering in db/connection.ts — loadConfig can throw, and an already-open
-  // handle at that point would never be closed).
-  const config = opts.config || loadConfig(process.cwd());
+  // handle at that point would never be closed). Derives rootDir from
+  // customDbPath (not process.cwd()) so `--db /other/repo/...` reads that
+  // repo's .codegraphrc.json (issue #1881).
+  const config = opts.config || resolveConfigForDbPath(customDbPath);
   const db = openReadonlyOrFail(
     customDbPath,
     config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,

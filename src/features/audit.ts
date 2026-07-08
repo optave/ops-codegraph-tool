@@ -1,9 +1,8 @@
-import path from 'node:path';
-import { openReadonlyOrFail } from '../db/index.js';
+import { openReadonlyOrFail, resolveConfigForDbPath } from '../db/index.js';
 import { normalizeFileFilter } from '../db/query-builder.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { explainData } from '../domain/queries.js';
-import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { toErrorMessage } from '../shared/errors.js';
@@ -35,13 +34,7 @@ function resolveThresholds(
   config: unknown,
 ): Record<string, ThresholdEntry> {
   try {
-    const cfg =
-      config ||
-      (() => {
-        const dbDir = customDbPath ? path.dirname(customDbPath) : process.cwd();
-        const repoRoot = path.resolve(dbDir, '..');
-        return loadConfig(repoRoot);
-      })();
+    const cfg = config || resolveConfigForDbPath(customDbPath);
     const userRules = (cfg as Record<string, unknown>).manifesto || {};
     const resolved: Record<string, ThresholdEntry> = {};
     for (const def of FUNCTION_RULES) {
@@ -144,7 +137,10 @@ export function auditData(
   opts: AuditDataOpts = {},
 ): AuditResult {
   const noTests = opts.noTests || false;
-  const config = opts.config || loadConfig();
+  // Derive rootDir from customDbPath (not process.cwd()) so `--db /other/repo/...`
+  // reads that repo's .codegraphrc.json (issue #1881) — matches resolveThresholds()
+  // below, which already derived rootDir correctly.
+  const config = opts.config || resolveConfigForDbPath(customDbPath);
   const maxDepth =
     opts.depth ||
     (config as unknown as { analysis?: { auditDepth?: number } }).analysis?.auditDepth ||

@@ -6,7 +6,7 @@ import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { DbError, toErrorMessage } from '../shared/errors.js';
-import type { BetterSqlite3Database, NativeDatabase } from '../types.js';
+import type { BetterSqlite3Database, CodegraphConfig, NativeDatabase } from '../types.js';
 import { getDatabase } from './better-sqlite3.js';
 import { Repository } from './repository/base.js';
 import { NativeRepository } from './repository/native-repository.js';
@@ -418,6 +418,24 @@ function deriveRootDirFromDbPath(customDbPath: string | undefined): string | und
 }
 
 /**
+ * Load config with rootDir derived from the resolved DB path, rather than
+ * process.cwd(). This is the single entry point every read-only query
+ * function should use to call loadConfig() when it has (or can resolve) a
+ * `--db` path — so `--db /other/repo/.codegraph/graph.db` reads *that*
+ * repo's `.codegraphrc.json` instead of the invoking directory's. Shared by
+ * resolveDbSettings() and resolveBusyTimeoutMs() (below) plus the ad-hoc
+ * read-only query call sites (features/*, domain/analysis/*, domain/search/*)
+ * so rootDir derivation can't drift between them (issue #1881).
+ *
+ * MUST be called before opening any DB handle: loadConfig can throw (e.g.
+ * ConfigError via resolveSecrets on a malformed llm.apiKeyCommand config),
+ * and an already-open handle at that point would never be closed.
+ */
+export function resolveConfigForDbPath(customDbPath?: string): CodegraphConfig {
+  return loadConfig(deriveRootDirFromDbPath(customDbPath));
+}
+
+/**
  * Resolve the effective engine for DB access (explicit opts.engine > config.build.engine >
  * 'auto') alongside config.db.busyTimeoutMs, in a single loadConfig() call.
  * Derives rootDir from the resolved DB path so loadConfig reads the right project config.
@@ -431,7 +449,7 @@ function resolveDbSettings(
   customDbPath: string | undefined,
   engineOpt: 'native' | 'wasm' | 'auto' | undefined,
 ): ResolvedDbSettings {
-  const config = loadConfig(deriveRootDirFromDbPath(customDbPath));
+  const config = resolveConfigForDbPath(customDbPath);
   // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
   // so this covers both the env-var path and the .codegraphrc.json config-file path.
   return {
@@ -452,8 +470,7 @@ function resolveDbSettings(
  * already-open handle at that point would never be closed.
  */
 export function resolveBusyTimeoutMs(customDbPath?: string): number {
-  const config = loadConfig(deriveRootDirFromDbPath(customDbPath));
-  return config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
+  return resolveConfigForDbPath(customDbPath).db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
 }
 
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */

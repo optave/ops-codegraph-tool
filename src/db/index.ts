@@ -16,6 +16,7 @@ export {
   openRepo,
   releaseAdvisoryLock,
   resolveBusyTimeoutMs,
+  resolveConfigForDbPath,
 } from './connection.js';
 export { getBuildMeta, initSchema, MIGRATIONS, setBuildMeta } from './migrations.js';
 export {
