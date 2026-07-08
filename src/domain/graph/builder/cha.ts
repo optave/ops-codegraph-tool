@@ -6,11 +6,17 @@
  * never instantiated in the program (no `new X()` anywhere in the codebase).
  *
  * Used by:
- *   - buildFileCallEdges (WASM/JS path) — inline during per-file edge building
- *   - buildChaPostPass (native path)    — JS post-pass on top of native edges
+ *   - buildFileCallEdges (WASM/JS path)  — inline during per-file edge building,
+ *     context built in-memory from all parsed fileSymbols (buildChaContext)
+ *   - buildChaPostPass (native path)     — JS post-pass on top of native edges,
+ *     context built in-memory from all parsed fileSymbols (buildChaContext)
+ *   - incremental rebuild (watch mode)   — post-pass on top of a single-file
+ *     rebuild's edges, context built from already-persisted DB state
+ *     (buildChaContextFromDb) since only the rebuilt file + its reverse deps
+ *     are held in memory, not the whole project (#1852)
  */
 
-import type { ClassRelation, ExtractorOutput } from '../../../types.js';
+import type { BetterSqlite3Database, ClassRelation, ExtractorOutput } from '../../../types.js';
 import type { CallNodeLookup } from './call-resolver.js';
 
 // ── CHA context ──────────────────────────────────────────────────────────────
@@ -105,6 +111,67 @@ export function buildChaContext(fileSymbols: ReadonlyMap<string, ExtractorOutput
     }
     collectInstantiatedTypes(symbols, instantiatedTypes);
   }
+
+  return { implementors, parents, instantiatedTypes };
+}
+
+/**
+ * Build the CHA context by querying already-persisted DB state instead of
+ * scanning in-memory fileSymbols.
+ *
+ * Used by the incremental single-file rebuild path (`buildCallEdges` in
+ * `builder/incremental.ts`), where only the rebuilt file + its reverse deps
+ * are held in memory — the class hierarchy (`extends`/`implements` edges)
+ * and RTA instantiation evidence needed for correct CHA/RTA dispatch,
+ * however, span the whole project and must come from the DB (#1852).
+ *
+ * RTA evidence is read from `calls` edges targeting `class`-kind nodes:
+ * `new X()` is extracted as an ordinary call to `X` (see extractors'
+ * `handleNewExpr`/equivalent), so a resolved constructor call already leaves
+ * this evidence in the DB regardless of which engine or build (full or
+ * incremental) wrote it — no separate `newExpressions` bookkeeping needed.
+ *
+ * Unlike `runPostNativeCha`'s DB-driven CHA post-pass (`stages/native-orchestrator.ts`),
+ * this does not fall back to treating every class as instantiated when no RTA
+ * evidence exists anywhere — it stays consistent with `resolveChaTargets`'
+ * always-strict filtering, matching the semantics `buildChaContext` (in-memory)
+ * already gives the WASM/JS full-build path.
+ */
+export function buildChaContextFromDb(db: BetterSqlite3Database): ChaContext {
+  const hierarchyRows = db
+    .prepare(`
+      SELECT src.name AS child_name, tgt.name AS parent_name, e.kind AS edge_kind
+      FROM edges e
+      JOIN nodes src ON e.source_id = src.id
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind IN ('extends', 'implements')
+    `)
+    .all() as Array<{ child_name: string; parent_name: string; edge_kind: string }>;
+  if (hierarchyRows.length === 0) return EMPTY_CHA_CONTEXT;
+
+  const implementors = new Map<string, string[]>();
+  const parents = new Map<string, string>();
+  for (const row of hierarchyRows) {
+    let list = implementors.get(row.parent_name);
+    if (!list) {
+      list = [];
+      implementors.set(row.parent_name, list);
+    }
+    if (!list.includes(row.child_name)) list.push(row.child_name);
+    if (row.edge_kind === 'extends' && !parents.has(row.child_name)) {
+      parents.set(row.child_name, row.parent_name);
+    }
+  }
+
+  const rtaRows = db
+    .prepare(`
+      SELECT DISTINCT tgt.name
+      FROM edges e
+      JOIN nodes tgt ON e.target_id = tgt.id
+      WHERE e.kind = 'calls' AND tgt.kind = 'class'
+    `)
+    .all() as Array<{ name: string }>;
+  const instantiatedTypes = new Set(rtaRows.map((r) => r.name));
 
   return { implementors, parents, instantiatedTypes };
 }

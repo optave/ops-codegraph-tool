@@ -10,11 +10,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { bulkNodeIdsByFile, purgeFileData } from '../../../db/index.js';
+import { PROPAGATION_HOP_PENALTY } from '../../../extractors/javascript.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
 import { normalizePath, TS_NATIVE_CONFIDENCE_FLOOR } from '../../../shared/constants.js';
-import { isTypeErasedImportTarget } from '../../../shared/kinds.js';
+import { FLAG_ONLY_DYNAMIC_KINDS, isTypeErasedImportTarget } from '../../../shared/kinds.js';
 import type {
   BetterSqlite3Database,
+  Call,
   EngineOpts,
   ExtractorOutput,
   Import,
@@ -23,6 +25,11 @@ import type {
 } from '../../../types.js';
 import { parseFileIncremental } from '../../parser.js';
 import { computeConfidence, resolveImportPath } from '../resolve.js';
+import {
+  buildPointsToMapForFile,
+  type PointsToMap,
+  resolveViaPointsTo,
+} from '../resolver/points-to.js';
 import {
   type CallNodeLookup,
   findCaller,
@@ -33,7 +40,20 @@ import {
   resolveReceiverEdge,
   resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
-import { BUILTIN_RECEIVERS, fileHash, fileStat, readFileSafe } from './helpers.js';
+import {
+  buildChaContextFromDb,
+  type ChaContext,
+  resolveChaTargets,
+  resolveThisDispatch,
+} from './cha.js';
+import {
+  BUILTIN_RECEIVERS,
+  CHA_DISPATCH_PENALTY,
+  CHA_TYPED_DISPATCH_CONFIDENCE,
+  fileHash,
+  fileStat,
+  readFileSafe,
+} from './helpers.js';
 
 // ── Local types ─────────────────────────────────────────────────────────
 
@@ -623,6 +643,45 @@ function buildClassHierarchyEdges(
   return edgesAdded;
 }
 
+// ── Extended edge insertion (technique / dynamic_kind) ──────────────────
+
+// Lazily-cached prepared statement for `calls` edges that need `technique`
+// and/or `dynamic_kind` set at insert time — points-to (#1852), CHA/RTA
+// dispatch (#1852), and dynamic-sink edges (#1852). The shared
+// `IncrementalStmts.insertEdge` (built by `prepareWatcherStatements` in
+// watcher.ts) only covers the 5 base columns and always leaves `technique`
+// NULL, which `backfillIncrementalEdgeTechniques` below then backfills to
+// 'ts-native' — correct for direct-resolution edges, but wrong for these.
+// Runs its own INSERT directly against `db`, bypassing the `stmts`
+// abstraction, mirroring how `deleteOutgoingEdges`/`backfillIncrementalEdgeTechniques`
+// already do for statements outside the shared watcher.ts pool.
+let _extEdgeDb: BetterSqlite3Database | null = null;
+let _insertCallEdgeExtStmt: SqliteStatement | null = null;
+
+function getInsertCallEdgeExtStmt(db: BetterSqlite3Database): SqliteStatement {
+  if (_extEdgeDb !== db) {
+    _extEdgeDb = db;
+    _insertCallEdgeExtStmt = db.prepare(
+      `INSERT INTO edges (source_id, target_id, kind, confidence, dynamic, technique, dynamic_kind)
+       VALUES (?, ?, 'calls', ?, ?, ?, ?)`,
+    );
+  }
+  return _insertCallEdgeExtStmt!;
+}
+
+/** Insert a `calls` edge with an explicit technique and/or dynamic_kind. */
+function insertCallEdgeExt(
+  db: BetterSqlite3Database,
+  sourceId: number,
+  targetId: number,
+  confidence: number,
+  dynamic: 0 | 1,
+  technique: string | null,
+  dynamicKind: string | null,
+): void {
+  getInsertCallEdgeExtStmt(db).run(sourceId, targetId, confidence, dynamic, technique, dynamicKind);
+}
+
 // ── Call edge building ──────────────────────────────────────────────────
 
 function makeIncrementalLookup(db: BetterSqlite3Database, stmts: IncrementalStmts): CallNodeLookup {
@@ -709,8 +768,10 @@ function buildIncrementalTypeMap(symbols: ExtractorOutput): Map<string, unknown>
  * Mirrors the same-class fallback strategies in `resolveFallbackTargets`
  * (stages/build-edges.ts, full-build path). The Kotlin-reflection
  * pre-qualify and reflection-keyExpr fallbacks are intentionally not
- * mirrored here — that broader points-to/CHA/dynamic-sink gap between the
- * two paths is tracked separately (#1815/#1852), not by this function.
+ * mirrored here — that narrower, language-specific gap is tracked
+ * separately (#1993), not by this function. The broader points-to/CHA/
+ * dynamic-sink gap this comment used to reference is now fixed by
+ * `buildCallEdges`/`applyChaDispatchPostPass` below (#1852).
  */
 function applyCallFallbacks(
   call: { name: string; receiver?: string | null },
@@ -808,6 +869,176 @@ function emitIncrementalCallEdges(
   return edgesAdded;
 }
 
+/**
+ * Phase 8.3/8.3c pts fallback for calls with no receiver, when the primary
+ * resolveCallTargets + applyCallFallbacks chain found nothing. Mirrors
+ * `emitPtsNoReceiverEdges` (stages/build-edges.ts, full-build path) — see
+ * that function's docstring for the full case breakdown (dynamic calls,
+ * scoped/module/flat pts keys).
+ *
+ * Unlike the full-build version, a pts edge here shares `seenCallEdges` with
+ * direct-call edges rather than a separate `ptsEdgeRows` map, so a later
+ * direct call to the same target in the same file is skipped (not upgraded
+ * to the higher direct-call confidence) if a pts edge already claimed the
+ * pair — a narrow, documented gap from full-build parity (tracked in #1852's
+ * follow-up), not a missing edge.
+ */
+function emitIncrementalPtsNoReceiverEdges(
+  db: BetterSqlite3Database,
+  call: Call,
+  caller: { id: number; callerName: string | null },
+  relPath: string,
+  importedNames: Map<string, string>,
+  lookup: CallNodeLookup,
+  typeMap: Map<string, unknown>,
+  ptsMap: PointsToMap,
+  fnRefBindingLhs: ReadonlySet<string>,
+  seenCallEdges: Set<string>,
+  importedOriginalNames: ReadonlyMap<string, string> | undefined,
+): number {
+  const scopedPtsKey = caller.callerName != null ? `${caller.callerName}::${call.name}` : null;
+  // Module-level calls (callerName === null) use the '<module>' sentinel emitted by
+  // extractSpreadForOfWalk for top-level for-of loops.
+  const modulePtsKey =
+    caller.callerName === null && ptsMap.has(`<module>::${call.name}`)
+      ? `<module>::${call.name}`
+      : null;
+  const flatPtsKey =
+    !call.dynamic && fnRefBindingLhs.has(call.name) && ptsMap.has(call.name) ? call.name : null;
+
+  if (
+    !(
+      call.dynamic ||
+      (scopedPtsKey != null && ptsMap.has(scopedPtsKey)) ||
+      modulePtsKey != null ||
+      flatPtsKey != null
+    )
+  )
+    return 0;
+
+  const ptsLookupName = call.dynamic
+    ? call.name
+    : scopedPtsKey != null && ptsMap.has(scopedPtsKey)
+      ? scopedPtsKey
+      : modulePtsKey != null
+        ? modulePtsKey
+        : flatPtsKey!;
+
+  let edgesAdded = 0;
+  const isDynamic: 0 | 1 = call.dynamic ? 1 : 0;
+  for (const alias of resolveViaPointsTo(ptsLookupName, ptsMap)) {
+    const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+      lookup,
+      { name: alias },
+      relPath,
+      importedNames,
+      typeMap,
+      undefined,
+      importedOriginalNames,
+    );
+    const sortedAliasTargets =
+      aliasTargets.length > 1
+        ? [...aliasTargets].sort(
+            (a, b) =>
+              computeConfidence(relPath, b.file, aliasFrom ?? null) -
+              computeConfidence(relPath, a.file, aliasFrom ?? null),
+          )
+        : aliasTargets;
+    for (const t of sortedAliasTargets) {
+      const edgeKey = `${caller.id}|${t.id}`;
+      if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+        const conf =
+          computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+        if (conf > 0) {
+          seenCallEdges.add(edgeKey);
+          insertCallEdgeExt(db, caller.id, t.id, conf, isDynamic, 'points-to', null);
+          edgesAdded++;
+        }
+      }
+    }
+  }
+  return edgesAdded;
+}
+
+/**
+ * Phase 8.3f pts fallback for unresolved receiver calls via object-rest
+ * param bindings (`rest.prop()`). Mirrors `emitPtsReceiverEdges`
+ * (stages/build-edges.ts, full-build path).
+ */
+function emitIncrementalPtsReceiverEdges(
+  db: BetterSqlite3Database,
+  call: Call,
+  caller: { id: number; callerName: string | null },
+  relPath: string,
+  importedNames: Map<string, string>,
+  lookup: CallNodeLookup,
+  typeMap: Map<string, unknown>,
+  ptsMap: PointsToMap,
+  seenCallEdges: Set<string>,
+  importedOriginalNames: ReadonlyMap<string, string> | undefined,
+): number {
+  const receiverKey = `${call.receiver}.${call.name}`;
+  if (!ptsMap.has(receiverKey)) return 0;
+
+  let edgesAdded = 0;
+  const isDynamic: 0 | 1 = call.dynamic ? 1 : 0;
+  for (const alias of resolveViaPointsTo(receiverKey, ptsMap)) {
+    const { targets: aliasTargets, importedFrom: aliasFrom } = resolveCallTargets(
+      lookup,
+      { name: alias },
+      relPath,
+      importedNames,
+      typeMap,
+      undefined,
+      importedOriginalNames,
+    );
+    const sortedAliasTargets =
+      aliasTargets.length > 1
+        ? [...aliasTargets].sort(
+            (a, b) =>
+              computeConfidence(relPath, b.file, aliasFrom ?? null) -
+              computeConfidence(relPath, a.file, aliasFrom ?? null),
+          )
+        : aliasTargets;
+    for (const t of sortedAliasTargets) {
+      const edgeKey = `${caller.id}|${t.id}`;
+      if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+        const conf =
+          computeConfidence(relPath, t.file, aliasFrom ?? null) - PROPAGATION_HOP_PENALTY;
+        if (conf > 0) {
+          seenCallEdges.add(edgeKey);
+          insertCallEdgeExt(db, caller.id, t.id, conf, isDynamic, 'points-to', null);
+          edgesAdded++;
+        }
+      }
+    }
+  }
+  return edgesAdded;
+}
+
+/**
+ * Flag-only dynamic kinds (eval, computed-key, reflection, unresolved-dynamic)
+ * left with no resolved target get a confidence=0.0 sink edge to the file
+ * node instead of being silently dropped — queryable via `codegraph roles
+ * --dynamic`. Mirrors Step 7 of `buildFileCallEdges` (stages/build-edges.ts,
+ * full-build path).
+ */
+function emitDynamicSinkEdge(
+  db: BetterSqlite3Database,
+  call: Call,
+  caller: { id: number },
+  fileNodeRow: { id: number },
+  seenCallEdges: Set<string>,
+): number {
+  if (!call.dynamicKind || !FLAG_ONLY_DYNAMIC_KINDS.has(call.dynamicKind)) return 0;
+  // Key per (caller, file, kind) so each kind gets at most one sink edge per caller.
+  const sinkKey = `${caller.id}:${fileNodeRow.id}:${call.dynamicKind}`;
+  if (seenCallEdges.has(sinkKey)) return 0;
+  seenCallEdges.add(sinkKey);
+  insertCallEdgeExt(db, caller.id, fileNodeRow.id, 0.0, 1, null, call.dynamicKind);
+  return 1;
+}
+
 function buildCallEdges(
   db: BetterSqlite3Database,
   stmts: IncrementalStmts,
@@ -820,6 +1051,10 @@ function buildCallEdges(
   const typeMap = buildIncrementalTypeMap(symbols);
   const seenCallEdges = new Set<string>();
   const lookup = makeIncrementalLookup(db, stmts);
+  // Phase 8.3 pts map (#1852) — same per-file construction the full-build
+  // JS path uses (buildPointsToMapForFile, shared via resolver/points-to.js).
+  const ptsMap = buildPointsToMapForFile(symbols, importedNames);
+  const fnRefBindingLhs = new Set(symbols.fnRefBindings?.map((b) => b.lhs) ?? []);
   let edgesAdded = 0;
 
   for (const call of symbols.calls) {
@@ -868,6 +1103,49 @@ function buildCallEdges(
       seenCallEdges,
       stmts,
     );
+
+    // Phase 8.3/8.3c/8.3f pts fallback (#1852): only fires when the primary +
+    // fallback resolution chain above found nothing.
+    if (targets.length === 0 && ptsMap) {
+      if (!call.receiver) {
+        edgesAdded += emitIncrementalPtsNoReceiverEdges(
+          db,
+          call,
+          caller,
+          relPath,
+          importedNames,
+          lookup,
+          typeMap,
+          ptsMap,
+          fnRefBindingLhs,
+          seenCallEdges,
+          importedOriginalNames,
+        );
+      } else if (
+        !BUILTIN_RECEIVERS.has(call.receiver) &&
+        call.receiver !== 'this' &&
+        call.receiver !== 'self' &&
+        call.receiver !== 'super'
+      ) {
+        edgesAdded += emitIncrementalPtsReceiverEdges(
+          db,
+          call,
+          caller,
+          relPath,
+          importedNames,
+          lookup,
+          typeMap,
+          ptsMap,
+          seenCallEdges,
+          importedOriginalNames,
+        );
+      }
+    }
+
+    // Flag-only dynamic kinds with no resolved target → sink edge (#1852).
+    if (targets.length === 0) {
+      edgesAdded += emitDynamicSinkEdge(db, call, caller, fileNodeRow, seenCallEdges);
+    }
   }
   return edgesAdded;
 }
@@ -875,22 +1153,24 @@ function buildCallEdges(
 // ── technique backfill (#1744) ──────────────────────────────────────────
 
 /**
- * Backfill `technique = 'ts-native'` on `calls` edges just written by
- * `buildCallEdges`/`emitIncrementalCallEdges` above, which insert edges via
- * `stmts.insertEdge.run(...)` without ever setting `technique`, leaving it
- * NULL.
+ * Backfill `technique = 'ts-native'` on direct-resolution `calls` edges just
+ * written by `buildCallEdges`/`emitIncrementalCallEdges` above, which insert
+ * edges via `stmts.insertEdge.run(...)` without ever setting `technique`,
+ * leaving it NULL.
  *
  * `'ts-native'` is not an engine marker — it is the resolution-technique
  * label the full-build paths apply to every directly name/type-resolved
  * `calls` edge, in both the WASM/JS pipeline (`emitDirectCallEdgesForCall` in
  * stages/build-edges.ts) and the native pipeline (`buildCallEdgesNative`,
  * same file), as opposed to `'points-to'` (alias/pts fallback) or `'cha'` /
- * `'super-dispatch'` (virtual-dispatch expansion). `incremental.ts`'s call
- * resolution (`resolveCallTargets` + the same-class/defineProperty
- * fallbacks in `applyCallFallbacks`) implements only that same
- * direct-resolution cascade — it has no pts or CHA/RTA post-pass of its own
- * — so every edge it emits is the direct-resolution case and always
- * belongs under `'ts-native'`, regardless of which engine parsed the file.
+ * `'super-dispatch'` (virtual-dispatch expansion).
+ *
+ * `AND dynamic_kind IS NULL` excludes the flag-only dynamic-call sink edges
+ * `emitDynamicSinkEdge` inserts (#1852) — those intentionally keep
+ * `technique = NULL` forever (matching the full-build WASM/JS path's own
+ * sink-edge rows), with `dynamic_kind` alone marking why they exist. Without
+ * this exclusion, this blanket backfill would mislabel every sink edge as a
+ * direct resolution.
  *
  * Mirrors `applyEdgeTechniquesAfterNativeInsert` (full-build JS pipeline,
  * stages/build-edges.ts) and `backfillEdgeTechniquesAfterNativeOrchestrator`
@@ -916,7 +1196,7 @@ function backfillIncrementalEdgeTechniques(
       const placeholders = chunk.map(() => '?').join(',');
       db.prepare(
         `UPDATE edges SET technique = 'ts-native'
-         WHERE kind = 'calls' AND technique IS NULL
+         WHERE kind = 'calls' AND technique IS NULL AND dynamic_kind IS NULL
            AND source_id IN (SELECT id FROM nodes WHERE file IN (${placeholders}))`,
       ).run(...chunk);
       // Lift resolved ts-native edges below the confidence floor for this
@@ -1052,8 +1332,10 @@ function emitBarrelImportEdgesForReverseDeps(
  * Two-pass reverse-dep cascade:
  *   1. Rebuild direct edges (creating `reexports` edges for barrels).
  *   2. Add barrel import edges (which need `reexports` edges to exist).
- * Returns both the gross edges-added count and the pre-deletion edge count
- * for all reverse deps so callers can compute a true net delta.
+ * Returns the gross edges-added count, the pre-deletion edge count for all
+ * reverse deps so callers can compute a true net delta, and the parsed
+ * `depSymbols` map itself so the CHA post-pass (#1852) can re-iterate each
+ * reverse dep's already-parsed `calls` array without a second re-parse.
  */
 async function runReverseDepCascade(
   db: BetterSqlite3Database,
@@ -1062,7 +1344,11 @@ async function runReverseDepCascade(
   stmts: IncrementalStmts,
   engineOpts: EngineOpts,
   cache: unknown,
-): Promise<{ edgesAdded: number; reverseDepsEdgesBefore: number }> {
+): Promise<{
+  edgesAdded: number;
+  reverseDepsEdgesBefore: number;
+  depSymbols: Map<string, ExtractorOutput>;
+}> {
   const { depSymbols, reverseDepsEdgesBefore } = await parseReverseDeps(
     db,
     rootDir,
@@ -1079,7 +1365,150 @@ async function runReverseDepCascade(
   }
   // Pass 2: add barrel import edges (reexports edges now exist)
   edgesAdded += emitBarrelImportEdgesForReverseDeps(db, stmts, depSymbols, rootDir);
-  return { edgesAdded, reverseDepsEdgesBefore };
+  return { edgesAdded, reverseDepsEdgesBefore, depSymbols };
+}
+
+// ── CHA/RTA dispatch post-pass (#1852) ───────────────────────────────────
+
+/**
+ * Seed a dedup set from `calls` edges already in the DB for the given
+ * caller-side files, so the CHA post-pass below never re-emits a pair that
+ * direct resolution or the pts fallback already wrote — in this rebuild or a
+ * prior one. Mirrors the `seen` set construction in `expandChaEdges`
+ * (stages/native-orchestrator.ts).
+ */
+function seedChaSeenEdges(db: BetterSqlite3Database, files: readonly string[]): Set<string> {
+  const seen = new Set<string>();
+  if (files.length === 0) return seen;
+  const CHUNK_SIZE = 500;
+  for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+    const chunk = files.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT source_id, target_id FROM edges
+         WHERE kind = 'calls' AND source_id IN (SELECT id FROM nodes WHERE file IN (${placeholders}))`,
+      )
+      .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+    for (const r of rows) seen.add(`${r.source_id}|${r.target_id}`);
+  }
+  return seen;
+}
+
+/**
+ * Phase 8.5 CHA + RTA dispatch expansion for a single call site — mirrors
+ * `emitChaCallEdgesForCall` (stages/build-edges.ts, full-build path).
+ */
+function emitChaDispatchForCall(
+  db: BetterSqlite3Database,
+  call: Call,
+  caller: { id: number; callerName: string | null },
+  relPath: string,
+  typeMap: Map<string, unknown>,
+  lookup: CallNodeLookup,
+  chaCtx: ChaContext,
+  seenCallEdges: Set<string>,
+): number {
+  if (!call.receiver || BUILTIN_RECEIVERS.has(call.receiver)) return 0;
+
+  let chaTargets: ReadonlyArray<{ id: number; file: string }> = [];
+  let isTypedReceiverDispatch = false;
+
+  if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super') {
+    chaTargets = resolveThisDispatch(
+      call.name,
+      caller.callerName,
+      call.receiver,
+      chaCtx,
+      lookup,
+      relPath,
+    );
+  } else {
+    const typeEntry = typeMap.get(call.receiver);
+    const typeName = typeEntry
+      ? typeof typeEntry === 'string'
+        ? typeEntry
+        : (typeEntry as { type?: string }).type
+      : null;
+    if (typeName) {
+      chaTargets = resolveChaTargets(typeName, call.name, chaCtx, lookup);
+      isTypedReceiverDispatch = true;
+    }
+  }
+
+  let edgesAdded = 0;
+  for (const t of chaTargets) {
+    const edgeKey = `${caller.id}|${t.id}`;
+    if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+      // Typed-receiver (interface/CHA) dispatch: use CHA_TYPED_DISPATCH_CONFIDENCE
+      // — file proximity is not meaningful for virtual dispatch confidence.
+      // this/super dispatch keeps computeConfidence-based proximity scoring.
+      const conf = isTypedReceiverDispatch
+        ? CHA_TYPED_DISPATCH_CONFIDENCE
+        : computeConfidence(relPath, t.file, null) - CHA_DISPATCH_PENALTY;
+      if (conf > 0) {
+        seenCallEdges.add(edgeKey);
+        // Tag super-dispatch edges distinctly, matching the full-build convention
+        // (super calls are not virtual dispatch).
+        const technique = call.receiver === 'super' ? 'super-dispatch' : 'cha';
+        insertCallEdgeExt(db, caller.id, t.id, conf, 0, technique, null);
+        edgesAdded++;
+      }
+    }
+  }
+  return edgesAdded;
+}
+
+/**
+ * Phase 8.5 CHA + RTA dispatch expansion post-pass for the incremental
+ * single-file rebuild path (#1852).
+ *
+ * Runs AFTER the target file's and every reverse-dep's edges (including
+ * class-hierarchy `extends`/`implements` edges) are fully rebuilt, since the
+ * DB-driven ChaContext (`buildChaContextFromDb`, builder/cha.ts) depends on
+ * that state already being persisted.
+ *
+ * Iterates the already-parsed `calls` arrays for the rebuilt file and its
+ * reverse deps — no re-parse needed, unlike the native full-build's
+ * `runPostNativeThisDispatch` (stages/native-orchestrator.ts), which must
+ * WASM-re-parse because it never held the raw call sites in memory to begin
+ * with (the native engine doesn't persist unresolved receiver info to DB).
+ */
+function applyChaDispatchPostPass(
+  db: BetterSqlite3Database,
+  stmts: IncrementalStmts,
+  filesWithSymbols: ReadonlyArray<readonly [string, ExtractorOutput]>,
+): number {
+  const chaCtx = buildChaContextFromDb(db);
+  if (chaCtx.implementors.size === 0) return 0;
+
+  const lookup = makeIncrementalLookup(db, stmts);
+  const seenCallEdges = seedChaSeenEdges(
+    db,
+    filesWithSymbols.map(([relPath]) => relPath),
+  );
+
+  let edgesAdded = 0;
+  for (const [relPath, symbols] of filesWithSymbols) {
+    const fileNodeRow = stmts.getNodeId.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+    const typeMap = coerceTypeMap(symbols);
+
+    for (const call of symbols.calls) {
+      const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
+      edgesAdded += emitChaDispatchForCall(
+        db,
+        call,
+        caller,
+        relPath,
+        typeMap,
+        lookup,
+        chaCtx,
+        seenCallEdges,
+      );
+    }
+  }
+  return edgesAdded;
 }
 
 /**
@@ -1145,20 +1574,25 @@ export async function rebuildFile(
     };
 
   let edgesAdded = rebuildEdgesForTargetFile(db, stmts, relPath, symbols, fileNodeRow, rootDir);
-  const { edgesAdded: cascadeEdges, reverseDepsEdgesBefore } = await runReverseDepCascade(
-    db,
-    rootDir,
-    reverseDeps,
-    stmts,
-    engineOpts,
-    cache,
-  );
+  const {
+    edgesAdded: cascadeEdges,
+    reverseDepsEdgesBefore,
+    depSymbols,
+  } = await runReverseDepCascade(db, rootDir, reverseDeps, stmts, engineOpts, cache);
   edgesAdded += cascadeEdges;
+
+  // Phase 8.5 CHA + RTA dispatch expansion post-pass (#1852) — runs after all
+  // of this rebuild's class-hierarchy edges are in the DB (target file +
+  // reverse deps), since the DB-driven ChaContext depends on them.
+  edgesAdded += applyChaDispatchPostPass(db, stmts, [[relPath, symbols], ...depSymbols]);
 
   // Backfill technique='ts-native' (and the confidence floor) for this
   // rebuild's calls edges — buildCallEdges above inserts edges without a
   // technique value, unlike a full rebuild of either engine, which always
-  // tags directly-resolved calls edges 'ts-native' (#1744).
+  // tags directly-resolved calls edges 'ts-native' (#1744). Runs after the
+  // CHA post-pass, which sets its own non-NULL technique ('cha'/'super-dispatch')
+  // at insert time via insertCallEdgeExt — this backfill's `technique IS NULL`
+  // filter correctly skips those rows.
   backfillIncrementalEdgeTechniques(db, [relPath, ...reverseDeps]);
 
   // Include pre-deletion edge counts from reverse deps so the net delta

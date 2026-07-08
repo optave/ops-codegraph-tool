@@ -13,17 +13,14 @@ import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import { getOrCreatePerDbChunkStmt } from '../../../../shared/chunked-stmt-cache.js';
 import { TS_NATIVE_CONFIDENCE_FLOOR } from '../../../../shared/constants.js';
-import { isTypeErasedImportTarget } from '../../../../shared/kinds.js';
+import { FLAG_ONLY_DYNAMIC_KINDS, isTypeErasedImportTarget } from '../../../../shared/kinds.js';
 import type {
   ArrayCallbackBinding,
   ArrayElemBinding,
   BetterSqlite3Database,
   Call,
   ClassRelation,
-  Definition,
-  DynamicKind,
   ExtractorOutput,
-  FnRefBinding,
   ForOfBinding,
   Import,
   NativeAddon,
@@ -38,7 +35,7 @@ import type {
 } from '../../../../types.js';
 import { computeConfidence } from '../../resolve.js';
 import type { PointsToMap } from '../../resolver/points-to.js';
-import { buildPointsToMap, resolveViaPointsTo } from '../../resolver/points-to.js';
+import { buildPointsToMapForFile, resolveViaPointsTo } from '../../resolver/points-to.js';
 import { unwrapTypeEntry } from '../../resolver/strategy.js';
 import { enrichTypeMapWithTsc } from '../../resolver/ts-resolver.js';
 import {
@@ -1120,97 +1117,6 @@ function makeContextLookup(ctx: PipelineContext, getNodeIdStmt: NodeIdStmt): Cal
   };
 }
 
-/**
- * Build a per-file points-to map for Phase 8.3 alias resolution.
- * Returns null fast when the file has no function-reference bindings.
- *
- * Only callable definitions (function/method) are seeded as concrete targets.
- * Class and interface names are intentionally excluded — aliasing a constructor
- * (`const Svc = MyService`) is an uncommon pattern that would require tracking
- * `new`-expression flows separately from the alias chain. That is left to Phase
- * 8.2 call-assignment propagation, which already handles constructor assignments.
- *
- * @param maxIterations - fixed-point solver iteration cap, forwarded to
- *   `buildPointsToMap` (resolved from `ctx.config.analysis.pointsToMaxIterations`
- *   by the caller, which already holds the pipeline's resolved config).
- */
-function buildPointsToMapForFile(
-  symbols: ExtractorOutput,
-  importedNames: Map<string, string>,
-  maxIterations: number,
-): PointsToMap | null {
-  const hasThisCallBindings = !!symbols.thisCallBindings?.length;
-  if (
-    !symbols.fnRefBindings?.length &&
-    !symbols.paramBindings?.length &&
-    !symbols.arrayElemBindings?.length &&
-    !symbols.spreadArgBindings?.length &&
-    !symbols.forOfBindings?.length &&
-    !symbols.arrayCallbackBindings?.length &&
-    !symbols.objectRestParamBindings?.length &&
-    !symbols.objectPropBindings?.length &&
-    !hasThisCallBindings
-  )
-    return null;
-  const defNames = new Set(
-    symbols.definitions
-      .filter((d) => d.kind === 'function' || d.kind === 'method')
-      .map((d) => d.name),
-  );
-  const definitionParams = buildDefinitionParamsMap(symbols.definitions);
-
-  // Convert thisCallBindings into scoped fnRefBindings: `fn::this → namedCtx`.
-  // The scoped key `fn::this` is looked up when `this()` calls are resolved inside
-  // function `fn` — caller.callerName='fn', call.name='this' → scopedPtsKey='fn::this'.
-  let allFnRefBindings: readonly FnRefBinding[] = symbols.fnRefBindings ?? [];
-  if (hasThisCallBindings) {
-    const extra: FnRefBinding[] = (symbols.thisCallBindings ?? []).map((b) => ({
-      lhs: `${b.callee}::this`,
-      rhs: b.thisArg,
-    }));
-    allFnRefBindings = [...allFnRefBindings, ...extra];
-  }
-
-  return buildPointsToMap(
-    allFnRefBindings,
-    defNames,
-    importedNames,
-    symbols.paramBindings,
-    definitionParams,
-    symbols.arrayElemBindings,
-    symbols.spreadArgBindings,
-    symbols.forOfBindings,
-    symbols.arrayCallbackBindings,
-    symbols.objectRestParamBindings,
-    symbols.objectPropBindings,
-    maxIterations,
-  );
-}
-
-function buildDefinitionParamsMap(
-  definitions: readonly Definition[],
-): Map<string, readonly string[]> {
-  const map = new Map<string, readonly string[]>();
-  for (const def of definitions) {
-    if ((def.kind === 'function' || def.kind === 'method') && def.children) {
-      const params = def.children.filter((c) => c.kind === 'parameter').map((c) => c.name);
-      if (params.length > 0) {
-        if (map.has(def.name)) {
-          // Two definitions share the same name (e.g. overloads, same-named method and
-          // function, or conditional redeclaration). Keep the first entry — using the
-          // wrong parameter list would map argIndex to the wrong parameter name.
-          debug(
-            `buildDefinitionParamsMap: duplicate def name "${def.name}" (kind=${def.kind}, line=${def.line}) — skipping; first entry kept`,
-          );
-        } else {
-          map.set(def.name, params);
-        }
-      }
-    }
-  }
-  return map;
-}
-
 // ── Per-call resolution helpers ─────────────────────────────────────────
 
 /**
@@ -1783,20 +1689,6 @@ function emitChaCallEdgesForCall(
 }
 
 /**
- * Dynamic kinds that cannot be resolved statically — emit a sink edge to the
- * file node instead of silently dropping the call site.  confidence=0.0 keeps
- * these below DEFAULT_MIN_CONFIDENCE so they never appear in normal query results.
- * Includes reflection so that Reflect.apply/getMethod/callable-ref calls whose
- * target is not found in the codebase still produce a visible sink edge.
- */
-const FLAG_ONLY_KINDS: ReadonlySet<DynamicKind> = new Set([
-  'eval',
-  'computed-key',
-  'reflection',
-  'unresolved-dynamic',
-]);
-
-/**
  * Build call edges for all calls in a single file (WASM/JS engine path).
  *
  * Iterates over `symbols.calls` and dispatches each call through the full
@@ -1970,7 +1862,7 @@ function buildFileCallEdges(
     // Step 7: Flag-only dynamic kinds with no resolved target → sink edge to the
     // file node.  confidence=0.0 keeps it below DEFAULT_MIN_CONFIDENCE so it never
     // appears in normal query results, but is queryable via `codegraph roles --dynamic`.
-    if (targets.length === 0 && call.dynamicKind && FLAG_ONLY_KINDS.has(call.dynamicKind)) {
+    if (targets.length === 0 && call.dynamicKind && FLAG_ONLY_DYNAMIC_KINDS.has(call.dynamicKind)) {
       // Key per (caller, file, kind) so each kind gets at most one sink edge per caller.
       const sinkKey = `${caller.id}:${fileNodeRow.id}:${call.dynamicKind}`;
       if (!seenCallEdges.has(sinkKey)) {
