@@ -150,7 +150,7 @@ function handleLogicalOperator(
   nestingLevel: number,
   walkFn: WalkFn,
 ): boolean {
-  if (type !== rules.logicalNodeType) return false;
+  if (!rules.logicalNodeTypes.has(type)) return false;
 
   const op = node.child(1)?.type;
   if (!op || !rules.logicalOperators.has(op)) return false;
@@ -159,7 +159,8 @@ function handleLogicalOperator(
 
   // Cognitive: +1 only when operator changes from the previous sibling sequence
   const parent = node.parent;
-  const sameSequence = parent?.type === rules.logicalNodeType && parent.child(1)?.type === op;
+  const sameSequence =
+    parent != null && rules.logicalNodeTypes.has(parent.type) && parent.child(1)?.type === op;
   if (!sameSequence) acc.cognitive++;
 
   walkChildren(node, nestingLevel, walkFn);
@@ -257,7 +258,14 @@ function handleBranchNode(
     return true;
   }
 
-  return false;
+  // Always fully handled once branchNodes matched — mirrors the Rust walk()'s
+  // unconditional `return` after `classify_branch`, which makes `is_case`
+  // unreachable for a node type listed in both branch_nodes and case_nodes
+  // (e.g. Kotlin's when_entry, Scala's case_clause). Returning `false` here
+  // would let the caller's separate `caseNodes` check double-count the
+  // cyclomatic increment for such node types.
+  walkChildren(node, nestingLevel, walkFn);
+  return true;
 }
 
 /** Handle Pattern C plain else: block is the alternative of an if_statement (Go/Java). */

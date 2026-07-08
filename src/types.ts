@@ -986,7 +986,11 @@ export interface ComplexityRules {
   branchNodes: Set<string>;
   caseNodes: Set<string>;
   logicalOperators: Set<string>;
-  logicalNodeType: string | null;
+  /** Node type(s) that wrap a logical operator. Most grammars use one shared
+   * binary-op node for all operators; a few (e.g. Kotlin's `conjunction_expression`
+   * / `disjunction_expression`) use a distinct node type per operator. Mirrors
+   * the native `logical_node_types: &'static [&'static str]` slice. */
+  logicalNodeTypes: Set<string>;
   optionalChainType: string | null;
   nestingNodes: Set<string>;
   functionNodes: Set<string>;
