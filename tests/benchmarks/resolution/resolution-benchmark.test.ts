@@ -152,18 +152,18 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   'dynamic-kotlin': { precision: 1.0, recall: 1.0 },
   'dynamic-scala': { precision: 1.0, recall: 1.0 },
   'dynamic-groovy': { precision: 1.0, recall: 1.0 },
-  // TS 0.72: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
-  //   lifting recall from 69.4% to 72.2%.  Remaining gap (interface-dispatch, CHA) is tracked
+  // TS 0.9: Phase 8.3e adds this.method() same-class resolution (Shape.describe → Shape.area),
+  //   lifting recall from 69.4% to 72.2%. Remaining gap (interface-dispatch, CHA) is tracked
   //   in Phase 8.5 (TSC enrichment) and Phase 8.7 (CHA on JS/TS).
-  //   #1741 (identifier-arg callback gating) intentionally drops 3 callback-mode edges
+  //   #1741 (identifier-arg callback gating) had intentionally dropped 3 callback-mode edges
   //   (runCallbackDemo -> logUser/upperUser/hasEmail in callbacks.ts — bare identifiers
-  //   passed to the project-defined higher-order functions processEach/filterThen, which
-  //   aren't and can't be in a name allowlist). Actual recall is now 44/47 (93.6%), still
-  //   well above this floor — the 3 edges stay in expected-edges.json because they're real,
-  //   decidable facts, not fabricated ones. Recognizing them needs the callee's own parameter
-  //   type (function-shaped?), not its name; tracked as a follow-up (#1845) rather than
-  //   expanding the name/position gate in #1741.
-  typescript: { precision: 0.85, recall: 0.72 },
+  //   passed to the project-defined higher-order functions processEach/filterThen), because a
+  //   name allowlist can't enumerate arbitrary user-defined higher-order functions. #1845
+  //   recovers all 3 by recognizing the callee's own function-shaped parameter type
+  //   (same-file only) instead of relying solely on the name/position allowlist. Actual recall
+  //   is now 47/47 (100%); floor ratcheted up from 0.72 to 0.9, leaving headroom for organic
+  //   fixture growth without the exact-100% brittleness of a 1.0 floor.
+  typescript: { precision: 0.85, recall: 0.9 },
   tsx: { precision: 0.85, recall: 0.8 },
   // TODO: raise thresholds once bash call resolution is implemented
   bash: { precision: 0.0, recall: 0.0 },

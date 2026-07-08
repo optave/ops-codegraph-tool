@@ -230,6 +230,41 @@ Uint8Array.from(arr, mapCallback);
 `,
     },
     {
+      // Regression guard for #1845: native must recognize identifier args to
+      // arbitrary user-defined higher-order functions via the callee's own
+      // function-shaped parameter type, not just the CALLBACK_ACCEPTING_CALLEES
+      // name allowlist — and must not regress the #1741 fix for non-function-
+      // shaped parameters.
+      //   1. processEach's `fn` param is a function-shaped type alias → logUser recognized
+      //   2. filterThen's `pred`/`fn` params are function-shaped → hasEmail, logUser recognized
+      //   3. filterThen's `users` param is NOT function-shaped → not emitted
+      //   4. findMergeCandidates's `communities` param is NOT function-shaped → not emitted
+      name: 'TypeScript — identifier args to user-defined higher-order functions recognized via parameter type must agree between engines',
+      file: 'callbacks-1845.ts',
+      code: `
+type UserProcessor = (user: string) => void;
+type UserPredicate = (user: string) => boolean;
+
+function processEach(users: string[], fn: UserProcessor): void {
+  for (const user of users) fn(user);
+}
+function filterThen(users: string[], pred: UserPredicate, fn: UserProcessor): void {
+  for (const user of users) {
+    if (pred(user)) fn(user);
+  }
+}
+function findMergeCandidates(communities: string[]): void {}
+function logUser(user: string): void { console.log(user); }
+function hasEmail(user: string): boolean { return true; }
+
+function runDemo(users: string[]): void {
+  processEach(users, logUser);
+  filterThen(users, hasEmail, logUser);
+  findMergeCandidates(users);
+}
+`,
+    },
+    {
       name: 'TypeScript — destructured parameters',
       file: 'destruct.ts',
       code: `

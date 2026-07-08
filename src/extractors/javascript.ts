@@ -330,6 +330,7 @@ function dispatchQueryMatch(
   imports: Import[],
   classes: ClassRelation[],
   exps: Export[],
+  callbackParamShapes: CallbackParamShapes,
 ): void {
   if (c.fn_node) {
     handleFnCapture(c, definitions);
@@ -351,7 +352,7 @@ function dispatchQueryMatch(
     // Route through extractCallInfo so special identifier calls (eval) get classified.
     const callfnInfo = extractCallInfo(c.callfn_name!, c.callfn_node);
     if (callfnInfo) calls.push(callfnInfo);
-    calls.push(...extractCallbackReferenceCalls(c.callfn_node));
+    calls.push(...extractCallbackReferenceCalls(c.callfn_node, callbackParamShapes));
   } else if (c.callmem_node) {
     // extractCallInfo → extractMemberExprCallInfo tags .call/.apply/.bind (e.g. `fn.call(ctx)`)
     // as dynamic/reflection regardless of receiver shape, matching the walk path and native
@@ -362,11 +363,11 @@ function dispatchQueryMatch(
     if (callInfo) calls.push(callInfo);
     const cbDef = extractCallbackDefinition(c.callmem_node, c.callmem_fn);
     if (cbDef) definitions.push(cbDef);
-    calls.push(...extractCallbackReferenceCalls(c.callmem_node));
+    calls.push(...extractCallbackReferenceCalls(c.callmem_node, callbackParamShapes));
   } else if (c.callsub_node) {
     const callInfo = extractCallInfo(c.callsub_fn!, c.callsub_node);
     if (callInfo) calls.push(callInfo);
-    calls.push(...extractCallbackReferenceCalls(c.callsub_node));
+    calls.push(...extractCallbackReferenceCalls(c.callsub_node, callbackParamShapes));
   } else if (c.newfn_node) {
     if (c.newfn_name!.text === 'Function') {
       // new Function(body) — dynamic code execution; classify as eval kind
@@ -411,12 +412,16 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   const thisCallBindings: ThisCallBinding[] = [];
 
   const matches = query.matches(tree.rootNode);
+  // Issue #1845: collected once up front so identifier-argument calls to
+  // same-file user-defined higher-order functions can be recognized
+  // regardless of match order.
+  const callbackParamShapes = collectCallbackParamShapes(tree.rootNode);
 
   for (const match of matches) {
     // Build capture lookup for this match (1-3 captures each, very fast)
     const c: Record<string, TreeSitterNode> = Object.create(null);
     for (const cap of match.captures) c[cap.name] = cap.node;
-    dispatchQueryMatch(c, definitions, calls, imports, classes, exps);
+    dispatchQueryMatch(c, definitions, calls, imports, classes, exps, callbackParamShapes);
   }
 
   // Extract top-level constants via targeted walk (query patterns don't cover these)
@@ -909,7 +914,11 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     thisCallBindings: [],
   };
 
-  walkJavaScriptNode(tree.rootNode, ctx);
+  // Issue #1845: collected once up front so identifier-argument calls to
+  // same-file user-defined higher-order functions can be recognized during
+  // the single forward walk below, regardless of declaration order.
+  const callbackParamShapes = collectCallbackParamShapes(tree.rootNode);
+  walkJavaScriptNode(tree.rootNode, ctx, callbackParamShapes);
   // Phase 8.2: Extract function return types first — runContextCollectorWalk's
   // declarator handler reads the *complete* per-file map for inter-procedural
   // propagation, so this cannot be folded into that pass.
@@ -949,7 +958,11 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   return ctx;
 }
 
-function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
+function walkJavaScriptNode(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  callbackParamShapes: CallbackParamShapes,
+): void {
   switch (node.type) {
     case 'function_declaration':
     case 'generator_function_declaration':
@@ -988,7 +1001,7 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
       handleDecorator(node, ctx.calls);
       break;
     case 'call_expression':
-      handleCallExpr(node, ctx);
+      handleCallExpr(node, ctx, callbackParamShapes);
       break;
     case 'new_expression':
       handleNewExpr(node, ctx);
@@ -1005,7 +1018,7 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 
   for (let i = 0; i < node.childCount; i++) {
-    walkJavaScriptNode(node.child(i)!, ctx);
+    walkJavaScriptNode(node.child(i)!, ctx, callbackParamShapes);
   }
 }
 
@@ -1449,7 +1462,11 @@ function handleEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   });
 }
 
-function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
+function handleCallExpr(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  callbackParamShapes: CallbackParamShapes,
+): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
   if (fn.type === 'import') {
@@ -1494,7 +1511,7 @@ function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
         }
       }
     }
-    ctx.calls.push(...extractCallbackReferenceCalls(node));
+    ctx.calls.push(...extractCallbackReferenceCalls(node, callbackParamShapes));
   }
 }
 
@@ -3681,6 +3698,172 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
 }
 
 /**
+ * Per-file map from a function/method's bare name (matching what
+ * {@link extractCalleeName} returns) to the set of its own parameter
+ * positions whose declared TypeScript type is function-shaped (an inline
+ * arrow-function type, `Function`, or a `type X = (...) => ...` alias).
+ * Built once per file by {@link collectCallbackParamShapes} and consulted by
+ * {@link extractCallbackReferenceCalls} to recognize identifier arguments
+ * passed to arbitrary user-defined higher-order functions (issue #1845),
+ * not just the {@link CALLBACK_ACCEPTING_CALLEES} name allowlist.
+ *
+ * Name-keyed rather than receiver-typed, consistent with the rest of this
+ * gate (see {@link POSITIONAL_CALLBACK_ARG_INDEX}'s doc comment for the same
+ * tradeoff) — a same-named function/method elsewhere in the file with an
+ * unrelated non-function-shaped parameter at the same index is a residual,
+ * accepted risk.
+ */
+type CallbackParamShapes = ReadonlyMap<string, ReadonlySet<number>>;
+
+/**
+ * True iff `typeNode` denotes a function-shaped TypeScript type: an inline
+ * arrow-function type (`(x: T) => R`), the `Function` type, a parenthesized
+ * function type, a generic instantiation of one (`UserProcessor<T>`), or a
+ * `type` alias name that itself resolves to one of the above (see
+ * {@link collectFunctionShapedTypeAliases}).
+ *
+ * Deliberately not full type-checking: union/intersection types and
+ * interface call signatures are not recognized, matching the same
+ * "defensible heuristic, not full inference" scope as {@link extractSimpleTypeName}.
+ */
+function isFunctionShapedTypeNode(
+  typeNode: TreeSitterNode,
+  aliasShapes: ReadonlyMap<string, boolean>,
+): boolean {
+  switch (typeNode.type) {
+    case 'function_type':
+      return true;
+    case 'parenthesized_type': {
+      const inner = typeNode.namedChild(0);
+      return inner ? isFunctionShapedTypeNode(inner, aliasShapes) : false;
+    }
+    case 'type_identifier':
+      return typeNode.text === 'Function' || aliasShapes.get(typeNode.text) === true;
+    case 'generic_type': {
+      const base = typeNode.child(0);
+      return base ? isFunctionShapedTypeNode(base, aliasShapes) : false;
+    }
+    default:
+      return false;
+  }
+}
+
+/** True iff a `type_annotation` node's inner type is function-shaped. */
+function isFunctionShapedTypeAnnotation(
+  typeAnnotationNode: TreeSitterNode,
+  aliasShapes: ReadonlyMap<string, boolean>,
+): boolean {
+  for (let i = 0; i < typeAnnotationNode.childCount; i++) {
+    const child = typeAnnotationNode.child(i);
+    if (child && child.type !== ':') return isFunctionShapedTypeNode(child, aliasShapes);
+  }
+  return false;
+}
+
+/**
+ * Walk the file for `type X = ...` aliases and classify each by whether it
+ * resolves to a function-shaped type, following one level of alias-to-alias
+ * indirection (`type A = B` where `B` is itself function-shaped) with a
+ * cycle guard. Motivating case: `export type UserProcessor = (user: User) => void;`.
+ */
+function collectFunctionShapedTypeAliases(root: TreeSitterNode): ReadonlyMap<string, boolean> {
+  const directAliasOf = new Map<string, string>();
+  const resolved = new Map<string, boolean>();
+
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'type_alias_declaration') {
+      const nameNode = node.childForFieldName('name');
+      const valueNode = node.childForFieldName('value');
+      if (nameNode && valueNode) {
+        if (valueNode.type === 'type_identifier') {
+          directAliasOf.set(nameNode.text, valueNode.text);
+        } else {
+          resolved.set(nameNode.text, isFunctionShapedTypeNode(valueNode, resolved));
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) walk(child, depth + 1);
+    }
+  }
+  walk(root, 0);
+
+  // Resolve `type A = B` chains against the direct classifications above.
+  for (const [name, aliasOf] of directAliasOf) {
+    if (!resolved.has(name)) {
+      resolved.set(name, aliasOf === 'Function' || resolved.get(aliasOf) === true);
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Walk the whole file once to record, per {@link CallbackParamShapes}, which
+ * parameter positions of every `function`/method declaration are
+ * function-shaped — the callee-definition side of recognizing identifier
+ * arguments to arbitrary user-defined higher-order functions (issue #1845).
+ *
+ * Same-file only: a call site whose callee is defined in another file has no
+ * entry here and falls back to the existing name/position allowlist.
+ */
+function collectCallbackParamShapes(root: TreeSitterNode): CallbackParamShapes {
+  const aliasShapes = collectFunctionShapedTypeAliases(root);
+  const shapes = new Map<string, Set<number>>();
+
+  function recordFunctionParams(nameNode: TreeSitterNode | null, fnNode: TreeSitterNode): void {
+    if (!nameNode) return;
+    const paramsNode =
+      fnNode.childForFieldName('parameters') || findChild(fnNode, 'formal_parameters');
+    if (!paramsNode) return;
+    let argIndex = -1;
+    for (let i = 0; i < paramsNode.childCount; i++) {
+      const child = paramsNode.child(i);
+      if (!child) continue;
+      const t = child.type;
+      if (t === '(' || t === ')' || t === ',') continue;
+      if (t === 'required_parameter' || t === 'optional_parameter') {
+        // TypeScript's explicit `this` parameter (`function f(this: Foo, cb: Bar)`)
+        // is compiled away and never appears at the call site, so it must not
+        // consume an argument-index slot — otherwise every later parameter's
+        // index would be off by one relative to the call's actual arguments.
+        const patternNode = child.childForFieldName('pattern') || child.childForFieldName('name');
+        if (patternNode?.type === 'this') continue;
+      }
+      argIndex++;
+      if (t !== 'required_parameter' && t !== 'optional_parameter') continue;
+      const typeAnno = findChild(child, 'type_annotation');
+      if (typeAnno && isFunctionShapedTypeAnnotation(typeAnno, aliasShapes)) {
+        let set = shapes.get(nameNode.text);
+        if (!set) {
+          set = new Set();
+          shapes.set(nameNode.text, set);
+        }
+        set.add(argIndex);
+      }
+    }
+  }
+
+  function walk(node: TreeSitterNode, depth: number): void {
+    if (depth >= MAX_WALK_DEPTH) return;
+    const t = node.type;
+    if (t === 'function_declaration' || t === 'generator_function_declaration') {
+      recordFunctionParams(node.childForFieldName('name'), node);
+    } else if (t === 'method_definition') {
+      recordFunctionParams(node.childForFieldName('name'), node);
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) walk(child, depth + 1);
+    }
+  }
+  walk(root, 0);
+
+  return shapes;
+}
+
+/**
  * Extract Call entries for named function references passed as arguments.
  * e.g. `router.use(handleToken, checkAuth)` yields calls to handleToken and checkAuth.
  * `app.use(auth.validate)` yields a call to validate with receiver auth.
@@ -3690,10 +3873,14 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  * `store.set(user.id, user)` — `user.id` is a value, not a callback; or
  * `findMergeCandidates(communities)` — `communities` is a data argument, not
  * a callback), both identifier and member_expression args are only emitted
- * when the callee is in {@link CALLBACK_ACCEPTING_CALLEES}, or the argument
- * sits at the specific index a {@link POSITIONAL_CALLBACK_ARG_INDEX} entry
+ * when the callee is in {@link CALLBACK_ACCEPTING_CALLEES}, the argument sits
+ * at the specific index a {@link POSITIONAL_CALLBACK_ARG_INDEX} entry
  * designates (e.g. `Array.from(arrayLike, mapFn)` — only index 1 is eligible;
- * `arrayLike` at index 0 stays ungated data).
+ * `arrayLike` at index 0 stays ungated data), or the callee is a same-file
+ * function/method whose own parameter at that index is function-shaped per
+ * {@link CallbackParamShapes} (issue #1845 — arbitrary user-defined
+ * higher-order functions like `processEach(users, fn: UserProcessor)`,
+ * which no name/position allowlist can enumerate).
  *
  * HTTP-verb callees (`get`, `post`, `put`, `delete`, `patch`, `options`,
  * `head`, `all`) double as Map/cache/repository method names, so their
@@ -3706,15 +3893,15 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  * Emitting them here would produce false-positive edges from the *calling* function.
  * This-rebinding (fn::this → ctx) is handled separately by extractThisCallBindingsWalk.
  *
- * Known gap: arbitrary user-defined higher-order functions (e.g.
- * `processEach(users, fn: UserProcessor)`) are neither name-allowlisted nor
- * position-mapped, so `processEach(users, logUser)` no longer emits a
- * `logUser` reference from the caller. Recognizing these would require
- * looking at the callee's own parameter type (is it function-shaped?) rather
- * than its name — a resolver-level, cross-engine feature, not a small
- * extension of this name/position gate. Tracked as a follow-up.
+ * Known gap: {@link CallbackParamShapes} only covers callees defined in the
+ * same file. A cross-file arbitrary higher-order function still falls back
+ * to the name/position allowlist. Extending this to cross-file callees needs
+ * the resolver's import-resolution machinery; tracked as a follow-up.
  */
-function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
+function extractCallbackReferenceCalls(
+  callNode: TreeSitterNode,
+  callbackParamShapes: CallbackParamShapes,
+): Call[] {
   const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
   if (!args) return [];
 
@@ -3735,7 +3922,10 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 
   const positionalIndex =
     calleeName !== null ? POSITIONAL_CALLBACK_ARG_INDEX.get(calleeName) : undefined;
-  if (!callbackArgsAllowed && positionalIndex === undefined) return [];
+  const calleeParamShapes = calleeName !== null ? callbackParamShapes.get(calleeName) : undefined;
+  if (!callbackArgsAllowed && positionalIndex === undefined && !calleeParamShapes?.size) {
+    return [];
+  }
 
   const result: Call[] = [];
   const callLine = nodeStartLine(callNode);
@@ -3748,9 +3938,14 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
     if (t === '(' || t === ')' || t === ',') continue;
     argIndex++;
 
-    // A positional entry restricts eligibility to its one designated index,
-    // regardless of what the generic (any-position) gate above decided.
-    if (positionalIndex !== undefined && argIndex !== positionalIndex) continue;
+    if (positionalIndex !== undefined) {
+      // A positional entry restricts eligibility to its one designated
+      // index, regardless of what the generic (any-position) gate above
+      // decided.
+      if (argIndex !== positionalIndex) continue;
+    } else if (!callbackArgsAllowed && !calleeParamShapes?.has(argIndex)) {
+      continue;
+    }
 
     if (t === 'identifier') {
       result.push({ name: child.text, line: callLine, dynamic: true });

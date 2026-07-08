@@ -3,6 +3,7 @@ use super::SymbolExtractor;
 use crate::ast_analysis::cfg::build_function_cfg;
 use crate::ast_analysis::complexity::compute_all_metrics;
 use crate::types::*;
+use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Tree};
 
 /// Well-known JS globals that must not be recorded as pts targets.
@@ -30,7 +31,13 @@ pub struct JsExtractor;
 impl SymbolExtractor for JsExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_tree(&tree.root_node(), source, &mut symbols, match_js_node);
+        // Issue #1845: collected once up front so identifier-argument calls to
+        // same-file user-defined higher-order functions can be recognized
+        // during the single forward walk below, regardless of declaration order.
+        let callback_param_shapes = collect_callback_param_shapes(&tree.root_node(), source);
+        walk_tree(&tree.root_node(), source, &mut symbols, |node, source, symbols, depth| {
+            match_js_node(node, source, symbols, depth, &callback_param_shapes)
+        });
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_type_map);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_return_type_map);
@@ -1018,7 +1025,13 @@ fn match_js_call_assignments(node: &Node, source: &[u8], symbols: &mut FileSymbo
     }
 }
 
-fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+fn match_js_node(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    _depth: usize,
+    callback_param_shapes: &CallbackParamShapes,
+) {
     match node.kind() {
         "function_declaration" | "generator_function_declaration" => handle_function_decl(node, source, symbols),
         "class_declaration" | "abstract_class_declaration"
@@ -1033,7 +1046,7 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "type_alias_declaration" => handle_type_alias(node, source, symbols),
         "enum_declaration" => handle_enum_decl(node, source, symbols),
         "lexical_declaration" | "variable_declaration" => handle_var_decl(node, source, symbols),
-        "call_expression" => handle_call_expr(node, source, symbols),
+        "call_expression" => handle_call_expr(node, source, symbols, callback_param_shapes),
         "new_expression" => handle_new_expr(node, source, symbols),
         "decorator" => handle_decorator(node, source, symbols),
         "import_statement" => handle_import_stmt(node, source, symbols),
@@ -1561,7 +1574,12 @@ fn extract_dispatch_table_call(
     })
 }
 
-fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+fn handle_call_expr(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    callback_param_shapes: &CallbackParamShapes,
+) {
     let Some(fn_node) = node.child_by_field_name("function") else { return };
     if fn_node.kind() == "import" {
         handle_dynamic_import(node, &fn_node, source, symbols);
@@ -1592,7 +1610,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             if let Some(cb_def) = extract_callback_definition(node, source) {
                 symbols.definitions.push(cb_def);
             }
-            extract_callback_reference_calls(node, source, &mut symbols.calls);
+            extract_callback_reference_calls(node, source, callback_param_shapes, &mut symbols.calls);
             return;
         }
     }
@@ -1602,7 +1620,7 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(cb_def) = extract_callback_definition(node, source) {
         symbols.definitions.push(cb_def);
     }
-    extract_callback_reference_calls(node, source, &mut symbols.calls);
+    extract_callback_reference_calls(node, source, callback_param_shapes, &mut symbols.calls);
 }
 
 fn handle_new_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
@@ -2287,14 +2305,11 @@ fn extract_implements_depth(node: &Node, source: &[u8], result: &mut Vec<String>
 /// with receiver `user`, or a fabricated edge to an unrelated same-named
 /// function (issue #1741).
 ///
-/// Known gap: arbitrary user-defined higher-order functions (e.g.
-/// `processEach(users, fn: UserProcessor)`) are neither name-allowlisted nor
-/// position-mapped (see `positional_callback_arg_index`), so `processEach(users,
-/// logUser)` no longer emits a `logUser` reference from the caller.
-/// Recognizing these would require looking at the callee's own parameter type
-/// (is it function-shaped?) rather than its name — a resolver-level,
-/// cross-engine feature, not a small extension of this gate. Tracked as a
-/// follow-up.
+/// Arbitrary user-defined higher-order functions (e.g. `processEach(users,
+/// fn: UserProcessor)`) are neither name-allowlisted nor position-mapped (see
+/// `positional_callback_arg_index`) — those are instead recognized via
+/// `CallbackParamShapes`, which looks at the callee's own parameter type
+/// (issue #1845), same-file only.
 ///
 /// Mirrors `CALLBACK_ACCEPTING_CALLEES` in `src/extractors/javascript.ts`.
 const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
@@ -2384,7 +2399,239 @@ fn first_arg_is_string_literal(args_node: &Node) -> bool {
     false
 }
 
-fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut Vec<Call>) {
+/// Maps a function/method's bare name (matching what `extract_callee_name`
+/// returns) to the set of its own parameter positions whose declared
+/// TypeScript type is function-shaped (an inline arrow-function type,
+/// `Function`, or a `type X = (...) => ...` alias). Built once per file by
+/// `collect_callback_param_shapes` and consulted by
+/// `extract_callback_reference_calls` to recognize identifier arguments
+/// passed to arbitrary user-defined higher-order functions (issue #1845),
+/// not just the `CALLBACK_ACCEPTING_CALLEES` name allowlist.
+///
+/// Name-keyed rather than receiver-typed, consistent with the rest of this
+/// gate (see `positional_callback_arg_index`'s doc comment for the same
+/// tradeoff) — a same-named function/method elsewhere in the file with an
+/// unrelated non-function-shaped parameter at the same index is a residual,
+/// accepted risk.
+///
+/// Mirrors `CallbackParamShapes` in `src/extractors/javascript.ts`.
+type CallbackParamShapes = HashMap<String, HashSet<usize>>;
+
+/// True iff `type_node` denotes a function-shaped TypeScript type: an inline
+/// arrow-function type (`(x: T) => R`), the `Function` type, a parenthesized
+/// function type, a generic instantiation of one (`UserProcessor<T>`), or a
+/// `type` alias name that itself resolves to one of the above (see
+/// `collect_function_shaped_type_aliases`).
+///
+/// Deliberately not full type-checking: union/intersection types and
+/// interface call signatures are not recognized, matching the same
+/// "defensible heuristic, not full inference" scope as `extract_simple_type_name`.
+///
+/// Mirrors `isFunctionShapedTypeNode` in `src/extractors/javascript.ts`.
+fn is_function_shaped_type_node(
+    type_node: &Node,
+    source: &[u8],
+    alias_shapes: &HashMap<String, bool>,
+) -> bool {
+    match type_node.kind() {
+        "function_type" => true,
+        "parenthesized_type" => type_node
+            .named_child(0)
+            .map(|inner| is_function_shaped_type_node(&inner, source, alias_shapes))
+            .unwrap_or(false),
+        "type_identifier" => {
+            let name = node_text(type_node, source);
+            name == "Function" || alias_shapes.get(name).copied().unwrap_or(false)
+        }
+        "generic_type" => type_node
+            .child(0)
+            .map(|base| is_function_shaped_type_node(&base, source, alias_shapes))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// True iff a `type_annotation` node's inner type is function-shaped.
+///
+/// Mirrors `isFunctionShapedTypeAnnotation` in `src/extractors/javascript.ts`.
+fn is_function_shaped_type_annotation(
+    type_annotation_node: &Node,
+    source: &[u8],
+    alias_shapes: &HashMap<String, bool>,
+) -> bool {
+    for i in 0..type_annotation_node.child_count() {
+        if let Some(child) = type_annotation_node.child(i) {
+            if child.kind() != ":" {
+                return is_function_shaped_type_node(&child, source, alias_shapes);
+            }
+        }
+    }
+    false
+}
+
+/// Walk the file for `type X = ...` aliases and classify each by whether it
+/// resolves to a function-shaped type, following one level of alias-to-alias
+/// indirection (`type A = B` where `B` is itself function-shaped) with a
+/// cycle guard. Motivating case: `export type UserProcessor = (user: User) => void;`.
+///
+/// Mirrors `collectFunctionShapedTypeAliases` in `src/extractors/javascript.ts`.
+fn collect_function_shaped_type_aliases(root: &Node, source: &[u8]) -> HashMap<String, bool> {
+    let mut direct_alias_of: HashMap<String, String> = HashMap::new();
+    let mut resolved: HashMap<String, bool> = HashMap::new();
+
+    fn walk(
+        node: &Node,
+        source: &[u8],
+        depth: usize,
+        direct_alias_of: &mut HashMap<String, String>,
+        resolved: &mut HashMap<String, bool>,
+    ) {
+        if depth >= MAX_WALK_DEPTH {
+            return;
+        }
+        if node.kind() == "type_alias_declaration" {
+            let name_node = node.child_by_field_name("name");
+            let value_node = node.child_by_field_name("value");
+            if let (Some(name_node), Some(value_node)) = (name_node, value_node) {
+                let name = node_text(&name_node, source).to_string();
+                if value_node.kind() == "type_identifier" {
+                    direct_alias_of.insert(name, node_text(&value_node, source).to_string());
+                } else {
+                    let shaped = is_function_shaped_type_node(&value_node, source, resolved);
+                    resolved.insert(name, shaped);
+                }
+            }
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                walk(&child, source, depth + 1, direct_alias_of, resolved);
+            }
+        }
+    }
+    walk(root, source, 0, &mut direct_alias_of, &mut resolved);
+
+    // Resolve `type A = B` chains against the direct classifications above.
+    for (name, alias_of) in &direct_alias_of {
+        if !resolved.contains_key(name) {
+            let shaped =
+                alias_of == "Function" || resolved.get(alias_of).copied().unwrap_or(false);
+            resolved.insert(name.clone(), shaped);
+        }
+    }
+    resolved
+}
+
+/// Walk the whole file once to record, per `CallbackParamShapes`, which
+/// parameter positions of every `function`/method declaration are
+/// function-shaped — the callee-definition side of recognizing identifier
+/// arguments to arbitrary user-defined higher-order functions (issue #1845).
+///
+/// Same-file only: a call site whose callee is defined in another file has no
+/// entry here and falls back to the existing name/position allowlist.
+///
+/// Mirrors `collectCallbackParamShapes` in `src/extractors/javascript.ts`.
+fn collect_callback_param_shapes(root: &Node, source: &[u8]) -> CallbackParamShapes {
+    let alias_shapes = collect_function_shaped_type_aliases(root, source);
+    let mut shapes: CallbackParamShapes = HashMap::new();
+
+    fn record_function_params(
+        name_node: Option<Node>,
+        fn_node: &Node,
+        source: &[u8],
+        alias_shapes: &HashMap<String, bool>,
+        shapes: &mut CallbackParamShapes,
+    ) {
+        let Some(name_node) = name_node else { return };
+        let params_node = fn_node
+            .child_by_field_name("parameters")
+            .or_else(|| find_child(fn_node, "formal_parameters"));
+        let Some(params_node) = params_node else { return };
+
+        let mut arg_index: usize = 0;
+        for child in iter_children(&params_node, PUNCTUATION_TOKENS) {
+            let kind = child.kind();
+            if kind == "required_parameter" || kind == "optional_parameter" {
+                // TypeScript's explicit `this` parameter (`function f(this: Foo, cb: Bar)`)
+                // is compiled away and never appears at the call site, so it must not
+                // consume an argument-index slot — otherwise every later parameter's
+                // index would be off by one relative to the call's actual arguments.
+                let is_this_param = child
+                    .child_by_field_name("pattern")
+                    .or_else(|| child.child_by_field_name("name"))
+                    .map(|n| n.kind() == "this")
+                    .unwrap_or(false);
+                if is_this_param {
+                    continue;
+                }
+            }
+            if kind == "required_parameter" || kind == "optional_parameter" {
+                if let Some(type_anno) = find_child(&child, "type_annotation") {
+                    if is_function_shaped_type_annotation(&type_anno, source, alias_shapes) {
+                        shapes
+                            .entry(node_text(&name_node, source).to_string())
+                            .or_default()
+                            .insert(arg_index);
+                    }
+                }
+            }
+            arg_index += 1;
+        }
+    }
+
+    fn walk(
+        node: &Node,
+        source: &[u8],
+        depth: usize,
+        alias_shapes: &HashMap<String, bool>,
+        shapes: &mut CallbackParamShapes,
+    ) {
+        if depth >= MAX_WALK_DEPTH {
+            return;
+        }
+        match node.kind() {
+            "function_declaration" | "generator_function_declaration" => {
+                record_function_params(node.child_by_field_name("name"), node, source, alias_shapes, shapes);
+            }
+            "method_definition" => {
+                record_function_params(node.child_by_field_name("name"), node, source, alias_shapes, shapes);
+            }
+            _ => {}
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                walk(&child, source, depth + 1, alias_shapes, shapes);
+            }
+        }
+    }
+    walk(root, source, 0, &alias_shapes, &mut shapes);
+
+    shapes
+}
+
+/// Extract Call entries for named function references passed as arguments.
+/// e.g. `router.use(handleToken, checkAuth)` yields calls to handleToken and checkAuth.
+/// `app.use(auth.validate)` yields a call to validate with receiver auth.
+///
+/// Both identifier and member-expression args are only emitted when the
+/// callee is in `CALLBACK_ACCEPTING_CALLEES`, the argument sits at the
+/// specific index a `positional_callback_arg_index` entry designates, or the
+/// callee is a same-file function/method whose own parameter at that index
+/// is function-shaped per `CallbackParamShapes` (issue #1845 — arbitrary
+/// user-defined higher-order functions like `processEach(users, fn:
+/// UserProcessor)`, which no name/position allowlist can enumerate).
+///
+/// Known gap: `CallbackParamShapes` only covers callees defined in the same
+/// file. A cross-file arbitrary higher-order function still falls back to
+/// the name/position allowlist. Extending this to cross-file callees needs
+/// the resolver's import-resolution machinery; tracked as a follow-up.
+///
+/// Mirrors `extractCallbackReferenceCalls` in `src/extractors/javascript.ts`.
+fn extract_callback_reference_calls(
+    call_node: &Node,
+    source: &[u8],
+    callback_param_shapes: &CallbackParamShapes,
+    calls: &mut Vec<Call>,
+) {
     let args = call_node.child_by_field_name("arguments")
         .or_else(|| find_child(call_node, "arguments"));
     let Some(args) = args else { return };
@@ -2414,18 +2661,26 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
     }
 
     let positional_index = callee_name.and_then(positional_callback_arg_index);
-    if !callback_args_allowed && positional_index.is_none() {
+    let callee_param_shapes = callee_name.and_then(|n| callback_param_shapes.get(n));
+    if !callback_args_allowed
+        && positional_index.is_none()
+        && callee_param_shapes.map(|s| s.is_empty()).unwrap_or(true)
+    {
         return;
     }
 
     for (arg_index, child) in iter_children(&args, PUNCTUATION_TOKENS).enumerate() {
-        // A positional entry restricts eligibility to its one designated
-        // index, regardless of what the generic (any-position) gate above
-        // decided.
         if let Some(idx) = positional_index {
+            // A positional entry restricts eligibility to its one designated
+            // index, regardless of what the generic (any-position) gate above
+            // decided.
             if arg_index != idx {
                 continue;
             }
+        } else if !callback_args_allowed
+            && !callee_param_shapes.map(|s| s.contains(&arg_index)).unwrap_or(false)
+        {
+            continue;
         }
 
         match child.kind() {
@@ -4892,6 +5147,155 @@ mod tests {
         assert!(
             s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "myNamedCallback"),
             "arr.forEach must still emit myNamedCallback as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn recognizes_identifier_arg_via_function_shaped_type_alias_issue_1845() {
+        // Regression guard for #1845: `processEach`'s `fn` param is typed with a
+        // function-shaped type alias (`UserProcessor`), so `logUser` must be
+        // recognized as a callback reference even though neither `processEach`
+        // nor `logUser` is in CALLBACK_ACCEPTING_CALLEES.
+        let s = parse_ts(
+            "type UserProcessor = (user: string) => void;
+             function processEach(users: string[], fn: UserProcessor): void {
+               for (const user of users) fn(user);
+             }
+             function logUser(user: string): void { console.log(user); }
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "processEach(users, logUser) must emit logUser as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn recognizes_identifier_arg_via_inline_arrow_function_type_issue_1845() {
+        let s = parse_ts(
+            "function processEach(users: string[], fn: (user: string) => void): void {
+               for (const user of users) fn(user);
+             }
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "inline arrow-function-type param must recognize logUser; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn recognizes_identifier_arg_via_function_typed_param_issue_1845() {
+        let s = parse_ts(
+            "function runWith(fn: Function): void { fn(); }
+             function handler(): void {}
+             function runDemo(): void {
+               runWith(handler);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "handler"),
+            "Function-typed param must recognize handler; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn does_not_recognize_identifier_arg_when_param_not_function_shaped_issue_1845() {
+        // Regression guard: the new type-based gate must not reintroduce the
+        // #1741 false positive for callees whose parameter is plain data.
+        let s = parse_ts(
+            "function findMergeCandidates(communities: string[]): void {}
+             function runDemo(communities: string[]): void {
+               findMergeCandidates(communities);
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "communities"),
+            "non-function-shaped param must not emit communities as dynamic call; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn only_recognizes_function_shaped_param_position_issue_1845() {
+        let s = parse_ts(
+            "type UserPredicate = (user: string) => boolean;
+             type UserProcessor = (user: string) => void;
+             function filterThen(users: string[], pred: UserPredicate, fn: UserProcessor): void {}
+             function hasEmail(user: string): boolean { return true; }
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               filterThen(users, hasEmail, logUser);
+             }",
+        );
+        let dynamic_names: Vec<&str> = s.calls.iter()
+            .filter(|c| c.dynamic == Some(true))
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(dynamic_names.contains(&"hasEmail"), "got: {:?}", s.calls);
+        assert!(dynamic_names.contains(&"logUser"), "got: {:?}", s.calls);
+        assert!(!dynamic_names.contains(&"users"), "got: {:?}", s.calls);
+    }
+
+    #[test]
+    fn resolves_one_level_of_type_alias_indirection_issue_1845() {
+        let s = parse_ts(
+            "type Handler = (user: string) => void;
+             type UserProcessor = Handler;
+             function processEach(users: string[], fn: UserProcessor): void {}
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "one-level alias indirection must still recognize logUser; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn recognizes_function_shaped_param_on_class_methods_issue_1845() {
+        let s = parse_ts(
+            "class Runner {
+               processEach(users: string[], fn: (user: string) => void): void {}
+             }
+             function logUser(user: string): void {}
+             function runDemo(runner: Runner, users: string[]): void {
+               runner.processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "class-method function-shaped param must recognize logUser; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn does_not_misalign_param_index_with_explicit_this_param_issue_1845() {
+        // TypeScript's explicit `this` parameter is compiled away and never
+        // appears at the call site — it must not consume an argument-index slot.
+        let s = parse_ts(
+            "function processEach(this: void, users: string[], fn: (user: string) => void): void {}
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "explicit this param must not misalign the callback param index; got: {:?}",
             s.calls,
         );
     }

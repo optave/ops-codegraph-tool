@@ -255,6 +255,27 @@ import { readFile } from 'fs/promises';
 function load(): Config { return readFile('cfg.json'); }
 `,
   },
+  {
+    // Regression guard for #1845: identifier args recognized via the
+    // callee's own function-shaped parameter type must be identical on both
+    // extraction paths (query path used by the WASM worker, walk path used
+    // directly) — and the #1741 fix (non-function-shaped params stay gated)
+    // must hold on both paths too.
+    name: 'identifier args to user-defined higher-order functions via parameter type (#1845)',
+    file: 'test.ts',
+    code: `
+type UserProcessor = (user: string) => void;
+function processEach(users: string[], fn: UserProcessor): void {
+  for (const user of users) fn(user);
+}
+function findMergeCandidates(communities: string[]): void {}
+function logUser(user: string): void {}
+function runDemo(users: string[]): void {
+  processEach(users, logUser);
+  findMergeCandidates(users);
+}
+`,
+  },
   // TSX
   {
     name: 'TSX component with extends',
