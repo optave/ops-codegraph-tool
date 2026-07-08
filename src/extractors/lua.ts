@@ -246,9 +246,33 @@ function handleLuaAssignmentStatement(node: TreeSitterNode, ctx: ExtractorOutput
   }
 }
 
+/**
+ * Lua string node types across grammar variants — `string` is the only kind
+ * the current `@tree-sitter-grammars/tree-sitter-lua` grammar (npm, used by
+ * this WASM extractor) produces; `string_literal` is included so this stays
+ * in lockstep with the native Rust extractor's own (equally defensive) check.
+ */
+const LUA_STRING_NODE_TYPES = new Set(['string', 'string_literal']);
+
 function handleLuaFunctionCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
+
+  // load(chunk) / loadstring(chunk) / dofile(...) — dynamic code execution;
+  // undecidable statically. Mirrors handle_lua_function_call's `load` arm in
+  // crates/codegraph-core/src/extractors/lua.rs.
+  if (nameNode.type === 'identifier') {
+    const ident = nameNode.text;
+    if (ident === 'load' || ident === 'loadstring' || ident === 'dofile') {
+      ctx.calls.push({
+        name: '<dynamic:eval>',
+        line: node.startPosition.row + 1,
+        dynamic: true,
+        dynamicKind: 'eval',
+      });
+      return;
+    }
+  }
 
   // Check for require() as import
   if (nameNode.type === 'identifier' && nameNode.text === 'require') {
@@ -279,6 +303,31 @@ function handleLuaFunctionCall(node: TreeSitterNode, ctx: ExtractorOutput): void
     const field = nameNode.childForFieldName('field');
     if (field) call.name = field.text;
     if (table) call.receiver = table.text;
+  } else if (nameNode.type === 'bracket_index_expression') {
+    // t[k]() — bracket-index call; key may be a string literal (resolvable
+    // directly, same as a `.field`/`:method` call) or a variable/expression
+    // (undecidable statically — flagged `computed-key`). Mirrors
+    // handle_lua_function_call's `bracket_index_expression` arm in
+    // crates/codegraph-core/src/extractors/lua.rs.
+    const table = nameNode.childForFieldName('table');
+    const key = nameNode.childForFieldName('field');
+    if (key) {
+      if (LUA_STRING_NODE_TYPES.has(key.type)) {
+        call.name = key.text.replace(/^['"]|['"]$/g, '');
+        if (table) call.receiver = table.text;
+      } else {
+        const dynamicCall: Call = {
+          name: '<dynamic:computed-key>',
+          line: node.startPosition.row + 1,
+          dynamic: true,
+          dynamicKind: 'computed-key',
+          keyExpr: key.text,
+        };
+        if (table) dynamicCall.receiver = table.text;
+        ctx.calls.push(dynamicCall);
+        return;
+      }
+    }
   } else {
     call.name = nameNode.text;
   }
