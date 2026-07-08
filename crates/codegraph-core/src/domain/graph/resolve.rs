@@ -259,6 +259,22 @@ fn ancestor_chain(dir: &str) -> Vec<String> {
     chain
 }
 
+// directory_distance is on the hot path for every call-edge confidence
+// score, invoked from inside compute_confidence's rayon `.par_iter()` caller
+// (line ~330 below). The same directory pairs recur constantly across a
+// build, so memoizing avoids rebuilding both ancestor chains and the lookup
+// map every call. Thread-local (not a shared Mutex/DashMap) because rayon's
+// worker pool is reused across the whole build — each worker accumulates its
+// own useful cache with zero lock contention, at the cost of some redundant
+// computation the first time a given pair is seen on each thread.
+// distance(a, b) === distance(b, a) (symmetric tree distance), so the key is
+// order-independent to halve the effective cache size per thread (#1769
+// perf regression).
+thread_local! {
+    static DIRECTORY_DISTANCE_CACHE: std::cell::RefCell<std::collections::HashMap<(String, String), usize>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Directory-tree distance between two directories: hops up from `a` to the
 /// nearest ancestor shared with `b`, plus hops down from there to `b`.
 ///
@@ -271,16 +287,24 @@ fn ancestor_chain(dir: &str) -> Vec<String> {
 /// so e.g. a file in `graph/algorithms/*.rs` calling a method declared in
 /// the shallower `graph/model.rs` was scored as maximally distant (issue #1769).
 fn directory_distance(a: &str, b: &str) -> usize {
+    let key = if a <= b { (a.to_string(), b.to_string()) } else { (b.to_string(), a.to_string()) };
+    if let Some(cached) = DIRECTORY_DISTANCE_CACHE.with(|c| c.borrow().get(&key).copied()) {
+        return cached;
+    }
+
     let chain_a = ancestor_chain(a);
     let chain_b = ancestor_chain(b);
     let index_in_b: std::collections::HashMap<&str, usize> =
         chain_b.iter().enumerate().map(|(j, d)| (d.as_str(), j)).collect();
+    let mut dist = usize::MAX;
     for (i, dir_a) in chain_a.iter().enumerate() {
         if let Some(&j) = index_in_b.get(dir_a.as_str()) {
-            return i + j;
+            dist = i + j;
+            break;
         }
     }
-    usize::MAX
+    DIRECTORY_DISTANCE_CACHE.with(|c| c.borrow_mut().insert(key, dist));
+    dist
 }
 
 /// Compute proximity-based confidence for call resolution.
