@@ -194,15 +194,29 @@ pub fn build_reexport_map(ctx: &ImportEdgeContext) -> HashMap<String, Vec<Reexpo
     reexport_map
 }
 
-/// Detect barrel-only files (files where reexport count >= definition count).
-pub fn detect_barrel_only_files(ctx: &ImportEdgeContext) -> HashSet<String> {
-    let mut barrel_only = HashSet::new();
-    for rel_path in ctx.file_symbols.keys() {
-        if ctx.is_barrel_file(rel_path) {
-            barrel_only.insert(rel_path.clone());
-        }
-    }
-    barrel_only
+/// Detect which of `candidate_paths` are barrel-only (reexport count >=
+/// definition count).
+///
+/// `candidate_paths` must be scoped to files loaded purely to resolve
+/// reexport chains (the transient merges `reparse_barrel_candidates` performs
+/// during Stage 6b) — never to every key in `ctx.file_symbols`. A file that's
+/// genuinely part of this build's changed set (or, on a full build, *every*
+/// file) must always get its own non-reexport imports emitted; only a file
+/// that was side-loaded solely for barrel resolution — whose real edges
+/// either don't exist yet or are being fully reconstructed by this same
+/// re-parse — is eligible to have its non-reexport imports skipped. Mirrors
+/// `resolve-imports.ts::reparseBarrelFiles`, which marks barrel-only status
+/// inside its own re-parse loop rather than recomputing it over the whole
+/// `fileSymbols` map (#1848).
+pub fn detect_barrel_only_files(
+    ctx: &ImportEdgeContext,
+    candidate_paths: &[String],
+) -> HashSet<String> {
+    candidate_paths
+        .iter()
+        .filter(|rel_path| ctx.is_barrel_file(rel_path))
+        .cloned()
+        .collect()
 }
 
 /// Load every file node ID into a HashMap in one query — replaces per-import
@@ -760,6 +774,89 @@ mod tests {
         assert!(ctx.is_barrel_file("src/index.ts"));
         assert!(!ctx.is_barrel_file("src/utils.ts"));
         assert!(!ctx.is_barrel_file("nonexistent.ts"));
+    }
+
+    /// Regression test for #1848: `detect_barrel_only_files` must only
+    /// classify files present in the supplied candidate list, even when a
+    /// file outside that list also satisfies the reexports>=ownDefs
+    /// heuristic. `run_pipeline` relies on this scoping to keep a
+    /// genuinely-changed (or, on a full build, every) file's own
+    /// non-reexport imports from ever being dropped — only files
+    /// transiently side-loaded by `reparse_barrel_candidates` for barrel
+    /// resolution may be classified as barrel-only.
+    #[test]
+    fn detect_barrel_only_files_scopes_to_candidate_paths_only() {
+        let mut file_symbols = BTreeMap::new();
+        // Barrel-like (1 def, 2 reexports) but NOT in the candidate list —
+        // e.g. a file that's genuinely part of this build's changed set.
+        file_symbols.insert(
+            "src/changed-barrel.ts".to_string(),
+            make_symbols(vec!["helper"], vec!["./a", "./b"]),
+        );
+        // Barrel-like AND in the candidate list — a file side-loaded purely
+        // for reexport-chain resolution.
+        file_symbols.insert(
+            "src/transient-barrel.ts".to_string(),
+            make_symbols(vec!["helper"], vec!["./c", "./d"]),
+        );
+        // Not barrel-like at all, also in the candidate list.
+        file_symbols.insert(
+            "src/transient-hybrid.ts".to_string(),
+            make_symbols(vec!["foo", "bar", "baz"], vec!["./e"]),
+        );
+
+        let ctx = ImportEdgeContext {
+            batch_resolved: HashMap::new(),
+            reexport_map: HashMap::new(),
+            barrel_only_files: HashSet::new(),
+            file_symbols,
+            root_dir: "/project".to_string(),
+            aliases: PathAliases {
+                base_url: None,
+                paths: vec![],
+            },
+            known_files: HashSet::new(),
+        };
+
+        let candidates = vec![
+            "src/transient-barrel.ts".to_string(),
+            "src/transient-hybrid.ts".to_string(),
+        ];
+        let barrel_only = detect_barrel_only_files(&ctx, &candidates);
+
+        assert!(barrel_only.contains("src/transient-barrel.ts"));
+        assert!(!barrel_only.contains("src/transient-hybrid.ts"));
+        assert!(
+            !barrel_only.contains("src/changed-barrel.ts"),
+            "a barrel-like file outside the candidate list must never be classified barrel-only"
+        );
+    }
+
+    /// Regression test for #1848: on a full build the caller passes an empty
+    /// candidate list (mirrors `run_pipeline` never invoking
+    /// `reparse_barrel_candidates` when `is_full_build` is true), so no file
+    /// — however barrel-like — is ever classified barrel-only.
+    #[test]
+    fn detect_barrel_only_files_returns_empty_for_empty_candidates() {
+        let mut file_symbols = BTreeMap::new();
+        file_symbols.insert(
+            "src/index.ts".to_string(),
+            make_symbols(vec!["helper"], vec!["./a", "./b"]),
+        );
+        let ctx = ImportEdgeContext {
+            batch_resolved: HashMap::new(),
+            reexport_map: HashMap::new(),
+            barrel_only_files: HashSet::new(),
+            file_symbols,
+            root_dir: "/project".to_string(),
+            aliases: PathAliases {
+                base_url: None,
+                paths: vec![],
+            },
+            known_files: HashSet::new(),
+        };
+
+        assert!(detect_barrel_only_files(&ctx, &[]).is_empty());
     }
 
     #[test]
