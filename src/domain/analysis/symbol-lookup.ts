@@ -178,7 +178,7 @@ function whereFileImpl(db: BetterSqlite3Database, target: string) {
 
     const importedBy = (findImportSources(db, fn.id) as ImportEdgeRow[]).map((r) => r.file);
 
-    const exported = findExportedNodesByFile(db, fn.file).map((s) => s.name);
+    const exported = findExportedNodesByFile(db, fn.file, symbols).map((s) => s.name);
 
     return {
       file: fn.file,

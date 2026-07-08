@@ -791,13 +791,14 @@ fn process_file<'a>(
         // of these positions is as likely to be a plain data reference
         // (`{ name: SOME_CONSTANT }`) as a real function/class, so drop any
         // other-kind match rather than fabricating a "calls" edge to a
-        // constant. `class` is included alongside function/method because
-        // `instanceof`'s right operand is always a class/constructor
-        // (#1784) — unlike the original #1771 object-literal case, which is
-        // function/method only. Applied once here (after all
-        // resolve_call_targets tiers), mirroring the
-        // `dynamicKind === 'value-ref'` filter in resolveFallbackTargets
-        // (stages/build-edges.ts).
+        // constant. `class` was added because `instanceof`'s right operand
+        // is always a class/constructor (#1784). The filter is keyed on
+        // `dynamic_kind`, not on which site produced the call, so the #1771
+        // object-literal and #1776 Lua sites also gain class-kind
+        // resolution as a side effect — not because either idiom commonly
+        // names a class. Applied once here (after all resolve_call_targets
+        // tiers), mirroring the `dynamicKind === 'value-ref'` filter in
+        // resolveFallbackTargets (stages/build-edges.ts).
         if call.dynamic_kind.as_deref() == Some("value-ref") {
             targets.retain(|t| t.kind == "function" || t.kind == "method" || t.kind == "class");
         }
@@ -1669,6 +1670,16 @@ fn is_named_reexport(imp: &ImportInfo) -> bool {
     imp.reexport && !imp.wildcard_reexport
 }
 
+/// True for a genuine wildcard re-export (`export * from 'Y'`). Emitted as a
+/// distinct file-level marker edge (`reexports-wildcard`) alongside the
+/// generic `reexports` edge so the query layer can tell a target reached
+/// only by named specifiers apart from one that's also reached by a
+/// wildcard — even when a *different* statement in the same file names
+/// specific symbols from that exact target (#1849 review).
+fn is_wildcard_reexport(imp: &ImportInfo) -> bool {
+    imp.reexport && imp.wildcard_reexport
+}
+
 /// For a `type` import or a named re-export targeting a barrel or resolved
 /// file, emit one symbol-level edge per named symbol so the target symbols
 /// receive fan-in credit and aren't misclassified as dead code
@@ -1803,6 +1814,15 @@ fn process_single_import(
     }
     if is_named_reexport(imp) {
         emit_named_symbol_edges(edges, file_input, imp, resolved_path, "reexports", ctx);
+    } else if is_wildcard_reexport(imp) {
+        edges.push(ComputedEdge {
+            source_id: file_input.file_node_id,
+            target_id: target_node_id,
+            kind: "reexports-wildcard".to_string(),
+            confidence: 1.0,
+            dynamic: 0,
+            dynamic_kind: None,
+        });
     }
     emit_barrel_through_edges(edges, file_input, imp, resolved_path, edge_kind, ctx);
 }
@@ -1909,9 +1929,12 @@ mod import_edge_tests {
 
     #[test]
     fn wildcard_reexport_emits_no_symbol_level_edge() {
-        // `export * from './utils'` carries no specific names, so only the
-        // file-level `reexports` edge is emitted — the query layer falls
-        // back to the target's full export list for genuine wildcards.
+        // `export * from './utils'` carries no specific names, so no
+        // symbol-level edge is emitted. It does get the dedicated
+        // `reexports-wildcard` file-level marker (alongside the generic
+        // `reexports` edge) so the query layer can always apply full-export
+        // semantics for genuine wildcards, even when a *different* statement
+        // to the same target also names specific symbols (#1849 review).
         let files = vec![make_file("src/index.ts", 1, vec![
             ImportInfo {
                 source: "./utils".to_string(),
@@ -1939,9 +1962,61 @@ mod import_edge_tests {
             "/root".to_string(),
             Some(symbol_nodes),
         );
-        assert_eq!(edges.len(), 1);
+        assert_eq!(edges.len(), 2);
         assert_eq!(edges[0].kind, "reexports");
         assert_eq!(edges[0].target_id, 2);
+        assert_eq!(edges[1].kind, "reexports-wildcard");
+        assert_eq!(edges[1].target_id, 2);
+    }
+
+    #[test]
+    fn named_and_wildcard_reexport_of_same_target_both_marked() {
+        // `export { foo } from './utils'` AND `export * from './utils'` in
+        // the same file, both targeting utils.ts. The wildcard's full-export
+        // semantics must stay independently signalled (via the dedicated
+        // `reexports-wildcard` marker) rather than being suppressed by the
+        // named specifier's symbol-level edge — otherwise the query layer
+        // would report only `foo` and silently drop every other export of
+        // utils.ts that the wildcard was meant to surface (#1849 review).
+        let files = vec![make_file("src/index.ts", 1, vec![
+            make_import("./utils", vec!["foo"], true, false, false),
+            ImportInfo {
+                source: "./utils".to_string(),
+                names: vec![],
+                reexport: true,
+                type_only: false,
+                dynamic_import: false,
+                wildcard_reexport: true,
+            },
+        ], vec![])];
+        let resolved = vec![make_resolved("/root/src/index.ts", "./utils", "src/utils.ts")];
+        let node_ids = vec![make_node_entry("src/index.ts", 1), make_node_entry("src/utils.ts", 2)];
+        let symbol_nodes = vec![SymbolNodeEntry {
+            name: "foo".to_string(),
+            file: "src/utils.ts".to_string(),
+            node_id: 99,
+        }];
+
+        let edges = build_import_edges(
+            files,
+            resolved,
+            vec![],
+            node_ids,
+            vec![],
+            "/root".to_string(),
+            Some(symbol_nodes),
+        );
+        assert_eq!(edges.len(), 4);
+        // Named statement: file-level `reexports` + symbol-level `reexports` to foo.
+        assert_eq!(edges[0].kind, "reexports");
+        assert_eq!(edges[0].target_id, 2);
+        assert_eq!(edges[1].kind, "reexports");
+        assert_eq!(edges[1].target_id, 99);
+        // Wildcard statement: file-level `reexports` + the `reexports-wildcard` marker.
+        assert_eq!(edges[2].kind, "reexports");
+        assert_eq!(edges[2].target_id, 2);
+        assert_eq!(edges[3].kind, "reexports-wildcard");
+        assert_eq!(edges[3].target_id, 2);
     }
 
     #[test]
