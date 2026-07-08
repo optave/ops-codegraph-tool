@@ -1370,10 +1370,11 @@ function resolveFallbackTargets(
     // `targets` is typed without `kind` when it flows straight through from
     // resolveCallTargets (call-resolver.ts's declared return type omits it),
     // but every underlying CallNodeLookup method actually populates it — the
-    // same gap the preQualifiedTargets cast above already works around.
-    targets = (targets as ReadonlyArray<{ id: number; file: string; kind?: string }>).filter(
-      (t) => t.kind === 'function' || t.kind === 'method',
-    );
+    // same gap the preQualifiedTargets cast above already works around. Kept
+    // as its own step (not folded into the filter callback) so the type-gap
+    // workaround and the actual filtering decision stay visually distinct.
+    const typedTargets = targets as ReadonlyArray<{ id: number; file: string; kind?: string }>;
+    targets = typedTargets.filter((t) => t.kind === 'function' || t.kind === 'method');
   }
 
   return { targets, importedFrom };
