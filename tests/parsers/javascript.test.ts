@@ -1002,22 +1002,43 @@ describe('JavaScript parser', () => {
 
     // Destructured bindings
     it('extracts definitions from destructured const bindings', () => {
+      // kind is 'constant' (#1773), not 'function' — matches the plain
+      // `const x = <literal>` and array-pattern destructuring convention.
+      // Destructured names remain resolvable as call targets regardless of
+      // kind (call-target resolution is kind-agnostic), so callback-style
+      // destructured bindings like `handleToken` still resolve when called.
       const symbols = parseJS(`const { handleToken, checkPermissions } = initAuth(config);`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: 'handleToken', kind: 'function' }),
+        expect.objectContaining({ name: 'handleToken', kind: 'constant' }),
       );
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: 'checkPermissions', kind: 'function' }),
+        expect.objectContaining({ name: 'checkPermissions', kind: 'constant' }),
       );
     });
 
     it('extracts definitions from exported destructured const bindings', () => {
       const symbols = parseJS(`export const { handleToken, checkPermissions } = initAuth(config);`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: 'handleToken', kind: 'function' }),
+        expect.objectContaining({ name: 'handleToken', kind: 'constant' }),
       );
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: 'checkPermissions', kind: 'function' }),
+        expect.objectContaining({ name: 'checkPermissions', kind: 'constant' }),
+      );
+    });
+
+    it('extracts non-renamed destructured const bindings with kind constant (#1773)', () => {
+      // Regression guard for issue #1773: plain (non-renamed) destructured
+      // bindings from a non-call RHS (e.g. `workerData`) must not default to
+      // kind 'function' — they hold arbitrary values, not callables.
+      const symbols = parseJS(`const { dbPath, name, force } = workerData;`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'dbPath', kind: 'constant' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'name', kind: 'constant' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'force', kind: 'constant' }),
       );
     });
 
@@ -1034,9 +1055,10 @@ describe('JavaScript parser', () => {
     });
 
     it('extracts renamed destructured const binding under its local alias', () => {
+      // kind is 'constant' (#1773) — see comment on the non-renamed case above.
       const symbols = parseJS(`const { original: renamed } = initAuth();`);
       expect(symbols.definitions).toContainEqual(
-        expect.objectContaining({ name: 'renamed', kind: 'function' }),
+        expect.objectContaining({ name: 'renamed', kind: 'constant' }),
       );
       expect(symbols.definitions).not.toContainEqual(expect.objectContaining({ name: 'original' }));
     });

@@ -2507,6 +2507,19 @@ fn handle_object_literal_shorthand_value_ref(node: &Node, source: &[u8], calls: 
     });
 }
 
+/// Extract definitions from destructured object bindings: `const { handleToken,
+/// checkPermissions } = initAuth(...)` creates definitions for `handleToken`
+/// and `checkPermissions`, kind `constant` — matching the convention for plain
+/// `const x = <literal>` bindings and array-pattern destructuring.
+///
+/// Every call site of this function is already gated to `const` declarations
+/// (never `let`/`var`), so `constant` is unconditionally correct here. Prior to
+/// #1773 this used `kind: "function"` on the theory that destructured names
+/// are usually callbacks, but that miscategorized every non-function
+/// destructured value (e.g. `const { dbPath } = workerData`). `constant`-kind
+/// nodes remain fully resolvable as call targets — call-target resolution is
+/// kind-agnostic — so callback-style destructured bindings still resolve.
+/// Mirrors the TS extractor's `extractDestructuredBindings`.
 fn extract_destructured_bindings(
     pattern: &Node,
     source: &[u8],
@@ -2520,7 +2533,7 @@ fn extract_destructured_bindings(
             "shorthand_property_identifier_pattern" | "shorthand_property_identifier" => {
                 definitions.push(Definition {
                     name: node_text(&child, source).to_string(),
-                    kind: "function".to_string(),
+                    kind: "constant".to_string(),
                     line,
                     end_line: Some(end_line),
                     decorators: None,
@@ -2536,7 +2549,7 @@ fn extract_destructured_bindings(
                     {
                         definitions.push(Definition {
                             name: node_text(&value, source).to_string(),
-                            kind: "function".to_string(),
+                            kind: "constant".to_string(),
                             line,
                             end_line: Some(end_line),
                             decorators: None,
@@ -4565,12 +4578,33 @@ mod tests {
 
     #[test]
     fn extracts_destructured_const_bindings() {
+        // kind is "constant" (#1773), not "function" — matches the plain
+        // `const x = <literal>` and array-pattern destructuring convention.
+        // Destructured names remain resolvable as call targets regardless of
+        // kind (call-target resolution is kind-agnostic), so callback-style
+        // destructured bindings like `handleToken` still resolve when called.
         let s = parse_js("const { handleToken, checkPermissions } = initAuth(config);");
         let names: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"handleToken"), "should extract handleToken definition");
         assert!(names.contains(&"checkPermissions"), "should extract checkPermissions definition");
         let ht = s.definitions.iter().find(|d| d.name == "handleToken").unwrap();
-        assert_eq!(ht.kind, "function");
+        assert_eq!(ht.kind, "constant");
+    }
+
+    #[test]
+    fn extracts_non_renamed_destructured_bindings_with_kind_constant() {
+        // Regression guard for issue #1773: plain (non-renamed) destructured
+        // bindings from a non-call RHS (e.g. `workerData`) must not default to
+        // kind "function" — they hold arbitrary values, not callables.
+        let s = parse_js("const { dbPath, name, force } = workerData;");
+        for expected in ["dbPath", "name", "force"] {
+            let def = s
+                .definitions
+                .iter()
+                .find(|d| d.name == expected)
+                .unwrap_or_else(|| panic!("should extract {expected} definition"));
+            assert_eq!(def.kind, "constant");
+        }
     }
 
     #[test]
@@ -4611,7 +4645,13 @@ mod tests {
     #[test]
     fn extracts_renamed_destructured_binding() {
         let s = parse_js("const { original: renamed } = initAuth();");
-        assert!(s.definitions.iter().any(|d| d.name == "renamed"), "should use the local alias");
+        let renamed = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "renamed")
+            .expect("should use the local alias");
+        // kind is "constant" (#1773) — see comment on extracts_destructured_const_bindings.
+        assert_eq!(renamed.kind, "constant");
         assert!(!s.definitions.iter().any(|d| d.name == "original"), "should not use the original key");
     }
 
