@@ -822,6 +822,19 @@ export function clearConfigCache(): void {
 }
 
 /**
+ * Single source of truth for CODEGRAPH_LLM_* env var overrides, mapping each
+ * env var name to the `config.llm` field it overrides. Consumed both by
+ * applyEnvOverrides (actual override behavior) and applyEnvProvenance (which
+ * derives its key list via Object.keys) so the two can never drift.
+ */
+const ENV_LLM_MAP: Record<string, string> = {
+  CODEGRAPH_LLM_PROVIDER: 'provider',
+  CODEGRAPH_LLM_API_KEY: 'apiKey',
+  CODEGRAPH_LLM_MODEL: 'model',
+  CODEGRAPH_LLM_BASE_URL: 'baseUrl',
+};
+
+/**
  * Layer 0 provenance: every top-level key starts attributed to 'default'.
  */
 function initDefaultProvenance(): Record<string, ConfigSource> {
@@ -866,16 +879,11 @@ function applyProjectProvenance(provenance: Record<string, ConfigSource>, cwd: s
 
 /**
  * Layer 3+ provenance: mark `llm` as env-sourced if any CODEGRAPH_LLM_*
- * override variable is set.
+ * override variable is set. Keys are derived from ENV_LLM_MAP so this can
+ * never drift from the env vars applyEnvOverrides actually honors.
  */
 function applyEnvProvenance(provenance: Record<string, ConfigSource>): void {
-  const ENV_LLM_KEYS = [
-    'CODEGRAPH_LLM_PROVIDER',
-    'CODEGRAPH_LLM_API_KEY',
-    'CODEGRAPH_LLM_MODEL',
-    'CODEGRAPH_LLM_BASE_URL',
-  ];
-  if (ENV_LLM_KEYS.some((k) => process.env[k] !== undefined)) {
+  if (Object.keys(ENV_LLM_MAP).some((k) => process.env[k] !== undefined)) {
     provenance.llm = 'env';
   }
 }
@@ -912,13 +920,6 @@ export function loadConfigWithProvenance(
 
   return { config, provenance, appliedGlobalPath: applied ? globalPath : null, consentDecision };
 }
-
-const ENV_LLM_MAP: Record<string, string> = {
-  CODEGRAPH_LLM_PROVIDER: 'provider',
-  CODEGRAPH_LLM_API_KEY: 'apiKey',
-  CODEGRAPH_LLM_MODEL: 'model',
-  CODEGRAPH_LLM_BASE_URL: 'baseUrl',
-};
 
 export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {
   for (const [envKey, field] of Object.entries(ENV_LLM_MAP)) {
