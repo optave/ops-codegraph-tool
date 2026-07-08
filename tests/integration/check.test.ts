@@ -69,6 +69,15 @@ beforeAll(() => {
   // tests/math.test.js: testAdd (line 1-5)
   insertNode(db, 'testAdd', 'function', 'tests/math.test.js', 1, 5);
 
+  // src/multiline.js: multiLineSig (line 20-24) — declaration spans lines
+  // 20-22 (opening line + two parameters, one per line), body on 23-24.
+  // Exercises the multi-line-signature guard (issue #1740 follow-up).
+  const multiLineSig = insertNode(db, 'multiLineSig', 'function', 'src/multiline.js', 20, 24);
+  const paramA = insertNode(db, 'a', 'parameter', 'src/multiline.js', 21);
+  const paramB = insertNode(db, 'b', 'parameter', 'src/multiline.js', 22);
+  insertEdge(db, paramA, multiLineSig, 'parameter_of');
+  insertEdge(db, paramB, multiLineSig, 'parameter_of');
+
   // --- Call edges (for blast radius) ---
   // handleRequest -> add -> multiply (chain of 2)
   insertEdge(db, handleRequest, add, 'calls');
@@ -79,6 +88,9 @@ beforeAll(() => {
   insertEdge(db, parseInput, formatResult, 'calls');
   // processNode -> handleRequest
   insertEdge(db, processNode, handleRequest, 'calls');
+  // handleRequest -> multiLineSig (direct); processNode -> handleRequest
+  // (above) gives multiLineSig a transitive caller too.
+  insertEdge(db, handleRequest, multiLineSig, 'calls');
 
   // --- Import edges (for cycles) ---
   // Create a file-level cycle: math.js <-> utils.js
@@ -309,6 +321,30 @@ describe('parseDiffOutput', () => {
     ]);
   });
 
+  test('changedEdits does not pair a removal with an unrelated addition separated by a context line', () => {
+    // Within a single hunk (non-zero context, e.g. a plain `git diff`
+    // without `--unified=0`), a context line between a removal and a later,
+    // unrelated addition must break the pairing — otherwise the removal's
+    // text gets wrongly attributed as "replaced by" the addition purely
+    // because it was the most recently closed removed run. `getGitDiff`
+    // always uses `--unified=0` so this never happens in production, but
+    // `parseDiffOutput` is a public export and must stay correct for any
+    // unified diff.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -1,2 +1,2 @@',
+      '-old line 1',
+      ' unchanged context',
+      '+new line 3',
+    ].join('\n');
+
+    const { changedEdits } = parseDiffOutput(diff);
+    expect(changedEdits.get('src/math.js')).toEqual([
+      { start: 2, end: 2, addedText: ['new line 3'], removedText: [] },
+    ]);
+  });
+
   // ─── hunk-scoped file-header detection (issue #1761) ───────────────────
 
   test('a removed line whose content starts with "-- " is treated as hunk content, not a file header', () => {
@@ -505,6 +541,67 @@ describe('checkMaxBlastRadius', () => {
       '@@ -3,1 +3,1 @@',
       '-  return formatResult(a) + b;',
       '+  return parseInput(a) + b;',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(false);
+    expect(result.exemptedCount).toBe(0);
+  });
+
+  test('still fails for a high-fan-in function when a parameter is added on line 2+ of a multi-line signature', () => {
+    // multiLineSig's declaration spans lines 20 (opening) through 22 (its
+    // last parameter, `b`, on its own line) — only line 20 is `def.line`.
+    // Editing line 22 to add a parameter must still be read as a
+    // declaration/signature change even though it never touches line 20
+    // itself, and a parameter list has no `identifier(` tokens for the
+    // paren-token comparison to catch either.
+    const diff = [
+      '--- a/src/multiline.js',
+      '+++ b/src/multiline.js',
+      '@@ -22,1 +22,1 @@',
+      '-  b,',
+      '+  b, c,',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(false);
+    expect(result.violations.length).toBe(1);
+    expect(result.violations[0].name).toBe('multiLineSig');
+    expect(result.exemptedCount).toBe(0);
+  });
+
+  test('passes for a high-fan-in function when a multi-line signature is untouched and only the body changes', () => {
+    // Sanity check for the fix above: an edit strictly inside the body
+    // (line 23, past the last parameter on line 22) with no new call target
+    // must still be exempted — the signature-end-line widening must not
+    // over-exempt the whole function span.
+    const diff = [
+      '--- a/src/multiline.js',
+      '+++ b/src/multiline.js',
+      '@@ -23,1 +23,1 @@',
+      '-  return a + b + 0;',
+      '+  return a + b + ZERO_OFFSET;',
+    ].join('\n');
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+
+    const result = checkMaxBlastRadius(db, changedRanges, changedEdits, 1, false, 3);
+    expect(result.passed).toBe(true);
+    expect(result.exemptedCount).toBe(1);
+  });
+
+  test('still fails when a real call is replaced by a string literal merely mentioning the same identifier', () => {
+    // The removed line makes a genuine call to `bar`; the added line only
+    // *mentions* `bar(` inside a string literal. Without stripping string
+    // content first, the naive regex would read both sides as referencing
+    // the token "bar" and wrongly treat this as a no-op.
+    const diff = [
+      '--- a/src/math.js',
+      '+++ b/src/math.js',
+      '@@ -3,1 +3,1 @@',
+      '-  return bar() + b;',
+      "+  return 'invoke bar(x)' + b;",
     ].join('\n');
     const { changedRanges, changedEdits } = parseDiffOutput(diff);
 
