@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use napi_derive::napi;
 
 use crate::domain::graph::builder::barrel_resolution::{self, BarrelContext, ReexportRef};
+use crate::domain::graph::builder::stages::import_edges::{import_name_pairs, ImportNameSource};
 use crate::domain::graph::resolve;
 use crate::types::{
     ArrayCallbackBinding, ArrayElemBinding, FnRefBinding, ForOfBinding, ObjectPropBinding,
@@ -1528,6 +1529,28 @@ pub struct ImportInfo {
     /// by `type_only`, #1813).
     #[napi(js_name = "typeOnlyNames")]
     pub type_only_names: Vec<String>,
+    /// `{ local, imported }` pairs for `import { X as Y }` specifiers —
+    /// mirrors `Import.renamedImports` (#1730). Without this, symbol-level
+    /// lookups in `emit_named_symbol_edges`/`emit_barrel_through_edges` would
+    /// search the target file for the local (post-rename) name instead of
+    /// the name actually declared there, silently failing to find it (#1847).
+    #[napi(js_name = "renamedImports")]
+    pub renamed_imports: Vec<RenamedImport>,
+}
+
+impl ImportNameSource for ImportInfo {
+    fn names(&self) -> &[String] {
+        &self.names
+    }
+    fn renamed_imports(&self) -> &[RenamedImport] {
+        &self.renamed_imports
+    }
+    fn is_type_only(&self) -> bool {
+        self.type_only
+    }
+    fn type_only_names(&self) -> &[String] {
+        &self.type_only_names
+    }
 }
 
 #[napi(object)]
@@ -1713,17 +1736,6 @@ pub fn build_import_edges(
 
 // ── build_import_edges helpers ──────────────────────────────────────────
 
-/// Strip a `"* as "` / `"*\tas "` prefix from an import name so the bare
-/// symbol can be looked up against the target's exports. JS equivalent:
-/// `name.replace(/^\*\s+as\s+/, '')`.
-fn strip_star_as_prefix(name: &str) -> &str {
-    if name.starts_with("* as ") || name.starts_with("*\tas ") {
-        &name[5..]
-    } else {
-        name
-    }
-}
-
 /// Classify an import into its edge kind: reexports / imports-type /
 /// dynamic-imports / imports. Mirrors the JS classifier in `build-edges.ts`.
 fn classify_import_edge_kind(imp: &ImportInfo) -> &'static str {
@@ -1762,17 +1774,20 @@ fn is_named_reexport(imp: &ImportInfo) -> bool {
 /// `type` keyword) is the only consumption signal `codegraph exports` can
 /// observe for them (#1833).
 ///
-/// `imp.names` holds the *original* declaration name for export specifiers
-/// (see `extractImportNames` in the JS extractor) even when renamed
-/// externally, so this naturally resolves `export { X as Z }` against `X`'s
-/// own node — the emitted edge (and downstream `reexportedSymbols` entry)
-/// is reported under the symbol's own declared name, not the barrel alias.
+/// Looks up each specifier's *original* declared name via `import_name_pairs`
+/// rather than the local (possibly renamed) binding — for `export { X as Z }`
+/// this is already `X` (`imp.names` holds the original for export
+/// specifiers), but for a renamed value/type import (`import type { X as Y }`)
+/// the original name only exists in `imp.renamed_imports`; searching under the
+/// local alias `Y` would never find a match in the target file (#1847). The
+/// emitted edge (and downstream `reexportedSymbols` entry) is reported under
+/// the symbol's own declared name in both cases, not the local/barrel alias.
 ///
 /// When `resolved_path` is itself a barrel that renamed the requested name
 /// further down its own reexport chain (`export { X as Y } from …`),
 /// `resolve_barrel_export` reports the name actually declared in the
-/// resolved file — which may differ from `clean_name` — so the lookup below
-/// must use that reported name, not `clean_name`, against the barrel target
+/// resolved file — which may differ from `original` — so the lookup below
+/// must use that reported name, not `original`, against the barrel target
 /// (#1823).
 fn emit_named_symbol_edges(
     edges: &mut Vec<ComputedEdge>,
@@ -1785,12 +1800,10 @@ fn emit_named_symbol_edges(
     if ctx.symbol_node_map.is_empty() {
         return;
     }
-    for name in &imp.names {
-        let clean_name = strip_star_as_prefix(name);
-        let type_only = imp.type_only || imp.type_only_names.iter().any(|n| n == clean_name);
+    for (_local, original, type_only) in import_name_pairs(imp) {
         let barrel_target = if ctx.barrel_set.contains(resolved_path) {
             let mut visited = HashSet::new();
-            barrel_resolution::resolve_barrel_export(ctx, resolved_path, clean_name, &mut visited)
+            barrel_resolution::resolve_barrel_export(ctx, resolved_path, &original, &mut visited)
         } else {
             None
         };
@@ -1802,7 +1815,7 @@ fn emit_named_symbol_edges(
             {
                 (resolved.name.clone(), resolved.file.clone())
             }
-            _ => (clean_name.to_string(), resolved_path.to_string()),
+            _ => (original, resolved_path.to_string()),
         };
         let Some((id, sym_kind)) = ctx.symbol_node_map.get(&(target_name, target_file.clone()))
         else {
@@ -1846,13 +1859,12 @@ fn emit_barrel_through_edges(
         _ => "imports",
     };
     let mut resolved_sources: HashSet<String> = HashSet::new();
-    for name in &imp.names {
-        let clean_name = strip_star_as_prefix(name);
+    for (_local, original, _type_only) in import_name_pairs(imp) {
         let mut visited = HashSet::new();
         let actual = barrel_resolution::resolve_barrel_export(
             ctx,
             resolved_path,
-            clean_name,
+            &original,
             &mut visited,
         );
         let actual_source = match actual {
@@ -1941,6 +1953,7 @@ mod import_edge_tests {
             dynamic_import: dynamic,
             wildcard_reexport: false,
             type_only_names: vec![],
+            renamed_imports: vec![],
         }
     }
 
@@ -1959,6 +1972,35 @@ mod import_edge_tests {
             dynamic_import: false,
             wildcard_reexport: false,
             type_only_names: type_only_names.into_iter().map(|s| s.to_string()).collect(),
+            renamed_imports: vec![],
+        }
+    }
+
+    /// A renamed import (`import { X as Y } from 'src'`, optionally `import
+    /// type`) — `names` carries the local (post-rename) binding `Y`, and
+    /// `renamed_imports` maps it back to the original declared name `X`
+    /// (#1730, #1847).
+    fn make_import_with_renames(
+        source: &str,
+        names: Vec<&str>,
+        renames: Vec<(&str, &str)>,
+        type_only: bool,
+    ) -> ImportInfo {
+        ImportInfo {
+            source: source.to_string(),
+            names: names.into_iter().map(|s| s.to_string()).collect(),
+            reexport: false,
+            type_only,
+            dynamic_import: false,
+            wildcard_reexport: false,
+            type_only_names: vec![],
+            renamed_imports: renames
+                .into_iter()
+                .map(|(local, imported)| RenamedImport {
+                    local: local.to_string(),
+                    imported: imported.to_string(),
+                })
+                .collect(),
         }
     }
 
@@ -2052,6 +2094,7 @@ mod import_edge_tests {
                 dynamic_import: false,
                 wildcard_reexport: true,
                 type_only_names: vec![],
+                renamed_imports: vec![],
             },
         ], vec![])];
         let resolved = vec![make_resolved("/root/src/index.ts", "./utils", "src/utils.ts")];
@@ -2129,6 +2172,92 @@ mod import_edge_tests {
         let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string(), None);
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, "imports-type");
+    }
+
+    #[test]
+    fn renamed_type_import_resolves_original_name() {
+        // `import type { Config as CfgType } from './types'` — `names` holds
+        // the local alias "CfgType", but `Config` is the name actually
+        // declared in types.ts. The symbol-level `imports-type` edge must
+        // resolve against Config's own node, not fail to find "CfgType"
+        // there (#1847).
+        let files = vec![make_file("src/app.ts", 1, vec![
+            make_import_with_renames("./types", vec!["CfgType"], vec![("CfgType", "Config")], true),
+        ], vec![])];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./types", "src/types.ts")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/types.ts", 2)];
+        let symbol_nodes = vec![SymbolNodeEntry {
+            name: "Config".to_string(),
+            file: "src/types.ts".to_string(),
+            node_id: 77,
+            kind: "interface".to_string(),
+        }];
+
+        let edges = build_import_edges(
+            files,
+            resolved,
+            vec![],
+            node_ids,
+            vec![],
+            "/root".to_string(),
+            Some(symbol_nodes),
+        );
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].kind, "imports-type");
+        assert_eq!(edges[0].target_id, 2);
+        assert_eq!(edges[1].kind, "imports-type");
+        assert_eq!(edges[1].target_id, 77);
+    }
+
+    #[test]
+    fn renamed_import_through_barrel_resolves_original_name() {
+        // `import { Config as CfgType } from './barrel'` where './barrel'
+        // does `export { Config } from './types'`. Barrel-through resolution
+        // must look up "Config" (the original name) in the barrel's own
+        // export map, not the local alias "CfgType", which only exists in
+        // app.ts (#1847).
+        let files = vec![
+            make_file("src/app.ts", 1, vec![
+                make_import_with_renames("./barrel", vec!["CfgType"], vec![("CfgType", "Config")], false),
+            ], vec![]),
+            make_file("src/barrel.ts", 10, vec![], vec![]),
+            make_file("src/types.ts", 20, vec![], vec!["Config"]),
+        ];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./barrel", "src/barrel.ts")];
+        let reexports = vec![FileReexports {
+            file: "src/barrel.ts".to_string(),
+            reexports: vec![ReexportEntryInput {
+                source: "src/types.ts".to_string(),
+                names: vec!["Config".to_string()],
+                wildcard_reexport: false,
+                renames: None,
+            }],
+        }];
+        let node_ids = vec![
+            make_node_entry("src/app.ts", 1),
+            make_node_entry("src/barrel.ts", 10),
+            make_node_entry("src/types.ts", 20),
+        ];
+        let barrels = vec!["src/barrel.ts".to_string()];
+
+        let edges = build_import_edges(
+            files,
+            resolved,
+            reexports,
+            node_ids,
+            barrels,
+            "/root".to_string(),
+            None,
+        );
+        assert_eq!(edges.len(), 2);
+        // First: direct import to the barrel.
+        assert_eq!(edges[0].kind, "imports");
+        assert_eq!(edges[0].target_id, 10);
+        // Second: barrel-through to the actual source (types.ts), resolved
+        // via the original name "Config", not the local alias "CfgType".
+        assert_eq!(edges[1].kind, "imports");
+        assert_eq!(edges[1].target_id, 20);
+        assert_eq!(edges[1].confidence, 0.9);
     }
 
     #[test]

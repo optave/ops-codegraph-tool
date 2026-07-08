@@ -353,6 +353,14 @@ interface NativeImportInfo {
   wildcardReexport: boolean;
   /** Local names (subset of `names`) marked type-only via inline `type`/`typeof` modifier (#1813). */
   typeOnlyNames: string[];
+  /**
+   * `{ local, imported }` pairs for `import { X as Y }` specifiers — mirrors
+   * `Import.renamedImports` (#1730). Without this, the native `emit_named_symbol_edges`/
+   * `emit_barrel_through_edges` FFI handlers would search the target file for
+   * the local (post-rename) name instead of the name actually declared
+   * there, silently dropping the edge for a renamed import (#1847).
+   */
+  renamedImports: Array<{ local: string; imported: string }>;
 }
 
 /** Native FFI input shape for a single file. */
@@ -404,6 +412,7 @@ function toNativeImportInfo(imp: Import): NativeImportInfo {
     dynamicImport: !!imp.dynamicImport,
     wildcardReexport: !!imp.wildcardReexport,
     typeOnlyNames: imp.typeOnlyNames ?? [],
+    renamedImports: imp.renamedImports ?? [],
   };
 }
 

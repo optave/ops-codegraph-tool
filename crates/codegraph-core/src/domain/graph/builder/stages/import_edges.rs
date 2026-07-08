@@ -120,6 +120,35 @@ impl BarrelContext for ImportEdgeContext {
     }
 }
 
+/// Adapter over the two distinct "import statement" Rust representations in
+/// this crate that [`import_name_pairs`] needs to read from: the native
+/// orchestrator's own parsed `crate::types::Import`, and the FFI-facing
+/// `ImportInfo` wire struct the hybrid native path (`build_edges.rs`)
+/// deserializes from JS. Both mirror TS `Import` — this trait exists only so
+/// `import_name_pairs` has one implementation instead of being duplicated
+/// per Rust type, since the two structs differ in `Option` wrapping.
+pub(crate) trait ImportNameSource {
+    fn names(&self) -> &[String];
+    fn renamed_imports(&self) -> &[RenamedImport];
+    fn is_type_only(&self) -> bool;
+    fn type_only_names(&self) -> &[String];
+}
+
+impl ImportNameSource for crate::types::Import {
+    fn names(&self) -> &[String] {
+        &self.names
+    }
+    fn renamed_imports(&self) -> &[RenamedImport] {
+        self.renamed_imports.as_deref().unwrap_or(&[])
+    }
+    fn is_type_only(&self) -> bool {
+        self.type_only.unwrap_or(false)
+    }
+    fn type_only_names(&self) -> &[String] {
+        self.type_only_names.as_deref().unwrap_or(&[])
+    }
+}
+
 /// Pairs each locally-bound name from an import statement with its original
 /// (pre-rename) exported name — identical to the local name unless the
 /// specifier renames a binding (`import { X as Y }`). Barrel tracing and
@@ -131,23 +160,20 @@ impl BarrelContext for ImportEdgeContext {
 /// either because the whole statement is (`import type { X }`) or because
 /// this specific specifier carries the inline modifier
 /// (`import { type X }`, #1813).
-pub(crate) fn import_name_pairs(imp: &crate::types::Import) -> Vec<(String, String, bool)> {
+pub(crate) fn import_name_pairs<T: ImportNameSource>(imp: &T) -> Vec<(String, String, bool)> {
     let mut original_name_for: HashMap<&str, &str> = HashMap::new();
-    if let Some(renamed) = &imp.renamed_imports {
-        for r in renamed {
-            original_name_for.insert(&r.local, &r.imported);
-        }
+    for r in imp.renamed_imports() {
+        original_name_for.insert(&r.local, &r.imported);
     }
-    let statement_type_only = imp.type_only.unwrap_or(false);
-    let type_only_names: HashSet<&str> = imp
-        .type_only_names
-        .as_ref()
-        .map(|v| v.iter().map(|s| s.as_str()).collect())
-        .unwrap_or_default();
-    imp.names
+    let statement_type_only = imp.is_type_only();
+    let type_only_names: HashSet<&str> = imp.type_only_names().iter().map(|s| s.as_str()).collect();
+    imp.names()
         .iter()
         .map(|name| {
-            let local = name.strip_prefix("* as ").unwrap_or(name);
+            let local = name
+                .strip_prefix("* as ")
+                .or_else(|| name.strip_prefix("*\tas "))
+                .unwrap_or(name);
             let original = original_name_for.get(local).copied().unwrap_or(local);
             let type_only = statement_type_only || type_only_names.contains(local);
             (local.to_string(), original.to_string(), type_only)
