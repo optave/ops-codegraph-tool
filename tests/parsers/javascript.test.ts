@@ -211,6 +211,16 @@ describe('JavaScript parser', () => {
       expect(symbols.imports[0].names).toEqual(['a', 'b']);
     });
 
+    it('extracts destructured names through a TypeScript `satisfies {...}` assertion', () => {
+      // TS 4.9+ `satisfies` is structurally identical to `as` here (Greptile
+      // follow-up to #1781) — same walk-up gap would otherwise reproduce.
+      const symbols = parseTS(
+        `const { a, b } = await import('./foo.js') satisfies { a: Fn; b: Fn };`,
+      );
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'b']);
+    });
+
     it('extracts destructured names through parens + `as`-cast combined (exact repro shape)', () => {
       // Matches native-orchestrator.ts's actual production pattern:
       //   const { X, Y } = (await import('./mod.js')) as { X: Fn; Y: Fn };

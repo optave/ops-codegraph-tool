@@ -4054,16 +4054,19 @@ function extractImportNames(
 /**
  * Wrapper node types that can sit between a dynamic `import()` call and its
  * enclosing `variable_declarator` without changing which value gets bound —
- * `await`, redundant parentheses, and TypeScript `as` casts. Real-world
- * dynamic-import call sites often combine several of these, e.g.
+ * `await`, redundant parentheses, and TypeScript `as`/`satisfies` casts.
+ * Real-world dynamic-import call sites often combine several of these, e.g.
  * `const { X } = (await import('./mod.js')) as { X: Fn }` nests
  * await_expression → parenthesized_expression → as_expression before
- * reaching the declarator (#1781).
+ * reaching the declarator (#1781). `satisfies_expression` (TS 4.9+
+ * `... satisfies { X: Fn }`) is structurally identical to `as_expression`
+ * here — same Greptile follow-up as the native mirror.
  */
 const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
   'await_expression',
   'parenthesized_expression',
   'as_expression',
+  'satisfies_expression',
 ]);
 
 /**

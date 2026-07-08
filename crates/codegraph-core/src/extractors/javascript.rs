@@ -3038,13 +3038,19 @@ fn find_parent_class_no_fn_boundary(node: &Node, source: &[u8]) -> Option<String
 
 /// Wrapper node kinds that can sit between a dynamic `import()` call and its
 /// enclosing `variable_declarator` without changing which value gets bound —
-/// `await`, redundant parentheses, and TypeScript `as` casts. Real-world call
-/// sites often combine several of these, e.g.
+/// `await`, redundant parentheses, and TypeScript `as`/`satisfies` casts.
+/// Real-world call sites often combine several of these, e.g.
 /// `const { X } = (await import('./mod.js')) as { X: Fn }` nests
 /// await_expression → parenthesized_expression → as_expression before
-/// reaching the declarator (#1781).
-const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] =
-    &["await_expression", "parenthesized_expression", "as_expression"];
+/// reaching the declarator (#1781). `satisfies_expression` (TS 4.9+
+/// `... satisfies { X: Fn }`) is structurally identical to `as_expression`
+/// here — Greptile follow-up, mirrors the TS extractor.
+const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] = &[
+    "await_expression",
+    "parenthesized_expression",
+    "as_expression",
+    "satisfies_expression",
+];
 
 /// Extract named bindings from a dynamic `import()` call expression.
 /// Handles: `const { a, b } = await import(...)`, `const mod = await import(...)`,
@@ -4241,6 +4247,17 @@ mod tests {
     #[test]
     fn finds_dynamic_import_with_as_cast_destructuring() {
         let s = parse_ts("const { a, b } = await import('./foo.js') as { a: Fn; b: Fn };");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_satisfies_cast_destructuring() {
+        // TS 4.9+ `satisfies` is structurally identical to `as` here (Greptile
+        // follow-up to #1781) — same walk-up gap would otherwise reproduce.
+        let s = parse_ts("const { a, b } = await import('./foo.js') satisfies { a: Fn; b: Fn };");
         let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
         assert_eq!(dyn_imports.len(), 1);
         assert!(dyn_imports[0].names.contains(&"a".to_string()));
