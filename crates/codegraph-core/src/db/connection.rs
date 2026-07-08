@@ -880,10 +880,13 @@ impl NativeDatabase {
         let insert_ok = insert_nodes::do_insert_nodes(conn, &batches, &removed_files)
             .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_nodes failed: {e}"))
             .is_ok();
+        if !insert_ok {
+            return Ok(false);
+        }
         let hashes_ok = insert_nodes::commit_file_hashes(conn, &file_hashes)
             .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_nodes hash commit failed: {e}"))
             .is_ok();
-        Ok(insert_ok && hashes_ok)
+        Ok(hashes_ok)
     }
 
     /// Bulk-insert edge rows using chunked multi-value INSERT statements.
