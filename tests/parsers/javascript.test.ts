@@ -349,6 +349,38 @@ describe('JavaScript parser', () => {
     });
   });
 
+  describe('dynamic import() destructuring rest/default bindings (#1920)', () => {
+    // `extractDynamicImportNames`'s object_pattern branch only recognized
+    // shorthand_property_identifier_pattern and pair_pattern children, so a
+    // rest element (`...rest`) was silently dropped entirely and a shorthand
+    // default (`{ a = 1 }`) produced no name at all (#1920).
+
+    it('extracts a rest binding alongside plain destructured names', () => {
+      const symbols = parseJS(`const { a, ...rest } = await import('./mod.js');`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'rest']);
+    });
+
+    it('extracts a shorthand default-value binding', () => {
+      const symbols = parseJS(`const { a = 1 } = await import('./mod.js');`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a']);
+    });
+
+    it('extracts a mix of plain, renamed, default, and rest bindings', () => {
+      const symbols = parseJS(`const { a, b: alias, c = 1, ...rest } = await import('./mod.js');`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'alias', 'c', 'rest']);
+      expect(symbols.imports[0].renamedImports).toEqual([{ local: 'alias', imported: 'b' }]);
+    });
+
+    it('extracts a rest binding from an array-pattern destructure', () => {
+      const symbols = parseJS(`const [a, ...rest] = await import('./mod.js');`);
+      expect(symbols.imports).toHaveLength(1);
+      expect(symbols.imports[0].names).toEqual(['a', 'rest']);
+    });
+  });
+
   it('extracts call expressions', () => {
     const symbols = parseJS(`import { foo } from './bar'; foo(); baz();`);
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'foo' }));
