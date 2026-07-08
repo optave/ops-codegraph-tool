@@ -2407,4 +2407,124 @@ function runDemo(users: string[]): void {
       );
     });
   });
+
+  describe('ES6 getter/setter same-file property-read call attribution (#1893)', () => {
+    function parseJS(code) {
+      const parser = parsers.get('javascript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.js');
+    }
+
+    function parseTS(code) {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.ts');
+    }
+
+    it('attributes a bare `this.prop` read to the same-class getter', () => {
+      const symbols = parseJS(`
+        class Session {
+          get isReady() { return this._ready; }
+          check() {
+            if (this.isReady) { report(); }
+          }
+        }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'isReady', receiver: 'this' }),
+      );
+    });
+
+    it('attributes a bare `varName.prop` read to a same-file class getter via typeMap', () => {
+      const symbols = parseTS(`
+        class Repo {
+          get db() { return this._db; }
+        }
+        function useRepo(repo: Repo) {
+          return repo.db;
+        }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'db', receiver: 'repo' }),
+      );
+    });
+
+    it('attributes a plain-assignment write to the same-class setter', () => {
+      const symbols = parseJS(`
+        class Toggle {
+          set flag(v) { this._f = v; }
+          reset() { this.flag = false; }
+        }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'flag', receiver: 'this' }),
+      );
+    });
+
+    it('does not attribute a getter-only read as a call to the setter (no setter declared)', () => {
+      const symbols = parseJS(`
+        class Repo {
+          get db() { return this._db; }
+          check() { return this.db; }
+        }
+      `);
+      const dbCalls = symbols.calls.filter((c) => c.name === 'db');
+      expect(dbCalls).toHaveLength(1);
+    });
+
+    it('skips a property with both a getter and a setter (ambiguous target)', () => {
+      const symbols = parseJS(`
+        class Toggle {
+          get flag() { return this._f; }
+          set flag(v) { this._f = v; }
+          flip() { this.flag = !this.flag; }
+        }
+      `);
+      expect(symbols.calls.filter((c) => c.name === 'flag')).toHaveLength(0);
+    });
+
+    it('does not attribute a real method call to a bare-read even when the name matches an accessor', () => {
+      const symbols = parseJS(`
+        class Widget {
+          get value() { return this._v; }
+        }
+        function useWidget(w) {
+          return w.value();
+        }
+      `);
+      // The call-callee occurrence must still be handled by the regular call
+      // path (name='value', receiver='w') exactly once — not duplicated by
+      // the accessor-read collector.
+      expect(symbols.calls.filter((c) => c.name === 'value' && c.receiver === 'w')).toHaveLength(1);
+    });
+
+    it('does not attribute a plain (non-accessor) same-name method reference as a call', () => {
+      const symbols = parseJS(`
+        class Widget {
+          render() { return 1; }
+        }
+        function useWidget(w) {
+          const fn = w.render;
+          return fn;
+        }
+      `);
+      expect(symbols.calls).not.toContainEqual(
+        expect.objectContaining({ name: 'render', receiver: 'w' }),
+      );
+    });
+
+    it('recognizes a static get/set accessor the same way as an instance accessor', () => {
+      const symbols = parseJS(`
+        class Config {
+          static get version() { return Config._v; }
+          static describe() {
+            return this.version;
+          }
+        }
+      `);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'version', receiver: 'this' }),
+      );
+    });
+  });
 });

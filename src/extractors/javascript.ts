@@ -458,6 +458,10 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // which query patterns don't capture), and this()/call/apply bindings.
   const newExpressions: string[] = [];
   const definePropertyReceivers: Map<string, string> = new Map();
+  // #1893: same-file get/set accessor registry, needed before the collector
+  // walk below so bare property reads can be recognized regardless of
+  // whether the accessing code appears before or after the class declaration.
+  const localAccessors = collectLocalAccessors(tree.rootNode);
   runCollectorWalk(tree.rootNode, {
     definitions,
     typeMap,
@@ -467,6 +471,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     newExpressions,
     definePropertyReceivers,
     valueRefCalls: calls,
+    localAccessors,
     imports,
     calls,
     thisCallBindings,
@@ -570,6 +575,144 @@ function buildMethodDefinition(node: TreeSitterNode, name: string): Definition {
     children: methChildren.length > 0 ? methChildren : undefined,
     visibility: methVis,
   };
+}
+
+// ── ES6 getter/setter property-read call attribution (#1893) ────────────────
+//
+// A bare (non-call) property read/write on an ES6 `get`/`set` class accessor
+// (`obj.isReady`, no call parens) invokes the accessor function just as surely
+// as `obj.isReady()` would if written explicitly — but call-site extraction
+// only ever looked at `member_expression` nodes used as a call_expression's
+// callee, so accessor reads/writes never produced a `calls` edge at all.
+//
+// Scoped to the *same-file* case: `this.prop` inside one of the accessor's own
+// class's methods, or `varName.prop` where `varName`'s type (from this file's
+// own typeMap) is a class also declared in this file. Cross-file accessor
+// reads (the accessor's class declared in a different file than the read
+// site) are not yet covered — see #2030.
+
+/** Per-property record of which accessor kinds a same-file class declares. */
+interface LocalAccessorInfo {
+  get: boolean;
+  set: boolean;
+}
+
+/** `ClassName.propName` → which accessor kinds are declared, for this file only. */
+type LocalAccessorRegistry = Map<string, LocalAccessorInfo>;
+
+/**
+ * True when `methNode` (a method_definition) carries a `get` or `set` accessor
+ * modifier — an unnamed token child preceding the `name` field (tree-sitter
+ * represents `get`/`set`/`static`/`async` as literal unnamed children, not a
+ * dedicated field). Returns null for a plain (non-accessor) method.
+ */
+function getMethodAccessorKind(methNode: TreeSitterNode): 'get' | 'set' | null {
+  const nameNode = methNode.childForFieldName('name');
+  for (let i = 0; i < methNode.childCount; i++) {
+    const child = methNode.child(i);
+    if (!child || child === nameNode) break;
+    if (child.type === 'get' || child.type === 'set') return child.type;
+  }
+  return null;
+}
+
+/**
+ * Pre-scan pass: collect every ES6 get/set class-accessor declared in this
+ * file, keyed by its qualified `ClassName.propName` name — the same
+ * qualification `buildMethodDefinition`'s caller already gives the accessor's
+ * own Definition entry. Must run before the property-read walk below so the
+ * registry is complete regardless of source order (a class can be declared
+ * after code that reads its instances' accessors).
+ */
+function collectLocalAccessors(rootNode: TreeSitterNode): LocalAccessorRegistry {
+  const registry: LocalAccessorRegistry = new Map();
+  const walk = (node: TreeSitterNode, depth: number): void => {
+    if (depth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'method_definition') {
+      const accessorKind = getMethodAccessorKind(node);
+      if (accessorKind) {
+        const nameNode = node.childForFieldName('name');
+        const className = findParentClass(node);
+        const propName = nameNode ? resolveMethodDefinitionName(nameNode) : '';
+        if (className && propName) {
+          const key = `${className}.${propName}`;
+          const entry = registry.get(key) ?? { get: false, set: false };
+          entry[accessorKind] = true;
+          registry.set(key, entry);
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!, depth + 1);
+    }
+  };
+  walk(rootNode, 0);
+  return registry;
+}
+
+/** Unwrap a typeMap entry (always `{type, confidence}` in this file's own typeMap) to its type name. */
+function localTypeMapTypeName(typeMap: Map<string, TypeMapEntry>, varName: string): string | null {
+  return typeMap.get(varName)?.type ?? null;
+}
+
+/**
+ * Detect a bare (non-call) `this.prop` / `varName.prop` member-expression that
+ * reads or writes a same-file accessor property, and record it as an ordinary
+ * `Call` — indistinguishable from a real `this.prop()`/`varName.prop()` call
+ * site, so it flows through the existing (unchanged) call-resolution cascade.
+ *
+ * A plain assignment (`obj.prop = value`) invokes the setter; every other bare
+ * usage (reads, compound-assignment targets, etc.) invokes the getter. When a
+ * property declares *both* a getter and a setter, the two accessors share the
+ * same qualified name and resolution has no way to tell them apart — rather
+ * than risk an edge to the wrong one, that case is skipped entirely (mirrors
+ * resolveExactGlobalMatch's "ambiguous → drop rather than fan out" precedent
+ * in resolver/strategy.ts).
+ */
+function collectAccessorPropertyRead(
+  node: TreeSitterNode,
+  localAccessors: LocalAccessorRegistry,
+  typeMap: Map<string, TypeMapEntry>,
+  valueRefCalls: Call[],
+): void {
+  const parent = node.parent;
+  // obj.method() — already a real call, handled by the regular call path
+  // regardless of whether `method` also happens to be an accessor. Node
+  // identity must be compared via `.id` — tree-sitter (WASM) mints a fresh
+  // wrapper object on every childForFieldName()/parent access, so `===`
+  // between two independently-fetched references to the same AST node is
+  // always false.
+  if (parent?.type === 'call_expression' && parent.childForFieldName('function')?.id === node.id) {
+    return;
+  }
+
+  const obj = node.childForFieldName('object');
+  const propNode = node.childForFieldName('property');
+  if (!obj || !propNode || propNode.type !== 'property_identifier') return;
+  const propName = propNode.text;
+
+  let receiver: string;
+  let className: string | null;
+  if (obj.type === 'this') {
+    receiver = 'this';
+    className = findParentClass(node);
+  } else if (obj.type === 'identifier') {
+    receiver = obj.text;
+    className = localTypeMapTypeName(typeMap, obj.text);
+  } else {
+    return;
+  }
+  if (!className) return;
+
+  const accessorInfo = localAccessors.get(`${className}.${propName}`);
+  if (!accessorInfo || (accessorInfo.get && accessorInfo.set)) return;
+
+  const isPlainAssignTarget =
+    parent?.type === 'assignment_expression' && parent.childForFieldName('left')?.id === node.id;
+  const neededKind = isPlainAssignTarget ? 'set' : 'get';
+  if (!accessorInfo[neededKind]) return;
+
+  valueRefCalls.push({ name: propName, receiver, line: nodeStartLine(node) });
 }
 
 /**
@@ -942,6 +1085,9 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   // walkJavaScriptNode already covers those node types on this path.
   const newExpressions: string[] = [];
   const definePropertyReceivers: Map<string, string> = new Map();
+  // #1893: same-file get/set accessor registry — see the query-path call site
+  // of collectLocalAccessors for why this must be computed up front.
+  const localAccessors = collectLocalAccessors(tree.rootNode);
   runCollectorWalk(tree.rootNode, {
     definitions: ctx.definitions,
     typeMap: ctx.typeMap!,
@@ -951,6 +1097,7 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     newExpressions,
     definePropertyReceivers,
     valueRefCalls: ctx.calls,
+    localAccessors,
     funcPropDefs: ctx.definitions,
   });
   ctx.newExpressions = newExpressions;
@@ -4057,6 +4204,8 @@ interface CollectorWalkTargets {
   newExpressions: string[];
   definePropertyReceivers: Map<string, string>;
   valueRefCalls: Call[];
+  /** #1893: same-file `ClassName.propName` → declared get/set accessor kinds. */
+  localAccessors: LocalAccessorRegistry;
   imports?: Import[];
   calls?: Call[];
   thisCallBindings?: ThisCallBinding[];
@@ -4154,6 +4303,15 @@ function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTarget
       case 'binary_expression':
         // #1784: `instanceof ClassName` checks, e.g. `err instanceof CodegraphError`.
         collectInstanceofValueRefCall(node, targets.valueRefCalls);
+        break;
+      case 'member_expression':
+        // #1893: bare (non-call) reads/writes of a same-file get/set class accessor.
+        collectAccessorPropertyRead(
+          node,
+          targets.localAccessors,
+          targets.typeMap,
+          targets.valueRefCalls,
+        );
         break;
     }
     for (let i = 0; i < node.childCount; i++) {

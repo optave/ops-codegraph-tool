@@ -45,6 +45,15 @@ impl SymbolExtractor for JsExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_prototype_methods);
         // call_assignments runs after type_map is populated (needs receiver types)
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_call_assignments);
+        // #1893: same-file get/set accessor property reads/writes → calls edges.
+        // Runs after type_map is populated (needs receiver types for the
+        // `varName.prop` case) and after handle_method_def has run (the
+        // registry re-derives accessor names directly from the AST, so source
+        // order relative to match_js_node doesn't matter for correctness).
+        let local_accessors = collect_local_accessors(&tree.root_node(), source);
+        walk_tree(&tree.root_node(), source, &mut symbols, |node, source, symbols, _depth| {
+            handle_accessor_property_read(node, source, symbols, &local_accessors)
+        });
         // Phase 8.3c–8.3f: points-to bindings (params, this-rebinding, arrays,
         // spread, for-of, object rest/props) for the pts constraint solver.
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_pts_bindings);
@@ -1173,6 +1182,171 @@ fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             children: opt_children(children),
         });
     }
+}
+
+// ── ES6 getter/setter property-read call attribution (#1893) ────────────────
+//
+// A bare (non-call) property read/write on an ES6 `get`/`set` class accessor
+// (`obj.isReady`, no call parens) invokes the accessor function just as surely
+// as `obj.isReady()` would if written explicitly — but call-site extraction
+// only ever looked at `member_expression` nodes used as a call_expression's
+// callee, so accessor reads/writes never produced a `calls` edge at all.
+// Mirrors `collectAccessorPropertyRead` in `src/extractors/javascript.ts`.
+//
+// Scoped to the *same-file* case: `this.prop` inside one of the accessor's own
+// class's methods, or `varName.prop` where `varName`'s type (from this file's
+// own type_map) is a class also declared in this file. Cross-file accessor
+// reads (the accessor's class declared in a different file than the read
+// site) are not yet covered — see #2030.
+
+/// Per-property record of which accessor kinds a same-file class declares.
+#[derive(Default, Clone, Copy)]
+struct LocalAccessorInfo {
+    get: bool,
+    set: bool,
+}
+
+/// `ClassName.propName` → which accessor kinds are declared, for this file only.
+type LocalAccessorRegistry = HashMap<String, LocalAccessorInfo>;
+
+/// True when `meth_node` (a method_definition) carries a `get` or `set`
+/// accessor modifier — an unnamed token child preceding the `name` field
+/// (tree-sitter represents `get`/`set`/`static`/`async` as literal unnamed
+/// children, not a dedicated field). Returns `None` for a plain method.
+fn get_method_accessor_kind(meth_node: &Node) -> Option<&'static str> {
+    let name_node = meth_node.child_by_field_name("name");
+    for i in 0..meth_node.child_count() {
+        let Some(child) = meth_node.child(i) else { continue };
+        if Some(child.id()) == name_node.map(|n| n.id()) {
+            break;
+        }
+        match child.kind() {
+            "get" => return Some("get"),
+            "set" => return Some("set"),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Pre-scan pass: collect every ES6 get/set class-accessor declared in this
+/// file, keyed by its qualified `ClassName.propName` name — the same
+/// qualification `handle_method_def` already gives the accessor's own
+/// Definition entry. Must run before the property-read pass so the registry
+/// is complete regardless of source order.
+fn collect_local_accessors(root: &Node, source: &[u8]) -> LocalAccessorRegistry {
+    let mut registry = LocalAccessorRegistry::new();
+
+    fn walk(node: &Node, source: &[u8], registry: &mut LocalAccessorRegistry, depth: usize) {
+        if depth >= MAX_WALK_DEPTH {
+            return;
+        }
+        if node.kind() == "method_definition" {
+            if let Some(kind) = get_method_accessor_kind(node) {
+                if let (Some(class_name), Some(prop_name)) =
+                    (find_parent_class(node, source), resolve_method_def_name(node, source))
+                {
+                    let key = format!("{}.{}", class_name, prop_name);
+                    let entry = registry.entry(key).or_default();
+                    if kind == "get" {
+                        entry.get = true;
+                    } else {
+                        entry.set = true;
+                    }
+                }
+            }
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                walk(&child, source, registry, depth + 1);
+            }
+        }
+    }
+
+    walk(root, source, &mut registry, 0);
+    registry
+}
+
+/// Detect a bare (non-call) `this.prop` / `varName.prop` member-expression
+/// that reads or writes a same-file accessor property, and record it as an
+/// ordinary `Call` — indistinguishable from a real
+/// `this.prop()`/`varName.prop()` call site, so it flows through the existing
+/// (unchanged) call-resolution cascade.
+///
+/// A plain assignment (`obj.prop = value`) invokes the setter; every other
+/// bare usage (reads, compound-assignment targets, etc.) invokes the getter.
+/// When a property declares *both* a getter and a setter, the two accessors
+/// share the same qualified name and resolution has no way to tell them
+/// apart — rather than risk an edge to the wrong one, that case is skipped
+/// entirely (mirrors the "ambiguous → drop rather than fan out" precedent
+/// used elsewhere in call resolution).
+fn handle_accessor_property_read(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    local_accessors: &LocalAccessorRegistry,
+) {
+    if node.kind() != "member_expression" {
+        return;
+    }
+    // obj.method() — already a real call, handled by the regular call path
+    // regardless of whether `method` also happens to be an accessor.
+    if let Some(parent) = node.parent() {
+        if parent.kind() == "call_expression"
+            && parent.child_by_field_name("function").map(|f| f.id()) == Some(node.id())
+        {
+            return;
+        }
+    }
+
+    let Some(obj) = node.child_by_field_name("object") else { return };
+    let Some(prop_node) = node.child_by_field_name("property") else { return };
+    if prop_node.kind() != "property_identifier" {
+        return;
+    }
+    let prop_name = node_text(&prop_node, source);
+
+    let (receiver, class_name): (String, Option<String>) = match obj.kind() {
+        "this" => ("this".to_string(), find_parent_class(node, source)),
+        "identifier" => {
+            let obj_name = node_text(&obj, source).to_string();
+            let type_name = symbols
+                .type_map
+                .iter()
+                .find(|e| e.name == obj_name)
+                .map(|e| e.type_name.clone());
+            (obj_name, type_name)
+        }
+        _ => return,
+    };
+    let Some(class_name) = class_name else { return };
+
+    let key = format!("{}.{}", class_name, prop_name);
+    let Some(accessor_info) = local_accessors.get(&key) else { return };
+    if accessor_info.get && accessor_info.set {
+        return;
+    }
+
+    let is_plain_assign_target = node
+        .parent()
+        .filter(|p| p.kind() == "assignment_expression")
+        .and_then(|p| p.child_by_field_name("left"))
+        .map(|l| l.id())
+        == Some(node.id());
+    let needed_get = !is_plain_assign_target;
+    if needed_get && !accessor_info.get {
+        return;
+    }
+    if !needed_get && !accessor_info.set {
+        return;
+    }
+
+    symbols.calls.push(Call {
+        name: prop_name.to_string(),
+        line: start_line(node),
+        receiver: Some(receiver),
+        ..Default::default()
+    });
 }
 
 /// Create a synthetic `ClassName.<static:L:C>` definition for a class static block
@@ -6528,5 +6702,117 @@ mod tests {
         );
         let dt_call = s.calls.iter().find(|c| c.name.starts_with("<dt_") && c.name.ends_with(">[*]"));
         assert!(dt_call.is_some(), "dispatch-table call missing for parenthesized object; got: {:?}", s.calls);
+    }
+
+    // ── ES6 getter/setter same-file property-read call attribution (#1893) ──
+
+    #[test]
+    fn attributes_bare_this_prop_read_to_same_class_getter() {
+        let s = parse_js(
+            "class Session {\n\
+               get isReady() { return this._ready; }\n\
+               check() { if (this.isReady) { report(); } }\n\
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "isReady" && c.receiver.as_deref() == Some("this")),
+            "expected a call to isReady via this; got: {:?}",
+            s.calls
+        );
+    }
+
+    #[test]
+    fn attributes_bare_varname_prop_read_to_same_file_class_getter_via_type_map() {
+        let s = parse_ts(
+            "class Repo {\n\
+               get db() { return this._db; }\n\
+             }\n\
+             function useRepo(repo: Repo) {\n\
+               return repo.db;\n\
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "db" && c.receiver.as_deref() == Some("repo")),
+            "expected a call to db via repo; got: {:?}",
+            s.calls
+        );
+    }
+
+    #[test]
+    fn attributes_plain_assignment_write_to_same_class_setter() {
+        let s = parse_js(
+            "class Toggle {\n\
+               set flag(v) { this._f = v; }\n\
+               reset() { this.flag = false; }\n\
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "flag" && c.receiver.as_deref() == Some("this")),
+            "expected a call to flag via this; got: {:?}",
+            s.calls
+        );
+    }
+
+    #[test]
+    fn skips_property_with_both_getter_and_setter() {
+        let s = parse_js(
+            "class Toggle {\n\
+               get flag() { return this._f; }\n\
+               set flag(v) { this._f = v; }\n\
+               flip() { this.flag = !this.flag; }\n\
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "flag"),
+            "ambiguous get+set accessor must not produce a call; got: {:?}",
+            s.calls
+        );
+    }
+
+    #[test]
+    fn does_not_duplicate_a_real_call_to_an_accessor_name() {
+        let s = parse_js(
+            "class Widget {\n\
+               get value() { return this._v; }\n\
+             }\n\
+             function useWidget(w) {\n\
+               return w.value();\n\
+             }",
+        );
+        let matches = s.calls.iter().filter(|c| c.name == "value" && c.receiver.as_deref() == Some("w")).count();
+        assert_eq!(matches, 1, "expected exactly one call to w.value(); got: {:?}", s.calls);
+    }
+
+    #[test]
+    fn does_not_attribute_plain_method_reference_as_call() {
+        let s = parse_js(
+            "class Widget {\n\
+               render() { return 1; }\n\
+             }\n\
+             function useWidget(w) {\n\
+               const fn = w.render;\n\
+               return fn;\n\
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.name == "render" && c.receiver.as_deref() == Some("w")),
+            "plain method reference (no accessor) must not produce a call; got: {:?}",
+            s.calls
+        );
+    }
+
+    #[test]
+    fn recognizes_static_accessor_same_as_instance() {
+        let s = parse_js(
+            "class Config {\n\
+               static get version() { return Config._v; }\n\
+               static describe() { return this.version; }\n\
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.name == "version" && c.receiver.as_deref() == Some("this")),
+            "expected a call to version via this; got: {:?}",
+            s.calls
+        );
     }
 }
