@@ -29,14 +29,7 @@ FIXTURE_DIR="$(cd "$FIXTURE_DIR" && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Portable sed -i (GNU vs BSD)
-sedi() {
-    if sed --version 2>/dev/null | grep -q GNU; then
-        sed -i "$@"
-    else
-        sed -i '' "$@"
-    fi
-}
+source "$(dirname "${BASH_SOURCE[0]}")/tracer-common.sh"
 
 empty_result() {
     local reason="${1:-toolchain not available}"
