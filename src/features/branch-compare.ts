@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getDatabase } from '../db/better-sqlite3.js';
+import { resolveBusyTimeoutMs } from '../db/index.js';
 import { buildGraph } from '../domain/graph/builder.js';
 import { kindIcon } from '../domain/queries.js';
 import { debug } from '../infrastructure/logger.js';
@@ -120,7 +121,7 @@ function openNativeDbForFanMetrics(dbPath: string): NativeDatabase | undefined {
   if (!isNativeAvailable()) return undefined;
   try {
     const native = getNative();
-    return native.NativeDatabase.openReadonly(dbPath);
+    return native.NativeDatabase.openReadonly(dbPath, resolveBusyTimeoutMs(dbPath));
   } catch (e) {
     debug(`loadSymbolsFromDb: native path failed: ${toErrorMessage(e)}`);
     return undefined;

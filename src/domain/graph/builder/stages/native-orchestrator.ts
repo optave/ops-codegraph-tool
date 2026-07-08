@@ -579,7 +579,7 @@ async function runPostNativeAnalysis(
   const native = loadNative();
   if (native?.NativeDatabase) {
     try {
-      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath, ctx.config.db.busyTimeoutMs);
       if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
     } catch {
       ctx.nativeDb = undefined;
@@ -1955,7 +1955,7 @@ function openNativeDatabase(ctx: PipelineContext): void {
     // is kept and transferred to the NativeDbProxy below, not released here.
     ctx.db.close();
     acquireAdvisoryLock(ctx.dbPath);
-    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     ctx.nativeDb.initSchema();
     // Replace ctx.db with a NativeDbProxy so post-native JS fallback
     // (structure, analysis) can use it without reopening better-sqlite3.

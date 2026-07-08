@@ -474,7 +474,10 @@ export function resolveBusyTimeoutMs(customDbPath?: string): number {
 }
 
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */
-function openRepoNative(customDbPath?: string): { repo: Repository; close(): void } {
+function openRepoNative(
+  customDbPath: string | undefined,
+  busyTimeoutMs: number,
+): { repo: Repository; close(): void } {
   const dbPath = findDbPath(customDbPath);
   if (!fs.existsSync(dbPath)) {
     throw new DbError(
@@ -483,7 +486,7 @@ function openRepoNative(customDbPath?: string): { repo: Repository; close(): voi
     );
   }
   const native = getNative();
-  const ndb = native.NativeDatabase.openReadonly(dbPath);
+  const ndb = native.NativeDatabase.openReadonly(dbPath, busyTimeoutMs);
   try {
     warnOnVersionMismatch(() => ndb.getBuildMeta('codegraph_version'));
     const repo = new NativeRepository(ndb, dbPath);
@@ -529,10 +532,11 @@ function wrapInjectedRepo(repo: Repository): { repo: Repository; close(): void }
 function tryOpenRepoNative(
   customDbPath: string | undefined,
   engine: 'native' | 'wasm' | 'auto',
+  busyTimeoutMs: number,
 ): { repo: Repository; close(): void } | undefined {
   if (engine === 'wasm' || !isNativeAvailable()) return undefined;
   try {
-    return openRepoNative(customDbPath);
+    return openRepoNative(customDbPath, busyTimeoutMs);
   } catch (e) {
     // Re-throw user-visible errors (e.g. DB not found) — only silently
     // fall back for native-engine failures (e.g. incompatible native binary).
@@ -582,7 +586,7 @@ export function openRepo(
   // This ensures --engine wasm and benchmark workers bypass the native path.
   const { engine, busyTimeoutMs } = resolveDbSettings(customDbPath, opts.engine);
 
-  const native = tryOpenRepoNative(customDbPath, engine);
+  const native = tryOpenRepoNative(customDbPath, engine, busyTimeoutMs);
   if (native) return native;
 
   return openRepoSqliteFallback(customDbPath, busyTimeoutMs);
@@ -622,7 +626,7 @@ export function openReadonlyWithNative(
     try {
       const dbPath = findDbPath(customPath);
       const native = getNative();
-      nativeDb = native.NativeDatabase.openReadonly(dbPath);
+      nativeDb = native.NativeDatabase.openReadonly(dbPath, busyTimeoutMs);
     } catch (e) {
       const msg = toErrorMessage(e);
       if (isBusyOrLockedError(msg)) {

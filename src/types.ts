@@ -2390,8 +2390,8 @@ export interface NativeAddon {
   extractDataflowAnalysisBatch?(filePaths: string[]): (DataflowResult | null)[];
   ParseTreeCache: new () => NativeParseTreeCache;
   NativeDatabase: {
-    openReadWrite(dbPath: string): NativeDatabase;
-    openReadonly(dbPath: string): NativeDatabase;
+    openReadWrite(dbPath: string, busyTimeoutMs?: number): NativeDatabase;
+    openReadonly(dbPath: string, busyTimeoutMs?: number): NativeDatabase;
   };
 }
 

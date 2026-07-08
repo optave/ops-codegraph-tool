@@ -16,6 +16,11 @@ use crate::db::repository::edges::{self, EdgeRow};
 use crate::domain::graph::builder::stages::insert_nodes::{self, FileHashEntry, InsertNodesBatch};
 use crate::graph::classifiers::roles::{self, RoleSummary};
 
+/// Fallback `PRAGMA busy_timeout` (ms) used when the caller doesn't pass a
+/// resolved value. Mirrors `DEFAULTS.db.busyTimeoutMs` in
+/// `src/infrastructure/config.ts` — keep both in sync.
+const DEFAULT_BUSY_TIMEOUT_MS: u32 = 5000;
+
 // ── Migration DDL (mirrored from src/db/migrations.ts) ──────────────────
 
 struct Migration {
@@ -483,8 +488,12 @@ pub struct NativeDatabase {
 impl NativeDatabase {
     /// Open a read-write connection to the database at `db_path`.
     /// Creates the file and parent directories if they don't exist.
+    ///
+    /// `busy_timeout_ms` mirrors `config.db.busyTimeoutMs` on the TS side
+    /// (`DEFAULTS.db.busyTimeoutMs` in `src/infrastructure/config.ts`);
+    /// defaults to `DEFAULT_BUSY_TIMEOUT_MS` when omitted.
     #[napi(factory)]
-    pub fn open_read_write(db_path: String) -> napi::Result<Self> {
+    pub fn open_read_write(db_path: String, busy_timeout_ms: Option<u32>) -> napi::Result<Self> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -498,12 +507,13 @@ impl NativeDatabase {
         // are not cache-coherent on Windows, leading to SQLITE_CORRUPT (#715).
         // Read-only connections keep mmap since they don't share a WAL file
         // with a concurrent writer from a different library.
-        conn.execute_batch(
+        let busy_timeout_ms = busy_timeout_ms.unwrap_or(DEFAULT_BUSY_TIMEOUT_MS);
+        conn.execute_batch(&format!(
             "PRAGMA journal_mode = WAL; \
              PRAGMA synchronous = NORMAL; \
-             PRAGMA busy_timeout = 5000; \
+             PRAGMA busy_timeout = {busy_timeout_ms}; \
              PRAGMA temp_store = MEMORY;",
-        )
+        ))
         .map_err(|e| napi::Error::from_reason(format!("Failed to set pragmas: {e}")))?;
         Ok(Self {
             conn: SendWrapper::new(Some(conn)),
@@ -512,17 +522,22 @@ impl NativeDatabase {
     }
 
     /// Open a read-only connection to the database at `db_path`.
+    ///
+    /// `busy_timeout_ms` mirrors `config.db.busyTimeoutMs` on the TS side
+    /// (`DEFAULTS.db.busyTimeoutMs` in `src/infrastructure/config.ts`);
+    /// defaults to `DEFAULT_BUSY_TIMEOUT_MS` when omitted.
     #[napi(factory)]
-    pub fn open_readonly(db_path: String) -> napi::Result<Self> {
+    pub fn open_readonly(db_path: String, busy_timeout_ms: Option<u32>) -> napi::Result<Self> {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(&db_path, flags)
             .map_err(|e| napi::Error::from_reason(format!("Failed to open DB readonly: {e}")))?;
         conn.set_prepared_statement_cache_capacity(64);
-        conn.execute_batch(
-            "PRAGMA busy_timeout = 5000; \
+        let busy_timeout_ms = busy_timeout_ms.unwrap_or(DEFAULT_BUSY_TIMEOUT_MS);
+        conn.execute_batch(&format!(
+            "PRAGMA busy_timeout = {busy_timeout_ms}; \
              PRAGMA mmap_size = 268435456; \
              PRAGMA temp_store = MEMORY;",
-        )
+        ))
         .map_err(|e| napi::Error::from_reason(format!("Failed to set pragmas: {e}")))?;
         Ok(Self {
             conn: SendWrapper::new(Some(conn)),
