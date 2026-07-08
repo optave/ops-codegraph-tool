@@ -59,6 +59,7 @@ import {
   CHA_TYPED_DISPATCH_CONFIDENCE,
   runChaPostPass,
 } from '../helpers.js';
+import { importNamePairs } from '../import-utils.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -152,23 +153,6 @@ function importEdgeKind(imp: Import): string {
 }
 
 /**
- * Pairs each locally-bound name from an import statement with its original
- * (pre-rename) exported name — identical to the local name unless the
- * specifier renames a binding (`import { X as Y }`). Barrel tracing and
- * target-file symbol lookups must search using the *original* name — the
- * renamed local alias only exists in the importing file, not in the file
- * being imported from (#1730).
- */
-function importNamePairs(imp: Import): Array<{ local: string; original: string }> {
-  const originalNameFor = new Map<string, string>();
-  for (const r of imp.renamedImports ?? []) originalNameFor.set(r.local, r.imported);
-  return imp.names.map((name) => {
-    const local = name.replace(/^\*\s+as\s+/, '');
-    return { local, original: originalNameFor.get(local) ?? local };
-  });
-}
-
-/**
  * Emit one symbol-level edge per named specifier in `imp`, pointing at the
  * specific target symbol (resolved through barrel chains when needed).
  *
@@ -238,6 +222,14 @@ function emitEdgesForImport(
   }
   if (imp.reexport && !imp.wildcardReexport) {
     emitNamedSymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows, 'reexports');
+  } else if (imp.reexport && imp.wildcardReexport) {
+    // A genuine wildcard needs to be distinguishable from a named reexport
+    // even when a *different* statement in the same file names specific
+    // symbols from this exact target — otherwise the query layer can't tell
+    // "only these symbols are re-exported" apart from "everything is
+    // re-exported, and these happen to also be individually named" (#1849
+    // review). See `collectReexportedSymbols` in domain/analysis/exports.ts.
+    allEdgeRows.push([fileNodeId, targetRow.id, 'reexports-wildcard', 1.0, 0, null, null]);
   }
 
   if (!imp.reexport && isBarrelFile(ctx, resolvedPath)) {
@@ -1378,10 +1370,11 @@ function resolveFallbackTargets(
     // `targets` is typed without `kind` when it flows straight through from
     // resolveCallTargets (call-resolver.ts's declared return type omits it),
     // but every underlying CallNodeLookup method actually populates it — the
-    // same gap the preQualifiedTargets cast above already works around.
-    targets = (targets as ReadonlyArray<{ id: number; file: string; kind?: string }>).filter(
-      (t) => t.kind === 'function' || t.kind === 'method',
-    );
+    // same gap the preQualifiedTargets cast above already works around. Kept
+    // as its own step (not folded into the filter callback) so the type-gap
+    // workaround and the actual filtering decision stay visually distinct.
+    const typedTargets = targets as ReadonlyArray<{ id: number; file: string; kind?: string }>;
+    targets = typedTargets.filter((t) => t.kind === 'function' || t.kind === 'method');
   }
 
   return { targets, importedFrom };
