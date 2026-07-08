@@ -399,12 +399,7 @@ fn seed_object_create_entries(var_name: &str, call_node: &Node, source: &[u8], s
                 let Some(key_n) = child.child_by_field_name("key") else { continue };
                 let Some(val_n) = child.child_by_field_name("value") else { continue };
                 if val_n.kind() != "identifier" { continue; }
-                let key = if key_n.kind() == "string" {
-                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                } else {
-                    Some(node_text(&key_n, source).to_string())
-                };
-                let Some(key) = key else { continue };
+                let Some(key) = resolve_pair_key_name(&key_n, source) else { continue };
                 symbols.type_map.push(TypeMapEntry {
                     name: format!("{}.{}", var_name, key),
                     type_name: node_text(&val_n, source).to_string(),
@@ -423,12 +418,7 @@ fn seed_descriptor_object(obj_name: &str, obj_node: &Node, source: &[u8], symbol
         if child.kind() != "pair" { continue; }
         let Some(key_n) = child.child_by_field_name("key") else { continue };
         let Some(val_n) = child.child_by_field_name("value") else { continue };
-        let key = if key_n.kind() == "string" {
-            extract_string_fragment(&key_n, source).map(|s| s.to_string())
-        } else {
-            Some(node_text(&key_n, source).to_string())
-        };
-        let Some(key) = key else { continue };
+        let Some(key) = resolve_pair_key_name(&key_n, source) else { continue };
         let Some(target) = find_descriptor_value(&val_n, source) else { continue };
         symbols.type_map.push(TypeMapEntry {
             name: format!("{}.{}", obj_name, key),
@@ -662,12 +652,7 @@ fn seed_objlit_type_map_entries(var_name: &str, obj_node: &Node, source: &[u8], 
             "pair" => {
                 let Some(key_n) = child.child_by_field_name("key") else { continue };
                 let Some(val_n) = child.child_by_field_name("value") else { continue };
-                let key = if key_n.kind() == "string" {
-                    extract_string_fragment(&key_n, source).map(|s| s.to_string())
-                } else {
-                    Some(node_text(&key_n, source).to_string())
-                };
-                let Some(key) = key else { continue };
+                let Some(key) = resolve_pair_key_name(&key_n, source) else { continue };
                 let qualified = format!("{}.{}", var_name, key);
                 match val_n.kind() {
                     "arrow_function" | "function_expression" | "function" => {
@@ -965,19 +950,9 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
                 let key_node = child.child_by_field_name("key");
                 let value_node = child.child_by_field_name("value");
                 if let (Some(key_node), Some(value_node)) = (key_node, value_node) {
-                    let method_name: &str = if key_node.kind() == "string" {
-                        let s = node_text(&key_node, source);
-                        // Strip exactly one matching pair of surrounding quote characters.
-                        // `trim_matches` would also strip embedded quotes; we only want the
-                        // outermost delimiter pair so `"it's"` stays `it's`.
-                        s.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
-                            .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-                            .unwrap_or(s)
-                    } else {
-                        node_text(&key_node, source)
-                    };
+                    let Some(method_name) = resolve_pair_key_name(&key_node, source) else { continue };
                     if method_name.is_empty() { continue; }
-                    emit_js_prototype_method(class_name, method_name, &value_node, source, symbols);
+                    emit_js_prototype_method(class_name, &method_name, &value_node, source, symbols);
                 }
             }
             _ => {}
@@ -4115,24 +4090,21 @@ fn collect_object_rest_params(node: &Node, source: &[u8], symbols: &mut FileSymb
         }
         "pair" => {
             // object-literal method: `{ bar: function({ ...rest }) {} }`.
-            // Computed keys are skipped — they can never match a paramBinding callee.
+            // Computed keys resolve through resolve_pair_key_name, which unwraps resolvable
+            // string literals (e.g. `['bar']`) and returns None for non-string computed keys
+            // (e.g. `[Symbol.iterator]`) — those can never match a paramBinding callee.
             if let (Some(key_n), Some(value_n)) = (
                 node.child_by_field_name("key"),
                 node.child_by_field_name("value"),
             ) {
                 let vt = value_n.kind();
-                if key_n.kind() != "computed_property_name"
-                    && (vt == "arrow_function" || vt == "function_expression" || vt == "generator_function")
-                {
-                    let key_text = node_text(&key_n, source);
-                    fn_name = Some(if key_n.kind() == "string" {
-                        key_text[1..key_text.len() - 1].to_string()
-                    } else {
-                        key_text.to_string()
-                    });
-                    params_node = value_n
-                        .child_by_field_name("parameters")
-                        .or_else(|| find_child(&value_n, "formal_parameters"));
+                if vt == "arrow_function" || vt == "function_expression" || vt == "generator_function" {
+                    if let Some(key_name) = resolve_pair_key_name(&key_n, source) {
+                        fn_name = Some(key_name);
+                        params_node = value_n
+                            .child_by_field_name("parameters")
+                            .or_else(|| find_child(&value_n, "formal_parameters"));
+                    }
                 }
             }
         }
@@ -5997,6 +5969,124 @@ mod tests {
         assert!(names.contains(&"obj2.computedLet"), "expected 'obj2.computedLet'; got: {:?}", names);
         assert!(names.contains(&"obj2.plain"), "expected 'obj2.plain'; got: {:?}", names);
         assert!(names.contains(&"obj3.computedVar"), "expected 'obj3.computedVar'; got: {:?}", names);
+    }
+
+    /// Issue #1884: `seed_object_create_entries`'s pair arm must unwrap a computed
+    /// string-literal key (`Object.create({ ['foo']: fn })`) instead of falling back to the
+    /// raw bracket/quote source text.
+    #[test]
+    fn computed_key_in_object_create_resolves() {
+        let s = parse_js(
+            "function fn() {}\n\
+             const obj = Object.create({ ['foo']: fn });",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "obj.foo");
+        assert!(entry.is_some(), "type_map should contain 'obj.foo'; got: {:?}", s.type_map);
+        assert_eq!(entry.unwrap().type_name, "fn");
+    }
+
+    /// Issue #1884: `seed_descriptor_object`'s pair arm (Object.defineProperties) must unwrap
+    /// a computed string-literal key instead of falling back to the raw bracket/quote text.
+    #[test]
+    fn computed_key_in_define_properties_resolves() {
+        let s = parse_js(
+            "function f1() {}\n\
+             const obj = {};\n\
+             Object.defineProperties(obj, { ['foo']: { value: f1 } });",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "obj.foo");
+        assert!(entry.is_some(), "type_map should contain 'obj.foo'; got: {:?}", s.type_map);
+        assert_eq!(entry.unwrap().type_name, "f1");
+    }
+
+    /// Issue #1884: a non-string computed key in Object.defineProperties has no statically
+    /// resolvable name — must be skipped rather than emitting a garbled entry.
+    #[test]
+    fn non_string_computed_key_in_define_properties_skipped() {
+        let s = parse_js(
+            "function f1() {}\n\
+             const obj = {};\n\
+             Object.defineProperties(obj, { [Symbol.iterator]: { value: f1 } });",
+        );
+        assert!(
+            !s.type_map.iter().any(|e| e.name.contains("Symbol")),
+            "non-string computed key must not produce a type_map entry; got: {:?}", s.type_map
+        );
+    }
+
+    /// Issue #1884: `seed_objlit_type_map_entries`'s pair arm (let/var object literals) must
+    /// unwrap a computed string-literal key instead of falling back to the raw bracket/quote text.
+    #[test]
+    fn computed_key_in_let_objlit_pair_seeds_type_map() {
+        let s = parse_js(
+            "function handler() {}\n\
+             var routes = { ['get']: handler };",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "routes.get");
+        assert!(entry.is_some(), "type_map should contain 'routes.get'; got: {:?}", s.type_map);
+        assert_eq!(entry.unwrap().type_name, "handler");
+    }
+
+    /// Issue #1884: `extract_js_prototype_object_literal`'s pair arm must unwrap a computed
+    /// string-literal key instead of falling back to the raw bracket/quote text.
+    #[test]
+    fn computed_key_in_prototype_object_literal_pair_resolves() {
+        let s = parse_js(
+            "function helper() {}\n\
+             function C() {}\n\
+             C.prototype = { ['run']: helper };",
+        );
+        let entry = s.type_map.iter().find(|e| e.name == "C.run");
+        assert!(entry.is_some(), "type_map should contain 'C.run'; got: {:?}", s.type_map);
+        assert_eq!(entry.unwrap().type_name, "helper");
+    }
+
+    /// Issue #1884: a computed string-literal pair key with a function value in a prototype
+    /// object literal must emit a method definition under the plain qualified name.
+    #[test]
+    fn computed_key_in_prototype_object_literal_pair_fn_value_emits_definition() {
+        let s = parse_js(
+            "function C() {}\n\
+             C.prototype = { ['foo']: function() { return 1; } };",
+        );
+        let names: Vec<_> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"C.foo"), "expected 'C.foo'; got: {:?}", names);
+    }
+
+    /// Issue #1884: `collect_object_rest_params`'s pair arm previously skipped ALL computed
+    /// keys, including resolvable string literals — it must now unwrap them the same way
+    /// `resolve_pair_key_name` does elsewhere, instead of blanket-skipping.
+    #[test]
+    fn computed_string_literal_key_unwrapped_for_object_rest_param_binding() {
+        let s = parse_js(
+            "const api = {\n\
+               ['process']: function({ items, ...rest }) {\n\
+                 rest.flush();\n\
+               }\n\
+             };",
+        );
+        let b = s.object_rest_param_bindings.iter().find(|b| b.callee == "process");
+        assert!(b.is_some(), "object_rest_param_bindings missing; got: {:?}", s.object_rest_param_bindings);
+        let b = b.unwrap();
+        assert_eq!(b.rest_name, "rest");
+        assert_eq!(b.arg_index, 0);
+    }
+
+    /// Issue #1884: a non-string computed key must still be skipped for rest-param binding
+    /// extraction — there's no statically resolvable callee name to bind against.
+    #[test]
+    fn non_string_computed_key_still_skipped_for_object_rest_param_binding() {
+        let s = parse_js(
+            "const api = {\n\
+               [Symbol.iterator]: function({ ...rest }) {\n\
+                 rest.flush();\n\
+               }\n\
+             };",
+        );
+        assert!(
+            !s.object_rest_param_bindings.iter().any(|b| b.rest_name == "rest"),
+            "non-string computed key must not produce a binding; got: {:?}", s.object_rest_param_bindings
+        );
     }
 
     /// Issue #1551: `let` and `var` object-literal declarations must seed composite typeMap keys

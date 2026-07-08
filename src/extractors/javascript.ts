@@ -2196,6 +2196,21 @@ function resolveMethodDefinitionName(nameNode: TreeSitterNode): string {
 }
 
 /**
+ * Resolve an object-literal `pair` node's key field to its plain string form.
+ *
+ * Mirrors resolveMethodDefinitionName's computed-key handling so `{ ['foo']: () => {} }` and
+ * `{ ['foo']() {} }` resolve identically: quoted string keys have their quotes stripped,
+ * computed string-literal keys (`['foo']`) are unwrapped, and non-string computed keys
+ * (e.g. `[Symbol.iterator]`) return '' (no resolvable name — caller skips the pair) rather
+ * than falling back to the raw bracket/quote source text.
+ */
+function resolvePairKeyName(keyNode: TreeSitterNode): string {
+  if (keyNode.type === 'string') return keyNode.text.replace(/^['"]|['"]$/g, '');
+  if (keyNode.type === 'computed_property_name') return resolveComputedKeyName(keyNode);
+  return keyNode.text;
+}
+
+/**
  * Push node onto funcStack for a method_definition, qualified with the enclosing class
  * name so the PTS key matches callerName from findCaller (which uses
  * def.name = 'ClassName.method').
@@ -2584,8 +2599,7 @@ function handleObjectLiteralTypeMap(
       const keyNode = child.childForFieldName('key');
       const valNode = child.childForFieldName('value');
       if (!keyNode || !valNode) continue;
-      const keyName =
-        keyNode.type === 'string' ? keyNode.text.replace(/^['"]|['"]$/g, '') : keyNode.text;
+      const keyName = resolvePairKeyName(keyNode);
       if (!keyName) continue;
       const qualifiedKey = `${lhsName}.${keyName}`;
       if (
@@ -2604,7 +2618,9 @@ function handleObjectLiteralTypeMap(
       // seed the matching typeMap entry so the two-step accessor dispatch finds it.
       const nameNode = child.childForFieldName('name');
       if (!nameNode) continue;
-      setTypeMapEntry(typeMap, `${lhsName}.${nameNode.text}`, `${lhsName}.${nameNode.text}`, 0.85);
+      const methName = resolveMethodDefinitionName(nameNode);
+      if (!methName) continue;
+      setTypeMapEntry(typeMap, `${lhsName}.${methName}`, `${lhsName}.${methName}`, 0.85);
     }
   }
 }
@@ -2839,7 +2855,8 @@ function handleDefinePropertyTypeMap(
       const keyN = pair.childForFieldName('key');
       const valN = pair.childForFieldName('value');
       if (!keyN || !valN) continue;
-      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
+      const key = resolvePairKeyName(keyN);
+      if (!key) continue;
       const target = findDescriptorValue(valN);
       if (!target) continue;
       setTypeMapEntry(typeMap, `${arg0.text}.${key}`, target, 0.85);
@@ -2895,7 +2912,8 @@ function seedProtoProperties(
       const keyN = child.childForFieldName('key');
       const valN = child.childForFieldName('value');
       if (!keyN || !valN || valN.type !== 'identifier') continue;
-      const key = keyN.type === 'string' ? keyN.text.replace(/^['"]|['"]$/g, '') : keyN.text;
+      const key = resolvePairKeyName(keyN);
+      if (!key) continue;
       setTypeMapEntry(typeMap, `${varName}.${key}`, valN.text, 0.85);
     }
   }
@@ -3158,16 +3176,20 @@ function collectObjectRestParams(
     }
   } else if (t === 'pair') {
     // object-literal method: `{ bar: function({ a, ...rest }) {} }`
-    // Skip computed property keys (e.g. `{ [Symbol.iterator]: function({ ...rest }) {} }`)
-    // because `callee: '[Symbol.iterator]'` can never match a paramBinding callee.
+    // Computed keys resolve through resolvePairKeyName, which unwraps resolvable
+    // string literals (e.g. `['bar']`) and returns '' for non-string computed keys
+    // (e.g. `[Symbol.iterator]`) — `callee: ''` can never match a paramBinding callee.
     const keyN = node.childForFieldName('key');
     const valueN = node.childForFieldName('value');
-    if (keyN && valueN && keyN.type !== 'computed_property_name') {
+    if (keyN && valueN) {
       const vt = valueN.type;
       if (vt === 'arrow_function' || vt === 'function_expression' || vt === 'generator_function') {
-        fnName = keyN.type === 'string' ? keyN.text.slice(1, -1) : keyN.text;
-        paramsNode =
-          valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
+        const keyName = resolvePairKeyName(keyN);
+        if (keyName) {
+          fnName = keyName;
+          paramsNode =
+            valueN.childForFieldName('parameters') ?? findChild(valueN, 'formal_parameters');
+        }
       }
     }
   }
@@ -4625,12 +4647,15 @@ function extractPrototypeObjectLiteral(
       // Shorthand method: `Foo.prototype = { bar() {} }`
       const nameNode = child.childForFieldName('name');
       if (nameNode) {
-        definitions.push({
-          name: `${className}.${nameNode.text}`,
-          kind: 'method',
-          line: nodeStartLine(child),
-          endLine: nodeEndLine(child),
-        });
+        const methodName = resolveMethodDefinitionName(nameNode);
+        if (methodName) {
+          definitions.push({
+            name: `${className}.${methodName}`,
+            kind: 'method',
+            line: nodeStartLine(child),
+            endLine: nodeEndLine(child),
+          });
+        }
       }
       continue;
     }
@@ -4649,7 +4674,7 @@ function extractPrototypeObjectLiteral(
     const valueNode = child.childForFieldName('value');
     if (!keyNode || !valueNode) continue;
 
-    const methodName = keyNode.type === 'string' ? keyNode.text.replace(/['"]/g, '') : keyNode.text;
+    const methodName = resolvePairKeyName(keyNode);
     if (!methodName) continue;
 
     emitPrototypeMethod(className, methodName, valueNode, definitions, typeMap);

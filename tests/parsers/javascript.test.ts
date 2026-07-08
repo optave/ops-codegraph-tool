@@ -2034,6 +2034,141 @@ function runDemo(users: string[]): void {
     });
   });
 
+  describe('computed string-literal keys across typeMap/prototype extraction sites (#1884)', () => {
+    it('seeds a qualified typeMap entry (not a garbled bracket key) for a computed pair with a function value', () => {
+      // handleObjectLiteralTypeMap's pair branch: the extractObjectLiteralFunctions
+      // Definition ('obj.foo') already resolves correctly since #1764 — this covers the
+      // *typeMap* entry that the two-step accessor dispatch also needs.
+      const symbols = parseJS(`const obj = { ['foo']: () => {} };`);
+      expect(symbols.typeMap.get('obj.foo')).toEqual({ type: 'obj.foo', confidence: 0.85 });
+      expect(symbols.typeMap.has("obj.['foo']")).toBe(false);
+    });
+
+    it('seeds typeMap from a computed pair key with an identifier value', () => {
+      const symbols = parseJS(`
+        function handler() {}
+        var routes = { ['get']: handler };
+      `);
+      expect(symbols.typeMap.get('routes.get')).toEqual({ type: 'handler', confidence: 0.85 });
+    });
+
+    it('seeds a qualified typeMap entry for a computed method_definition shorthand in an object literal', () => {
+      const symbols = parseJS(`let obj = { ['foo']() { return 1; } };`);
+      expect(symbols.typeMap.get('obj.foo')).toEqual({ type: 'obj.foo', confidence: 0.85 });
+    });
+
+    it('does not seed a garbage typeMap entry for a non-string computed method_definition key', () => {
+      const symbols = parseJS(`let obj = { [Symbol.iterator]() { return 1; } };`);
+      for (const key of symbols.typeMap.keys()) {
+        expect(key).not.toContain('Symbol');
+        expect(key).not.toContain('[');
+      }
+    });
+
+    it('seeds typeMap from a computed key in Object.defineProperties', () => {
+      const symbols = parseJS(`
+        function f1() {}
+        const obj = {};
+        Object.defineProperties(obj, { ['foo']: { value: f1 } });
+      `);
+      expect(symbols.typeMap.get('obj.foo')).toEqual({ type: 'f1', confidence: 0.85 });
+    });
+
+    it('skips a non-string computed key in Object.defineProperties instead of emitting garbage', () => {
+      const symbols = parseJS(`
+        function f1() {}
+        const obj = {};
+        Object.defineProperties(obj, { [Symbol.iterator]: { value: f1 } });
+      `);
+      for (const key of symbols.typeMap.keys()) {
+        expect(key).not.toContain('Symbol');
+      }
+    });
+
+    it('seeds typeMap from a computed key in an Object.create prototype literal', () => {
+      const symbols = parseJS(`
+        function fn() {}
+        const obj = Object.create({ ['foo']: fn });
+      `);
+      expect(symbols.typeMap.get('obj.foo')).toEqual({ type: 'fn', confidence: 0.85 });
+    });
+
+    it('unwraps a resolvable computed key instead of blanket-skipping the rest-param binding', () => {
+      const symbols = parseJS(`
+        const api = {
+          ['process']: function({ items, ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings).toContainEqual({
+        callee: 'process',
+        restName: 'rest',
+        argIndex: 0,
+      });
+    });
+
+    it('still skips a non-string computed key for rest-param binding extraction', () => {
+      const symbols = parseJS(`
+        const api = {
+          [Symbol.iterator]: function({ ...rest }) {
+            rest.flush();
+          }
+        };
+      `);
+      expect(symbols.objectRestParamBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ restName: 'rest' }),
+      );
+    });
+
+    it('extracts a computed method_definition in a Foo.prototype = {...} object literal', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = { ['bar']() { return 1; } };
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.bar', kind: 'method' }),
+      );
+    });
+
+    it('does not extract a non-string computed method_definition key in a prototype object literal', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = { [Symbol.iterator]() { return 1; } };
+      `);
+      const def = symbols.definitions.find((d) => d.name.includes('iterator'));
+      expect(def).toBeUndefined();
+    });
+
+    it('extracts a computed pair key with a function value in a prototype object literal', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = { ['foo']: function() { return 1; } };
+      `);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'C.foo', kind: 'method' }),
+      );
+    });
+
+    it('seeds typeMap for a computed pair key with an identifier value in a prototype object literal', () => {
+      const symbols = parseJS(`
+        function helper() {}
+        function C() {}
+        C.prototype = { ['run']: helper };
+      `);
+      expect(symbols.typeMap.get('C.run')).toEqual({ type: 'helper', confidence: 0.9 });
+    });
+
+    it('does not extract a non-string computed pair key in a prototype object literal', () => {
+      const symbols = parseJS(`
+        function C() {}
+        C.prototype = { [Symbol.iterator]: function() { return 1; } };
+      `);
+      const def = symbols.definitions.find((d) => d.name.includes('iterator'));
+      expect(def).toBeUndefined();
+    });
+  });
+
   describe('class expression inside function extraction (#1471)', () => {
     it('extracts named class expression returned from a function', () => {
       const symbols = parseJS(
