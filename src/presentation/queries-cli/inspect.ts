@@ -222,7 +222,7 @@ function renderWhereFileResults(results: WhereFileResult[]): void {
 
 export function where(target: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = whereData(target, customDbPath, opts as Record<string, unknown>) as WhereData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(
@@ -247,7 +247,7 @@ export function queryName(name: string, customDbPath: string, opts: OutputOpts =
     limit: opts.limit,
     offset: opts.offset,
   }) as QueryNameData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No results for "${name}"`);
@@ -275,7 +275,7 @@ export function queryName(name: string, customDbPath: string, opts: OutputOpts =
 
 export function context(name: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = contextData(name, customDbPath, opts as Record<string, unknown>) as ContextData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No function/method/class matching "${name}"`);
@@ -289,7 +289,7 @@ export function context(name: string, customDbPath: string, opts: OutputOpts = {
 
 export function children(name: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = childrenData(name, customDbPath, opts as Record<string, unknown>) as ChildrenData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No symbol matching "${name}"`);
@@ -505,7 +505,7 @@ function renderFunctionExplain(r: FunctionExplainResult, indent = ''): void {
 
 export function explain(target: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = explainData(target, customDbPath, opts as Record<string, unknown>) as ExplainData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No ${data.kind === 'file' ? 'file' : 'function/symbol'} matching "${target}"`);
@@ -529,7 +529,7 @@ export function implementations(name: string, customDbPath: string, opts: Output
     customDbPath,
     opts as Record<string, unknown>,
   ) as ImplementationsData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No symbol matching "${name}"`);
@@ -556,7 +556,7 @@ export function interfaces(name: string, customDbPath: string, opts: OutputOpts 
     customDbPath,
     opts as Record<string, unknown>,
   ) as InterfacesData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No symbol matching "${name}"`);

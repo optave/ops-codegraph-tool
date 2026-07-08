@@ -262,7 +262,7 @@ export async function stats(customDbPath: string, opts: OutputOpts = {}): Promis
     debug(`stats: community detection failed (optional): ${toErrorMessage(e)}`);
   }
 
-  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
+  if (outputResult(data, null, opts)) return;
 
   console.log('\n# Codegraph Stats\n');
   printNodes(data);
@@ -280,7 +280,7 @@ export async function stats(customDbPath: string, opts: OutputOpts = {}): Promis
 
 export function moduleMap(customDbPath: string, limit = 20, opts: OutputOpts = {}): void {
   const data = moduleMapData(customDbPath, limit, { noTests: opts.noTests }) as ModuleMapData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'topNodes', opts)) return;
+  if (outputResult(data, 'topNodes', opts)) return;
 
   console.log(`\nModule map (top ${limit} most-connected nodes):\n`);
   const dirs = new Map<string, TopNode[]>();
@@ -326,11 +326,7 @@ function printRoleGroup(role: string, symbols: RoleSymbol[]): void {
 export function dynamicCalls(customDbPath: string, opts: OutputOpts = {}): void {
   const rows = dynamicCallsData(customDbPath);
   if (opts.json || opts.ndjson) {
-    outputResult(
-      { dynamic_calls: rows } as unknown as Record<string, unknown>,
-      'dynamic_calls',
-      opts,
-    );
+    outputResult({ dynamic_calls: rows }, 'dynamic_calls', opts);
     return;
   }
   if (rows.length === 0) {
@@ -353,7 +349,7 @@ export function dynamicCalls(customDbPath: string, opts: OutputOpts = {}): void 
 
 export function roles(customDbPath: string, opts: OutputOpts = {}): void {
   const data = rolesData(customDbPath, opts) as RolesData;
-  if (outputResult(data as unknown as Record<string, unknown>, 'symbols', opts)) return;
+  if (outputResult(data, 'symbols', opts)) return;
 
   if (data.count === 0) {
     console.log('No classified symbols found. Run "codegraph build" first.');

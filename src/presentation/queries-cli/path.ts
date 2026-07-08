@@ -86,7 +86,7 @@ export function symbolPath(
   }
 
   const data = pathData(from, to, customDbPath, opts) as PathDataResult;
-  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
+  if (outputResult(data, null, opts)) return;
 
   if (data.error) {
     console.log(data.error);
@@ -160,7 +160,7 @@ function printFilePathSteps(data: FilePathDataResult): void {
 
 function filePath(from: string, to: string, customDbPath: string, opts: PathOpts = {}): void {
   const data = filePathData(from, to, customDbPath, opts) as FilePathDataResult;
-  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
+  if (outputResult(data, null, opts)) return;
 
   if (data.error) {
     console.log(data.error);

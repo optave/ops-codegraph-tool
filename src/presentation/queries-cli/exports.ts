@@ -123,7 +123,7 @@ function printReexportedSection(data: ExportsDataResult, opts: ExportsOpts): voi
 
 export function fileExports(file: string, customDbPath: string, opts: ExportsOpts = {}): void {
   const data = exportsData(file, customDbPath, opts) as ExportsDataResult;
-  if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   const hasReexported = data.reexportedSymbols && data.reexportedSymbols.length > 0;
 
