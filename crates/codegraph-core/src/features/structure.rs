@@ -145,7 +145,8 @@ pub fn get_existing_file_count(conn: &Connection) -> i64 {
 /// direction — the cross-directory neighbours whose own fan-in/out may have
 /// shifted even though `file` is the only one that actually changed. Used by
 /// `refresh_affected_directory_metrics` to expand its affected-directory set
-/// by exactly one hop.
+/// by exactly one hop, for both changed files and (via `removed_file_neighbors`,
+/// #1839) removed ones.
 ///
 /// Scoped to the exact touched `file`, not its containing directory. An
 /// earlier version scoped this to the whole leaf directory (`dir >= x/ AND
@@ -217,19 +218,24 @@ fn find_neighbor_files(conn: &Connection, file: &str) -> Vec<String> {
 /// Removed files need no edge/node cleanup of their own — the purge step
 /// already deleted their nodes and every edge referencing them (including
 /// their old `contains` edge) earlier in the pipeline; only their ancestor
-/// directories' aggregates need recomputing here. Note this expansion can't
-/// reach a directory whose ONLY relationship to the touched set was an edge
-/// to/from a file that was JUST removed — that edge is already gone by the
-/// time this runs, so there's nothing left to discover it from (tracked
-/// separately, see #1738 follow-up).
+/// directories' aggregates need recomputing here. A removed file's own
+/// cross-directory neighbors (files it imported, or that imported it) can no
+/// longer be discovered from LIVE edges by the time this runs — those edges
+/// are already purged — so the pipeline captures them up front, before the
+/// purge, via `detect_changes::capture_removed_file_neighbors` and passes
+/// them in as `removed_file_neighbors` (#1839).
 pub fn refresh_affected_directory_metrics(
     conn: &Connection,
     changed_files: &[String],
     removed_files: &[String],
+    removed_file_neighbors: &[String],
 ) {
-    let mut touched: Vec<String> = Vec::with_capacity(changed_files.len() + removed_files.len());
+    let mut touched: Vec<String> = Vec::with_capacity(
+        changed_files.len() + removed_files.len() + removed_file_neighbors.len(),
+    );
     touched.extend_from_slice(changed_files);
     touched.extend_from_slice(removed_files);
+    touched.extend_from_slice(removed_file_neighbors);
     let mut affected_dirs = get_ancestor_dirs(&touched);
     if affected_dirs.is_empty() {
         return;

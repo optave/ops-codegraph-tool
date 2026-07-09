@@ -58,6 +58,14 @@ export class PipelineContext {
   parseChanges!: ParseChange[];
   metadataUpdates!: MetadataUpdate[];
   removed!: string[];
+  /**
+   * Forward+reverse import-neighbor files of `removed`, captured before
+   * `purgeFilesFromGraph`/`purgeFilesData` deletes those files' edges. Lets
+   * `refreshAffectedDirectoryMetrics` still discover a removed file's
+   * cross-directory neighbor even though the live edge evidence for it is
+   * gone by the time the structure stage runs (#1839).
+   */
+  removedFileNeighbors: string[] = [];
   earlyExit: boolean = false;
 
   // ── Parsing (set by parseFiles stage) ──────────────────────────────

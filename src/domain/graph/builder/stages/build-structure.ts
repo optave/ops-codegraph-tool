@@ -55,7 +55,12 @@ async function buildDirectoryStructure(
 ): Promise<void> {
   if (useSmallIncrementalFastPath) {
     updateChangedFileMetrics(ctx, changedFileList!);
-    refreshAffectedDirectoryMetrics(ctx, changedFileList!, ctx.removed ?? []);
+    refreshAffectedDirectoryMetrics(
+      ctx,
+      changedFileList!,
+      ctx.removed ?? [],
+      ctx.removedFileNeighbors ?? [],
+    );
     return;
   }
 
@@ -288,19 +293,20 @@ function updateChangedFileMetrics(ctx: PipelineContext, changedFiles: string[]):
  * Removed files need no edge/node cleanup of their own — `purgeFilesData`
  * already deleted their nodes and every edge referencing them (including
  * their old `contains` edge) earlier in the pipeline; only their ancestor
- * directories' aggregates need recomputing here. Note this expansion can't
- * reach a directory whose ONLY relationship to the touched set was an edge
- * to/from a file that was JUST removed — that edge is already gone by the
- * time this runs, so there's nothing left to discover it from (tracked
- * separately, see #1738 follow-up).
+ * directories' aggregates need recomputing here. A removed file's own
+ * cross-directory neighbors (files it imported, or that imported it) can no
+ * longer be discovered from LIVE edges by the time this runs — those edges
+ * are already purged — so `detectChanges` captures them up front, before the
+ * purge, and passes them in as `removedFileNeighbors` (#1839).
  */
 function refreshAffectedDirectoryMetrics(
   ctx: PipelineContext,
   changedFiles: string[],
   removedFiles: string[],
+  removedFileNeighbors: string[],
 ): void {
   const { db } = ctx;
-  const affectedDirs = getAncestorDirs([...changedFiles, ...removedFiles]);
+  const affectedDirs = getAncestorDirs([...changedFiles, ...removedFiles, ...removedFileNeighbors]);
   if (affectedDirs.size === 0) return;
 
   const getDirId = db.prepare(
@@ -342,7 +348,7 @@ function refreshAffectedDirectoryMetrics(
   // comment: expanding from a broad ancestor like `src`, or from every
   // sibling in the touched file's own directory, is effectively repo-wide
   // whenever that directory is a widely-imported hub.
-  for (const file of [...changedFiles, ...removedFiles]) {
+  for (const file of [...changedFiles, ...removedFiles, ...removedFileNeighbors]) {
     const otherFiles = neighborFiles.all({ file }) as Array<{
       other: string;
     }>;
