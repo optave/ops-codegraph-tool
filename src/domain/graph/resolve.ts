@@ -487,14 +487,36 @@ function ancestorChain(dir: string): string[] {
  * `graph/algorithms/*.ts` calling a method declared in the shallower
  * `graph/model.ts` was scored as maximally distant (issue #1769).
  */
+// directoryDistance is on the hot path for every call-edge confidence score
+// (computeConfidence runs per candidate during ranking/filtering, not just
+// once per emitted edge — see call-resolver.ts, resolver/strategy.ts,
+// stages/build-edges.ts). The same directory pairs recur constantly across a
+// build, so memoizing avoids rebuilding both ancestor chains and the lookup
+// map on every call. distance(a, b) === distance(b, a) (symmetric tree
+// distance), so the key is order-independent to halve the effective cache
+// size. Never cleared: purely a function of two path strings, so a stale
+// entry can't exist, and even a large repo's directory count keeps this
+// bounded (#1769 perf regression — see PR discussion).
+const directoryDistanceCache = new Map<string, number>();
+
 function directoryDistance(a: string, b: string): number {
+  const key = a <= b ? `${a}|${b}` : `${b}|${a}`;
+  const cached = directoryDistanceCache.get(key);
+  if (cached !== undefined) return cached;
+
   const chainA = ancestorChain(a);
   const chainB = ancestorChain(b);
+  const indexInB = new Map<string, number>(chainB.map((d, idx) => [d, idx]));
+  let dist = Infinity;
   for (let i = 0; i < chainA.length; i++) {
-    const j = chainB.indexOf(chainA[i]!);
-    if (j !== -1) return i + j;
+    const j = indexInB.get(chainA[i]!);
+    if (j !== undefined) {
+      dist = i + j;
+      break;
+    }
   }
-  return Infinity;
+  directoryDistanceCache.set(key, dist);
+  return dist;
 }
 
 // ── Language-family scoping for global-by-name fallback resolution ─────────
@@ -512,6 +534,24 @@ function directoryDistance(a: string, b: string): number {
 const JS_FAMILY_REGISTRY_IDS = new Set(['javascript', 'typescript', 'tsx']);
 
 /**
+ * Extensions excluded from the family map entirely, so `languageFamily`
+ * returns null for them and they fall through to the ambiguous-extension
+ * path (ordinary distance-based scoring, never rejected outright).
+ *
+ * `.h` is real-world ambiguous between C and C++: LANGUAGE_REGISTRY assigns
+ * it to the `c` entry alone (grammar selection needs one canonical parser),
+ * but the extremely common case of a `.cpp` file calling into its own
+ * project's `.h` header would otherwise be misclassified as cross-language
+ * and rejected outright (confidence 0) — a real regression from the
+ * pre-#1783 same-directory score of 0.7 (Greptile review). Treating `.h` as
+ * ambiguous — like an unrecognised extension — keeps the C/C++-header case
+ * working without merging C and C++ source-file families wholesale (`.c`
+ * vs `.cpp` intentionally do NOT merge — see
+ * is_same_language_family_does_not_merge_c_and_cpp).
+ */
+const AMBIGUOUS_EXTENSIONS = new Set(['.h']);
+
+/**
  * extension → language-family lookup, derived from LANGUAGE_REGISTRY (the
  * single source of truth for language definitions) so newly-added languages
  * are automatically covered without a second hand-maintained extension list.
@@ -520,6 +560,7 @@ const _extToLanguageFamily: Map<string, string> = new Map();
 for (const entry of LANGUAGE_REGISTRY) {
   const family = JS_FAMILY_REGISTRY_IDS.has(entry.id) ? 'javascript' : entry.id;
   for (const ext of entry.extensions) {
+    if (AMBIGUOUS_EXTENSIONS.has(ext)) continue;
     _extToLanguageFamily.set(ext, family);
   }
 }

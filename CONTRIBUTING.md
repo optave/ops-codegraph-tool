@@ -27,6 +27,16 @@ run. Run `npm run doctor` to check (or `npm run doctor -- --fix` to repair
 in place, scoped to the current worktree) — it also runs automatically before
 `npm test` via `pretest`.
 
+**Working in multiple git worktrees?** Each worktree gets its own untracked
+`node_modules/` and `grammars/` — neither is shared via git — so every fresh
+`git worktree add` needs its own `npm install`. A worktree set up before a
+host Node upgrade, or where `npm install` was interrupted, can be left with a
+`better-sqlite3` binary compiled for the wrong Node ABI or an incomplete
+`grammars/` directory; both fail in confusing ways deep inside a build or test
+run. Run `npm run doctor` to check (or `npm run doctor -- --fix` to repair
+in place, scoped to the current worktree) — it also runs automatically before
+`npm test` via `pretest`.
+
 ## Contributor License Agreement (CLA)
 
 All contributors must sign the [Contributor License Agreement](CLA.md) before
