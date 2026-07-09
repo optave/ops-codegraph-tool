@@ -97,18 +97,25 @@ describe('track-edits.sh Windows path normalization', () => {
   // so a regression here is caught on any host OS.
   function extractNormalizationSnippet(hookPath: string): string {
     const src = fs.readFileSync(hookPath, 'utf8');
-    const start = src.indexOf('case "$FILE_PATH" in');
-    const end = src.indexOf('esac', start);
+    const start = src.indexOf('if printf');
+    const end = src.indexOf('\nfi', start);
     if (start === -1 || end === -1) {
-      throw new Error(`could not locate normalization case block in ${hookPath}`);
+      throw new Error(`could not locate normalization if-block in ${hookPath}`);
     }
-    return src.slice(start, end + 'esac'.length);
+    return src.slice(start, end + '\nfi'.length);
   }
 
+  // Passed via env var, not argv: Windows command-line argument marshalling
+  // has its own backslash-escaping rules that don't apply to environment
+  // variables, and the real hook never receives FILE_PATH as a CLI arg
+  // either (it comes from JSON on stdin) — so this keeps the test's
+  // transport mechanism from confounding what's actually being verified.
   function normalize(hookPath: string, filePath: string): string {
     const snippet = extractNormalizationSnippet(hookPath);
-    const script = `FILE_PATH=$1\n${snippet}\nprintf '%s' "$FILE_PATH"`;
-    return execFileSync('bash', ['-c', script, '--', filePath]).toString();
+    const script = `${snippet}\nprintf '%s' "$FILE_PATH"`;
+    return execFileSync('bash', ['-c', script], {
+      env: { ...process.env, FILE_PATH: filePath },
+    }).toString();
   }
 
   const DOCS_HOOK_PATH = path.join(
