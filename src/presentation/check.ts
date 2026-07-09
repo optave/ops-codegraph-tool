@@ -125,10 +125,8 @@ export function check(customDbPath: string | undefined, opts: CheckCliOpts = {})
     return;
   }
 
-  const deletedSuffix =
-    data.summary.deletedFiles > 0 ? `  Deleted files: ${data.summary.deletedFiles}` : '';
   console.log(
-    `  Changed files: ${data.summary.changedFiles}  New files: ${data.summary.newFiles}${deletedSuffix}\n`,
+    `  Changed files: ${data.summary.changedFiles}  New files: ${data.summary.newFiles}  Deleted files: ${data.summary.deletedFiles}\n`,
   );
 
   for (const pred of data.predicates) {
