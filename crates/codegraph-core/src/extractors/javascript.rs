@@ -1386,12 +1386,8 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 let var_name = node_text(&name_n, source);
                 extract_object_literal_functions(&value_n, source, var_name, symbols);
             }
-        } else if !is_const && value_n.kind() == "object" && name_n.kind() == "identifier"
-            && find_parent_of_types(node, &[
-                "function_declaration", "arrow_function",
-                "function_expression", "method_definition",
-                "generator_function_declaration", "generator_function",
-            ]).is_none()
+        } else if !is_const && value_n.kind() == "object"
+            && is_eligible_object_literal_declarator(&declarator)
         {
             // `let`/`var` object literals get no "constant" definition of their own (mirrors
             // WASM extractLetVarObjLiteralDeclarators) but still need their function/method
