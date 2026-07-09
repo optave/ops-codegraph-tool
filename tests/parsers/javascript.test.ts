@@ -357,6 +357,29 @@ describe('JavaScript parser', () => {
       expect(symbols.imports[0].names).toEqual(['alias']);
       expect(symbols.imports[0].renamedImports).toEqual([{ local: 'alias', imported: 'realName' }]);
     });
+
+    it('strips quotes from a string-literal destructuring key (Greptile follow-up)', () => {
+      // `{ 'foo-bar': local }` — the key's raw text includes quotes; using it
+      // verbatim as `imported` would make the resolver look for an export
+      // literally named `'foo-bar'`, which never matches.
+      const symbols = parseJS(`const { 'foo-bar': local } = await import('./mod.js');`);
+      expect(symbols.imports[0].names).toEqual(['local']);
+      expect(symbols.imports[0].renamedImports).toEqual([{ local: 'local', imported: 'foo-bar' }]);
+    });
+
+    it('unwraps a computed string-literal destructuring key the same way', () => {
+      const symbols = parseJS(`const { ['foo-bar']: local } = await import('./mod.js');`);
+      expect(symbols.imports[0].names).toEqual(['local']);
+      expect(symbols.imports[0].renamedImports).toEqual([{ local: 'local', imported: 'foo-bar' }]);
+    });
+
+    it('still tracks the local binding for a non-string computed key, without a rename pair', () => {
+      // `[Symbol()]` has no statically resolvable export name — the local
+      // binding must still be tracked, just without a renamedImports entry.
+      const symbols = parseJS(`const { [Symbol()]: local } = await import('./mod.js');`);
+      expect(symbols.imports[0].names).toEqual(['local']);
+      expect(symbols.imports[0].renamedImports).toBeUndefined();
+    });
   });
 
   it('extracts call expressions', () => {

@@ -3178,24 +3178,42 @@ fn collect_object_pattern_names(
                     }
                     _ => None,
                 };
-                match (local_node, key) {
-                    (Some(local_node), Some(key)) => {
+                // A quoted (`{ 'foo-bar': local }`) or computed
+                // (`{ ['foo-bar']: local }`) key's raw text includes the
+                // quotes/brackets — using it verbatim as `imported` makes the
+                // resolver look for an export literally named `'foo-bar'`,
+                // which never matches (Greptile, #1824 follow-up). Resolve to
+                // the clean export name the same way resolve_computed_key_name
+                // already does for object-literal keys.
+                let key_name: Option<String> = key.and_then(|key| match key.kind() {
+                    "computed_property_name" => resolve_computed_key_name(&key, source),
+                    "string" => extract_string_fragment(&key, source).map(String::from),
+                    "string_fragment" => Some(node_text(&key, source).to_string()),
+                    _ => Some(node_text(&key, source).to_string()),
+                });
+                match (local_node, key_name) {
+                    (Some(local_node), key_name) => {
+                        // The local binding is always trackable on its own,
+                        // even when the key isn't statically resolvable (e.g.
+                        // `{ [Symbol()]: local }`) — only the rename-pair
+                        // mapping is skipped in that case.
                         let local_text = node_text(&local_node, source).to_string();
-                        let key_text = node_text(&key, source).to_string();
-                        if local_text != key_text {
-                            renamed_out.push(RenamedImport {
-                                local: local_text.clone(),
-                                imported: key_text,
-                            });
+                        if let Some(key_name) = key_name {
+                            if local_text != key_name {
+                                renamed_out.push(RenamedImport {
+                                    local: local_text.clone(),
+                                    imported: key_name,
+                                });
+                            }
                         }
                         names.push(local_text);
                     }
-                    (None, Some(key)) => {
+                    (None, Some(key_name)) => {
                         // Nested pattern (`{ foo: { nested } }`) or other
                         // unsupported value shape — no single local binding
                         // to extract; fall back to the key so the specifier
                         // isn't dropped entirely.
-                        names.push(node_text(&key, source).to_string());
+                        names.push(key_name);
                     }
                     _ => {}
                 }
@@ -4408,6 +4426,50 @@ mod tests {
         assert_eq!(renamed.len(), 1);
         assert_eq!(renamed[0].local, "fromBarrel");
         assert_eq!(renamed[0].imported, "buildGraph");
+    }
+
+    #[test]
+    fn strips_quotes_from_string_literal_destructuring_key() {
+        // { 'foo-bar': local } — the key's raw text includes quotes; using it
+        // verbatim as `imported` would make the resolver look for an export
+        // literally named `'foo-bar'`, which never matches (Greptile follow-up).
+        let s = parse_js("const { 'foo-bar': local } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["local".to_string()]);
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "local");
+        assert_eq!(renamed[0].imported, "foo-bar");
+    }
+
+    #[test]
+    fn unwraps_computed_string_literal_destructuring_key() {
+        let s = parse_js("const { ['foo-bar']: local } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["local".to_string()]);
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "local");
+        assert_eq!(renamed[0].imported, "foo-bar");
+    }
+
+    #[test]
+    fn tracks_local_binding_for_non_string_computed_key_without_rename_pair() {
+        // `[Symbol()]` has no statically resolvable export name — the local
+        // binding must still be tracked, just without a renamed_imports entry.
+        let s = parse_js("const { [Symbol()]: local } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["local".to_string()]);
+        assert!(dyn_imports[0].renamed_imports.is_none());
     }
 
     #[test]

@@ -4250,16 +4250,32 @@ function extractDynamicImportNames(
           const left = value.childForFieldName('left');
           if (left?.type === 'identifier') localNode = left;
         }
-        if (localNode && key) {
+        // A quoted (`{ 'foo-bar': local }`) or computed (`{ ['foo-bar']: local }`)
+        // key's raw `.text` includes the quotes/brackets — using it verbatim as
+        // `imported` makes the resolver look for an export literally named
+        // `'foo-bar'`, which never matches (Greptile, #1824 follow-up). Resolve
+        // to the clean export name the same way resolveComputedKeyName/
+        // resolveMethodDefinitionName already do for object-literal keys.
+        const keyName = key
+          ? key.type === 'computed_property_name'
+            ? resolveComputedKeyName(key)
+            : key.type === 'string' || key.type === 'string_fragment'
+              ? key.text.replace(/^['"]|['"]$/g, '')
+              : key.text
+          : '';
+        if (localNode) {
+          // The local binding is always trackable on its own, even when the
+          // key isn't statically resolvable (e.g. `{ [Symbol()]: local }`) —
+          // only the rename-pair mapping is skipped in that case.
           names.push(localNode.text);
-          if (localNode.text !== key.text) {
-            renamedOut?.push({ local: localNode.text, imported: key.text });
+          if (keyName && localNode.text !== keyName) {
+            renamedOut?.push({ local: localNode.text, imported: keyName });
           }
-        } else if (key) {
+        } else if (keyName) {
           // Nested pattern (`{ foo: { nested } }`) or other unsupported
           // value shape — no single local binding to extract; fall back to
           // the key so the specifier isn't dropped entirely.
-          names.push(key.text);
+          names.push(keyName);
         }
       }
     }
