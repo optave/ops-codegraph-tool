@@ -86,3 +86,52 @@ describe("track-edits.sh resolves the log to the edited file's own worktree", ()
     expect(fs.readFileSync(targetLog, 'utf8')).toMatch(/ a\/b\/c\/new-file\.ts$/m);
   });
 });
+
+describe('track-edits.sh Windows path normalization', () => {
+  // dirname (GNU/BSD coreutils) only splits on '/'. On Windows, Edit/Write's
+  // file_path arrives backslash-delimited (e.g. from Node's path.join), which
+  // made dirname silently no-op and return "." — undetectable on a POSIX test
+  // runner via the integration tests above, since they only ever construct
+  // paths with the host OS's own separator. Exercise the normalization
+  // snippet directly (extracted from the real file, not duplicated by hand)
+  // so a regression here is caught on any host OS.
+  function extractNormalizationSnippet(hookPath: string): string {
+    const src = fs.readFileSync(hookPath, 'utf8');
+    const start = src.indexOf('case "$FILE_PATH" in');
+    const end = src.indexOf('esac', start);
+    if (start === -1 || end === -1) {
+      throw new Error(`could not locate normalization case block in ${hookPath}`);
+    }
+    return src.slice(start, end + 'esac'.length);
+  }
+
+  function normalize(hookPath: string, filePath: string): string {
+    const snippet = extractNormalizationSnippet(hookPath);
+    const script = `FILE_PATH=$1\n${snippet}\nprintf '%s' "$FILE_PATH"`;
+    return execFileSync('bash', ['-c', script, '--', filePath]).toString();
+  }
+
+  const DOCS_HOOK_PATH = path.join(
+    REPO_ROOT,
+    'docs',
+    'examples',
+    'claude-code-hooks',
+    'track-edits.sh',
+  );
+
+  it.each([
+    ['live hook', HOOK_PATH],
+    ['docs example', DOCS_HOOK_PATH],
+  ])('%s: converts a Windows drive-letter path to forward slashes', (_label, hookPath) => {
+    expect(normalize(hookPath, 'C:\\Users\\dev\\project\\src\\thing.ts')).toBe(
+      'C:/Users/dev/project/src/thing.ts',
+    );
+  });
+
+  it.each([
+    ['live hook', HOOK_PATH],
+    ['docs example', DOCS_HOOK_PATH],
+  ])('%s: leaves a POSIX path with a literal backslash in the filename untouched', (_label, hookPath) => {
+    expect(normalize(hookPath, '/tmp/proj/weird\\name.ts')).toBe('/tmp/proj/weird\\name.ts');
+  });
+});

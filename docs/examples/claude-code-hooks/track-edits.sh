@@ -23,6 +23,15 @@ if [ -z "$FILE_PATH" ]; then
   exit 0
 fi
 
+# Normalize Windows-style separators before any dirname/git splitting below —
+# dirname (GNU coreutils) only splits on '/', so a backslash-delimited path
+# would make it silently no-op and return ".". Only touch paths that
+# unambiguously look like a Windows absolute path (drive letter prefix), so a
+# POSIX path containing a literal backslash in a filename is left untouched.
+case "$FILE_PATH" in
+  [A-Za-z]:\\*|[A-Za-z]:/*) FILE_PATH=${FILE_PATH//\\//} ;;
+esac
+
 # Resolve the git worktree that actually owns the edited file, rather than
 # the hook process's own ambient cwd. Edit/Write tool calls carry only an
 # absolute file_path with no associated "current directory" state, so the
