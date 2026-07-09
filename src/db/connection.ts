@@ -441,6 +441,9 @@ export function resolveConfigForDbPath(customDbPath?: string): CodegraphConfig {
  * Derives rootDir from the resolved DB path so loadConfig reads the right project config.
  * Shared by openRepo() and openReadonlyWithNative() so the two call sites can't drift.
  *
+ * Accepts an optional pre-resolved `config` for callers that already loaded it for the
+ * same `customDbPath` (e.g. withRepo()), avoiding a second findDbPath()/loadConfig() call.
+ *
  * MUST be called before opening any DB handle: loadConfig can throw (e.g. ConfigError
  * via resolveSecrets on a malformed llm.apiKeyCommand config), and an already-open
  * handle at that point would never be closed.
@@ -448,8 +451,8 @@ export function resolveConfigForDbPath(customDbPath?: string): CodegraphConfig {
 function resolveDbSettings(
   customDbPath: string | undefined,
   engineOpt: 'native' | 'wasm' | 'auto' | undefined,
+  config: CodegraphConfig = resolveConfigForDbPath(customDbPath),
 ): ResolvedDbSettings {
-  const config = resolveConfigForDbPath(customDbPath);
   // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
   // so this covers both the env-var path and the .codegraphrc.json config-file path.
   return {
@@ -573,10 +576,15 @@ function openRepoSqliteFallback(
  * When the native engine is available, opens a NativeDatabase (rusqlite) and
  * wraps it in NativeRepository. Otherwise falls back to better-sqlite3 via
  * SqliteRepository.
+ *
+ * `opts.config`, when supplied, is used in place of a fresh
+ * resolveConfigForDbPath() call — for callers (e.g. withRepo()) that already
+ * resolved config for the same `customDbPath` and need to avoid a second
+ * loadConfig() for it.
  */
 export function openRepo(
   customDbPath?: string,
-  opts: { repo?: Repository; engine?: 'native' | 'wasm' | 'auto' } = {},
+  opts: { repo?: Repository; engine?: 'native' | 'wasm' | 'auto'; config?: CodegraphConfig } = {},
 ): { repo: Repository; close(): void } {
   if (opts.repo != null) {
     return wrapInjectedRepo(opts.repo);
@@ -584,7 +592,7 @@ export function openRepo(
 
   // Respect explicit engine selection: opts.engine > config.build.engine > auto.
   // This ensures --engine wasm and benchmark workers bypass the native path.
-  const { engine, busyTimeoutMs } = resolveDbSettings(customDbPath, opts.engine);
+  const { engine, busyTimeoutMs } = resolveDbSettings(customDbPath, opts.engine, opts.config);
 
   const native = tryOpenRepoNative(customDbPath, engine, busyTimeoutMs);
   if (native) return native;
