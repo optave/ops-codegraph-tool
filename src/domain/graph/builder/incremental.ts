@@ -16,7 +16,6 @@ import type {
   BetterSqlite3Database,
   EngineOpts,
   ExtractorOutput,
-  Import,
   PathAliases,
   SqliteStatement,
 } from '../../../types.js';
@@ -33,6 +32,7 @@ import {
   resolveSameClassQualifiedMethod,
 } from './call-resolver.js';
 import { BUILTIN_RECEIVERS, fileHash, fileStat, readFileSafe } from './helpers.js';
+import { importNamePairs } from './import-utils.js';
 
 // ── Local types ─────────────────────────────────────────────────────────
 
@@ -237,7 +237,14 @@ function rebuildReverseDepEdges(
     importedNames,
     importedOriginalNames,
   );
-  edgesAdded += buildClassHierarchyEdges(db, stmts, depRelPath, symbols, importedNames);
+  edgesAdded += buildClassHierarchyEdges(
+    db,
+    stmts,
+    depRelPath,
+    symbols,
+    importedNames,
+    importedOriginalNames,
+  );
   return edgesAdded;
 }
 
@@ -341,35 +348,6 @@ function resolveBarrelTarget(
     }
   }
   return null;
-}
-
-/**
- * Pairs each locally-bound name from an import statement with its original
- * (pre-rename) exported name — identical to the local name unless the
- * specifier renames a binding (`import { X as Y }`). Barrel tracing and
- * target-file symbol lookups must search using the *original* name — the
- * renamed local alias only exists in the importing file, not in the file
- * being imported from (#1730). Mirrors `importNamePairs` in build-edges.ts.
- *
- * Also reports, per name, whether it should be treated as type-only —
- * either because the whole statement is (`import type { X }`) or because
- * this specific specifier carries the inline modifier
- * (`import { type X }`, #1813).
- */
-function importNamePairs(
-  imp: Import,
-): Array<{ local: string; original: string; typeOnly: boolean }> {
-  const originalNameFor = new Map<string, string>();
-  for (const r of imp.renamedImports ?? []) originalNameFor.set(r.local, r.imported);
-  const typeOnlyNames = new Set(imp.typeOnlyNames ?? []);
-  return imp.names.map((name) => {
-    const local = name.replace(/^\*\s+as\s+/, '');
-    return {
-      local,
-      original: originalNameFor.get(local) ?? local,
-      typeOnly: imp.typeOnly === true || typeOnlyNames.has(local),
-    };
-  });
 }
 
 /**
@@ -477,6 +455,14 @@ function emitEdgesForImport(
   }
   if (imp.reexport && !imp.wildcardReexport) {
     edgesAdded += emitNamedSymbolEdges(db, stmts, imp, resolvedPath, fileNodeId, 'reexports');
+  } else if (imp.reexport && imp.wildcardReexport) {
+    // Mirrors build-edges.ts (full-build path): a genuine wildcard must stay
+    // distinguishable from a named reexport even when a *different*
+    // statement in this file names specific symbols from the same target
+    // (#1849 review). See `collectReexportedSymbols` in
+    // domain/analysis/exports.ts.
+    stmts.insertEdge.run(fileNodeId, targetRow.id, 'reexports-wildcard', 1.0, 0);
+    edgesAdded++;
   }
   if (!imp.reexport && db) {
     edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp);
@@ -569,6 +555,7 @@ function buildClassHierarchyEdges(
   relPath: string,
   symbols: ExtractorOutput,
   importedNames: ReadonlyMap<string, string>,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): number {
   let edgesAdded = 0;
   const lookup = makeIncrementalLookup(db, stmts);
@@ -585,6 +572,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         EXTENDS_TARGET_KINDS,
+        importedOriginalNames,
       )) {
         stmts.insertEdge.run(sourceRow.id, t.id, 'extends', 1.0, 0);
         edgesAdded++;
@@ -597,6 +585,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         IMPLEMENTS_TARGET_KINDS,
+        importedOriginalNames,
       )) {
         stmts.insertEdge.run(sourceRow.id, t.id, 'implements', 1.0, 0);
         edgesAdded++;
@@ -969,7 +958,14 @@ function rebuildEdgesForTargetFile(
     importedNames,
     importedOriginalNames,
   );
-  edgesAdded += buildClassHierarchyEdges(db, stmts, relPath, symbols, importedNames);
+  edgesAdded += buildClassHierarchyEdges(
+    db,
+    stmts,
+    relPath,
+    symbols,
+    importedNames,
+    importedOriginalNames,
+  );
   return edgesAdded;
 }
 
