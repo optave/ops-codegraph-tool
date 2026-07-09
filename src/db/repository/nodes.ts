@@ -217,8 +217,17 @@ function hasExportedColumn(db: BetterSqlite3Database): boolean {
  * used the cross-file-calls heuristic unconditionally, which misses any
  * exported symbol that's only ever read as a value (not called) from another
  * file — e.g. an exported constant used in a comparison (#1728).
+ *
+ * `knownSymbols`, if passed, is used in place of a fresh `findNodesByFile`
+ * call for the legacy-DB fallback path — callers that already fetched the
+ * file's symbols (e.g. to build their own result shape) can pass them in to
+ * avoid running the same query twice.
  */
-export function findExportedNodesByFile(db: BetterSqlite3Database, file: string): NodeRow[] {
+export function findExportedNodesByFile(
+  db: BetterSqlite3Database,
+  file: string,
+  knownSymbols?: NodeRow[],
+): NodeRow[] {
   if (hasExportedColumn(db)) {
     return cachedStmt(
       _findExportedNodesByFileStmt,
@@ -226,7 +235,7 @@ export function findExportedNodesByFile(db: BetterSqlite3Database, file: string)
       "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
     ).all(file);
   }
-  const symbols = findNodesByFile(db, file);
+  const symbols = knownSymbols ?? findNodesByFile(db, file);
   const exportedIds = findCrossFileCallTargets(db, file);
   return symbols.filter((s) => exportedIds.has(s.id));
 }

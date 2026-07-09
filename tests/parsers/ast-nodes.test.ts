@@ -621,9 +621,15 @@ describe('buildAstNodes — PHP extraction (#1821)', () => {
   });
 
   test('does not misclassify (string) cast as kind:string', () => {
-    // `(string) $value` (line 12) must not contribute a bare "string" row.
+    // `(string) $value` (line 14) must not contribute a bare "string" row.
+    // Empirically, tree-sitter-php's cast_type keyword never surfaces as a
+    // distinct ast_node on the WASM walker (confirmed by reverting the
+    // requireNamedNode guard entirely: only the two primitive_type
+    // occurrences on lines 4/9/13 regress, never line 14) -- so this asserts
+    // the same text-based invariant as the sibling type-hint test, rather
+    // than a line number that no false positive would ever land on.
     const nodes = queryPhpAstNodes('string');
-    expect(nodes.some((n) => n.line === 12)).toBe(false);
+    expect(nodes.some((n) => n.text === 'string')).toBe(false);
   });
 
   test('still captures genuine string literals (interpolated and plain)', () => {
