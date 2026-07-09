@@ -31,13 +31,6 @@ impl SymbolExtractor for JsExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_node);
-        // Emit qualified `obj.method(function)` definitions for object-literal shorthand
-        // methods AFTER match_js_node so that the bare `f(method)` node created by
-        // handle_method_def comes first in definitions — matching WASM ordering where
-        // handleMethodCapture (query path) runs before extractObjectLiteralFunctions
-        // (runCollectorWalk). Equal-span tie-break in findCaller keeps the first entry,
-        // so bare `f(method)` wins for call attribution in both engines.
-        walk_tree(&tree.root_node(), source, &mut symbols, match_js_objlit_qualified_method_defs);
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_type_map);
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_return_type_map);
@@ -480,6 +473,39 @@ fn find_descriptor_accessors<'a>(node: &Node<'a>, source: &'a [u8]) -> Vec<&'a s
     result
 }
 
+/// True when `declarator` is the shape `extract_object_literal_functions` qualifies: a plain
+/// identifier name, outside any function scope. Mirrors TS `isEligibleObjectLiteralDeclarator`.
+fn is_eligible_object_literal_declarator(declarator: &Node) -> bool {
+    if declarator.kind() != "variable_declarator" { return false; }
+    let Some(name_n) = declarator.child_by_field_name("name") else { return false };
+    if name_n.kind() != "identifier" { return false; }
+    find_parent_of_types(declarator, &[
+        "function_declaration", "arrow_function", "function_expression",
+        "method_definition", "generator_function_declaration", "generator_function",
+    ]).is_none()
+}
+
+/// True when `method_node` (a method_definition) is a shorthand method whose enclosing object
+/// literal is the direct value of an eligible variable declarator (see
+/// `is_eligible_object_literal_declarator`) AND has no enclosing class — the common shape
+/// `extract_object_literal_functions` already emits both the qualified (`varName.method`) and
+/// bare (`method`) definitions for, together, in source position order relative to the
+/// declaration itself. `handle_method_def` skips these nodes to avoid pushing a second,
+/// differently-positioned bare entry that makes native and WASM disagree on `definitions`
+/// array order (#1818). Mirrors TS `isObjectLiteralDeclaratorMethod`.
+///
+/// The enclosing-class check excludes a rarer, unrelated nested shape — e.g. a const declared
+/// inside a class `static { }` block (not itself function-scoped) — where `handle_method_def`
+/// already produces a *class*-qualified entry (`ClassName.method`, via `find_parent_class`)
+/// rather than a bare one; that entry must be left alone, not duplicated by a spurious bare push.
+fn is_object_literal_declarator_method(method_node: &Node, source: &[u8]) -> bool {
+    let Some(obj) = method_node.parent() else { return false };
+    if obj.kind() != "object" { return false; }
+    let Some(declarator) = obj.parent() else { return false };
+    if !is_eligible_object_literal_declarator(&declarator) { return false; }
+    find_parent_class(method_node, source).is_none()
+}
+
 /// Phase 8.3f: extract function/arrow properties from an object literal as standalone definitions
 /// and seed composite typeMap keys so that `this.method()` inside Object.defineProperty accessors
 /// can resolve them.
@@ -492,6 +518,15 @@ fn find_descriptor_accessors<'a>(node: &Node<'a>, source: &'a [u8]) -> Vec<&'a s
 /// `const obj = { baz: () => {} }` → Definition { name: "obj.baz", kind: "function" }
 ///                                  + TypeMapEntry { name: "obj.baz", type_name: "obj.baz" }
 /// `const obj = { baz }` (shorthand) → TypeMapEntry { name: "obj.baz", type_name: "baz" }
+///
+/// Called for ALL declaration kinds (`const`, `let`, `var`) — see `handle_var_decl`'s two call
+/// sites. For `method_definition` children (shorthand methods), also emits the bare, unqualified
+/// `Definition { name: "baz", kind: "method" }` that `handle_method_def` would otherwise produce
+/// on its own — see `is_object_literal_declarator_method`, which it skips for exactly these
+/// nodes so both entries are always emitted here together, in a fixed relative order (bare
+/// first, matching the `findCaller` equal-span tie-break WASM relies on). Keeping them adjacent
+/// (rather than one inline and one from a separate deferred pass) is what keeps native and WASM
+/// agreeing on `definitions` array order (#1818).
 fn extract_object_literal_functions(
     obj_node: &Node,
     source: &[u8],
@@ -550,10 +585,6 @@ fn extract_object_literal_functions(
                 }
             }
             "method_definition" => {
-                // The definition (`obj.baz(function)`) is emitted by the second-pass
-                // `match_js_objlit_qualified_method_defs` walker (runs after `match_js_node`)
-                // so that `handle_method_def`'s bare `baz(method)` node appears first in
-                // `definitions`. Only seed the typeMap entry here.
                 // Use resolve_method_def_name to strip brackets from computed string keys
                 // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]).
                 let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
@@ -561,9 +592,38 @@ fn extract_object_literal_functions(
                 // typeMap['obj.baz'] = 'baz' — points to the bare-name definition so
                 // the two-step accessor dispatch resolves via the bare node.
                 symbols.type_map.push(TypeMapEntry {
-                    name: qualified,
-                    type_name: method_name,
+                    name: qualified.clone(),
+                    type_name: method_name.clone(),
                     confidence: 0.85,
+                });
+                // Bare entry (when handle_method_def would have produced one — see
+                // is_object_literal_declarator_method) then the qualified entry, adjacent —
+                // matches WASM's extractObjectLiteralFunctions and keeps native/WASM
+                // `definitions` array order aligned (#1818). When there's an enclosing class,
+                // handle_method_def already pushes a class-qualified entry on its own.
+                if is_object_literal_declarator_method(&child, source) {
+                    let children = extract_js_parameters(&child, source);
+                    symbols.definitions.push(Definition {
+                        name: method_name,
+                        kind: "method".to_string(),
+                        line: start_line(&child),
+                        end_line: Some(end_line(&child)),
+                        decorators: None,
+                        complexity: compute_all_metrics(&child, source, "javascript"),
+                        cfg: build_function_cfg(&child, "javascript", source),
+                        children: opt_children(children),
+                    });
+                }
+                let body = child.child_by_field_name("body");
+                symbols.definitions.push(Definition {
+                    name: qualified,
+                    kind: "function".to_string(),
+                    line: start_line(&child),
+                    end_line: Some(end_line(&child)),
+                    decorators: None,
+                    complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
+                    cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
+                    children: None,
                 });
             }
             _ => {}
@@ -606,9 +666,9 @@ fn seed_objlit_type_map_entries(var_name: &str, obj_node: &Node, source: &[u8], 
                     "arrow_function" | "function_expression" | "function" => {
                         // Store qualified name as value so the resolver finds the qualified def.
                         // Mirrors WASM: setTypeMapEntry(typeMap, qualifiedKey, qualifiedKey, 0.85).
-                        // For `const`, `extract_object_literal_functions` creates the matching definition.
-                        // For `let`/`var`, `match_js_objlit_qualified_method_defs` creates it in its
-                        // deferred second pass (now covers all declaration kinds, not just `const`).
+                        // `extract_object_literal_functions` creates the matching definition
+                        // inline for all declaration kinds (`const`, `let`, `var`) — see
+                        // `handle_var_decl`'s two call sites.
                         symbols.type_map.push(TypeMapEntry {
                             name: qualified.clone(),
                             type_name: qualified,
@@ -629,11 +689,10 @@ fn seed_objlit_type_map_entries(var_name: &str, obj_node: &Node, source: &[u8], 
             "method_definition" => {
                 // Method shorthand: `let obj = { baz() {} }` → typeMap['obj.baz'] = 'baz'
                 // Points to the bare-name definition so the two-step accessor dispatch resolves
-                // via the bare node. `handle_method_def` always creates a bare definition for
-                // method_definition nodes; `match_js_objlit_qualified_method_defs` (which now
-                // covers all declaration kinds) adds the qualified definition in its deferred
-                // second pass. Using the bare name here keeps resolution consistent across all
-                // declaration kinds (const/let/var).
+                // via the bare node. `extract_object_literal_functions` creates both the bare
+                // and qualified definitions inline for all declaration kinds (const/let/var) —
+                // see `handle_var_decl`'s two call sites. Using the bare name here keeps
+                // resolution consistent across all declaration kinds.
                 let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
                 let qualified = format!("{}.{}", var_name, method_name);
                 symbols.type_map.push(TypeMapEntry {
@@ -643,101 +702,6 @@ fn seed_objlit_type_map_entries(var_name: &str, obj_node: &Node, source: &[u8], 
                 });
             }
             _ => {}
-        }
-    }
-}
-
-/// Second-pass walker: emit qualified `obj.method(function)` definitions for
-/// `method_definition` and (for `let`/`var`) `pair+arrow/function` children of object literals.
-///
-/// **method_definition** (all declaration kinds — `const`, `let`, `var`):
-/// This must run AFTER the main `match_js_node` walk so that the bare `f(method)` node
-/// created by `handle_method_def` appears BEFORE the qualified `obj.f(function)` node
-/// in `symbols.definitions`. `findCaller` picks the narrowest-span enclosing definition;
-/// when spans are equal it keeps the first inserted one (strict `<`), so `f(method)` wins
-/// and call-edge attribution matches WASM (which runs `handleMethodCapture` via the query
-/// path before `extractObjectLiteralFunctions` via `runCollectorWalk`).
-///
-/// **pair + arrow_function / function_expression / function** (`let`/`var` only):
-/// For `const`, `extract_object_literal_functions` already creates the qualified definition;
-/// repeating it here would produce a duplicate. For `let`/`var`, no other pass emits the
-/// qualified definition, so we must emit it here. Without the definition, the typeMap entry
-/// seeded by `seed_objlit_type_map_entries` (`"api.save" → "api.save"`) dead-ends: the
-/// resolver finds the typeMap entry but then fails to locate a node named `"api.save"`.
-///
-/// WASM produces both nodes — the qualified one via `extractObjectLiteralFunctions` and the
-/// bare one via `handleMethodCapture`. This pass mirrors that by adding only the qualified
-/// definitions, deferred so ordering is correct.
-fn match_js_objlit_qualified_method_defs(
-    node: &Node,
-    source: &[u8],
-    symbols: &mut FileSymbols,
-    _depth: usize,
-) {
-    // Only lexical/variable declarations at non-function scope.
-    if !matches!(node.kind(), "lexical_declaration" | "variable_declaration") { return; }
-    if find_parent_of_types(node, &[
-        "function_declaration", "arrow_function", "function_expression",
-        "method_definition", "generator_function_declaration", "generator_function",
-    ]).is_some() {
-        return;
-    }
-    let is_const = node.child(0).map(|c| node_text(&c, source) == "const").unwrap_or(false);
-    for i in 0..node.child_count() {
-        let Some(declarator) = node.child(i) else { continue };
-        if declarator.kind() != "variable_declarator" { continue; }
-        let Some(name_n) = declarator.child_by_field_name("name") else { continue };
-        let Some(value_n) = declarator.child_by_field_name("value") else { continue };
-        if value_n.kind() != "object" || name_n.kind() != "identifier" { continue; }
-        let var_name = node_text(&name_n, source);
-        for j in 0..value_n.child_count() {
-            let Some(child) = value_n.child(j) else { continue };
-            match child.kind() {
-                "method_definition" => {
-                    // Emit qualified definition for ALL declaration kinds.
-                    // Use resolve_method_def_name to strip brackets from computed string keys
-                    // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]).
-                    let Some(method_name) = resolve_method_def_name(&child, source) else { continue };
-                    let qualified = format!("{}.{}", var_name, method_name);
-                    let body = child.child_by_field_name("body");
-                    symbols.definitions.push(Definition {
-                        name: qualified,
-                        kind: "function".to_string(),
-                        line: start_line(&child),
-                        end_line: Some(end_line(&child)),
-                        decorators: None,
-                        complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
-                        cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
-                        children: None,
-                    });
-                }
-                "pair" if !is_const => {
-                    // Emit qualified definition for `let`/`var` pair+arrow/function values only.
-                    // For `const`, `extract_object_literal_functions` already creates this definition;
-                    // creating it again here would be a duplicate.
-                    let Some(key_n) = child.child_by_field_name("key") else { continue };
-                    let Some(val_n) = child.child_by_field_name("value") else { continue };
-                    if !matches!(val_n.kind(), "arrow_function" | "function_expression" | "function") {
-                        continue;
-                    }
-                    // Use resolve_pair_key_name to strip brackets from computed string keys
-                    // (e.g. ['foo'] → "foo") and skip non-string computed keys ([Symbol.iterator]),
-                    // mirroring the const path in extract_object_literal_functions above.
-                    let Some(key) = resolve_pair_key_name(&key_n, source) else { continue };
-                    let qualified = format!("{}.{}", var_name, key);
-                    symbols.definitions.push(Definition {
-                        name: qualified,
-                        kind: "function".to_string(),
-                        line: start_line(&child),
-                        end_line: Some(end_line(&val_n)),
-                        decorators: None,
-                        complexity: compute_all_metrics(&val_n, source, "javascript"),
-                        cfg: build_function_cfg(&val_n, "javascript", source),
-                        children: None,
-                    });
-                }
-                _ => {}
-            }
         }
     }
 }
@@ -1197,6 +1161,12 @@ fn resolve_pair_key_name(key_n: &Node, source: &[u8]) -> Option<String> {
 
 fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(method_name) = resolve_method_def_name(node, source) {
+        // extract_object_literal_functions already emits this node's bare + qualified
+        // definitions together (#1818) — skip here to avoid a duplicate, differently-
+        // positioned bare entry.
+        if is_object_literal_declarator_method(node, source) {
+            return;
+        }
         let method_name = method_name.as_str();
         let parent_class = find_parent_class(node, source);
         let full_name = match parent_class {
@@ -1416,6 +1386,17 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 let var_name = node_text(&name_n, source);
                 extract_object_literal_functions(&value_n, source, var_name, symbols);
             }
+        } else if !is_const && value_n.kind() == "object"
+            && is_eligible_object_literal_declarator(&declarator)
+        {
+            // `let`/`var` object literals get no "constant" definition of their own (mirrors
+            // WASM extractLetVarObjLiteralDeclarators) but still need their function/method
+            // properties extracted — inline here, like the `const` branch above, so native and
+            // WASM agree on `definitions` array order (#1818). Previously deferred to a
+            // separate post-walk pass that ran after the whole file, which put these qualified
+            // definitions in the wrong relative position.
+            let var_name = node_text(&name_n, source);
+            extract_object_literal_functions(&value_n, source, var_name, symbols);
         } else if name_n.kind() == "identifier" && value_n.kind() == "identifier" {
             // Phase 8.3: `const alias = handler` — record for pts analysis.
             // Mirror the JS BUILTIN_GLOBALS guard: skip well-known JS globals so
@@ -2469,7 +2450,7 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
 /// issue #1771). Restricted to plain `identifier` values: call expressions,
 /// member expressions, and inline function/arrow values are handled by their
 /// own extraction paths (regular call resolution, `seed_objlit_type_map_entries`
-/// / `match_js_objlit_qualified_method_defs`) and must not be double-counted here.
+/// / `extract_object_literal_functions`) and must not be double-counted here.
 ///
 /// Emitted unconditionally for every bare-identifier property value in the
 /// file — `dynamic_kind: "value-ref"` is resolved downstream (build_edges.rs)
@@ -5398,11 +5379,11 @@ mod tests {
     }
 
     /// Object literal shorthand method `{ f() {} }` must produce BOTH a bare `f(method)` node
-    /// (from handle_method_def, main walk) AND a qualified `o1.f(function)` node (from the
-    /// second-pass match_js_objlit_qualified_method_defs), with the bare node appearing FIRST.
-    /// findCaller's equal-span tie-break keeps the first entry, so `f(method)` wins for call
-    /// attribution — matching WASM where handleMethodCapture runs before extractObjectLiteralFunctions.
-    /// Issue #1538.
+    /// AND a qualified `o1.f(function)` node — both emitted inline together by
+    /// extract_object_literal_functions (see is_object_literal_declarator_method), with the
+    /// bare node appearing FIRST. findCaller's equal-span tie-break keeps the first entry, so
+    /// `f(method)` wins for call attribution — matching WASM's extractObjectLiteralFunctions,
+    /// which emits both in the same relative order. Issue #1538, #1818.
     #[test]
     fn object_literal_shorthand_method_bare_node_precedes_qualified() {
         let s = parse_js(
@@ -5479,8 +5460,8 @@ mod tests {
         assert!(names.contains(&"obj.bar"), "expected 'obj.bar'; got: {:?}", names);
     }
 
-    /// Issue #1764: the same computed-key unwrapping must apply to `let`/`var` object literals
-    /// (match_js_objlit_qualified_method_defs), not just `const` (extract_object_literal_functions).
+    /// Issue #1764: the same computed-key unwrapping must apply to `let`/`var` object literals,
+    /// not just `const` — both now go through extract_object_literal_functions inline.
     #[test]
     fn computed_string_literal_pair_key_resolves_for_let_and_var() {
         let s = parse_js(
@@ -5534,8 +5515,8 @@ mod tests {
         assert_eq!(tm3.unwrap().type_name, "handler");
 
         // Pair with arrow value: `let api = { save: () => {} }` → typeMap['api.save'] = 'api.save'
-        // and a qualified definition 'api.save' must exist (emitted by the deferred
-        // match_js_objlit_qualified_method_defs pass for non-const pair+arrow/function).
+        // and a qualified definition 'api.save' must exist (emitted inline by
+        // extract_object_literal_functions, called from handle_var_decl's let/var branch).
         let s_let_arrow = parse_js(
             "let api = { save: () => {} };\n\
              api.save();",
