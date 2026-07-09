@@ -3633,6 +3633,11 @@ const HTTP_VERB_CALLEES: ReadonlySet<string> = new Set([
  * callback-accepting (no separate {@link CALLBACK_ACCEPTING_CALLEES} entry
  * needed); only the arg at its listed index is eligible.
  *
+ * Invariant: this map and {@link CALLBACK_ACCEPTING_CALLEES} must stay
+ * disjoint. A callee name present in both would have its any-position intent
+ * silently narrowed to the single listed index (positional wins — see the
+ * gate in {@link extractCallbackReferenceCalls}), with no error or warning.
+ *
  * This is name-based, not receiver-typed (consistent with the rest of this
  * gate), so it can't distinguish `Array.from(x, mapFn)` from an unrelated
  * `.from(x, y)` on some other object shaped differently — e.g. `Buffer.from(data,
@@ -4167,16 +4172,19 @@ function extractImportNames(
 /**
  * Wrapper node types that can sit between a dynamic `import()` call and its
  * enclosing `variable_declarator` without changing which value gets bound —
- * `await`, redundant parentheses, and TypeScript `as` casts. Real-world
- * dynamic-import call sites often combine several of these, e.g.
+ * `await`, redundant parentheses, and TypeScript `as`/`satisfies` casts.
+ * Real-world dynamic-import call sites often combine several of these, e.g.
  * `const { X } = (await import('./mod.js')) as { X: Fn }` nests
  * await_expression → parenthesized_expression → as_expression before
- * reaching the declarator (#1781).
+ * reaching the declarator (#1781). `satisfies_expression` (TS 4.9+
+ * `... satisfies { X: Fn }`) is structurally identical to `as_expression`
+ * here — same Greptile follow-up as the native mirror.
  */
 const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
   'await_expression',
   'parenthesized_expression',
   'as_expression',
+  'satisfies_expression',
 ]);
 
 /**
@@ -4242,16 +4250,32 @@ function extractDynamicImportNames(
           const left = value.childForFieldName('left');
           if (left?.type === 'identifier') localNode = left;
         }
-        if (localNode && key) {
+        // A quoted (`{ 'foo-bar': local }`) or computed (`{ ['foo-bar']: local }`)
+        // key's raw `.text` includes the quotes/brackets — using it verbatim as
+        // `imported` makes the resolver look for an export literally named
+        // `'foo-bar'`, which never matches (Greptile, #1824 follow-up). Resolve
+        // to the clean export name the same way resolveComputedKeyName/
+        // resolveMethodDefinitionName already do for object-literal keys.
+        const keyName = key
+          ? key.type === 'computed_property_name'
+            ? resolveComputedKeyName(key)
+            : key.type === 'string' || key.type === 'string_fragment'
+              ? key.text.replace(/^['"]|['"]$/g, '')
+              : key.text
+          : '';
+        if (localNode) {
+          // The local binding is always trackable on its own, even when the
+          // key isn't statically resolvable (e.g. `{ [Symbol()]: local }`) —
+          // only the rename-pair mapping is skipped in that case.
           names.push(localNode.text);
-          if (localNode.text !== key.text) {
-            renamedOut?.push({ local: localNode.text, imported: key.text });
+          if (keyName && localNode.text !== keyName) {
+            renamedOut?.push({ local: localNode.text, imported: keyName });
           }
-        } else if (key) {
+        } else if (keyName) {
           // Nested pattern (`{ foo: { nested } }`) or other unsupported
           // value shape — no single local binding to extract; fall back to
           // the key so the specifier isn't dropped entirely.
-          names.push(key.text);
+          names.push(keyName);
         }
       }
     }
