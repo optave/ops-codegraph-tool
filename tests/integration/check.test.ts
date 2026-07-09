@@ -492,9 +492,17 @@ describe('checkNoNewCycles', () => {
     // dynamic imports carry a distinct 'dynamic-imports' kind that's excluded
     // from cycle detection entirely, so no file-level cycle can be
     // speculative today. This asserts that invariant rather than assuming it.
+    //
+    // Normalized (sorted nodes + sorted cycle list) before comparing: an SCC's
+    // member order isn't semantically meaningful, and Tarjan (native or JS)
+    // makes no ordering guarantee across separate calls on the same input.
+    const normalize = (cycles: { nodes: string[]; speculative: boolean }[]) =>
+      cycles
+        .map((c) => ({ ...c, nodes: [...c.nodes].sort() }))
+        .sort((a, b) => a.nodes.join('\0').localeCompare(b.nodes.join('\0')));
     const withSpeculative = checkNoNewCycles(db, new Set(['src/math.js']), false, false);
     const withoutSpeculative = checkNoNewCycles(db, new Set(['src/math.js']), false, true);
-    expect(withoutSpeculative.cycles).toEqual(withSpeculative.cycles);
+    expect(normalize(withoutSpeculative.cycles)).toEqual(normalize(withSpeculative.cycles));
   });
 });
 
@@ -927,7 +935,6 @@ describe('checkNoDeletedExportsInUse', () => {
 });
 
 // ─── checkNoBoundaryViolations ────────────────────────────────────────
-
 
 describe('checkNoBoundaryViolations', () => {
   test('passes (with note) when no CODEOWNERS exists', () => {
