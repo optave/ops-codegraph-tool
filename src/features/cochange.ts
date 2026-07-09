@@ -78,14 +78,14 @@ function parseGitLogOutput(output: string): CommitEntry[] {
 
 export function scanGitHistory(
   repoRoot: string,
-  opts: { since?: string; afterSha?: string | null } = {},
+  opts: { since?: string; afterSha?: string | null; execMaxBufferBytes?: number } = {},
 ): { commits: CommitEntry[] } {
   let output: string;
   try {
     output = execFileSync('git', buildGitLogArgs(opts), {
       cwd: repoRoot,
       encoding: 'utf-8',
-      maxBuffer: DEFAULTS.coChange.execMaxBufferBytes,
+      maxBuffer: opts.execMaxBufferBytes ?? DEFAULTS.coChange.execMaxBufferBytes,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e: unknown) {
@@ -279,18 +279,21 @@ interface CoChangeAnalysisOptions {
   since: string;
   minSupport: number;
   maxFilesPerCommit: number;
+  execMaxBufferBytes: number;
 }
 
-/** Resolve since/minSupport/maxFilesPerCommit from opts, falling back to DEFAULTS.coChange. */
+/** Resolve since/minSupport/maxFilesPerCommit/execMaxBufferBytes from opts, falling back to DEFAULTS.coChange. */
 function resolveCoChangeAnalysisOptions(opts: {
   since?: string;
   minSupport?: number;
   maxFilesPerCommit?: number;
+  execMaxBufferBytes?: number;
 }): CoChangeAnalysisOptions {
   return {
     since: opts.since || DEFAULTS.coChange.since,
     minSupport: opts.minSupport ?? DEFAULTS.coChange.minSupport,
     maxFilesPerCommit: opts.maxFilesPerCommit ?? DEFAULTS.coChange.maxFilesPerCommit,
+    execMaxBufferBytes: opts.execMaxBufferBytes ?? DEFAULTS.coChange.execMaxBufferBytes,
   };
 }
 
@@ -302,7 +305,11 @@ function runCoChangeScanAndPersist(
   resolved: CoChangeAnalysisOptions,
 ): CommitEntry[] {
   const knownFiles = loadKnownFiles(db);
-  const { commits } = scanGitHistory(repoRoot, { since: resolved.since, afterSha });
+  const { commits } = scanGitHistory(repoRoot, {
+    since: resolved.since,
+    afterSha,
+    execMaxBufferBytes: resolved.execMaxBufferBytes,
+  });
   const { pairs: coChanges, fileCommitCounts } = computeCoChanges(commits, {
     minSupport: resolved.minSupport,
     maxFilesPerCommit: resolved.maxFilesPerCommit,
@@ -322,6 +329,7 @@ export function analyzeCoChanges(
     since?: string;
     minSupport?: number;
     maxFilesPerCommit?: number;
+    execMaxBufferBytes?: number;
     full?: boolean;
   } = {},
 ):
