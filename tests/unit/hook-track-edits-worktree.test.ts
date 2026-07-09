@@ -85,6 +85,32 @@ describe("track-edits.sh resolves the log to the edited file's own worktree", ()
     expect(fs.existsSync(targetLog)).toBe(true);
     expect(fs.readFileSync(targetLog, 'utf8')).toMatch(/ a\/b\/c\/new-file\.ts$/m);
   });
+
+  it('logs a clean relative path when the edited file is reached through a symlink to the worktree', () => {
+    // Reproduces (on any OS) the same class of bug as Windows' 8.3 short-name
+    // aliases (e.g. "runneradmin" vs "RUNNER~1"): two different, valid string
+    // forms resolve to the identical real directory. `git rev-parse
+    // --show-toplevel` returns the real (symlink-resolved) path, so without
+    // canonicalizing FILE_PATH's directory the same way before computing the
+    // relative path, path.relative sees two unrelated-looking trees and
+    // produces a long, useless chain of '../' segments instead of a clean
+    // relative path.
+    const realRepo = path.join(tmpRoot, 'real-worktree');
+    const symlinkRepo = path.join(tmpRoot, 'symlink-to-worktree');
+    initRepo(realRepo);
+    fs.mkdirSync(path.join(realRepo, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(realRepo, 'src', 'thing.ts'), '// content\n');
+    fs.symlinkSync(realRepo, symlinkRepo, 'dir');
+
+    const targetFile = path.join(symlinkRepo, 'src', 'thing.ts');
+    runHook(targetFile, tmpRoot);
+
+    const realLog = path.join(realRepo, '.claude', 'session-edits.log');
+    expect(fs.existsSync(realLog)).toBe(true);
+    const content = fs.readFileSync(realLog, 'utf8');
+    expect(content).toMatch(/ src\/thing\.ts$/m);
+    expect(content).not.toContain('..');
+  });
 });
 
 describe('track-edits.sh Windows path normalization', () => {

@@ -57,11 +57,35 @@ if [ -z "$PROJECT_DIR" ]; then
 fi
 LOG_FILE="$PROJECT_DIR/.claude/session-edits.log"
 
-# Normalize to relative path with forward slashes
+# Normalize to relative path with forward slashes. Canonicalize both sides
+# via realpath first (walking up to the nearest existing ancestor, since
+# Write can target a not-yet-created nested path) — on Windows the same
+# directory can be reported as either its long form or its auto-generated
+# 8.3 short-name alias (e.g. "runneradmin" vs "RUNNER~1") depending on which
+# API produced it, and a naive string-based path.relative() treats those as
+# unrelated trees, producing a long chain of spurious '../' segments.
 REL_PATH=$(node -e "
+  const fs = require('fs');
   const path = require('path');
-  const abs = path.resolve(process.argv[1]);
-  const base = path.resolve(process.argv[2]);
+
+  function realpathWalkUp(p) {
+    let dir = path.resolve(p);
+    let tail = '';
+    while (true) {
+      try {
+        const real = fs.realpathSync(dir);
+        return tail ? path.join(real, tail) : real;
+      } catch {
+        const parent = path.dirname(dir);
+        if (parent === dir) return path.resolve(p);
+        tail = tail ? path.join(path.basename(dir), tail) : path.basename(dir);
+        dir = parent;
+      }
+    }
+  }
+
+  const abs = realpathWalkUp(process.argv[1]);
+  const base = realpathWalkUp(process.argv[2]);
   const rel = path.relative(base, abs).split(path.sep).join('/');
   process.stdout.write(rel);
 " "$FILE_PATH" "$PROJECT_DIR" 2>/dev/null) || true
