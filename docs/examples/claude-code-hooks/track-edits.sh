@@ -73,7 +73,11 @@ REL_PATH=$(node -e "
     let tail = '';
     while (true) {
       try {
-        const real = fs.realpathSync(dir);
+        // .native calls the OS's own canonicalization (GetFinalPathNameByHandleW
+        // on Windows), which resolves 8.3 short-name aliases; the plain JS
+        // fallback only walks symlinks component-by-component and would leave
+        // a short-name alias like "RUNNER~1" untouched.
+        const real = fs.realpathSync.native(dir);
         return tail ? path.join(real, tail) : real;
       } catch {
         const parent = path.dirname(dir);
