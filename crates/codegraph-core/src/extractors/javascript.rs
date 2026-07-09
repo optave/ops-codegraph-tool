@@ -479,10 +479,7 @@ fn is_eligible_object_literal_declarator(declarator: &Node) -> bool {
     if declarator.kind() != "variable_declarator" { return false; }
     let Some(name_n) = declarator.child_by_field_name("name") else { return false };
     if name_n.kind() != "identifier" { return false; }
-    find_parent_of_types(declarator, &[
-        "function_declaration", "arrow_function", "function_expression",
-        "method_definition", "generator_function_declaration", "generator_function",
-    ]).is_none()
+    find_parent_of_types(declarator, &VAR_DECL_FN_SCOPE_TYPES).is_none()
 }
 
 /// True when `method_node` (a method_definition) is a shorthand method whose enclosing object
@@ -1315,6 +1312,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let is_const = node.child(0)
         .map(|c| node_text(&c, source) == "const")
         .unwrap_or(false);
+    let in_function_scope = find_parent_of_types(node, &VAR_DECL_FN_SCOPE_TYPES).is_some();
     for i in 0..node.child_count() {
         let Some(declarator) = node.child(i) else { continue };
         if declarator.kind() != "variable_declarator" { continue; }
@@ -1322,7 +1320,6 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         let value_n = declarator.child_by_field_name("value");
         let (Some(name_n), Some(value_n)) = (name_n, value_n) else { continue };
         let vt = value_n.kind();
-        let in_function_scope = find_parent_of_types(node, &VAR_DECL_FN_SCOPE_TYPES).is_some();
 
         if vt == "arrow_function" || vt == "function_expression" || vt == "function" || vt == "generator_function" {
             let children = extract_js_parameters(&value_n, source);
@@ -1391,7 +1388,9 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 let var_name = node_text(&name_n, source);
                 extract_object_literal_functions(&value_n, source, var_name, symbols);
             }
-        } else if !is_const && value_n.kind() == "object" && name_n.kind() == "identifier" && !in_function_scope {
+        } else if !is_const && value_n.kind() == "object"
+            && is_eligible_object_literal_declarator(&declarator)
+        {
             // `let`/`var` object literals get no "constant" definition of their own (mirrors
             // WASM extractLetVarObjLiteralDeclarators) but still need their function/method
             // properties extracted — inline here, like the `const` branch above, so native and
@@ -2333,6 +2332,11 @@ const HTTP_VERB_CALLEES: &[&str] = &[
 /// separate `CALLBACK_ACCEPTING_CALLEES` entry needed); only the arg at its
 /// listed index is eligible.
 ///
+/// Invariant: this map and `CALLBACK_ACCEPTING_CALLEES` must stay disjoint.
+/// A callee name present in both would have its any-position intent silently
+/// narrowed to the single listed index (positional wins — see the gate in
+/// `extract_callback_reference_calls`), with no error or warning.
+///
 /// Name-based, not receiver-typed, so it can't distinguish `Array.from(x,
 /// mapFn)` from an unrelated `.from(x, y)` shaped differently (e.g.
 /// `Buffer.from(data, encoding)`) — that residual risk is far narrower than
@@ -3076,13 +3080,19 @@ fn find_parent_class_no_fn_boundary(node: &Node, source: &[u8]) -> Option<String
 
 /// Wrapper node kinds that can sit between a dynamic `import()` call and its
 /// enclosing `variable_declarator` without changing which value gets bound —
-/// `await`, redundant parentheses, and TypeScript `as` casts. Real-world call
-/// sites often combine several of these, e.g.
+/// `await`, redundant parentheses, and TypeScript `as`/`satisfies` casts.
+/// Real-world call sites often combine several of these, e.g.
 /// `const { X } = (await import('./mod.js')) as { X: Fn }` nests
 /// await_expression → parenthesized_expression → as_expression before
-/// reaching the declarator (#1781).
-const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] =
-    &["await_expression", "parenthesized_expression", "as_expression"];
+/// reaching the declarator (#1781). `satisfies_expression` (TS 4.9+
+/// `... satisfies { X: Fn }`) is structurally identical to `as_expression`
+/// here — Greptile follow-up, mirrors the TS extractor.
+const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] = &[
+    "await_expression",
+    "parenthesized_expression",
+    "as_expression",
+    "satisfies_expression",
+];
 
 /// Extract named bindings from a dynamic `import()` call expression.
 /// Handles: `const { a, b } = await import(...)`, `const mod = await import(...)`,
@@ -4384,6 +4394,17 @@ mod tests {
     }
 
     #[test]
+    fn finds_dynamic_import_with_satisfies_cast_destructuring() {
+        // TS 4.9+ `satisfies` is structurally identical to `as` here (Greptile
+        // follow-up to #1781) — same walk-up gap would otherwise reproduce.
+        let s = parse_ts("const { a, b } = await import('./foo.js') satisfies { a: Fn; b: Fn };");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
     fn finds_dynamic_import_with_parenthesized_as_cast_destructuring() {
         // Exact repro shape from #1781 (native-orchestrator.ts):
         // `const { X, Y } = (await import('../mod.js')) as { X: Fn; Y: Fn };`
@@ -4873,6 +4894,39 @@ mod tests {
             !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
             "Uint8Array.from(arr, mapCallback) must not emit `arr`; got: {:?}",
             s.calls,
+        );
+    }
+
+    #[test]
+    fn applies_array_from_positional_gate_to_member_expression_args_too() {
+        // Mirrors the TS test of the same intent: the old member_expression
+        // guard was an explicit `&& memberExprArgsAllowed` inline check; the
+        // positional restructuring moved that responsibility to the shared
+        // early-return above the loop. `Array.from(arr, obj.mapper)` exercises
+        // that a member_expression at the positional index (1) is still
+        // emitted with its receiver, while one at index 0 is not.
+        let s = parse_js("Array.from(arr, obj.mapper);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapper" && c.receiver.as_deref() == Some("obj")),
+            "Array.from(arr, obj.mapper) must emit mapper with receiver obj; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Array.from(arr, obj.mapper) must not emit `arr` (index 0); got: {:?}",
+            s.calls,
+        );
+
+        let s2 = parse_js("Array.from(obj.arrayLike, mapCallback);");
+        assert!(
+            !s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arrayLike"),
+            "Array.from(obj.arrayLike, mapCallback) must not emit `arrayLike` (index 0); got: {:?}",
+            s2.calls,
+        );
+        assert!(
+            s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Array.from(obj.arrayLike, mapCallback) must emit mapCallback; got: {:?}",
+            s2.calls,
         );
     }
 

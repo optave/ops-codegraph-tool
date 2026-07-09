@@ -1,24 +1,25 @@
-import {
-  openReadonlyOrFail,
-  openRepo,
-  type Repository,
-  resolveBusyTimeoutMs,
-} from '../../db/index.js';
-import { loadConfig } from '../../infrastructure/config.js';
+import { openReadonlyOrFail, openRepo, type Repository, resolveDbConfig } from '../../db/index.js';
+import { DEFAULTS, loadConfig } from '../../infrastructure/config.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../../types.js';
 
 /**
  * Open a readonly DB connection, run `fn`, and close the DB on completion.
  * Eliminates the duplicated `openReadonlyOrFail` + `try/finally/db.close()` pattern
  * that appears in every analysis query function.
+ *
+ * Resolves the config once and passes it to `fn` so callers that also need
+ * `resolveAnalysisOpts` can reuse it as `opts.config` instead of triggering a
+ * second `loadConfig()` for the same rootDir (#1763 review).
  */
 export function withReadonlyDb<T>(
   customDbPath: string | undefined,
-  fn: (db: BetterSqlite3Database) => T,
+  fn: (db: BetterSqlite3Database, config: CodegraphConfig) => T,
 ): T {
-  const db = openReadonlyOrFail(customDbPath, resolveBusyTimeoutMs(customDbPath));
+  const config = resolveDbConfig(customDbPath);
+  const busyTimeoutMs = config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
+  const db = openReadonlyOrFail(customDbPath, busyTimeoutMs);
   try {
-    return fn(db);
+    return fn(db, config);
   } finally {
     db.close();
   }

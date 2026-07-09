@@ -3624,6 +3624,11 @@ const HTTP_VERB_CALLEES: ReadonlySet<string> = new Set([
  * callback-accepting (no separate {@link CALLBACK_ACCEPTING_CALLEES} entry
  * needed); only the arg at its listed index is eligible.
  *
+ * Invariant: this map and {@link CALLBACK_ACCEPTING_CALLEES} must stay
+ * disjoint. A callee name present in both would have its any-position intent
+ * silently narrowed to the single listed index (positional wins — see the
+ * gate in {@link extractCallbackReferenceCalls}), with no error or warning.
+ *
  * This is name-based, not receiver-typed (consistent with the rest of this
  * gate), so it can't distinguish `Array.from(x, mapFn)` from an unrelated
  * `.from(x, y)` on some other object shaped differently — e.g. `Buffer.from(data,
@@ -4158,16 +4163,19 @@ function extractImportNames(
 /**
  * Wrapper node types that can sit between a dynamic `import()` call and its
  * enclosing `variable_declarator` without changing which value gets bound —
- * `await`, redundant parentheses, and TypeScript `as` casts. Real-world
- * dynamic-import call sites often combine several of these, e.g.
+ * `await`, redundant parentheses, and TypeScript `as`/`satisfies` casts.
+ * Real-world dynamic-import call sites often combine several of these, e.g.
  * `const { X } = (await import('./mod.js')) as { X: Fn }` nests
  * await_expression → parenthesized_expression → as_expression before
- * reaching the declarator (#1781).
+ * reaching the declarator (#1781). `satisfies_expression` (TS 4.9+
+ * `... satisfies { X: Fn }`) is structurally identical to `as_expression`
+ * here — same Greptile follow-up as the native mirror.
  */
 const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
   'await_expression',
   'parenthesized_expression',
   'as_expression',
+  'satisfies_expression',
 ]);
 
 /**
