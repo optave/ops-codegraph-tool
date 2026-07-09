@@ -1312,6 +1312,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let is_const = node.child(0)
         .map(|c| node_text(&c, source) == "const")
         .unwrap_or(false);
+    let in_function_scope = find_parent_of_types(node, &VAR_DECL_FN_SCOPE_TYPES).is_some();
     for i in 0..node.child_count() {
         let Some(declarator) = node.child(i) else { continue };
         if declarator.kind() != "variable_declarator" { continue; }
@@ -1319,7 +1320,6 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         let value_n = declarator.child_by_field_name("value");
         let (Some(name_n), Some(value_n)) = (name_n, value_n) else { continue };
         let vt = value_n.kind();
-        let in_function_scope = find_parent_of_types(node, &VAR_DECL_FN_SCOPE_TYPES).is_some();
 
         if vt == "arrow_function" || vt == "function_expression" || vt == "function" || vt == "generator_function" {
             let children = extract_js_parameters(&value_n, source);
