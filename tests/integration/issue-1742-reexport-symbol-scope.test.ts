@@ -14,6 +14,9 @@
  *                    `import type { PlotConfig } from './viewer.js'`
  *                    (type-only — NOT a reexport)
  *   all-helpers.ts — `export * from './helpers.js'` (pure wildcard barrel)
+ *   mixed-barrel.ts — `export { formatDate } from './helpers.js'` (named)
+ *                    PLUS `export * from './helpers.js'` (wildcard, same
+ *                    target) — the mixed case flagged in the #1849 review
  *
  * Before the fix, `reexportedSymbols` for enrichment.ts dumped all four of
  * viewer.ts's exports (including escapeHtml and PlotConfig, neither of
@@ -21,7 +24,11 @@
  * viewer.ts existed. It should report exactly loadPlotConfig and
  * buildLayoutOptions from viewer.ts. all-helpers.ts's wildcard re-export
  * should keep reporting every export of helpers.ts — genuinely different
- * semantics from a named specifier, handled distinctly.
+ * semantics from a named specifier, handled distinctly. mixed-barrel.ts
+ * additionally covers a target file reached by BOTH a named and a wildcard
+ * reexport in the same barrel — the wildcard's full-export semantics must
+ * win, not be silently dropped because a named symbol-level edge also
+ * exists for that target.
  */
 
 import fs from 'node:fs';
@@ -58,7 +65,7 @@ function readReexportEdges(dbPath: string): EdgeRow[] {
          FROM edges e
          JOIN nodes n1 ON e.source_id = n1.id
          JOIN nodes n2 ON e.target_id = n2.id
-         WHERE e.kind = 'reexports'
+         WHERE e.kind IN ('reexports', 'reexports-wildcard')
          ORDER BY n1.file, n2.file, n2.name`,
       )
       .all() as EdgeRow[];
@@ -138,6 +145,30 @@ describe.each(ENGINES)('#1742 reexportedSymbols scoping (%s)', (engine) => {
 
   it('exportsData still reports the full wildcard re-export list for the pure-barrel file', () => {
     const data = exportsData('all-helpers.ts', dbPath);
+    const names = data.reexportedSymbols.map((s: { name: string }) => s.name).sort();
+    expect(names).toEqual(['formatDate', 'formatNumber']);
+    expect(data.totalReexported).toBe(2);
+  });
+
+  it('emits a reexports-wildcard marker edge for mixed-barrel.ts, alongside the named symbol edge', () => {
+    const wildcardEdge = reexportEdges.find(
+      (e) =>
+        e.source_file === 'mixed-barrel.ts' &&
+        e.target_file === 'helpers.ts' &&
+        e.kind === 'reexports-wildcard',
+    );
+    expect(
+      wildcardEdge,
+      `Expected a reexports-wildcard marker edge from mixed-barrel.ts to helpers.ts.\nActual reexports edges:\n${JSON.stringify(reexportEdges, null, 2)}`,
+    ).toBeDefined();
+  });
+
+  it('exportsData reports every export of helpers.ts for mixed-barrel.ts, not just the named specifier', () => {
+    // mixed-barrel.ts does BOTH `export { formatDate } from './helpers.js'`
+    // (named) AND `export * from './helpers.js'` (wildcard) — the wildcard's
+    // full-export semantics must win, not be suppressed by the named edge
+    // (#1849 review).
+    const data = exportsData('mixed-barrel.ts', dbPath);
     const names = data.reexportedSymbols.map((s: { name: string }) => s.name).sort();
     expect(names).toEqual(['formatDate', 'formatNumber']);
     expect(data.totalReexported).toBe(2);
