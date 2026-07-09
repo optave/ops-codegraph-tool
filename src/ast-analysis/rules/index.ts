@@ -383,20 +383,37 @@ export function astStopRecurseKinds(langId: string): ReadonlySet<string> {
 
 // ─── Per-language "named-node-required" guard ────────────────────────────
 //
-// tree-sitter-typescript's `predefined_type` production (the `string`,
-// `number`, `boolean`, `void`, ... primitive type keywords) lexes its
-// keyword as an anonymous grammar token whose `type` string is identical to
-// the *named* `string` node type used for real string literals — the
-// grammar's own node-types.json lists both a `"string", named: true` entry
-// (the literal) and a `"string", named: false` entry (the keyword token).
-// Matching by `node.type` alone therefore misclassifies `name: string`
-// type annotations as string-literal ast_nodes (#1729). Mirrors the native
-// `is_named()` guard in `extractors/javascript.rs::walk_ast_nodes_depth`.
+// Some grammars reuse the same `type` string for two different node-types
+// entries: a *named* node (a real literal) and an *anonymous* token (a
+// keyword). Matching by `node.type` alone misclassifies the keyword as the
+// literal. Two bundled grammars currently hit this:
 //
-// Scoped to the JS family: no other bundled grammar currently maps an
-// AST_TYPE_MAPS key that collides with an anonymous token of the same name.
-const JS_REQUIRES_NAMED_NODE: ReadonlySet<string> = new Set(['javascript', 'typescript', 'tsx']);
+// - tree-sitter-typescript's `predefined_type` production (the `string`,
+//   `number`, `boolean`, `void`, ... primitive type keywords) lexes its
+//   keyword as an anonymous grammar token whose `type` string is identical
+//   to the *named* `string` node type used for real string literals —
+//   node-types.json lists both a `"string", named: true` entry (the
+//   literal) and a `"string", named: false` entry (the keyword token).
+//   `name: string` type annotations were misclassified as string-literal
+//   ast_nodes (#1729).
+// - tree-sitter-php's `primitive_type`/`cast_type` productions (scalar
+//   type-hints like `string $x` and casts like `(string)`) lex the `string`
+//   keyword the same anonymous way, colliding with PHP's *named* `string`
+//   literal node type (#1821).
+//
+// Mirrors the native `is_named()`/`requires_named_node` guards in
+// `extractors/javascript.rs::walk_ast_nodes_depth` (JS bespoke walker) and
+// `extractors/helpers.rs::classify_ast_node` (generic walker, PHP config).
+//
+// A language is added here only when a `node-types.json` sweep confirms an
+// AST_TYPE_MAPS key collides with an anonymous token of the same name.
+const REQUIRES_NAMED_NODE: ReadonlySet<string> = new Set([
+  'javascript',
+  'typescript',
+  'tsx',
+  'php',
+]);
 
 export function astRequiresNamedNode(langId: string): boolean {
-  return JS_REQUIRES_NAMED_NODE.has(langId);
+  return REQUIRES_NAMED_NODE.has(langId);
 }

@@ -278,13 +278,15 @@ function collectNode(ctx: CollectCtx, node: TreeSitterNode, kind: string): void 
  * grammar tokens are rejected even though their `type` string matches a
  * mapped key — e.g. TypeScript's `predefined_type` keyword (`string`,
  * `number`, ...) lexes as an unnamed token whose type collides with the
- * named `string` literal node (#1729). Scoped to just those two node types
- * (not every mapped kind) to mirror the native `is_named()` guard, which
- * only appears on the `"string" | "template_string"` match arm in
+ * named `string` literal node (#1729), and PHP's `primitive_type`/`cast_type`
+ * keyword (`string`) collides the same way (#1821). Scoped to just those two
+ * node types (not every mapped kind) to mirror the native `is_named()` guard,
+ * which only appears on the `"string" | "template_string"` match arm in
  * `extractors/javascript.rs::walk_ast_nodes_depth` — every other mapped kind
  * (call, new, throw, await, regex) is always a named production, so gating
  * them too would silently diverge from the native engine's behavior the
- * moment that stops being true.
+ * moment that stops being true. See `astRequiresNamedNode()` in
+ * `../rules/index.ts` for the full requireNamedNode language list.
  */
 const NAMED_NODE_REQUIRED_TYPES: ReadonlySet<string> = new Set(['string', 'template_string']);
 
