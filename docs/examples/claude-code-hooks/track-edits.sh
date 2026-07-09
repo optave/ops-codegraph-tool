@@ -32,9 +32,9 @@ fi
 #
 # Walk up to the nearest existing ancestor directory first: Write can target
 # a not-yet-created nested directory, and `git -C` requires an existing path.
-SEARCH_DIR=$(dirname -- "$FILE_PATH")
+SEARCH_DIR=$(dirname "$FILE_PATH")
 while [ ! -d "$SEARCH_DIR" ] && [ "$SEARCH_DIR" != "/" ] && [ -n "$SEARCH_DIR" ]; do
-  SEARCH_DIR=$(dirname -- "$SEARCH_DIR")
+  SEARCH_DIR=$(dirname "$SEARCH_DIR")
 done
 
 PROJECT_DIR=""
