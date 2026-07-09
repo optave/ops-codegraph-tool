@@ -2024,8 +2024,24 @@ export interface FileExportEntry {
   role: Role | null;
   signature: string | null;
   summary: string | null;
-  consumers: Array<{ name: string; file: string; line: number }>;
+  consumers: Array<FileExportConsumer>;
   consumerCount: number;
+}
+
+/**
+ * A single caller of an exported symbol. `consumerKind` discriminates two
+ * shapes that share this same struct:
+ *   - `'symbol'` — a real caller/constructor: `name` is the calling
+ *     function/method/class, `line` is the actual call-site line.
+ *   - `'file'` — a whole-file reference such as `import type { X }`, where
+ *     there is no specific calling symbol: `name` equals `file` and `line`
+ *     is always `0` (no real call-site exists to report; see #1830).
+ */
+export interface FileExportConsumer {
+  name: string;
+  file: string;
+  line: number;
+  consumerKind: 'file' | 'symbol';
 }
 
 // ── Path ─────────────────────────────────────────────────────────────

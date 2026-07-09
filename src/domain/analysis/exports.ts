@@ -16,7 +16,12 @@ import { paginateResult } from '../../shared/paginate.js';
 import type { BetterSqlite3Database, NodeRow, StmtCache } from '../../types.js';
 import { resolveAnalysisOpts, withReadonlyDb } from './query-helpers.js';
 
-const _consumersStmtCache: StmtCache<{ name: string; file: string; line: number }> = new WeakMap();
+const _consumersStmtCache: StmtCache<{
+  name: string;
+  file: string;
+  line: number;
+  sourceKind: string;
+}> = new WeakMap();
 const _reexportsFromStmtCache: StmtCache<{ file: string }> = new WeakMap();
 const _reexportsToStmtCache: StmtCache<{ file: string }> = new WeakMap();
 const _reexportSymbolsStmtCache: StmtCache<NodeRow> = new WeakMap();
@@ -179,7 +184,7 @@ function exportsFileImpl(
   const consumersStmt = cachedStmt(
     _consumersStmtCache,
     db,
-    `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
+    `SELECT n.name, n.file, n.line, n.kind AS sourceKind FROM edges e JOIN nodes n ON e.source_id = n.id
          WHERE e.target_id = ? AND e.kind IN ('calls', 'imports-type')`,
   );
   const reexportsFromStmt = cachedStmt(
@@ -227,6 +232,7 @@ function exportsFileImpl(
         name: string;
         file: string;
         line: number;
+        sourceKind: string;
       }>;
       if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
 
@@ -238,7 +244,18 @@ function exportsFileImpl(
         role: s.role || null,
         signature: fileLines ? extractSignature(fileLines, s.line, displayOpts) : null,
         summary: fileLines ? extractSummary(fileLines, s.line, displayOpts) : null,
-        consumers: consumers.map((c) => ({ name: c.name, file: c.file, line: c.line })),
+        // `consumerKind` discriminates a real caller/constructor symbol
+        // (source is a function/method/class node with a genuine call-site
+        // line) from a whole-file reference such as `import type { X }`
+        // (source is the importing file node itself — see the comment on
+        // `consumersStmt` above). Renderers must not treat `name`/`line` on
+        // a `'file'` entry as a caller symbol/call-site (#1830).
+        consumers: consumers.map((c) => ({
+          name: c.name,
+          file: c.file,
+          line: c.line,
+          consumerKind: c.sourceKind === 'file' ? ('file' as const) : ('symbol' as const),
+        })),
         consumerCount: consumers.length,
       };
     };

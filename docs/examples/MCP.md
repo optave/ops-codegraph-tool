@@ -949,6 +949,8 @@ With Mermaid output:
 
 Show exported symbols of a file with per-symbol consumers — who calls each export and from where.
 
+Each entry in a symbol's `consumers[]` array carries a `consumerKind` field: `"symbol"` for a real caller/constructor (`name`/`line` are a genuine call-site), or `"file"` for a whole-file reference such as `import type { X }`, where there is no specific calling symbol — `name` equals `file` and `line` is always `0`.
+
 ```json
 {
   "tool": "file_exports",
