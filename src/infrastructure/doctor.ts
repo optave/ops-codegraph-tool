@@ -43,10 +43,30 @@
  */
 import { readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { GRAMMARS_DIR, LANGUAGE_REGISTRY } from '../domain/parser.js';
 import type { LanguageRegistryEntry } from '../types.js';
 
 const _require = createRequire(import.meta.url);
+
+/**
+ * `domain/parser.js` eagerly imports `web-tree-sitter` at module scope, so a
+ * fully broken `npm install` (not just a stale `better-sqlite3` binary)
+ * would otherwise crash this entire module with an unhandled
+ * `MODULE_NOT_FOUND` before a single doctor check can run — defeating the
+ * point of a tool whose job is to turn opaque startup crashes into a clear
+ * diagnostic (#1733). Loaded once via top-level await so `checkWasmGrammars`
+ * stays synchronous for callers/tests; a load failure is surfaced as a
+ * doctor check row instead of propagating.
+ */
+let parserModule: {
+  GRAMMARS_DIR: string;
+  LANGUAGE_REGISTRY: readonly LanguageRegistryEntry[];
+} | null = null;
+let parserModuleError: string | null = null;
+try {
+  parserModule = await import('../domain/parser.js');
+} catch (e) {
+  parserModuleError = e instanceof Error ? e.message : String(e);
+}
 
 /**
  * 'ok' — nothing to report. 'warn' — non-blocking (e.g. an optional grammar
@@ -189,8 +209,9 @@ export function findMissingGrammars(
 
 /** List `.wasm` filenames present in the real `grammars/` directory. */
 function listInstalledGrammarFiles(): ReadonlySet<string> {
+  if (!parserModule) return new Set(); // parser module failed to load — see checkWasmGrammars
   try {
-    return new Set(readdirSync(GRAMMARS_DIR).filter((f) => f.endsWith('.wasm')));
+    return new Set(readdirSync(parserModule.GRAMMARS_DIR).filter((f) => f.endsWith('.wasm')));
   } catch {
     return new Set(); // grammars/ doesn't exist at all
   }
@@ -222,14 +243,31 @@ function sampleList(entries: readonly GrammarRegistryEntry[], max = 5): string {
  *
  * Both `registry` and `listGrammarFiles` are injectable so tests can supply a
  * fake registry and a fake "what's on disk" set without touching the real
- * grammars/ directory.
+ * grammars/ directory. `registry` defaults to the real `LANGUAGE_REGISTRY`
+ * unless the `domain/parser.js` module itself failed to load (see the
+ * top-level-await block above), in which case this reports a clear 'fail'
+ * instead of silently claiming zero missing grammars.
  */
 export function checkWasmGrammars(
-  registry: readonly GrammarRegistryEntry[] = LANGUAGE_REGISTRY,
+  registry?: readonly GrammarRegistryEntry[],
   listGrammarFiles: () => ReadonlySet<string> = listInstalledGrammarFiles,
 ): DoctorCheck {
   const id = 'wasm-grammars';
   const label = 'WASM tree-sitter grammars';
+
+  if (registry === undefined) {
+    if (!parserModule) {
+      return {
+        id,
+        label,
+        status: 'fail',
+        detail: `cannot check grammar completeness — parser module failed to load: ${parserModuleError}`,
+        fixCommand: 'npm install',
+      };
+    }
+    registry = parserModule.LANGUAGE_REGISTRY;
+  }
+
   const existing = listGrammarFiles();
   const missing = findMissingGrammars(registry, existing);
 
