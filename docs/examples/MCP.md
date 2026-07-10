@@ -310,7 +310,7 @@ Impact analysis for files matching "src/parser.js":
 }
 ```
 
-With `format: "mermaid"`, returns a flowchart for visual rendering — each changed file becomes a subgraph, and callers not directly reachable from a changed function are grouped into a "blast radius" subgraph:
+With `format: "mermaid"`, returns a flowchart for visual rendering — each changed file becomes a subgraph, and each caller found (direct or transitive) is grouped into a "blast radius" subgraph unless it is itself an intermediate hop with a further caller of its own, in which case it's rendered as a standalone node:
 
 ```json
 {

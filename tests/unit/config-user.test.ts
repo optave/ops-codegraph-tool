@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import {
   clearConfigCache,
   computeConfigHash,
+  ENV_LLM_MAP,
   loadConfig,
   loadConfigWithProvenance,
   resolveUserConfigPath,
@@ -339,12 +340,7 @@ describe('loadConfigWithProvenance', () => {
   // triggers an override is also attributed as 'env'-sourced. A hardcoded
   // second list would silently miss any var added to one but not the other.
   describe('marks "llm" as "env" source for every CODEGRAPH_LLM_* override var', () => {
-    const envVars = [
-      'CODEGRAPH_LLM_PROVIDER',
-      'CODEGRAPH_LLM_API_KEY',
-      'CODEGRAPH_LLM_MODEL',
-      'CODEGRAPH_LLM_BASE_URL',
-    ];
+    const envVars = Object.keys(ENV_LLM_MAP);
 
     afterEach(() => {
       for (const key of envVars) delete process.env[key];
