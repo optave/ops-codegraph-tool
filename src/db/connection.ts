@@ -363,7 +363,7 @@ export function findDbPath(customPath?: string, rootDirHint?: string): string {
   const startDir = resolveDbSearchStartDir(rootDirHint);
   const found = walkUpForDbPath(startDir, ceiling);
   if (found) return found;
-  const base = ceiling || rootDirHint || process.cwd();
+  const base = rootDirHint || ceiling || process.cwd();
   return path.join(base, '.codegraph', 'graph.db');
 }
 
