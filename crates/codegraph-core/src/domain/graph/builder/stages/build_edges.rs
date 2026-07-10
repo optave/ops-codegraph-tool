@@ -935,6 +935,40 @@ fn find_enclosing_caller<'a>(defs: &[DefWithId<'a>], call_line: u32, file_node_i
     (file_node_id, "")
 }
 
+/// Step 2 of the scoped (this/self/super or no-receiver) fallback: exact global
+/// name lookup. Mirrors `resolveExactGlobalMatch` in
+/// `src/domain/graph/resolver/strategy.ts`.
+///
+/// A bare/this/self/super call carries no type qualifier, so `nodes_by_name`
+/// can return every same-named symbol in the codebase, filtered only by the
+/// loose directory-proximity confidence threshold. Returning all of them
+/// turns a single real call site into N-1 false `calls` edges (#1863). Only
+/// a single highest-confidence candidate is trustworthy — a tie at the top
+/// confidence (e.g. several files at the same directory depth from the
+/// caller) is genuinely ambiguous and returns nothing, letting the caller
+/// fall through to the narrower same-class-sibling fallback.
+fn resolve_exact_global_match<'a>(
+    ctx: &EdgeContext<'a>,
+    call_name: &str,
+    rel_path: &str,
+) -> Vec<&'a NodeInfo> {
+    let scored: Vec<(&'a NodeInfo, f64)> = ctx.nodes_by_name
+        .get(call_name)
+        .map(|v| v.iter()
+            .map(|&n| (n, resolve::compute_confidence(rel_path, &n.file, None)))
+            .filter(|&(_, confidence)| confidence >= 0.5)
+            .collect())
+        .unwrap_or_default();
+    if scored.is_empty() { return Vec::new(); }
+
+    let best_confidence = scored.iter().map(|&(_, confidence)| confidence).fold(f64::MIN, f64::max);
+    let best: Vec<&'a NodeInfo> = scored.iter()
+        .filter(|&&(_, confidence)| confidence == best_confidence)
+        .map(|&(n, _)| n)
+        .collect();
+    if best.len() == 1 { best } else { Vec::new() }
+}
+
 /// Multi-strategy call target resolution: import-aware → same-file → type-aware → scoped.
 /// `caller_name` is the enclosing function/method name (e.g. `"Shape.describe"`) used to scope
 /// `this`/`self`/`super` dispatch to the caller's own class before falling back to a broader scan.
@@ -1181,12 +1215,7 @@ fn resolve_call_targets<'a>(
         }
 
         // First try exact name match (e.g. an unqualified function named "area").
-        let exact: Vec<&NodeInfo> = ctx.nodes_by_name
-            .get(call.name.as_str())
-            .map(|v| v.iter()
-                .filter(|n| resolve::compute_confidence(rel_path, &n.file, None) >= 0.5)
-                .copied().collect())
-            .unwrap_or_default();
+        let exact = resolve_exact_global_match(ctx, call.name.as_str(), rel_path);
         if !exact.is_empty() { return exact; }
 
         // Class-scoped exact lookup: prefer `ClassName.method` when the caller is a qualified
@@ -2936,6 +2965,67 @@ mod call_edge_tests {
             "expected Geo.Shape.describe → Shape.area via bare class segment; got: {:?}",
             edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
         );
+    }
+
+    /// Issue #1863: several same-named object-literal `close() {}` methods
+    /// scattered under sibling directories two levels below the caller all
+    /// score the same 0.5 "grandparent proximity" confidence. A bare `close()`
+    /// call must not fan out into a `calls` edge to every one of them — a
+    /// genuine top-confidence tie is ambiguous and must resolve to nothing.
+    #[test]
+    fn global_fallback_tie_does_not_fan_out() {
+        let all_nodes = vec![
+            node(1, "caller", "function", "src/presentation/caller.ts", 3),
+            node(2, "close", "method", "src/db/connection.ts", 10),
+            node(3, "close", "method", "src/domain/target2.ts", 20),
+            node(4, "close", "method", "src/features/target3.ts", 30),
+        ];
+        let files = vec![make_file(
+            "src/presentation/caller.ts",
+            10,
+            vec![def("caller", "function", 3, 8)],
+            vec![call("close", 5, None)],
+            vec![],
+            vec![],
+        )];
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
+        assert!(
+            !edges.iter().any(|e| e.kind == "calls" && e.source_id == 1),
+            "ambiguous same-confidence candidates must not fan out into calls edges; got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+    }
+
+    /// Companion to `global_fallback_tie_does_not_fan_out`: when one candidate
+    /// has a strictly higher confidence than the rest, the clear single winner
+    /// must still resolve — only genuine top-confidence ties are dropped.
+    #[test]
+    fn global_fallback_resolves_unambiguous_best_match() {
+        let all_nodes = vec![
+            node(1, "caller", "function", "src/presentation/caller.ts", 3),
+            // Same directory as the caller → confidence 0.7, the clear winner.
+            node(2, "close", "method", "src/presentation/sibling.ts", 10),
+            // Two directories away → confidence 0.5, tied with each other but not with node 2.
+            node(3, "close", "method", "src/domain/target2.ts", 20),
+            node(4, "close", "method", "src/features/target3.ts", 30),
+        ];
+        let files = vec![make_file(
+            "src/presentation/caller.ts",
+            10,
+            vec![def("caller", "function", 3, 8)],
+            vec![call("close", 5, None)],
+            vec![],
+            vec![],
+        )];
+        let edges = build_call_edges(files, all_nodes, vec![], MAX_SOLVER_ITERATIONS);
+        let call_edges: Vec<_> = edges.iter().filter(|e| e.kind == "calls" && e.source_id == 1).collect();
+        assert_eq!(
+            call_edges.len(),
+            1,
+            "expected exactly one calls edge (the unambiguous best match); got: {:?}",
+            edges.iter().map(|e| (&e.kind, e.source_id, e.target_id)).collect::<Vec<_>>()
+        );
+        assert_eq!(call_edges[0].target_id, 2, "expected the same-directory candidate to win");
     }
 
     /// Receiver-edge confidence must propagate the stored typeMap confidence
