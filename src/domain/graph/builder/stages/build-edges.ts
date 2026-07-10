@@ -2026,29 +2026,133 @@ function applyEdgeTechniquesAfterNativeInsert(
 // ── Reverse-dep edge reconnection (#932, #933) ─────────────────────────
 
 /**
- * Picks the correct reconnect target among same-(name,kind,file) candidates
- * (sorted by ascending line).
+ * Aligns two ascending line arrays representing the same-(name,kind) sibling
+ * group before (`oldLines`) and after (`newLines`) a purge+reinsert.
  *
- * When only one candidate exists, it's an unambiguous match. When several
- * exist (e.g. multiple object-literal `close() {}` methods in one file) and
- * the sibling-group size is unchanged since save, the saved ordinal — the
- * target's rank by line among its siblings at save time — reliably
- * identifies the original target even though the whole group may have
- * shifted by an arbitrary number of lines. Falls back to nearest-line only
- * when the sibling count itself changed (a same-named sibling was added or
- * removed), since the ordinal mapping can no longer be trusted — see #1752.
+ * When the sibling count is unchanged, declarations of the same name and
+ * kind within one file keep their relative textual order across an edit —
+ * even when the whole group shifts by an arbitrary, non-uniform amount per
+ * sibling (e.g. one sibling's own body grew independently) — so mapping by
+ * rank (1st old -> 1st new, 2nd -> 2nd, ...) is always correct (#1752).
+ *
+ * When the count changed (a same-named sibling was added or removed in the
+ * same edit), rank order alone can't tell which element is the new/missing
+ * one. But the untouched siblings' OWN source text wasn't edited, so they
+ * all shift by the exact SAME line delta — whatever unrelated insertion or
+ * deletion elsewhere in the file caused the shift applies uniformly to
+ * everything below/above it. This finds the single shift value `S` that
+ * makes `old + S` land on a real new line for the most siblings — the
+ * dominant shift — and matches every old line whose shifted position
+ * exists in `newLines`; the rest were removed. This is far more reliable
+ * than picking whichever old/new pairing merely minimizes total line
+ * distance, which a uniform shift can fool once an old line coincidentally
+ * ends up numerically closer to a different sibling's new position than to
+ * its own (confirmed against this repo's real #1752 fixture numbers) — see
+ * #1865.
+ *
+ * Returns a map from each old line to its aligned new line. An old line
+ * missing from the result means its sibling was removed (no new line
+ * matches it) — callers must drop, not guess, in that case.
+ */
+function alignSiblingLines(oldLines: number[], newLines: number[]): Map<number, number> {
+  const result = new Map<number, number>();
+  if (oldLines.length === 0 || newLines.length === 0) return result;
+
+  if (oldLines.length === newLines.length) {
+    for (let i = 0; i < oldLines.length; i++) result.set(oldLines[i]!, newLines[i]!);
+    return result;
+  }
+
+  const newLineSet = new Set(newLines);
+  const shiftCounts = new Map<number, number>();
+  for (const oldLine of oldLines) {
+    for (const newLine of newLines) {
+      const shift = newLine - oldLine;
+      shiftCounts.set(shift, (shiftCounts.get(shift) ?? 0) + 1);
+    }
+  }
+  // Tie-break fully by value (not iteration/insertion order) so this stays
+  // identical to the Rust mirror, whose HashMap iterates in unspecified
+  // order: prefer the higher match count, then the smaller magnitude
+  // shift, then the smaller signed shift.
+  let bestShift = 0;
+  let bestCount = -1;
+  for (const [shift, count] of shiftCounts) {
+    const better =
+      count > bestCount ||
+      (count === bestCount &&
+        (Math.abs(shift) < Math.abs(bestShift) ||
+          (Math.abs(shift) === Math.abs(bestShift) && shift < bestShift)));
+    if (better) {
+      bestShift = shift;
+      bestCount = count;
+    }
+  }
+  for (const oldLine of oldLines) {
+    const candidate = oldLine + bestShift;
+    if (newLineSet.has(candidate)) result.set(oldLine, candidate);
+  }
+  return result;
+}
+
+/**
+ * Picks the correct reconnect target among same-(name,kind,file) candidates.
+ *
+ * A single candidate is an unambiguous match. With several candidates (e.g.
+ * multiple object-literal `close() {}` methods in one file), the saved
+ * sibling-group snapshot from before purge is aligned against the current
+ * candidate lines (see `alignSiblingLines`) to find which new line the saved
+ * target's old line maps to — correct even when the whole group shifted and
+ * its size changed in the same edit. Falls back to nearest-line only when no
+ * sibling-group snapshot is available, or the group is too large to align
+ * cheaply.
  */
 function pickReconnectTarget(
   candidates: Array<{ id: number; line: number }>,
-  tgtOrdinal: number,
-  tgtSiblingCount: number,
   tgtLine: number,
+  groupKey: string,
+  savedSiblingGroups: ReadonlyMap<string, number[]>,
+  alignmentCache: Map<string, Map<number, number>>,
+  maxAlignGroupSize: number,
 ): number | null {
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0]!.id;
-  if (candidates.length === tgtSiblingCount && tgtOrdinal >= 1 && tgtOrdinal <= candidates.length) {
-    return candidates[tgtOrdinal - 1]!.id;
+
+  const oldLines = savedSiblingGroups.get(groupKey);
+  if (
+    oldLines &&
+    oldLines.length > 0 &&
+    oldLines.length <= maxAlignGroupSize &&
+    candidates.length <= maxAlignGroupSize
+  ) {
+    let alignment = alignmentCache.get(groupKey);
+    if (!alignment) {
+      alignment = alignSiblingLines(
+        oldLines,
+        candidates.map((c) => c.line),
+      );
+      alignmentCache.set(groupKey, alignment);
+    }
+    const newLine = alignment.get(tgtLine);
+    if (newLine === undefined) {
+      // tgtLine's sibling was legitimately removed in this edit — the
+      // alignment already accounted for the size change, so falling
+      // through to nearest-line here would silently reattach to an
+      // unrelated sibling instead of correctly dropping this edge.
+      return null;
+    }
+    const match = candidates.find((c) => c.line === newLine);
+    // match is always found in practice — newLine came from
+    // candidates.map((c) => c.line) above — but an explicit return here
+    // (rather than falling through) keeps this branch's outcome always
+    // "matched or dropped," never "silently re-evaluated against
+    // nearest-line," matching the Rust mirror's always-return match arm.
+    return match ? match.id : null;
   }
+
+  // No sibling-group snapshot (shouldn't normally happen — every saved edge
+  // has one recorded at save time) or the group exceeds the alignment size
+  // cap — fall back to nearest-line.
   let best = candidates[0]!;
   let bestDist = Math.abs(best.line - tgtLine);
   for (const c of candidates) {
@@ -2065,11 +2169,11 @@ function pickReconnectTarget(
  * Reconnect edges that were saved before changed-file purge.
  *
  * Each saved edge records: sourceId (still valid — reverse-dep nodes were not
- * purged) and target attributes (name, kind, file, line, ordinal, sibling
- * count). The target node was deleted and re-inserted with a new ID by
- * insertNodes. We look up all (name, kind, file) candidates and pick the one
- * matching the saved ordinal (see `pickReconnectTarget`), then re-create the
- * edge.
+ * purged) and target attributes (name, kind, file, line). The target node
+ * was deleted and re-inserted with a new ID by insertNodes. We look up all
+ * (name, kind, file) candidates and pick the one the saved sibling-group
+ * snapshot aligns to the saved line (see `pickReconnectTarget`), then
+ * re-create the edge.
  */
 function reconnectReverseDepEdges(ctx: PipelineContext): void {
   const { db } = ctx;
@@ -2083,6 +2187,10 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
   // often share the same target (e.g. several callers of the same
   // function), so this avoids re-querying per edge.
   const candidatesCache = new Map<string, Array<{ id: number; line: number }>>();
+  // Cache the (potentially expensive) alignment result per group too —
+  // shared across every saved edge targeting the same sibling group.
+  const alignmentCache = new Map<string, Map<number, number>>();
+  const maxAlignGroupSize = ctx.config.build.reverseDepAlignmentMaxGroupSize;
 
   for (const saved of ctx.savedReverseDepEdges) {
     const cacheKey = `${saved.tgtName}|${saved.tgtKind}|${saved.tgtFile}`;
@@ -2097,9 +2205,11 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
 
     const newId = pickReconnectTarget(
       candidates,
-      saved.tgtOrdinal,
-      saved.tgtSiblingCount,
       saved.tgtLine,
+      cacheKey,
+      ctx.savedSiblingGroups,
+      alignmentCache,
+      maxAlignGroupSize,
     );
     if (newId != null) {
       reconnectedRows.push([

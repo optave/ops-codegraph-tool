@@ -413,44 +413,37 @@ function captureRemovedFileNeighbors(db: BetterSqlite3Database, removedFiles: st
 }
 
 /**
- * Computes each node's 1-based ordinal rank (by ascending line) among nodes
- * sharing its (name, kind) within `file`, plus the sibling-group size, keyed
- * by `name|kind|line`.
+ * Computes the sorted line list for every (name, kind) sibling group within
+ * `file`, keyed by `name|kind`.
  *
  * A file can contain multiple distinct symbols with the identical name and
  * kind — e.g. several object-literal `close() {}` methods returned from
  * different functions in the same file. `(name, kind, file)` alone is not a
  * unique identity for such symbols, so `reconnectReverseDepEdges` cannot
  * safely tell them apart by nearest-line matching once unrelated code shifts
- * the candidates unevenly (#1752). The ordinal recorded here — the target's
- * rank among same-named siblings at save time — lets reconnection map an old
- * target to its new node correctly as long as the sibling count is
- * unchanged, regardless of how far the whole group has shifted.
+ * the candidates unevenly, or a same-named sibling is added/removed in the
+ * same edit (#1752, #1865). The sorted line list captured here — the
+ * sibling group's layout at save time — lets reconnection align old targets
+ * to their correct new nodes by rank when the sibling count is unchanged,
+ * or by the dominant line-shift that best explains the surviving siblings
+ * when it changed (see `alignSiblingLines` in `build-edges.ts`), which
+ * tolerates both a uniform shift of the whole group AND a change in the
+ * group's size.
  */
-function computeNodeOrdinals(
-  db: BetterSqlite3Database,
-  file: string,
-): Map<string, { ordinal: number; siblingCount: number }> {
-  const result = new Map<string, { ordinal: number; siblingCount: number }>();
+function computeSiblingGroups(db: BetterSqlite3Database, file: string): Map<string, number[]> {
+  const groups = new Map<string, number[]>();
   const rows = db.prepare('SELECT name, kind, line FROM nodes WHERE file = ?').all(file) as Array<{
     name: string;
     kind: string;
     line: number;
   }>;
-  const groups = new Map<string, number[]>();
   for (const row of rows) {
     const groupKey = `${row.name}|${row.kind}`;
     if (!groups.has(groupKey)) groups.set(groupKey, []);
     groups.get(groupKey)!.push(row.line);
   }
-  for (const [groupKey, lines] of groups) {
-    lines.sort((a, b) => a - b);
-    const siblingCount = lines.length;
-    lines.forEach((line, idx) => {
-      result.set(`${groupKey}|${line}`, { ordinal: idx + 1, siblingCount });
-    });
-  }
-  return result;
+  for (const lines of groups.values()) lines.sort((a, b) => a - b);
+  return groups;
 }
 
 /**
@@ -501,7 +494,7 @@ function addReverseDeps(
     // Must be computed BEFORE this file's nodes are purged — captures the
     // pre-purge sibling layout so reconnection can map old→new correctly
     // even when several same-named/same-kind symbols exist in the file.
-    const ordinals = computeNodeOrdinals(db, changedPath);
+    const groups = computeSiblingGroups(db, changedPath);
     for (const row of saveEdgesStmt.all(changedPath) as Array<{
       source_id: number;
       tgt_name: string;
@@ -518,17 +511,19 @@ function addReverseDeps(
       // Skip edges whose source is also being purged — buildEdges will
       // re-create them with correct new IDs.
       if (changePathSet.has(row.src_file)) continue;
-      const { ordinal, siblingCount } = ordinals.get(
-        `${row.tgt_name}|${row.tgt_kind}|${row.tgt_line}`,
-      ) ?? { ordinal: 1, siblingCount: 1 };
+      const groupKey = `${row.tgt_name}|${row.tgt_kind}|${row.tgt_file}`;
+      if (!ctx.savedSiblingGroups.has(groupKey)) {
+        ctx.savedSiblingGroups.set(
+          groupKey,
+          groups.get(`${row.tgt_name}|${row.tgt_kind}`) ?? [row.tgt_line],
+        );
+      }
       ctx.savedReverseDepEdges.push({
         sourceId: row.source_id,
         tgtName: row.tgt_name,
         tgtKind: row.tgt_kind,
         tgtFile: row.tgt_file,
         tgtLine: row.tgt_line,
-        tgtOrdinal: ordinal,
-        tgtSiblingCount: siblingCount,
         edgeKind: row.edge_kind,
         confidence: row.confidence,
         dynamic: row.dynamic,

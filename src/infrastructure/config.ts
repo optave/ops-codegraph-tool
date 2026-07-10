@@ -64,6 +64,15 @@ export const DEFAULTS = deepFreeze({
      * `execFileSync` in `queryGitIgnoredFiles()` (src/domain/graph/builder/stages/native-orchestrator.ts).
      */
     execMaxBufferBytes: 100 * 1024 * 1024,
+    /**
+     * Max size of a same-(name, kind) sibling group `reconnectReverseDepEdges`
+     * will run its line-alignment against (#1865). Building the shift
+     * histogram is O(n*m) in the old/new group sizes; groups above this size
+     * fall back to nearest-line matching to bound worst-case incremental-build
+     * cost. Mirrors `reverse_dep_alignment_max_group_size` in
+     * `crates/codegraph-core/src/infrastructure/config.rs`.
+     */
+    reverseDepAlignmentMaxGroupSize: 200,
   },
   db: {
     /**

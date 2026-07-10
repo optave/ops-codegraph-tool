@@ -96,22 +96,27 @@ export class PipelineContext {
     tgtKind: string;
     tgtFile: string;
     tgtLine: number;
-    /**
-     * 1-based rank of the target (by ascending line) among nodes sharing its
-     * (name, kind) within `tgtFile`, computed at save time. Lets
-     * `reconnectReverseDepEdges` map an old target to its correct new node
-     * even when multiple distinct symbols in the file share the same name
-     * and kind (e.g. several object-literal `close() {}` methods) — see #1752.
-     */
-    tgtOrdinal: number;
-    /** Size of that (name, kind) sibling group at save time. */
-    tgtSiblingCount: number;
     edgeKind: string;
     confidence: number;
     dynamic: number;
     technique: string | null;
     dynamicKind: string | null;
   }> = [];
+
+  /**
+   * Pre-purge snapshot of the sorted line list for every (name, kind)
+   * sibling group referenced by `savedReverseDepEdges`, keyed by
+   * `name|kind|file`. A file can contain multiple distinct symbols sharing
+   * the identical name and kind — e.g. several object-literal `close() {}`
+   * methods — so `(name, kind, file)` alone is not a unique identity.
+   * `reconnectReverseDepEdges` aligns this old line list against the
+   * post-purge candidate lines (order-preserving, minimum line-shift) to
+   * map each saved edge to its correct new target even when the sibling
+   * group itself was shifted, and even when the group's size changed
+   * because a same-named sibling was added or removed in the same edit
+   * (#1752, #1865).
+   */
+  savedSiblingGroups: Map<string, number[]> = new Map();
 
   // ── Misc state ─────────────────────────────────────────────────────
   hasEmbeddings: boolean = false;

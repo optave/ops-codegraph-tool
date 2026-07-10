@@ -369,32 +369,31 @@ pub struct SavedReverseDepEdge {
     pub edge_kind: String,
     pub confidence: f64,
     pub dynamic: i64,
-    /// 1-based rank of the target (by ascending line) among nodes sharing its
-    /// (name, kind) within `tgt_file`, computed at save time — see #1752.
-    pub tgt_ordinal: i64,
-    /// Size of that (name, kind) sibling group at save time.
-    pub tgt_sibling_count: i64,
 }
 
-/// Computes each node's 1-based ordinal rank (by ascending line) among nodes
-/// sharing its (name, kind) within `file`, plus the sibling-group size,
-/// keyed by `(name, kind, line)`.
+/// Key identifying a same-(name, kind) sibling group within one file.
+pub type SiblingGroupKey = (String, String, String);
+
+/// Computes the sorted line list for every (name, kind) sibling group within
+/// `file`, keyed by `(name, kind)`.
 ///
 /// A file can contain multiple distinct symbols with the identical name and
 /// kind — e.g. several object-literal `close() {}` methods returned from
 /// different functions in the same file. `(name, kind, file)` alone is not a
 /// unique identity for such symbols, so `reconnect_reverse_dep_edges` cannot
 /// safely tell them apart by nearest-line matching once unrelated code
-/// shifts the candidates unevenly (#1752). The ordinal recorded here — the
-/// target's rank among same-named siblings at save time — lets reconnection
-/// map an old target to its new node correctly as long as the sibling count
-/// is unchanged, regardless of how far the whole group has shifted.
-fn compute_ordinals(conn: &Connection, file: &str) -> HashMap<(String, String, i64), (i64, i64)> {
-    let mut by_group: HashMap<(String, String), Vec<i64>> = HashMap::new();
-    let mut result = HashMap::new();
+/// shifts the candidates unevenly, or a same-named sibling is added/removed
+/// in the same edit (#1752, #1865). The sorted line list captured here — the
+/// sibling group's layout at save time — lets reconnection align old targets
+/// to their correct new nodes by rank when the sibling count is unchanged,
+/// or by the dominant line-shift that best explains the surviving siblings
+/// when it changed (see `align_sibling_lines`), which tolerates both a
+/// uniform shift of the whole group AND a change in the group's size.
+fn compute_sibling_groups(conn: &Connection, file: &str) -> HashMap<(String, String), Vec<i64>> {
+    let mut groups: HashMap<(String, String), Vec<i64>> = HashMap::new();
     let mut stmt = match conn.prepare("SELECT name, kind, line FROM nodes WHERE file = ?1") {
         Ok(s) => s,
-        Err(_) => return result,
+        Err(_) => return groups,
     };
     let rows = match stmt.query_map([file], |row| {
         Ok((
@@ -404,19 +403,15 @@ fn compute_ordinals(conn: &Connection, file: &str) -> HashMap<(String, String, i
         ))
     }) {
         Ok(r) => r,
-        Err(_) => return result,
+        Err(_) => return groups,
     };
     for row in rows.flatten() {
-        by_group.entry((row.0, row.1)).or_default().push(row.2);
+        groups.entry((row.0, row.1)).or_default().push(row.2);
     }
-    for ((name, kind), mut lines) in by_group {
+    for lines in groups.values_mut() {
         lines.sort_unstable();
-        let sibling_count = lines.len() as i64;
-        for (idx, line) in lines.iter().enumerate() {
-            result.insert((name.clone(), kind.clone(), *line), (idx as i64 + 1, sibling_count));
-        }
     }
-    result
+    groups
 }
 
 /// Save edges from reverse-dep files → changed files BEFORE purge so they
@@ -431,10 +426,11 @@ fn compute_ordinals(conn: &Connection, file: &str) -> HashMap<(String, String, i
 pub fn save_reverse_dep_edges(
     conn: &Connection,
     changed_paths: &[String],
-) -> Vec<SavedReverseDepEdge> {
+) -> (Vec<SavedReverseDepEdge>, HashMap<SiblingGroupKey, Vec<i64>>) {
     let mut saved = Vec::new();
+    let mut sibling_groups: HashMap<SiblingGroupKey, Vec<i64>> = HashMap::new();
     if changed_paths.is_empty() {
-        return saved;
+        return (saved, sibling_groups);
     }
     let changed_set: HashSet<&str> = changed_paths.iter().map(|s| s.as_str()).collect();
 
@@ -447,14 +443,14 @@ pub fn save_reverse_dep_edges(
          WHERE n_tgt.file = ?1 AND n_src.file != n_tgt.file",
     ) {
         Ok(s) => s,
-        Err(_) => return saved,
+        Err(_) => return (saved, sibling_groups),
     };
 
     for changed in changed_paths {
         // Must be computed BEFORE this file's nodes are purged — captures the
         // pre-purge sibling layout so reconnection can map old→new correctly
         // even when several same-named/same-kind symbols exist in the file.
-        let ordinals = compute_ordinals(conn, changed);
+        let groups = compute_sibling_groups(conn, changed);
         let rows = match stmt.query_map([changed], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -477,10 +473,13 @@ pub fn save_reverse_dep_edges(
             if changed_set.contains(row.8.as_str()) {
                 continue;
             }
-            let (tgt_ordinal, tgt_sibling_count) = ordinals
-                .get(&(row.1.clone(), row.2.clone(), row.4))
-                .copied()
-                .unwrap_or((1, 1));
+            let group_key: SiblingGroupKey = (row.1.clone(), row.2.clone(), row.3.clone());
+            sibling_groups.entry(group_key).or_insert_with(|| {
+                groups
+                    .get(&(row.1.clone(), row.2.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| vec![row.4])
+            });
             saved.push(SavedReverseDepEdge {
                 source_id: row.0,
                 tgt_name: row.1,
@@ -490,30 +489,103 @@ pub fn save_reverse_dep_edges(
                 edge_kind: row.5,
                 confidence: row.6,
                 dynamic: row.7,
-                tgt_ordinal,
-                tgt_sibling_count,
             });
         }
     }
-    saved
+    (saved, sibling_groups)
 }
 
-/// Picks the correct reconnect target among same-(name,kind,file) candidates
-/// (sorted by ascending line).
+/// Aligns two ascending line arrays representing the same-(name, kind)
+/// sibling group before (`old_lines`) and after (`new_lines`) a
+/// purge+reinsert. Mirrors `alignSiblingLines` in `build-edges.ts`.
 ///
-/// When only one candidate exists, it's an unambiguous match. When several
-/// exist (e.g. multiple object-literal `close() {}` methods in one file) and
-/// the sibling-group size is unchanged since save, the saved ordinal — the
-/// target's rank by line among its siblings at save time — reliably
-/// identifies the original target even though the whole group may have
-/// shifted by an arbitrary number of lines. Falls back to nearest-line only
-/// when the sibling count itself changed (a same-named sibling was added or
-/// removed), since the ordinal mapping can no longer be trusted — see #1752.
+/// When the sibling count is unchanged, declarations of the same name and
+/// kind within one file keep their relative textual order across an edit —
+/// even when the whole group shifts by an arbitrary, non-uniform amount per
+/// sibling (e.g. one sibling's own body grew independently) — so mapping by
+/// rank (1st old -> 1st new, 2nd -> 2nd, ...) is always correct (#1752).
+///
+/// When the count changed (a same-named sibling was added or removed in the
+/// same edit), rank order alone can't tell which element is the new/missing
+/// one. But the untouched siblings' OWN source text wasn't edited, so they
+/// all shift by the exact SAME line delta — whatever unrelated insertion or
+/// deletion elsewhere in the file caused the shift applies uniformly to
+/// everything below/above it. This finds the single shift value `S` that
+/// makes `old + S` land on a real new line for the most siblings — the
+/// dominant shift — and matches every old line whose shifted position
+/// exists in `new_lines`; the rest were removed. This is far more reliable
+/// than picking whichever old/new pairing merely minimizes total line
+/// distance, which a uniform shift can fool once an old line coincidentally
+/// ends up numerically closer to a different sibling's new position than to
+/// its own (confirmed against this repo's real #1752 fixture numbers) —
+/// see #1865.
+///
+/// Returns a map from each old line to its aligned new line. An old line
+/// missing from the result means its sibling was removed (no new line
+/// matches it) — callers must drop, not guess, in that case.
+fn align_sibling_lines(old_lines: &[i64], new_lines: &[i64]) -> HashMap<i64, i64> {
+    let mut result = HashMap::new();
+    if old_lines.is_empty() || new_lines.is_empty() {
+        return result;
+    }
+
+    if old_lines.len() == new_lines.len() {
+        for (old_line, new_line) in old_lines.iter().zip(new_lines.iter()) {
+            result.insert(*old_line, *new_line);
+        }
+        return result;
+    }
+
+    let new_line_set: HashSet<i64> = new_lines.iter().copied().collect();
+    let mut shift_counts: HashMap<i64, i64> = HashMap::new();
+    for &old_line in old_lines {
+        for &new_line in new_lines {
+            *shift_counts.entry(new_line - old_line).or_insert(0) += 1;
+        }
+    }
+    // Tie-break fully by value (not HashMap iteration order, which Rust
+    // leaves unspecified): prefer the higher match count, then the smaller
+    // magnitude shift, then the smaller signed shift. Mirrors the JS
+    // implementation exactly so both engines pick the same shift on a tie.
+    let mut best_shift = 0i64;
+    let mut best_count = -1i64;
+    for (&shift, &count) in &shift_counts {
+        let better = count > best_count
+            || (count == best_count
+                && (shift.abs() < best_shift.abs()
+                    || (shift.abs() == best_shift.abs() && shift < best_shift)));
+        if better {
+            best_shift = shift;
+            best_count = count;
+        }
+    }
+    for &old_line in old_lines {
+        let candidate = old_line + best_shift;
+        if new_line_set.contains(&candidate) {
+            result.insert(old_line, candidate);
+        }
+    }
+    result
+}
+
+/// Picks the correct reconnect target among same-(name, kind, file)
+/// candidates.
+///
+/// A single candidate is an unambiguous match. With several candidates (e.g.
+/// multiple object-literal `close() {}` methods in one file), the saved
+/// sibling-group snapshot from before purge is aligned against the current
+/// candidate lines (see `align_sibling_lines`) to find which new line the
+/// saved target's old line maps to — correct even when the whole group
+/// shifted and its size changed in the same edit. Falls back to
+/// nearest-line only when no sibling-group snapshot is available, or the
+/// group is too large to align cheaply.
 fn pick_reconnect_target(
     candidates: &[(i64, i64)],
-    tgt_ordinal: i64,
-    tgt_sibling_count: i64,
     tgt_line: i64,
+    group_key: &SiblingGroupKey,
+    saved_sibling_groups: &HashMap<SiblingGroupKey, Vec<i64>>,
+    alignment_cache: &mut HashMap<SiblingGroupKey, HashMap<i64, i64>>,
+    max_align_group_size: usize,
 ) -> Option<i64> {
     if candidates.is_empty() {
         return None;
@@ -521,12 +593,37 @@ fn pick_reconnect_target(
     if candidates.len() == 1 {
         return Some(candidates[0].0);
     }
-    if candidates.len() as i64 == tgt_sibling_count
-        && tgt_ordinal >= 1
-        && (tgt_ordinal as usize) <= candidates.len()
-    {
-        return Some(candidates[(tgt_ordinal - 1) as usize].0);
+
+    if let Some(old_lines) = saved_sibling_groups.get(group_key) {
+        if !old_lines.is_empty()
+            && old_lines.len() <= max_align_group_size
+            && candidates.len() <= max_align_group_size
+        {
+            let alignment = match alignment_cache.entry(group_key.clone()) {
+                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    let new_lines: Vec<i64> = candidates.iter().map(|(_, line)| *line).collect();
+                    e.insert(align_sibling_lines(old_lines, &new_lines))
+                }
+            };
+            return match alignment.get(&tgt_line) {
+                Some(new_line) => candidates
+                    .iter()
+                    .find(|(_, line)| line == new_line)
+                    .map(|(id, _)| *id),
+                // tgt_line's sibling was legitimately removed in this edit —
+                // the alignment already accounted for the size change, so
+                // falling through to nearest-line here would silently
+                // reattach to an unrelated sibling instead of correctly
+                // dropping this edge.
+                None => None,
+            };
+        }
     }
+
+    // No sibling-group snapshot (shouldn't normally happen — every saved
+    // edge has one recorded at save time) or the group exceeds the
+    // alignment size cap — fall back to nearest-line.
     candidates
         .iter()
         .min_by_key(|(_, line)| (line - tgt_line).abs())
@@ -537,14 +634,17 @@ fn pick_reconnect_target(
 ///
 /// The source node ID is still valid (reverse-dep nodes were never purged).
 /// The target was deleted and re-inserted with a new ID — look up all
-/// (name, kind, file) candidates and pick the one matching the saved ordinal
-/// (see `pick_reconnect_target`), then recreate the edge. Mirrors
-/// `reconnectReverseDepEdges` in `build-edges.ts`.
+/// (name, kind, file) candidates and pick the one the saved sibling-group
+/// snapshot aligns to the saved line (see `pick_reconnect_target`), then
+/// recreate the edge. Mirrors `reconnectReverseDepEdges` in
+/// `build-edges.ts`.
 ///
 /// Returns (reconnected, dropped) counts.
 pub fn reconnect_reverse_dep_edges(
     conn: &Connection,
     saved: &[SavedReverseDepEdge],
+    saved_sibling_groups: &HashMap<SiblingGroupKey, Vec<i64>>,
+    max_align_group_size: usize,
 ) -> (usize, usize) {
     if saved.is_empty() {
         return (0, 0);
@@ -574,12 +674,14 @@ pub fn reconnect_reverse_dep_edges(
         // Cache candidate lists per (name, kind, file) group — many saved
         // edges often share the same target (e.g. several callers of the
         // same function), so this avoids re-querying per edge.
-        let mut candidates_cache: HashMap<(String, String, String), Vec<(i64, i64)>> =
-            HashMap::new();
+        let mut candidates_cache: HashMap<SiblingGroupKey, Vec<(i64, i64)>> = HashMap::new();
+        // Cache the (potentially expensive) alignment result per group too —
+        // shared across every saved edge targeting the same sibling group.
+        let mut alignment_cache: HashMap<SiblingGroupKey, HashMap<i64, i64>> = HashMap::new();
 
         for s in saved {
             let key = (s.tgt_name.clone(), s.tgt_kind.clone(), s.tgt_file.clone());
-            let candidates = match candidates_cache.entry(key) {
+            let candidates = match candidates_cache.entry(key.clone()) {
                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                 std::collections::hash_map::Entry::Vacant(e) => {
                     let mut rows: Vec<(i64, i64)> = Vec::new();
@@ -600,9 +702,11 @@ pub fn reconnect_reverse_dep_edges(
 
             match pick_reconnect_target(
                 candidates,
-                s.tgt_ordinal,
-                s.tgt_sibling_count,
                 s.tgt_line,
+                &key,
+                saved_sibling_groups,
+                &mut alignment_cache,
+                max_align_group_size,
             ) {
                 Some(new_id) => {
                     // INSERT OR IGNORE silently swallows duplicate-row constraint
@@ -994,48 +1098,95 @@ mod tests {
         assert_eq!(removed, vec!["src/deleted.ts"]);
     }
 
-    // ── Reverse-dep edge reconnection (#1752) ───────────────────────────
+    // ── Reverse-dep edge reconnection (#1752, #1865) ────────────────────
+
+    /// Convenience wrapper mirroring the pre-#1865 `pick_reconnect_target`
+    /// call shape: builds the single-group map + a fresh alignment cache
+    /// internally so each test case reads as a plain (candidates, old_lines,
+    /// tgt_line) -> Option<id> call.
+    fn pick(
+        candidates: &[(i64, i64)],
+        old_lines: &[i64],
+        tgt_line: i64,
+    ) -> Option<i64> {
+        let key: SiblingGroupKey = ("x".to_string(), "method".to_string(), "f.ts".to_string());
+        let mut groups = HashMap::new();
+        groups.insert(key.clone(), old_lines.to_vec());
+        let mut cache = HashMap::new();
+        pick_reconnect_target(candidates, tgt_line, &key, &groups, &mut cache, 200)
+    }
 
     #[test]
     fn pick_reconnect_target_single_candidate_is_unambiguous() {
         let candidates = vec![(42, 100)];
-        assert_eq!(pick_reconnect_target(&candidates, 1, 1, 999), Some(42));
+        assert_eq!(pick(&candidates, &[999], 999), Some(42));
     }
 
     #[test]
     fn pick_reconnect_target_no_candidates_returns_none() {
         let candidates: Vec<(i64, i64)> = vec![];
-        assert_eq!(pick_reconnect_target(&candidates, 1, 1, 100), None);
+        assert_eq!(pick(&candidates, &[100], 100), None);
     }
 
     #[test]
-    fn pick_reconnect_target_uses_ordinal_when_sibling_count_matches() {
+    fn pick_reconnect_target_aligns_unchanged_group_by_rank() {
         // Four same-named/same-kind siblings (e.g. four `close() {}` methods),
         // shifted down by an insertion elsewhere in the file. The 3rd-ranked
-        // sibling (originally closest to line 433 in the pre-shift layout)
-        // must still resolve to the 3rd-ranked sibling post-shift (id 30,
-        // line 580), NOT to whichever candidate is nearest to the stale old
-        // line 433 (which would wrongly pick id 10 / line 433... except that
-        // id no longer exists post-purge; the point is nearest-*new*-line
-        // to the OLD reference can pick the wrong post-shift sibling once the
-        // group shifts unevenly).
-        let candidates = vec![(10, 178), (20, 461), (30, 500), (40, 580)];
-        // Saved ordinal=3 out of 4 siblings (matches count) → must pick the
-        // 3rd by line (id 30), regardless of how far tgt_line (the stale old
-        // reference, 433) now sits from any candidate.
-        let picked = pick_reconnect_target(&candidates, 3, 4, 433);
+        // sibling (old line 500) must still resolve to the 3rd-ranked sibling
+        // post-shift (id 30, line 580), NOT to whichever candidate is nearest
+        // to the stale old line 500 (which would wrongly pick a different id
+        // once the group shifts unevenly).
+        let old_lines = vec![433, 461, 500, 580];
+        let candidates = vec![(10, 178), (20, 461), (30, 500 + 80), (40, 580 + 80)];
+        let picked = pick(&candidates, &old_lines, 500);
         assert_eq!(picked, Some(30));
     }
 
     #[test]
-    fn pick_reconnect_target_falls_back_to_nearest_line_when_sibling_count_changed() {
-        // A sibling was added/removed since save — the ordinal mapping can no
-        // longer be trusted, so fall back to nearest-line (best effort, same
-        // as pre-#1752 behavior).
-        let candidates = vec![(10, 100), (20, 200), (30, 300)];
-        // Saved sibling_count=2 but now there are 3 candidates → mismatch.
-        let picked = pick_reconnect_target(&candidates, 2, 2, 195);
-        assert_eq!(picked, Some(20)); // nearest to 195 is line 200
+    fn pick_reconnect_target_drops_edge_when_its_own_sibling_was_removed() {
+        // Sibling count changed (4 -> 3): old line 200's sibling was removed,
+        // the other three shifted down by 50. The edge targeting line 200
+        // must be dropped (no matching new line) — not silently reattached
+        // to whichever candidate happens to be nearest.
+        let old_lines = vec![100, 200, 300, 400];
+        let candidates = vec![(10, 150), (30, 350), (40, 450)]; // id 20 (line 200) removed
+        assert_eq!(pick(&candidates, &old_lines, 200), None);
+        // The untouched siblings must still resolve correctly despite the
+        // group's size having changed in the same edit (#1865).
+        assert_eq!(pick(&candidates, &old_lines, 100), Some(10));
+        assert_eq!(pick(&candidates, &old_lines, 300), Some(30));
+        assert_eq!(pick(&candidates, &old_lines, 400), Some(40));
+    }
+
+    #[test]
+    fn pick_reconnect_target_survives_added_sibling_plus_shift() {
+        // Sibling count changed (3 -> 4): a new sibling was inserted between
+        // the 1st and 2nd old siblings, and the whole group shifted down by
+        // 50. The two original siblings must still resolve to their own new
+        // lines, not to the newly inserted one.
+        let old_lines = vec![100, 300, 400];
+        let candidates = vec![(10, 150), (99, 250), (30, 350), (40, 450)]; // id 99 is new
+        assert_eq!(pick(&candidates, &old_lines, 100), Some(10));
+        assert_eq!(pick(&candidates, &old_lines, 300), Some(30));
+        assert_eq!(pick(&candidates, &old_lines, 400), Some(40));
+    }
+
+    #[test]
+    fn align_sibling_lines_forces_exact_pairing_when_counts_match() {
+        let old_lines = vec![433, 461, 500, 580];
+        let new_lines = vec![513, 541, 580, 660]; // uniform +80 shift
+        let alignment = align_sibling_lines(&old_lines, &new_lines);
+        assert_eq!(alignment.get(&433), Some(&513));
+        assert_eq!(alignment.get(&461), Some(&541));
+        assert_eq!(alignment.get(&500), Some(&580));
+        assert_eq!(alignment.get(&580), Some(&660));
+    }
+
+    #[test]
+    fn align_sibling_lines_empty_inputs_yield_empty_map() {
+        assert!(align_sibling_lines(&[], &[1, 2, 3]).is_empty());
+        assert!(align_sibling_lines(&[1, 2, 3], &[]).is_empty());
+        assert!(align_sibling_lines(&[], &[]).is_empty());
     }
 
     /// Minimal in-memory schema covering only the columns `save_reverse_dep_edges`
@@ -1074,7 +1225,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_ordinals_ranks_same_name_kind_siblings_by_line() {
+    fn compute_sibling_groups_ranks_same_name_kind_siblings_by_line() {
         let conn = test_conn();
         insert_node(&conn, "close", "method", "src/db/connection.ts", 433);
         insert_node(&conn, "close", "method", "src/db/connection.ts", 461);
@@ -1083,15 +1234,14 @@ mod tests {
         // An unrelated, uniquely-named sibling must not pollute the group.
         insert_node(&conn, "openDb", "function", "src/db/connection.ts", 161);
 
-        let ordinals = compute_ordinals(&conn, "src/db/connection.ts");
-        let key = |line: i64| ("close".to_string(), "method".to_string(), line);
-        assert_eq!(ordinals.get(&key(433)), Some(&(1, 4)));
-        assert_eq!(ordinals.get(&key(461)), Some(&(2, 4)));
-        assert_eq!(ordinals.get(&key(500)), Some(&(3, 4)));
-        assert_eq!(ordinals.get(&key(580)), Some(&(4, 4)));
+        let groups = compute_sibling_groups(&conn, "src/db/connection.ts");
         assert_eq!(
-            ordinals.get(&("openDb".to_string(), "function".to_string(), 161)),
-            Some(&(1, 1))
+            groups.get(&("close".to_string(), "method".to_string())),
+            Some(&vec![433, 461, 500, 580])
+        );
+        assert_eq!(
+            groups.get(&("openDb".to_string(), "function".to_string())),
+            Some(&vec![161])
         );
     }
 
@@ -1123,10 +1273,12 @@ mod tests {
         )
         .unwrap();
 
-        let saved = save_reverse_dep_edges(&conn, &[file.to_string()]);
+        let (saved, sibling_groups) = save_reverse_dep_edges(&conn, &[file.to_string()]);
         assert_eq!(saved.len(), 1);
-        assert_eq!(saved[0].tgt_ordinal, 3);
-        assert_eq!(saved[0].tgt_sibling_count, 4);
+        assert_eq!(
+            sibling_groups.get(&("close".to_string(), "method".to_string(), file.to_string())),
+            Some(&vec![433, 461, 500, 580])
+        );
 
         // Simulate purge_changed_files: delete the changed file's nodes/edges.
         conn.execute("DELETE FROM edges WHERE target_id IN (SELECT id FROM nodes WHERE file = ?1)", [file]).unwrap();
@@ -1140,7 +1292,8 @@ mod tests {
         let target_new_id = insert_node(&conn, "close", "method", file, 500 + 147);
         insert_node(&conn, "close", "method", file, 580 + 147);
 
-        let (reconnected, dropped) = reconnect_reverse_dep_edges(&conn, &saved);
+        let (reconnected, dropped) =
+            reconnect_reverse_dep_edges(&conn, &saved, &sibling_groups, 200);
         assert_eq!((reconnected, dropped), (1, 0));
 
         let new_target: i64 = conn
@@ -1151,6 +1304,77 @@ mod tests {
             )
             .unwrap();
         assert_eq!(new_target, target_new_id);
+    }
+
+    /// End-to-end reproduction of #1865: same shift as #1752's repro, but a
+    /// same-named/same-kind sibling is ALSO renamed away (removed from the
+    /// group) in the same edit — the exact compound scenario the pre-#1865
+    /// ordinal+nearest-line fallback could not resolve correctly. The three
+    /// untouched siblings' reverse-dep edges must all reconnect to their own
+    /// correct new node despite the group shrinking from 4 to 3 in the same
+    /// build that also shifted it.
+    #[test]
+    fn reconnect_survives_shift_plus_sibling_removed_in_same_edit() {
+        let conn = test_conn();
+        let file = "src/db/connection.ts";
+
+        // Pre-edit layout: four `close` siblings (A, B, C, D by old line).
+        let a_old = insert_node(&conn, "close", "method", file, 433);
+        let b_old = insert_node(&conn, "close", "method", file, 461);
+        let c_old = insert_node(&conn, "close", "method", file, 500);
+        let d_old = insert_node(&conn, "close", "method", file, 580);
+
+        // One external caller per sibling, in untouched files.
+        let caller_a = insert_node(&conn, "useA", "function", "src/features/a.ts", 10);
+        let caller_b = insert_node(&conn, "useB", "function", "src/features/b.ts", 10);
+        let caller_c = insert_node(&conn, "useC", "function", "src/features/c.ts", 10);
+        let caller_d = insert_node(&conn, "useD", "function", "src/features/d.ts", 10);
+        for (caller, target) in [
+            (caller_a, a_old),
+            (caller_b, b_old),
+            (caller_c, c_old),
+            (caller_d, d_old),
+        ] {
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 0.9, 0)",
+                rusqlite::params![caller, target],
+            )
+            .unwrap();
+        }
+
+        let (saved, sibling_groups) = save_reverse_dep_edges(&conn, &[file.to_string()]);
+        assert_eq!(saved.len(), 4);
+
+        // Simulate purge_changed_files.
+        conn.execute("DELETE FROM edges WHERE target_id IN (SELECT id FROM nodes WHERE file = ?1)", [file]).unwrap();
+        conn.execute("DELETE FROM nodes WHERE file = ?1", [file]).unwrap();
+
+        // Re-insert: whole group shifted +147 (unrelated helper inserted
+        // above), AND B's `close` was renamed to `shutdown` in the same
+        // edit — sibling count for (close, method) drops from 4 to 3.
+        let a_new = insert_node(&conn, "close", "method", file, 433 + 147);
+        insert_node(&conn, "shutdown", "method", file, 461 + 147); // was B's close
+        let c_new = insert_node(&conn, "close", "method", file, 500 + 147);
+        let d_new = insert_node(&conn, "close", "method", file, 580 + 147);
+
+        let (reconnected, dropped) =
+            reconnect_reverse_dep_edges(&conn, &saved, &sibling_groups, 200);
+        // A, C, D reconnect correctly; B's edge is dropped (its `close` no
+        // longer exists — renamed to `shutdown`).
+        assert_eq!((reconnected, dropped), (3, 1));
+
+        let target_of = |caller: i64| -> Option<i64> {
+            conn.query_row(
+                "SELECT target_id FROM edges WHERE source_id = ?1",
+                [caller],
+                |row| row.get(0),
+            )
+            .ok()
+        };
+        assert_eq!(target_of(caller_a), Some(a_new));
+        assert_eq!(target_of(caller_b), None);
+        assert_eq!(target_of(caller_c), Some(c_new));
+        assert_eq!(target_of(caller_d), Some(d_new));
     }
 
     // ── capture_removed_file_neighbors (#1839) ──────────────────────────

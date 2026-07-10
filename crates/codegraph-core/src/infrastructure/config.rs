@@ -48,6 +48,16 @@ pub struct BuildSettings {
     /// Drift detection threshold for incremental builds.
     #[serde(default = "default_drift_threshold")]
     pub drift_threshold: f64,
+
+    /// Max size of a same-(name, kind) sibling group
+    /// `reconnect_reverse_dep_edges` will run its line-alignment against
+    /// (#1865). Building the shift histogram is O(n*m) in the old/new group
+    /// sizes; groups above this size fall back to nearest-line matching to
+    /// bound worst-case incremental-build cost. Mirrors
+    /// `DEFAULTS.build.reverseDepAlignmentMaxGroupSize` in
+    /// `src/infrastructure/config.ts`.
+    #[serde(default = "default_reverse_dep_alignment_max_group_size")]
+    pub reverse_dep_alignment_max_group_size: usize,
 }
 
 // Manual impl so `BuildSettings::default()` matches the serde field defaults.
@@ -58,6 +68,7 @@ impl Default for BuildSettings {
         Self {
             incremental: default_true(),
             drift_threshold: default_drift_threshold(),
+            reverse_dep_alignment_max_group_size: default_reverse_dep_alignment_max_group_size(),
         }
     }
 }
@@ -68,6 +79,10 @@ fn default_true() -> bool {
 
 fn default_drift_threshold() -> f64 {
     0.1
+}
+
+fn default_reverse_dep_alignment_max_group_size() -> usize {
+    200
 }
 
 /// Subset of `CodegraphConfig.analysis` relevant to the build pipeline.
@@ -174,6 +189,15 @@ mod tests {
         assert!(config.build.incremental);
         // Default mirrors DEFAULTS.analysis.pointsToMaxIterations in config.ts.
         assert_eq!(config.analysis.points_to_max_iterations, 50);
+        // Default mirrors DEFAULTS.build.reverseDepAlignmentMaxGroupSize (#1865).
+        assert_eq!(config.build.reverse_dep_alignment_max_group_size, 200);
+    }
+
+    #[test]
+    fn deserialize_reverse_dep_alignment_max_group_size_override() {
+        let json = r#"{"build": {"reverseDepAlignmentMaxGroupSize": 32}}"#;
+        let config: BuildConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.build.reverse_dep_alignment_max_group_size, 32);
     }
 
     #[test]

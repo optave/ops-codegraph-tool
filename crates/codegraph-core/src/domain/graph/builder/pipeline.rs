@@ -175,32 +175,50 @@ fn early_exit_result(
     }
 }
 
+/// `(saved_reverse_dep_edges, saved_sibling_groups, removal_reverse_deps,
+/// removed_file_neighbors)` — see `save_and_purge_changed`.
+type SaveAndPurgeResult = (
+    Vec<detect_changes::SavedReverseDepEdge>,
+    HashMap<detect_changes::SiblingGroupKey, Vec<i64>>,
+    Vec<String>,
+    Vec<String>,
+);
+
 /// Save reverse-dep edges (and reverse-deps of removed files) before purging
 /// changed files. Mirrors the JS save-then-purge sequence in `build-edges.ts`
-/// (#1012). Returns `(saved_reverse_dep_edges, removal_reverse_deps,
-/// removed_file_neighbors)` so the pipeline can reconnect edges after Stage 5,
-/// reclassify roles in Stage 8, and (#1839) fold a removed file's
-/// cross-directory neighbors into Stage 8's directory-metrics refresh.
+/// (#1012). Returns `(saved_reverse_dep_edges, saved_sibling_groups,
+/// removal_reverse_deps, removed_file_neighbors)` so the pipeline can
+/// reconnect edges after Stage 5, reclassify roles in Stage 8, and (#1839)
+/// fold a removed file's cross-directory neighbors into Stage 8's
+/// directory-metrics refresh.
 fn save_and_purge_changed(
     conn: &Connection,
     parse_changes: &[&detect_changes::ChangedFile],
     change_result: &detect_changes::ChangeResult,
     opts: &BuildOpts,
     root_dir: &str,
-) -> (Vec<detect_changes::SavedReverseDepEdge>, Vec<String>, Vec<String>) {
+) -> SaveAndPurgeResult {
     let mut saved_reverse_dep_edges: Vec<detect_changes::SavedReverseDepEdge> = Vec::new();
+    let mut saved_sibling_groups: HashMap<detect_changes::SiblingGroupKey, Vec<i64>> =
+        HashMap::new();
     let mut removal_reverse_deps: Vec<String> = Vec::new();
 
     if change_result.is_full_build {
         let has_embeddings = detect_changes::has_embeddings(conn);
         detect_changes::clear_all_graph_data(conn, has_embeddings);
-        return (saved_reverse_dep_edges, removal_reverse_deps, Vec::new());
+        return (
+            saved_reverse_dep_edges,
+            saved_sibling_groups,
+            removal_reverse_deps,
+            Vec::new(),
+        );
     }
 
     let changed_paths: Vec<String> = parse_changes.iter().map(|c| c.rel_path.clone()).collect();
 
     if !opts.no_reverse_deps.unwrap_or(false) {
-        saved_reverse_dep_edges = detect_changes::save_reverse_dep_edges(conn, &changed_paths);
+        (saved_reverse_dep_edges, saved_sibling_groups) =
+            detect_changes::save_reverse_dep_edges(conn, &changed_paths);
 
         if !change_result.removed.is_empty() {
             let removed_set: HashSet<String> = change_result.removed.iter().cloned().collect();
@@ -225,7 +243,12 @@ fn save_and_purge_changed(
         .collect();
     detect_changes::purge_changed_files(conn, &files_to_purge, &[]);
 
-    (saved_reverse_dep_edges, removal_reverse_deps, removed_file_neighbors)
+    (
+        saved_reverse_dep_edges,
+        saved_sibling_groups,
+        removal_reverse_deps,
+        removed_file_neighbors,
+    )
 }
 
 /// Parse a changed-file slice in parallel and key the results by relative path.
@@ -286,11 +309,18 @@ fn resolve_pipeline_imports(
 fn reconnect_saved_reverse_dep_edges(
     conn: &Connection,
     saved: &[detect_changes::SavedReverseDepEdge],
+    saved_sibling_groups: &HashMap<detect_changes::SiblingGroupKey, Vec<i64>>,
+    max_align_group_size: usize,
 ) {
     if saved.is_empty() {
         return;
     }
-    let (reconnected, dropped) = detect_changes::reconnect_reverse_dep_edges(conn, saved);
+    let (reconnected, dropped) = detect_changes::reconnect_reverse_dep_edges(
+        conn,
+        saved,
+        saved_sibling_groups,
+        max_align_group_size,
+    );
     if dropped > 0 {
         eprintln!(
             "[codegraph] reconnect_reverse_dep_edges: {reconnected} reconnected, {dropped} dropped (target nodes not found)"
@@ -528,7 +558,7 @@ pub fn run_pipeline(
     // Stage 3b: save reverse-dep edges (incremental) or clear all (full),
     // then purge changed files. Returns the saved edges for Stage 7
     // reconnect and the removal reverse-dep set for Stage 8 reclassification.
-    let (saved_reverse_dep_edges, removal_reverse_deps, removed_file_neighbors) =
+    let (saved_reverse_dep_edges, saved_sibling_groups, removal_reverse_deps, removed_file_neighbors) =
         save_and_purge_changed(conn, &parse_changes, &change_result, &opts, root_dir);
 
     // ── Stage 4: Parse files ───────────────────────────────────────────
@@ -639,7 +669,12 @@ pub fn run_pipeline(
     )
     .map_err(|e| format!("call edge insertion failed: {e}"))?;
 
-    reconnect_saved_reverse_dep_edges(conn, &saved_reverse_dep_edges);
+    reconnect_saved_reverse_dep_edges(
+        conn,
+        &saved_reverse_dep_edges,
+        &saved_sibling_groups,
+        config.build.reverse_dep_alignment_max_group_size,
+    );
 
     // Now that edges reflect this revision, commit file_hashes for the
     // changed files (#1731). Deferred from Stage 5 — see the comment there.
