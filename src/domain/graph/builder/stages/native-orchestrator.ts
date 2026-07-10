@@ -556,7 +556,7 @@ async function runDataflowVertexPass(
  * Used when the Rust addon doesn't include analysis persistence (older addon
  * version) or when analysis failed on the Rust side.
  */
-async function runPostNativeAnalysis(
+export async function runPostNativeAnalysis(
   ctx: PipelineContext,
   allFileSymbols: Map<string, ExtractorOutput>,
   changedFiles: string[] | undefined,
@@ -1950,7 +1950,7 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
  * corruption. On setup failure, falls back to reopening better-sqlite3 and
  * leaves ctx.nativeDb undefined so the caller falls through to the JS pipeline.
  */
-function openNativeDatabase(ctx: PipelineContext): void {
+export function openNativeDatabase(ctx: PipelineContext): void {
   if (ctx.nativeDb || !ctx.nativeAvailable) return;
   const native = loadNative();
   if (!native?.NativeDatabase) return;
