@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import {
   clearConfigCache,
   computeConfigHash,
+  ENV_LLM_MAP,
   loadConfig,
   loadConfigWithProvenance,
   resolveUserConfigPath,
@@ -332,6 +333,27 @@ describe('loadConfigWithProvenance', () => {
     // Second call hits the cache — _lastAppliedGlobalConfig must be restored
     const { provenance } = loadConfigWithProvenance(dir, opts);
     expect(provenance.exclude).toBe('user');
+  });
+
+  // Regression test for issue #1857: the provenance key list must be derived
+  // from the same source as the actual override map, so every env var that
+  // triggers an override is also attributed as 'env'-sourced. A hardcoded
+  // second list would silently miss any var added to one but not the other.
+  describe('marks "llm" as "env" source for every CODEGRAPH_LLM_* override var', () => {
+    const envVars = Object.keys(ENV_LLM_MAP);
+
+    afterEach(() => {
+      for (const key of envVars) delete process.env[key];
+    });
+
+    for (const key of envVars) {
+      it(key, () => {
+        const dir = fs.mkdtempSync(path.join(tmpDir, 'prov-env-'));
+        process.env[key] = 'test-value';
+        const { provenance } = loadConfigWithProvenance(dir);
+        expect(provenance.llm).toBe('env');
+      });
+    }
   });
 });
 
