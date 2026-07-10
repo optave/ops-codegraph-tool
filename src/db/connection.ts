@@ -6,7 +6,7 @@ import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { DbError, toErrorMessage } from '../shared/errors.js';
-import type { BetterSqlite3Database, NativeDatabase } from '../types.js';
+import type { BetterSqlite3Database, CodegraphConfig, NativeDatabase } from '../types.js';
 import { getDatabase } from './better-sqlite3.js';
 import { Repository } from './repository/base.js';
 import { NativeRepository } from './repository/native-repository.js';
@@ -363,7 +363,7 @@ export function findDbPath(customPath?: string, rootDirHint?: string): string {
   const startDir = resolveDbSearchStartDir(rootDirHint);
   const found = walkUpForDbPath(startDir, ceiling);
   if (found) return found;
-  const base = ceiling || rootDirHint || process.cwd();
+  const base = rootDirHint || ceiling || process.cwd();
   return path.join(base, '.codegraph', 'graph.db');
 }
 
@@ -441,19 +441,33 @@ function resolveDbSettings(
 }
 
 /**
- * Resolve config.db.busyTimeoutMs alone, for the ad-hoc read-only query call
- * sites (features/*, domain/analysis/*, domain/search/*) that call
- * openReadonlyOrFail() directly and don't need engine selection. Shares
- * rootDir derivation with resolveDbSettings() so the two can't drift.
+ * Resolve the full config for a given DB path, deriving rootDir the same way
+ * resolveDbSettings()/resolveBusyTimeoutMs() do. Exported so callers that need
+ * both the busy-timeout and other config values (e.g. withReadonlyDb()) can
+ * share a single loadConfig() call instead of resolving it twice.
  *
  * MUST be called before opening any DB handle, for the same reason as
  * resolveDbSettings(): loadConfig can throw (e.g. ConfigError via
  * resolveSecrets on a malformed llm.apiKeyCommand config), and an
  * already-open handle at that point would never be closed.
  */
-export function resolveBusyTimeoutMs(customDbPath?: string): number {
-  const config = loadConfig(deriveRootDirFromDbPath(customDbPath));
-  return config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
+export function resolveDbConfig(customDbPath?: string): CodegraphConfig {
+  return loadConfig(deriveRootDirFromDbPath(customDbPath));
+}
+
+/**
+ * Resolve config.db.busyTimeoutMs alone, for the ad-hoc read-only query call
+ * sites (features/*, domain/analysis/*, domain/search/*) that call
+ * openReadonlyOrFail() directly and don't need engine selection. Shares
+ * rootDir derivation with resolveDbSettings() so the two can't drift.
+ *
+ * Accepts an optional pre-resolved `config` for callers that already loaded
+ * it (e.g. withReadonlyDb()), avoiding a second findDbPath()/loadConfig() for
+ * the same path (#1943 review).
+ */
+export function resolveBusyTimeoutMs(customDbPath?: string, config?: CodegraphConfig): number {
+  const cfg = config ?? resolveDbConfig(customDbPath);
+  return cfg.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
 }
 
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */

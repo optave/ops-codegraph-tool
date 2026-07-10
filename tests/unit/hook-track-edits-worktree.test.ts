@@ -85,4 +85,86 @@ describe("track-edits.sh resolves the log to the edited file's own worktree", ()
     expect(fs.existsSync(targetLog)).toBe(true);
     expect(fs.readFileSync(targetLog, 'utf8')).toMatch(/ a\/b\/c\/new-file\.ts$/m);
   });
+
+  it('logs a clean relative path when the edited file is reached through a symlink to the worktree', () => {
+    // Reproduces (on any OS) the same class of bug as Windows' 8.3 short-name
+    // aliases (e.g. "runneradmin" vs "RUNNER~1"): two different, valid string
+    // forms resolve to the identical real directory. `git rev-parse
+    // --show-toplevel` returns the real (symlink-resolved) path, so without
+    // canonicalizing FILE_PATH's directory the same way before computing the
+    // relative path, path.relative sees two unrelated-looking trees and
+    // produces a long, useless chain of '../' segments instead of a clean
+    // relative path.
+    const realRepo = path.join(tmpRoot, 'real-worktree');
+    const symlinkRepo = path.join(tmpRoot, 'symlink-to-worktree');
+    initRepo(realRepo);
+    fs.mkdirSync(path.join(realRepo, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(realRepo, 'src', 'thing.ts'), '// content\n');
+    fs.symlinkSync(realRepo, symlinkRepo, 'dir');
+
+    const targetFile = path.join(symlinkRepo, 'src', 'thing.ts');
+    runHook(targetFile, tmpRoot);
+
+    const realLog = path.join(realRepo, '.claude', 'session-edits.log');
+    expect(fs.existsSync(realLog)).toBe(true);
+    const content = fs.readFileSync(realLog, 'utf8');
+    expect(content).toMatch(/ src\/thing\.ts$/m);
+    expect(content).not.toContain('..');
+  });
+});
+
+describe('track-edits.sh Windows path normalization', () => {
+  // dirname (GNU/BSD coreutils) only splits on '/'. On Windows, Edit/Write's
+  // file_path arrives backslash-delimited (e.g. from Node's path.join), which
+  // made dirname silently no-op and return "." — undetectable on a POSIX test
+  // runner via the integration tests above, since they only ever construct
+  // paths with the host OS's own separator. Exercise the normalization
+  // snippet directly (extracted from the real file, not duplicated by hand)
+  // so a regression here is caught on any host OS.
+  function extractNormalizationSnippet(hookPath: string): string {
+    const src = fs.readFileSync(hookPath, 'utf8');
+    const start = src.indexOf('if printf');
+    const end = src.indexOf('\nfi', start);
+    if (start === -1 || end === -1) {
+      throw new Error(`could not locate normalization if-block in ${hookPath}`);
+    }
+    return src.slice(start, end + '\nfi'.length);
+  }
+
+  // Passed via env var, not argv: Windows command-line argument marshalling
+  // has its own backslash-escaping rules that don't apply to environment
+  // variables, and the real hook never receives FILE_PATH as a CLI arg
+  // either (it comes from JSON on stdin) — so this keeps the test's
+  // transport mechanism from confounding what's actually being verified.
+  function normalize(hookPath: string, filePath: string): string {
+    const snippet = extractNormalizationSnippet(hookPath);
+    const script = `${snippet}\nprintf '%s' "$FILE_PATH"`;
+    return execFileSync('bash', ['-c', script], {
+      env: { ...process.env, FILE_PATH: filePath },
+    }).toString();
+  }
+
+  const DOCS_HOOK_PATH = path.join(
+    REPO_ROOT,
+    'docs',
+    'examples',
+    'claude-code-hooks',
+    'track-edits.sh',
+  );
+
+  it.each([
+    ['live hook', HOOK_PATH],
+    ['docs example', DOCS_HOOK_PATH],
+  ])('%s: converts a Windows drive-letter path to forward slashes', (_label, hookPath) => {
+    expect(normalize(hookPath, 'C:\\Users\\dev\\project\\src\\thing.ts')).toBe(
+      'C:/Users/dev/project/src/thing.ts',
+    );
+  });
+
+  it.each([
+    ['live hook', HOOK_PATH],
+    ['docs example', DOCS_HOOK_PATH],
+  ])('%s: leaves a POSIX path with a literal backslash in the filename untouched', (_label, hookPath) => {
+    expect(normalize(hookPath, '/tmp/proj/weird\\name.ts')).toBe('/tmp/proj/weird\\name.ts');
+  });
 });
