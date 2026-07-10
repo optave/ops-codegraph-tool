@@ -2414,9 +2414,12 @@ fn first_arg_is_string_literal(args_node: &Node) -> bool {
 ///
 /// Name-keyed rather than receiver-typed, consistent with the rest of this
 /// gate (see `positional_callback_arg_index`'s doc comment for the same
-/// tradeoff) — a same-named function/method elsewhere in the file with an
-/// unrelated non-function-shaped parameter at the same index is a residual,
-/// accepted risk.
+/// tradeoff) — but unlike a plain name-keyed union, a position is only kept
+/// when *every* same-named declaration in the file agrees it is
+/// function-shaped (see `collect_callback_param_shapes`), so two unrelated
+/// same-named declarations with different signatures (e.g. same-named
+/// methods on two different classes) cancel out instead of merging into a
+/// false positive.
 ///
 /// Mirrors `CallbackParamShapes` in `src/extractors/javascript.ts`.
 type CallbackParamShapes = HashMap<String, HashSet<usize>>;
@@ -2529,6 +2532,9 @@ fn collect_function_shaped_type_aliases(root: &Node, source: &[u8]) -> HashMap<S
 /// parameter positions of every `function`/method declaration are
 /// function-shaped — the callee-definition side of recognizing identifier
 /// arguments to arbitrary user-defined higher-order functions (issue #1845).
+/// Also covers same-file `const f = (...) => ...` / `const f = function(...) {}`
+/// assignments, which are otherwise invisible to a walk that only looks at
+/// `function_declaration`/`method_definition` nodes.
 ///
 /// Same-file only: a call site whose callee is defined in another file has no
 /// entry here and falls back to the existing name/position allowlist.
@@ -2536,20 +2542,21 @@ fn collect_function_shaped_type_aliases(root: &Node, source: &[u8]) -> HashMap<S
 /// Mirrors `collectCallbackParamShapes` in `src/extractors/javascript.ts`.
 fn collect_callback_param_shapes(root: &Node, source: &[u8]) -> CallbackParamShapes {
     let alias_shapes = collect_function_shaped_type_aliases(root, source);
-    let mut shapes: CallbackParamShapes = HashMap::new();
+    // One entry per same-named declaration; intersected below so a bare name
+    // shared by two unrelated declarations only keeps a position that every
+    // declaration agrees is function-shaped.
+    let mut declarations: HashMap<String, Vec<HashSet<usize>>> = HashMap::new();
 
-    fn record_function_params(
-        name_node: Option<Node>,
+    fn function_shaped_param_indices(
         fn_node: &Node,
         source: &[u8],
         alias_shapes: &HashMap<String, bool>,
-        shapes: &mut CallbackParamShapes,
-    ) {
-        let Some(name_node) = name_node else { return };
+    ) -> HashSet<usize> {
+        let mut indices = HashSet::new();
         let params_node = fn_node
             .child_by_field_name("parameters")
             .or_else(|| find_child(fn_node, "formal_parameters"));
-        let Some(params_node) = params_node else { return };
+        let Some(params_node) = params_node else { return indices };
 
         let mut arg_index: usize = 0;
         for child in iter_children(&params_node, PUNCTUATION_TOKENS) {
@@ -2571,15 +2578,28 @@ fn collect_callback_param_shapes(root: &Node, source: &[u8]) -> CallbackParamSha
             if kind == "required_parameter" || kind == "optional_parameter" {
                 if let Some(type_anno) = find_child(&child, "type_annotation") {
                     if is_function_shaped_type_annotation(&type_anno, source, alias_shapes) {
-                        shapes
-                            .entry(node_text(&name_node, source).to_string())
-                            .or_default()
-                            .insert(arg_index);
+                        indices.insert(arg_index);
                     }
                 }
             }
             arg_index += 1;
         }
+        indices
+    }
+
+    fn record_declaration(
+        name_node: Option<Node>,
+        fn_node: &Node,
+        source: &[u8],
+        alias_shapes: &HashMap<String, bool>,
+        declarations: &mut HashMap<String, Vec<HashSet<usize>>>,
+    ) {
+        let Some(name_node) = name_node else { return };
+        let indices = function_shaped_param_indices(fn_node, source, alias_shapes);
+        declarations
+            .entry(node_text(&name_node, source).to_string())
+            .or_default()
+            .push(indices);
     }
 
     fn walk(
@@ -2587,28 +2607,52 @@ fn collect_callback_param_shapes(root: &Node, source: &[u8]) -> CallbackParamSha
         source: &[u8],
         depth: usize,
         alias_shapes: &HashMap<String, bool>,
-        shapes: &mut CallbackParamShapes,
+        declarations: &mut HashMap<String, Vec<HashSet<usize>>>,
     ) {
         if depth >= MAX_WALK_DEPTH {
             return;
         }
         match node.kind() {
             "function_declaration" | "generator_function_declaration" => {
-                record_function_params(node.child_by_field_name("name"), node, source, alias_shapes, shapes);
+                record_declaration(node.child_by_field_name("name"), node, source, alias_shapes, declarations);
             }
             "method_definition" => {
-                record_function_params(node.child_by_field_name("name"), node, source, alias_shapes, shapes);
+                record_declaration(node.child_by_field_name("name"), node, source, alias_shapes, declarations);
+            }
+            "variable_declarator" => {
+                if let (Some(name_node), Some(value_node)) = (
+                    node.child_by_field_name("name"),
+                    node.child_by_field_name("value"),
+                ) {
+                    let vt = value_node.kind();
+                    if name_node.kind() == "identifier"
+                        && (vt == "arrow_function" || vt == "function_expression" || vt == "generator_function")
+                    {
+                        record_declaration(Some(name_node), &value_node, source, alias_shapes, declarations);
+                    }
+                }
             }
             _ => {}
         }
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
-                walk(&child, source, depth + 1, alias_shapes, shapes);
+                walk(&child, source, depth + 1, alias_shapes, declarations);
             }
         }
     }
-    walk(root, source, 0, &alias_shapes, &mut shapes);
+    walk(root, source, 0, &alias_shapes, &mut declarations);
 
+    let mut shapes: CallbackParamShapes = HashMap::new();
+    for (name, per_decl_indices) in declarations {
+        let mut iter = per_decl_indices.into_iter();
+        let Some(mut intersected) = iter.next() else { continue };
+        for other in iter {
+            intersected.retain(|idx| other.contains(idx));
+        }
+        if !intersected.is_empty() {
+            shapes.insert(name, intersected);
+        }
+    }
     shapes
 }
 
@@ -5379,6 +5423,64 @@ mod tests {
         assert!(
             s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
             "explicit this param must not misalign the callback param index; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn recognizes_identifier_arg_via_arrow_function_hof_issue_1845() {
+        let s = parse_ts(
+            "type UserProcessor = (user: string) => void;
+             const processEach = (users: string[], fn: UserProcessor): void => {
+               for (const user of users) fn(user);
+             };
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "arrow-function HOF must recognize logUser; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn recognizes_identifier_arg_via_function_expression_hof_issue_1845() {
+        let s = parse_ts(
+            "type UserProcessor = (user: string) => void;
+             const processEach = function (users: string[], fn: UserProcessor): void {
+               for (const user of users) fn(user);
+             };
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "function-expression HOF must recognize logUser; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn does_not_merge_callback_shapes_across_unrelated_same_named_methods_issue_1845() {
+        let s = parse_ts(
+            "class Uploader {
+               process(data: string, cb: (result: string) => void): void {}
+             }
+             class Reporter {
+               process(users: string[]): void {}
+             }
+             function runDemo(reporter: Reporter, users: string[]): void {
+               reporter.process(users);
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "users"),
+            "unrelated same-named methods must not merge callback shapes; got: {:?}",
             s.calls,
         );
     }

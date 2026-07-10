@@ -3714,9 +3714,12 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  *
  * Name-keyed rather than receiver-typed, consistent with the rest of this
  * gate (see {@link POSITIONAL_CALLBACK_ARG_INDEX}'s doc comment for the same
- * tradeoff) — a same-named function/method elsewhere in the file with an
- * unrelated non-function-shaped parameter at the same index is a residual,
- * accepted risk.
+ * tradeoff) — but unlike a plain name-keyed union, a position is only kept
+ * when *every* same-named declaration in the file agrees it is
+ * function-shaped (see {@link collectCallbackParamShapes}), so two unrelated
+ * same-named declarations with different signatures (e.g. same-named
+ * methods on two different classes) cancel out instead of merging into a
+ * false positive.
  */
 type CallbackParamShapes = ReadonlyMap<string, ReadonlySet<number>>;
 
@@ -3809,19 +3812,25 @@ function collectFunctionShapedTypeAliases(root: TreeSitterNode): ReadonlyMap<str
  * parameter positions of every `function`/method declaration are
  * function-shaped — the callee-definition side of recognizing identifier
  * arguments to arbitrary user-defined higher-order functions (issue #1845).
+ * Also covers same-file `const f = (...) => ...` / `const f = function(...) {}`
+ * assignments, which are otherwise invisible to a walk that only looks at
+ * `function_declaration`/`method_definition` nodes.
  *
  * Same-file only: a call site whose callee is defined in another file has no
  * entry here and falls back to the existing name/position allowlist.
  */
 function collectCallbackParamShapes(root: TreeSitterNode): CallbackParamShapes {
   const aliasShapes = collectFunctionShapedTypeAliases(root);
-  const shapes = new Map<string, Set<number>>();
+  // One entry per same-named declaration; intersected below so a bare name
+  // shared by two unrelated declarations only keeps a position that every
+  // declaration agrees is function-shaped.
+  const declarations = new Map<string, Set<number>[]>();
 
-  function recordFunctionParams(nameNode: TreeSitterNode | null, fnNode: TreeSitterNode): void {
-    if (!nameNode) return;
+  function functionShapedParamIndices(fnNode: TreeSitterNode): Set<number> {
+    const indices = new Set<number>();
     const paramsNode =
       fnNode.childForFieldName('parameters') || findChild(fnNode, 'formal_parameters');
-    if (!paramsNode) return;
+    if (!paramsNode) return indices;
     let argIndex = -1;
     for (let i = 0; i < paramsNode.childCount; i++) {
       const child = paramsNode.child(i);
@@ -3840,23 +3849,39 @@ function collectCallbackParamShapes(root: TreeSitterNode): CallbackParamShapes {
       if (t !== 'required_parameter' && t !== 'optional_parameter') continue;
       const typeAnno = findChild(child, 'type_annotation');
       if (typeAnno && isFunctionShapedTypeAnnotation(typeAnno, aliasShapes)) {
-        let set = shapes.get(nameNode.text);
-        if (!set) {
-          set = new Set();
-          shapes.set(nameNode.text, set);
-        }
-        set.add(argIndex);
+        indices.add(argIndex);
       }
     }
+    return indices;
+  }
+
+  function recordDeclaration(nameNode: TreeSitterNode | null, fnNode: TreeSitterNode): void {
+    if (!nameNode) return;
+    let perName = declarations.get(nameNode.text);
+    if (!perName) {
+      perName = [];
+      declarations.set(nameNode.text, perName);
+    }
+    perName.push(functionShapedParamIndices(fnNode));
   }
 
   function walk(node: TreeSitterNode, depth: number): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
     if (t === 'function_declaration' || t === 'generator_function_declaration') {
-      recordFunctionParams(node.childForFieldName('name'), node);
+      recordDeclaration(node.childForFieldName('name'), node);
     } else if (t === 'method_definition') {
-      recordFunctionParams(node.childForFieldName('name'), node);
+      recordDeclaration(node.childForFieldName('name'), node);
+    } else if (t === 'variable_declarator') {
+      const nameNode = node.childForFieldName('name');
+      const valueNode = node.childForFieldName('value');
+      const vt = valueNode?.type;
+      if (
+        nameNode?.type === 'identifier' &&
+        (vt === 'arrow_function' || vt === 'function_expression' || vt === 'generator_function')
+      ) {
+        recordDeclaration(nameNode, valueNode!);
+      }
     }
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
@@ -3865,6 +3890,17 @@ function collectCallbackParamShapes(root: TreeSitterNode): CallbackParamShapes {
   }
   walk(root, 0);
 
+  const shapes = new Map<string, ReadonlySet<number>>();
+  for (const [name, perDeclIndices] of declarations) {
+    const [first, ...rest] = perDeclIndices;
+    const intersected = new Set(first);
+    for (const other of rest) {
+      for (const idx of intersected) {
+        if (!other.has(idx)) intersected.delete(idx);
+      }
+    }
+    if (intersected.size > 0) shapes.set(name, intersected);
+  }
   return shapes;
 }
 

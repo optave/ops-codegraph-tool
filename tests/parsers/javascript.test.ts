@@ -1336,6 +1336,53 @@ function runDemo(users: string[]): void {
           expect.objectContaining({ name: 'logUser', dynamic: true }),
         );
       });
+
+      it('recognizes an identifier arg passed to a same-file arrow-function higher-order function', () => {
+        const symbols = parseTS(`
+type UserProcessor = (user: string) => void;
+const processEach = (users: string[], fn: UserProcessor): void => {
+  for (const user of users) fn(user);
+};
+function logUser(user: string): void {}
+function runDemo(users: string[]): void {
+  processEach(users, logUser);
+}
+`);
+        expect(symbols.calls).toContainEqual(
+          expect.objectContaining({ name: 'logUser', dynamic: true }),
+        );
+      });
+
+      it('recognizes an identifier arg passed to a same-file function-expression higher-order function', () => {
+        const symbols = parseTS(`
+type UserProcessor = (user: string) => void;
+const processEach = function (users: string[], fn: UserProcessor): void {
+  for (const user of users) fn(user);
+};
+function logUser(user: string): void {}
+function runDemo(users: string[]): void {
+  processEach(users, logUser);
+}
+`);
+        expect(symbols.calls).toContainEqual(
+          expect.objectContaining({ name: 'logUser', dynamic: true }),
+        );
+      });
+
+      it('does not merge callback shapes across two unrelated same-named methods (false-positive guard)', () => {
+        const symbols = parseTS(`
+class Uploader {
+  process(data: string, cb: (result: string) => void): void {}
+}
+class Reporter {
+  process(users: string[]): void {}
+}
+function runDemo(reporter: Reporter, users: string[]): void {
+  reporter.process(users);
+}
+`);
+        expect(symbols.calls.filter((c) => c.dynamic && c.name === 'users')).toHaveLength(0);
+      });
     });
 
     // Destructured bindings
