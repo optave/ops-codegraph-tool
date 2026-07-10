@@ -827,7 +827,7 @@ export function clearConfigCache(): void {
  * applyEnvOverrides (actual override behavior) and applyEnvProvenance (which
  * derives its key list via Object.keys) so the two can never drift.
  */
-const ENV_LLM_MAP: Record<string, string> = {
+export const ENV_LLM_MAP: Record<string, string> = {
   CODEGRAPH_LLM_PROVIDER: 'provider',
   CODEGRAPH_LLM_API_KEY: 'apiKey',
   CODEGRAPH_LLM_MODEL: 'model',
