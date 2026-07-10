@@ -954,7 +954,7 @@ export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {
  * from hand-edited JSON). Throws a ConfigError with a descriptive message;
  * no-ops when `cmd` is already a string.
  */
-function assertApiKeyCommandIsString(cmd: string): void {
+function assertApiKeyCommandIsString(cmd: unknown): asserts cmd is string {
   if (typeof cmd === 'string') return;
   const actual = Array.isArray(cmd) ? 'array' : typeof cmd;
   throw new ConfigError(
