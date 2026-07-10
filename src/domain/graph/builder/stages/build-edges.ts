@@ -2142,7 +2142,12 @@ function pickReconnectTarget(
       return null;
     }
     const match = candidates.find((c) => c.line === newLine);
-    if (match) return match.id;
+    // match is always found in practice — newLine came from
+    // candidates.map((c) => c.line) above — but an explicit return here
+    // (rather than falling through) keeps this branch's outcome always
+    // "matched or dropped," never "silently re-evaluated against
+    // nearest-line," matching the Rust mirror's always-return match arm.
+    return match ? match.id : null;
   }
 
   // No sibling-group snapshot (shouldn't normally happen — every saved edge
