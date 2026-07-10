@@ -119,6 +119,14 @@ impl Display for Foo {}`);
     expect(symbols.typeMap?.get('v')).toEqual(expect.objectContaining({ type: 'NameValidator' }));
   });
 
+  it('does not type a unit enum variant as a unit struct (Greptile review)', () => {
+    // `None` (Option::None) parses identically to a unit-struct reference — a bare
+    // capitalized identifier — but is an enum variant, not a struct. Without a
+    // same-file `struct` definition for the name, it must not be typed.
+    const symbols = parseRust(`fn f() { let x = None; }`);
+    expect(symbols.typeMap?.has('x')).toBe(false);
+  });
+
   it('does not type a lowercase bare identifier assignment', () => {
     const symbols = parseRust(`fn f() { let a = 1; let b = a; }`);
     expect(symbols.typeMap?.has('b')).toBe(false);
