@@ -11,7 +11,7 @@ import {
   openReadonlyOrFail,
   openReadonlyWithNative,
   resolveBusyTimeoutMs,
-  resolveConfigForDbPath,
+  resolveDbConfig,
   testFilterSQL,
 } from '../db/index.js';
 import { DEFAULTS } from '../infrastructure/config.js';
@@ -388,7 +388,7 @@ export function moduleBoundariesData(
   // handle at that point would never be closed). Derives rootDir from
   // customDbPath (not process.cwd()) so `--db /other/repo/...` reads that
   // repo's .codegraphrc.json (issue #1881).
-  const config = opts.config || resolveConfigForDbPath(customDbPath);
+  const config = opts.config || resolveDbConfig(customDbPath);
   const db = openReadonlyOrFail(
     customDbPath,
     config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
