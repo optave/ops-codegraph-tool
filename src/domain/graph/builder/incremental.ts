@@ -1488,7 +1488,7 @@ function applyChaDispatchPostPass(
   for (const [relPath, symbols] of filesWithSymbols) {
     const fileNodeRow = stmts.getNodeId.get(relPath, 'file', relPath, 0);
     if (!fileNodeRow) continue;
-    const typeMap = coerceTypeMap(symbols);
+    const typeMap = buildIncrementalTypeMap(symbols);
 
     for (const call of symbols.calls) {
       const caller = findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow);
