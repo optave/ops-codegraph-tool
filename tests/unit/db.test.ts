@@ -634,6 +634,30 @@ describe('findDbPath with rootDirHint (#1869)', () => {
       process.cwd = origCwd;
     }
   });
+
+  it('prefers rootDirHint over the git ceiling for the no-DB-found default path (Greptile review)', () => {
+    // rootDirHint is a subdirectory *inside* a git repo, with no existing
+    // .codegraph/graph.db anywhere between it and the repo root — so
+    // walkUpForDbPath finds nothing and the fallback default-path branch
+    // runs. Before the fix, `ceiling || rootDirHint || cwd` let the git
+    // ceiling win whenever one existed, producing <git-root>/.codegraph/graph.db
+    // instead of build's own <rootDirHint>/.codegraph/graph.db convention.
+    const repoRoot = fs.mkdtempSync(path.join(tmpDir, 'cg-hint-priority-'));
+    execFileSyncForSetup('git', ['init'], { cwd: repoRoot, stdio: 'pipe' });
+    const subDir = path.join(repoRoot, 'packages', 'sub');
+    fs.mkdirSync(subDir, { recursive: true });
+    const resolvedRepoRoot = fs.realpathSync(repoRoot);
+    const resolvedSubDir = fs.realpathSync(subDir);
+
+    _resetRepoRootCache();
+    try {
+      const result = findDbPath(undefined, resolvedSubDir);
+      expect(result).toBe(path.join(resolvedSubDir, '.codegraph', 'graph.db'));
+      expect(result).not.toBe(path.join(resolvedRepoRoot, '.codegraph', 'graph.db'));
+    } finally {
+      _resetRepoRootCache();
+    }
+  });
 });
 
 describe('openReadonlyOrFail', () => {

@@ -827,7 +827,7 @@ export function clearConfigCache(): void {
  * applyEnvOverrides (actual override behavior) and applyEnvProvenance (which
  * derives its key list via Object.keys) so the two can never drift.
  */
-const ENV_LLM_MAP: Record<string, string> = {
+export const ENV_LLM_MAP: Record<string, string> = {
   CODEGRAPH_LLM_PROVIDER: 'provider',
   CODEGRAPH_LLM_API_KEY: 'apiKey',
   CODEGRAPH_LLM_MODEL: 'model',
@@ -954,7 +954,7 @@ export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {
  * from hand-edited JSON). Throws a ConfigError with a descriptive message;
  * no-ops when `cmd` is already a string.
  */
-function assertApiKeyCommandIsString(cmd: string): void {
+function assertApiKeyCommandIsString(cmd: unknown): asserts cmd is string {
   if (typeof cmd === 'string') return;
   const actual = Array.isArray(cmd) ? 'array' : typeof cmd;
   throw new ConfigError(
