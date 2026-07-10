@@ -170,7 +170,7 @@ export function auditData(
     customDbPath,
     config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
   );
-  const thresholds = resolveThresholds(customDbPath, opts.config);
+  const thresholds = resolveThresholds(customDbPath, config);
 
   let functions: AuditFunctionEntry[];
   try {
