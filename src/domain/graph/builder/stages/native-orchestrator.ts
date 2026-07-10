@@ -556,7 +556,7 @@ async function runDataflowVertexPass(
  * Used when the Rust addon doesn't include analysis persistence (older addon
  * version) or when analysis failed on the Rust side.
  */
-async function runPostNativeAnalysis(
+export async function runPostNativeAnalysis(
   ctx: PipelineContext,
   allFileSymbols: Map<string, ExtractorOutput>,
   changedFiles: string[] | undefined,
@@ -579,7 +579,7 @@ async function runPostNativeAnalysis(
   const native = loadNative();
   if (native?.NativeDatabase) {
     try {
-      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath, ctx.config.db.busyTimeoutMs);
       if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
     } catch {
       ctx.nativeDb = undefined;
@@ -1950,7 +1950,7 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
  * corruption. On setup failure, falls back to reopening better-sqlite3 and
  * leaves ctx.nativeDb undefined so the caller falls through to the JS pipeline.
  */
-function openNativeDatabase(ctx: PipelineContext): void {
+export function openNativeDatabase(ctx: PipelineContext): void {
   if (ctx.nativeDb || !ctx.nativeAvailable) return;
   const native = loadNative();
   if (!native?.NativeDatabase) return;
@@ -1960,7 +1960,7 @@ function openNativeDatabase(ctx: PipelineContext): void {
     // is kept and transferred to the NativeDbProxy below, not released here.
     ctx.db.close();
     acquireAdvisoryLock(ctx.dbPath);
-    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath, ctx.config.db.busyTimeoutMs);
     ctx.nativeDb.initSchema();
     // Replace ctx.db with a NativeDbProxy so post-native JS fallback
     // (structure, analysis) can use it without reopening better-sqlite3.

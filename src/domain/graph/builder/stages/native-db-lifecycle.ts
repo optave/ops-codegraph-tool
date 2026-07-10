@@ -44,7 +44,7 @@ export function reopenNativeDb(ctx: PipelineContext, label: string): void {
   const native = loadNative();
   if (!native?.NativeDatabase) return;
   try {
-    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath, ctx.config.db.busyTimeoutMs);
   } catch (e) {
     debug(`reopen nativeDb for ${label} failed: ${toErrorMessage(e)}`);
     ctx.nativeDb = undefined;
