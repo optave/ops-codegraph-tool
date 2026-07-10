@@ -363,7 +363,7 @@ export function findDbPath(customPath?: string, rootDirHint?: string): string {
   const startDir = resolveDbSearchStartDir(rootDirHint);
   const found = walkUpForDbPath(startDir, ceiling);
   if (found) return found;
-  const base = ceiling || rootDirHint || process.cwd();
+  const base = rootDirHint || ceiling || process.cwd();
   return path.join(base, '.codegraph', 'graph.db');
 }
 
@@ -418,24 +418,6 @@ function deriveRootDirFromDbPath(customDbPath: string | undefined): string | und
 }
 
 /**
- * Load config with rootDir derived from the resolved DB path, rather than
- * process.cwd(). This is the single entry point every read-only query
- * function should use to call loadConfig() when it has (or can resolve) a
- * `--db` path — so `--db /other/repo/.codegraph/graph.db` reads *that*
- * repo's `.codegraphrc.json` instead of the invoking directory's. Shared by
- * resolveDbSettings() and resolveBusyTimeoutMs() (below) plus the ad-hoc
- * read-only query call sites (features/*, domain/analysis/*, domain/search/*)
- * so rootDir derivation can't drift between them (issue #1881).
- *
- * MUST be called before opening any DB handle: loadConfig can throw (e.g.
- * ConfigError via resolveSecrets on a malformed llm.apiKeyCommand config),
- * and an already-open handle at that point would never be closed.
- */
-export function resolveConfigForDbPath(customDbPath?: string): CodegraphConfig {
-  return loadConfig(deriveRootDirFromDbPath(customDbPath));
-}
-
-/**
  * Resolve the effective engine for DB access (explicit opts.engine > config.build.engine >
  * 'auto') alongside config.db.busyTimeoutMs, in a single loadConfig() call.
  * Derives rootDir from the resolved DB path so loadConfig reads the right project config.
@@ -449,7 +431,7 @@ function resolveDbSettings(
   customDbPath: string | undefined,
   engineOpt: 'native' | 'wasm' | 'auto' | undefined,
 ): ResolvedDbSettings {
-  const config = resolveConfigForDbPath(customDbPath);
+  const config = resolveDbConfig(customDbPath);
   // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
   // so this covers both the env-var path and the .codegraphrc.json config-file path.
   return {
@@ -459,18 +441,37 @@ function resolveDbSettings(
 }
 
 /**
- * Resolve config.db.busyTimeoutMs alone, for the ad-hoc read-only query call
- * sites (features/*, domain/analysis/*, domain/search/*) that call
- * openReadonlyOrFail() directly and don't need engine selection. Shares
- * rootDir derivation with resolveDbSettings() so the two can't drift.
+ * Resolve the full config for a given DB path, deriving rootDir the same way
+ * resolveDbSettings()/resolveBusyTimeoutMs() do. Exported so callers that need
+ * both the busy-timeout and other config values (e.g. withReadonlyDb()) can
+ * share a single loadConfig() call instead of resolving it twice. This is the
+ * single entry point every read-only query function should use to call
+ * loadConfig() when it has (or can resolve) a `--db` path — so `--db
+ * /other/repo/.codegraph/graph.db` reads *that* repo's `.codegraphrc.json`
+ * instead of the invoking directory's (issue #1881).
  *
  * MUST be called before opening any DB handle, for the same reason as
  * resolveDbSettings(): loadConfig can throw (e.g. ConfigError via
  * resolveSecrets on a malformed llm.apiKeyCommand config), and an
  * already-open handle at that point would never be closed.
  */
-export function resolveBusyTimeoutMs(customDbPath?: string): number {
-  return resolveConfigForDbPath(customDbPath).db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
+export function resolveDbConfig(customDbPath?: string): CodegraphConfig {
+  return loadConfig(deriveRootDirFromDbPath(customDbPath));
+}
+
+/**
+ * Resolve config.db.busyTimeoutMs alone, for the ad-hoc read-only query call
+ * sites (features/*, domain/analysis/*, domain/search/*) that call
+ * openReadonlyOrFail() directly and don't need engine selection. Shares
+ * rootDir derivation with resolveDbSettings() so the two can't drift.
+ *
+ * Accepts an optional pre-resolved `config` for callers that already loaded
+ * it (e.g. withReadonlyDb()), avoiding a second findDbPath()/loadConfig() for
+ * the same path (#1943 review).
+ */
+export function resolveBusyTimeoutMs(customDbPath?: string, config?: CodegraphConfig): number {
+  const cfg = config ?? resolveDbConfig(customDbPath);
+  return cfg.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs;
 }
 
 /** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */

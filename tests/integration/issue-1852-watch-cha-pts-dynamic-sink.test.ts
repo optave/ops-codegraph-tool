@@ -353,3 +353,82 @@ runDynamicSinkScenario('wasm');
 describe.skipIf(!isNativeAvailable())('native engine coverage', () => {
   runDynamicSinkScenario('native');
 });
+
+// ── Suite 4: object-rest-param receiver resolution (#1845 review follow-up) ──
+//
+// Regression guard for a Greptile finding during #1852 review: the CHA
+// post-pass (`applyChaDispatchPostPass`) used `coerceTypeMap` directly
+// instead of `buildIncrementalTypeMap` (which additionally runs
+// `seedRestParamTypeMap`), an inconsistency with every other typeMap
+// consumer in this file. Fixed to use `buildIncrementalTypeMap` throughout.
+//
+// This suite verifies the Phase 8.3f object-rest-param resolution mechanism
+// (issue #1336 — `eerest.e4()` resolves through a rest-destructured
+// parameter) continues to resolve correctly through the *entire* incremental
+// rebuild pipeline added by #1852, including the new CHA/pts/sink passes —
+// not a regression test for CHA-specific dispatch through a rest receiver,
+// since `seedRestParamTypeMap` seeds the rest name with the call-site
+// argument's *variable name* (chased through a separate typeMap hop), not a
+// class/interface name `resolveChaTargets` could consume directly.
+
+function writeRestParamFixture(dir: string, marker: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'rest.js'),
+    `${marker}
+function e1() { console.log('31'); }
+function e4() { console.log('34'); }
+
+var obj = { e1, e4 };
+
+function f3({ e1: eee1, ...eerest }) {
+  eee1();
+  eerest.e4();
+}
+f3(obj);
+`,
+  );
+}
+
+function runRestParamScenario(engine: EngineMode): void {
+  describe(`codegraph watch (rebuildFile): object-rest-param receiver resolution survives a single-file rebuild (#1852) — ${engine}`, () => {
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `cg-1852-rest-${engine}-`));
+      writeRestParamFixture(tmpDir, '// v1');
+      await buildGraph(tmpDir, { engine, incremental: false, skipRegistry: true });
+
+      writeRestParamFixture(tmpDir, '// v2 edited');
+      await rebuildOneFile(tmpDir, 'rest.js', engine);
+    }, 60_000);
+
+    afterAll(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('keeps f3 -> e4 (object-rest-param receiver, #1336) after the rebuild', () => {
+      const all = readCallEdges(path.join(tmpDir, '.codegraph', 'graph.db'));
+      const found = all.find((e) => e.src === 'f3' && e.tgt === 'e4');
+      expect(found, `Actual edges:\n${JSON.stringify(all, null, 2)}`).toBeDefined();
+    });
+
+    it('matches a full rebuild of the identical post-edit source state (calls edges)', async () => {
+      const refDir = fs.mkdtempSync(path.join(os.tmpdir(), `cg-1852-rest-ref-${engine}-`));
+      try {
+        writeRestParamFixture(refDir, '// v2 edited');
+        await buildGraph(refDir, { engine, incremental: false, skipRegistry: true });
+        const reference = readCallEdges(path.join(refDir, '.codegraph', 'graph.db'));
+        const incremental = readCallEdges(path.join(tmpDir, '.codegraph', 'graph.db'));
+        expect(withoutTechnique(incremental)).toEqual(withoutTechnique(reference));
+      } finally {
+        fs.rmSync(refDir, { recursive: true, force: true });
+      }
+    });
+  });
+}
+
+runRestParamScenario('wasm');
+describe.skipIf(!isNativeAvailable())('native engine coverage', () => {
+  runRestParamScenario('native');
+});
