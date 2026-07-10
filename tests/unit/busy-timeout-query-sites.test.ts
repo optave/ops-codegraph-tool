@@ -101,11 +101,10 @@ describe('configured busyTimeoutMs reaches PRAGMA busy_timeout at ad-hoc read-on
   });
 
   it('manifestoData (config load reordered to before the db opens) applies the configured busy_timeout', () => {
-    // manifestoData resolves its config via loadConfig(process.cwd()) — a
-    // pre-existing, cwd-based resolution this fix intentionally preserves
-    // (only the *timing* of the call moved, not what it resolves) — so the
-    // project config must be visible from process.cwd() here, not from dbPath.
-    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    // manifestoData resolves its config from the resolved DB path's rootDir
+    // (issue #1881 fix), not process.cwd() — so an unrelated cwd must not
+    // affect resolution.
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(os.tmpdir());
     const capture = captureBusyTimeoutPragmas();
     try {
       manifestoData(dbPath);
@@ -117,10 +116,9 @@ describe('configured busyTimeoutMs reaches PRAGMA busy_timeout at ad-hoc read-on
   });
 
   it('hybridSearchData (already loaded config before the db opens) applies the configured busy_timeout', async () => {
-    // Same pre-existing cwd-based config resolution as manifestoData (bare
-    // loadConfig() defaults to process.cwd()) — preserved, not introduced, by
-    // this fix.
-    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    // Same DB-path-derived config resolution as manifestoData (issue #1881
+    // fix) — an unrelated cwd must not affect resolution.
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(os.tmpdir());
     const capture = captureBusyTimeoutPragmas();
     try {
       await hybridSearchData('nonexistent-query', dbPath);

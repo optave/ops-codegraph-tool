@@ -1,5 +1,5 @@
-import { openReadonlyOrFail } from '../../../db/index.js';
-import { DEFAULTS, loadConfig } from '../../../infrastructure/config.js';
+import { openReadonlyOrFail, resolveDbConfig } from '../../../db/index.js';
+import { DEFAULTS } from '../../../infrastructure/config.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../../../types.js';
 import { hasFtsIndex } from '../stores/fts5.js';
 import { ftsSearchData } from './keyword.js';
@@ -178,7 +178,9 @@ export async function hybridSearchData(
   customDbPath: string | undefined,
   opts: SemanticSearchOpts = {},
 ): Promise<HybridSearchResult | null> {
-  const config = opts.config || loadConfig();
+  // Derive rootDir from customDbPath (not process.cwd()) so `--db /other/repo/...`
+  // reads that repo's .codegraphrc.json (issue #1881).
+  const config = opts.config || resolveDbConfig(customDbPath);
   const searchCfg = config.search || ({} as CodegraphConfig['search']);
   const limit = opts.limit ?? searchCfg.topK ?? 15;
   const k = opts.rrfK ?? searchCfg.rrfK ?? 60;

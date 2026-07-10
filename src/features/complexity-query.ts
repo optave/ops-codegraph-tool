@@ -5,9 +5,9 @@
  * pagination) from compute-time concerns (AST traversal, metric algorithms).
  */
 
-import { openReadonlyOrFail } from '../db/index.js';
+import { openReadonlyOrFail, resolveDbConfig } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
-import { DEFAULTS, loadConfig } from '../infrastructure/config.js';
+import { DEFAULTS } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -281,14 +281,19 @@ interface ComplexityQueryOpts {
 }
 
 /** Resolve query flags + effective manifesto thresholds from opts/config/DEFAULTS. */
-function resolveComplexityQueryOptions(opts: ComplexityQueryOpts): {
+function resolveComplexityQueryOptions(
+  customDbPath: string | undefined,
+  opts: ComplexityQueryOpts,
+): {
   sort: string;
   noTests: boolean;
   aboveThreshold: boolean;
   thresholds: any;
   busyTimeoutMs: number;
 } {
-  const config = opts.config || loadConfig(process.cwd());
+  // Derive rootDir from customDbPath (not process.cwd()) so `--db /other/repo/...`
+  // reads that repo's .codegraphrc.json (issue #1881).
+  const config = opts.config || resolveDbConfig(customDbPath);
   return {
     sort: opts.sort || 'cognitive',
     noTests: opts.noTests || false,
@@ -330,7 +335,7 @@ export function complexityData(
   // resolveDbSettings()'s ordering in db/connection.ts, since loadConfig can
   // throw and an already-open handle at that point would never be closed.
   const { sort, noTests, aboveThreshold, thresholds, busyTimeoutMs } =
-    resolveComplexityQueryOptions(opts);
+    resolveComplexityQueryOptions(customDbPath, opts);
   const db = openReadonlyOrFail(customDbPath, busyTimeoutMs);
   try {
     const { where, params } = buildComplexityWhere({

@@ -431,7 +431,7 @@ function resolveDbSettings(
   customDbPath: string | undefined,
   engineOpt: 'native' | 'wasm' | 'auto' | undefined,
 ): ResolvedDbSettings {
-  const config = loadConfig(deriveRootDirFromDbPath(customDbPath));
+  const config = resolveDbConfig(customDbPath);
   // config.build.engine is already populated from CODEGRAPH_ENGINE env by applyEnvOverrides,
   // so this covers both the env-var path and the .codegraphrc.json config-file path.
   return {
@@ -444,7 +444,11 @@ function resolveDbSettings(
  * Resolve the full config for a given DB path, deriving rootDir the same way
  * resolveDbSettings()/resolveBusyTimeoutMs() do. Exported so callers that need
  * both the busy-timeout and other config values (e.g. withReadonlyDb()) can
- * share a single loadConfig() call instead of resolving it twice.
+ * share a single loadConfig() call instead of resolving it twice. This is the
+ * single entry point every read-only query function should use to call
+ * loadConfig() when it has (or can resolve) a `--db` path — so `--db
+ * /other/repo/.codegraph/graph.db` reads *that* repo's `.codegraphrc.json`
+ * instead of the invoking directory's (issue #1881).
  *
  * MUST be called before opening any DB handle, for the same reason as
  * resolveDbSettings(): loadConfig can throw (e.g. ConfigError via
