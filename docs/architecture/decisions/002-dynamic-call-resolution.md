@@ -83,8 +83,10 @@ export type DynamicKind =
                           // global/builtin identifier (e.g. `require = tracedRequire`,
                           // #1776), or the right operand of an `instanceof` check
                           // (e.g. `err instanceof CodegraphError`, #1784) —
-                          // resolvable against function/method-kind targets, plus
-                          // class-kind for the instanceof site
+                          // resolvable against function/method/class-kind targets;
+                          // class was added for instanceof, but the filter is
+                          // per-kind rather than per-site, so all three sites
+                          // share the same allow-list
 ```
 
 `dynamic?: boolean` is kept to avoid churning every `call.dynamic ? 1 : 0` site.
@@ -106,11 +108,13 @@ is the correct substitute for real alias tracking), and the right operand of
 an `instanceof` check (#1784, `err instanceof CodegraphError` — `instanceof`
 evaluates its right operand as a value, never calls it) are three independent
 extraction sites feeding the same resolution/filtering logic downstream. The
-`instanceof` site is the first to resolve against `class`-kind targets (the
-other two are function/method only, since `instanceof`'s operand is always a
-class/constructor) — the resolver-side filter is keyed on `dynamicKind`, not
-on which site produced the call, so this is a per-kind allowed-target-kind
-set rather than a per-site one. New languages/positions can add a fourth
+`instanceof` site is the motivation for adding `class` to the allowed
+target kinds, since its operand is always a class/constructor — but the
+resolver-side filter is keyed on `dynamicKind`, not on which site produced
+the call, so this is a per-kind allowed-target-kind set rather than a
+per-site one: object-literal and Lua value-ref sites also gain class-kind
+resolution as a side effect of this change, not because either idiom
+commonly names a class. New languages/positions can add a fourth
 without touching `build-edges.ts` / `incremental.ts` / `build_edges.rs`
 again, beyond widening the allowed-target-kind set if the new site's operand
 isn't a function/method/class.
