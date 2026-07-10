@@ -313,6 +313,17 @@ fn is_named_reexport(imp: &crate::types::Import) -> bool {
     imp.reexport.unwrap_or(false) && !imp.wildcard_reexport.unwrap_or(false)
 }
 
+/// True for a genuine wildcard re-export (`export * from 'Y'`). Emitted as a
+/// distinct file-level marker edge (`reexports-wildcard`) alongside the
+/// generic `reexports` edge so the query layer can tell a target reached
+/// only by named specifiers apart from one that's also reached by a
+/// wildcard — even when a *different* statement in the same file names
+/// specific symbols from that exact target (#1849 review). Mirrors
+/// `is_wildcard_reexport` in build_edges.rs (FFI fallback path).
+fn is_wildcard_reexport(imp: &crate::types::Import) -> bool {
+    imp.reexport.unwrap_or(false) && imp.wildcard_reexport.unwrap_or(false)
+}
+
 /// True when `file`'s extension means it *might* hold a TypeScript
 /// interface/type-alias declaration (see `is_type_erased_import_target`) —
 /// used to widen `collect_symbol_lookup_pairs` beyond syntactically
@@ -538,6 +549,14 @@ fn emit_edges_for_import(
             ctx,
             symbol_node_ids,
         );
+    } else if is_wildcard_reexport(imp) {
+        edges.push(EdgeRow {
+            source_id: file_node_id,
+            target_id,
+            kind: "reexports-wildcard".to_string(),
+            confidence: 1.0,
+            dynamic: 0,
+        });
     }
     emit_barrel_through_rows(
         edges,
