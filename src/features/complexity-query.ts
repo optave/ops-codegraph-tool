@@ -5,7 +5,7 @@
  * pagination) from compute-time concerns (AST traversal, metric algorithms).
  */
 
-import { openReadonlyOrFail, resolveConfigForDbPath } from '../db/index.js';
+import { openReadonlyOrFail, resolveDbConfig } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { DEFAULTS } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
@@ -293,7 +293,7 @@ function resolveComplexityQueryOptions(
 } {
   // Derive rootDir from customDbPath (not process.cwd()) so `--db /other/repo/...`
   // reads that repo's .codegraphrc.json (issue #1881).
-  const config = opts.config || resolveConfigForDbPath(customDbPath);
+  const config = opts.config || resolveDbConfig(customDbPath);
   return {
     sort: opts.sort || 'cognitive',
     noTests: opts.noTests || false,
