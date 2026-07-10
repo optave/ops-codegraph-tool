@@ -571,12 +571,21 @@ pub fn run_pipeline(
     timing.resolve_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 6b: Re-parse barrel candidates (incremental only) ─────────
-    if !change_result.is_full_build {
+    // `barrel_candidates_added` collects only the paths merged into
+    // `file_symbols` here — i.e. files loaded purely to resolve reexport
+    // chains, not files that are genuinely part of this build's changed
+    // set. Only those transient files are eligible for `barrel_only_files`
+    // classification below (mirrors `resolve-imports.ts::reparseBarrelFiles`,
+    // which marks barrel-only status inside this same re-parse loop rather
+    // than recomputing it over the whole `fileSymbols` map — #1848).
+    let barrel_candidates_added: Vec<String> = if !change_result.is_full_build {
         reparse_barrel_candidates(
             conn, root_dir, &napi_aliases, &known_files,
             &mut file_symbols, &mut batch_resolved,
-        );
-    }
+        )
+    } else {
+        Vec::new()
+    };
 
     // ── Stage 7: Build edges ───────────────────────────────────────────
     let t0 = Instant::now();
@@ -592,9 +601,15 @@ pub fn run_pipeline(
         known_files,
     };
 
-    // Build reexport map and detect barrel files
+    // Build reexport map and detect barrel files. Classification is scoped to
+    // `barrel_candidates_added` (empty on full builds) rather than every key
+    // in `file_symbols` — a file that's genuinely part of this build's
+    // changed set must always get its own non-reexport imports emitted,
+    // regardless of whether it happens to satisfy the reexports>=ownDefs
+    // heuristic (#1848).
     import_ctx.reexport_map = import_edges::build_reexport_map(&import_ctx);
-    import_ctx.barrel_only_files = import_edges::detect_barrel_only_files(&import_ctx);
+    import_ctx.barrel_only_files =
+        import_edges::detect_barrel_only_files(&import_ctx, &barrel_candidates_added);
 
     // Build import edges. A write failure here (transaction-start, a
     // malformed chunk, or commit) propagates via `?` instead of being
@@ -820,6 +835,14 @@ fn collect_source_files(
 /// barrel-through edges are silently dropped on every incremental rebuild
 /// (#1174). Convergence is guaranteed because `file_symbols` grows
 /// monotonically and is bounded by the set of barrel files in the project.
+///
+/// Returns the relative paths of every file merged into `file_symbols` by
+/// this call (across all iterations) — files loaded solely to resolve
+/// reexport chains, as distinct from the genuinely-changed files the caller
+/// already had in `file_symbols` before Stage 6b ran. The caller uses this
+/// list to scope `barrel_only_files` classification (#1848): a barrel-only
+/// skip must never apply to a file that's actually part of this build's
+/// changed set, only to these transiently side-loaded ones.
 fn reparse_barrel_candidates(
     conn: &Connection,
     root_dir: &str,
@@ -827,7 +850,8 @@ fn reparse_barrel_candidates(
     known_files: &HashSet<String>,
     file_symbols: &mut BTreeMap<String, FileSymbols>,
     batch_resolved: &mut HashMap<String, String>,
-) {
+) -> Vec<String> {
+    let mut all_added: Vec<String> = Vec::new();
     // Find all barrel files from DB (files that have 'reexports' edges)
     let barrel_files_in_db: HashSet<String> = {
         let rows: Vec<String> = match conn.prepare(
@@ -941,7 +965,10 @@ fn reparse_barrel_candidates(
             &barrel_files_in_db,
             file_symbols,
         );
+        all_added.extend(newly_added);
     }
+
+    all_added
 }
 
 /// Walk the imports of `from_files` and return absolute paths of any barrel
