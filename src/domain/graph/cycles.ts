@@ -104,6 +104,16 @@ function sccKey(nodes: string[]): string {
  * shrink or split SCCs, never grow them, so any full-graph cycle whose exact
  * node set doesn't reappear in the filtered run depended on a speculative
  * edge to close it.
+ *
+ * A speculative edge can also *merge* a genuinely confirmed cycle into a
+ * larger SCC without destroying it — e.g. confirmed `A->B, B->C, C->B` plus
+ * speculative `C->A` yields one full-graph SCC `{A,B,C}`, but the confirmed
+ * sub-graph still has its own real cycle `{B,C}`. Matching `allCycles`
+ * node-sets against `confirmedCycles` alone would mark the whole `{A,B,C}`
+ * grouping speculative and never surface `{B,C}` on its own — silently
+ * dropping a real cycle whenever `excludeSpeculative` is set (#1988 follow-
+ * up). Every confirmed cycle is therefore always included in its own right,
+ * in addition to whichever full-graph SCCs don't exactly match one.
  */
 function classifyCycles(edges: Edge[]): Cycle[] {
   const allCycles = runTarjan(edges);
@@ -117,10 +127,13 @@ function classifyCycles(edges: Edge[]): Cycle[] {
   const confirmedCycles = runTarjan(confirmedEdges);
   const confirmedKeys = new Set(confirmedCycles.map(sccKey));
 
-  return allCycles.map((nodes) => ({
-    nodes,
-    speculative: !confirmedKeys.has(sccKey(nodes)),
-  }));
+  const result: Cycle[] = confirmedCycles.map((nodes) => ({ nodes, speculative: false }));
+  for (const nodes of allCycles) {
+    if (!confirmedKeys.has(sccKey(nodes))) {
+      result.push({ nodes, speculative: true });
+    }
+  }
+  return result;
 }
 
 /**
