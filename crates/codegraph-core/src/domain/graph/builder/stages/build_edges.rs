@@ -1031,22 +1031,19 @@ fn resolve_call_targets<'a>(
     if !targets.is_empty() { return targets; }
 
     // 3. Type-aware resolution via receiver → type map.
-    // Strips "this." prefix so `this.repo.method()` resolves via typeMap["repo"]
-    // or typeMap["this.repo"] (both seeded by the class-field extractor).
+    // Strips "this."/"self." prefix so `this.repo.method()` / `self.repo.method()`
+    // resolves via typeMap["repo"] or typeMap["this.repo"] (both seeded by the
+    // class-field extractor — the Rust extractor seeds "StructName.repo", #1876).
     if let Some(ref receiver) = call.receiver {
-        let effective_receiver = if receiver.starts_with("this.") {
-            &receiver["this.".len()..]
-        } else {
-            receiver.as_str()
-        };
+        let effective_receiver = strip_instance_prefix(receiver);
         // Phase 8.3f: callee-scoped rest-param key (`callee::restName`) avoids
         // same-name rest-binding collisions across functions in the same file (#1358).
         let rest_param_key = format!("{}::{}", caller_name, effective_receiver);
         // Class-scoped key (`ClassName.prop`) seeded by `this.prop = new Ctor()` and
         // field annotations — prevents false edges when multiple classes define the same
-        // property name (issues #1323, #1458). Consulted first for `this.` receivers so
-        // bare fallback keys (confidence 0.6) don't shadow the correct per-class entry.
-        let class_scoped_key = if receiver.starts_with("this.") && !caller_name.is_empty() {
+        // property name (issues #1323, #1458). Consulted first for `this.`/`self.` receivers
+        // so bare fallback keys (confidence 0.6) don't shadow the correct per-class entry.
+        let class_scoped_key = if effective_receiver != receiver.as_str() && !caller_name.is_empty() {
             caller_name
                 .rfind('.')
                 .map(|dot| format!("{}.{}", &caller_name[..dot], effective_receiver))
@@ -1287,6 +1284,19 @@ fn is_module_scoped_language(rel_path: &str) -> bool {
         Some((_, ext)) => matches!(ext, "js" | "mjs" | "cjs" | "jsx" | "ts" | "tsx" | "mts" | "cts"),
         None => false,
     }
+}
+
+/// Instance-reference prefixes that qualify a receiver chain as "this object's
+/// own field" (`this.repo`, `self.repo`) — `this` for JS/TS/Java/C#-family
+/// languages, `self` for Python/Rust/Swift-family languages. Stripped the same
+/// way so `X.repo.method()` resolves via type_map["repo"] regardless of which
+/// keyword the source language uses. Mirrors `stripInstancePrefix` in
+/// strategy.ts (#1876).
+fn strip_instance_prefix(receiver: &str) -> &str {
+    receiver
+        .strip_prefix("this.")
+        .or_else(|| receiver.strip_prefix("self."))
+        .unwrap_or(receiver)
 }
 
 /// Extract the constructor name from an inline `new` receiver expression.

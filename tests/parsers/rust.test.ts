@@ -104,4 +104,78 @@ impl Display for Foo {}`);
     expect(macros.length).toBeGreaterThanOrEqual(1);
     expect(macros).toContainEqual(expect.objectContaining({ name: 'println!' }));
   });
+
+  // ── #1876: receiver-typed locals + self.field type map ────────────────────
+
+  it('seeds struct field type map for self.field resolution', () => {
+    const symbols = parseRust(`struct UserService { repo: UserRepository }`);
+    expect(symbols.typeMap?.get('UserService.repo')).toEqual(
+      expect.objectContaining({ type: 'UserRepository' }),
+    );
+  });
+
+  it('types a unit-struct value assignment (let v = TypeName;)', () => {
+    const symbols = parseRust(`struct NameValidator;\nfn f() { let v = NameValidator; }`);
+    expect(symbols.typeMap?.get('v')).toEqual(expect.objectContaining({ type: 'NameValidator' }));
+  });
+
+  it('does not type a unit enum variant as a unit struct (Greptile review)', () => {
+    // `None` (Option::None) parses identically to a unit-struct reference — a bare
+    // capitalized identifier — but is an enum variant, not a struct. Without a
+    // same-file `struct` definition for the name, it must not be typed.
+    const symbols = parseRust(`fn f() { let x = None; }`);
+    expect(symbols.typeMap?.has('x')).toBe(false);
+  });
+
+  it('does not type a lowercase bare identifier assignment', () => {
+    const symbols = parseRust(`fn f() { let a = 1; let b = a; }`);
+    expect(symbols.typeMap?.has('b')).toBe(false);
+  });
+
+  it('stores the declared return type for a free function', () => {
+    const symbols = parseRust(`fn build_service() -> UserService { todo!() }`);
+    expect(symbols.returnTypeMap?.get('build_service')).toEqual(
+      expect.objectContaining({ type: 'UserService', confidence: 1.0 }),
+    );
+  });
+
+  it('resolves -> Self to the enclosing impl type', () => {
+    const symbols = parseRust(
+      `struct UserRepository;\nimpl UserRepository {\n  fn new() -> Self { UserRepository }\n}`,
+    );
+    expect(symbols.returnTypeMap?.get('UserRepository.new')).toEqual(
+      expect.objectContaining({ type: 'UserRepository' }),
+    );
+  });
+
+  it('records a call assignment for a bare function call', () => {
+    const symbols = parseRust(`fn f() { let service = build_service(); }`);
+    expect(symbols.callAssignments).toContainEqual(
+      expect.objectContaining({ varName: 'service', calleeName: 'build_service' }),
+    );
+  });
+
+  it('records a call assignment for an associated-function call', () => {
+    const symbols = parseRust(`fn f() { let repo = UserRepository::new(); }`);
+    expect(symbols.callAssignments).toContainEqual(
+      expect.objectContaining({
+        varName: 'repo',
+        calleeName: 'new',
+        receiverTypeName: 'UserRepository',
+      }),
+    );
+  });
+
+  it('records a call assignment for a method call on a locally-typed receiver', () => {
+    const symbols = parseRust(
+      `fn f() {\n  let repo: UserRepository = make();\n  let user = repo.find_by_id(1);\n}`,
+    );
+    expect(symbols.callAssignments).toContainEqual(
+      expect.objectContaining({
+        varName: 'user',
+        calleeName: 'find_by_id',
+        receiverTypeName: 'UserRepository',
+      }),
+    );
+  });
 });

@@ -179,7 +179,15 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   csharp: { precision: 1.0, recall: 0.9 },
   kotlin: { precision: 0.6, recall: 0.2 },
   // Lower bars — resolution still maturing
-  rust: { precision: 0.6, recall: 0.2 },
+  // rust 1.0/0.8 (#1876): struct-field typeMap seeding + self./this.-prefix parity in the
+  //   shared receiver resolver fix `self.field.method()` dispatch; unit-struct-value and
+  //   `Type::assoc_fn()` typeMap heuristics plus Phase 8.2 return-type-map/callAssignments
+  //   propagation (mirroring the JS/TS extractor) fix trait-dispatch and constructor-typed
+  //   locals. Recall lifted from 58.3% (14/24) to 83.3% (20/24); precision stays 100%.
+  //   Remaining 4 false negatives (`main -> UserService.*`/`User.display_name`, typed from a
+  //   cross-file plain function call's return value) are blocked on a separate root cause —
+  //   Rust `use crate::…` paths never resolve to real files (#2007) — not on receiver typing.
+  rust: { precision: 1.0, recall: 0.8 },
   cpp: { precision: 0.6, recall: 0.2 },
   swift: { precision: 0.5, recall: 0.15 },
   // TODO(#872): raise haskell thresholds once call resolution lands
