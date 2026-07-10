@@ -223,6 +223,38 @@ describe('findCycles — speculative classification', () => {
     expect(confirmedOnly[0].nodes.sort()).toEqual(['a|src/a.js', 'b|src/b.js']);
     db.close();
   });
+
+  it('surfaces a confirmed sub-cycle even when a speculative edge merges it into a larger SCC', () => {
+    // Confirmed: a -> b -> c -> b (b <-> c is a real, closed cycle on its
+    // own). Speculative: c -> a merges {a,b,c} into one bigger SCC in the
+    // full-graph run, but must not swallow the genuine b <-> c cycle.
+    const db = createTestDb();
+    insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    insertNode(db, 'src/c.js', 'file', 'src/c.js', 0);
+    const fnA = insertNode(db, 'a', 'function', 'src/a.js', 1);
+    const fnB = insertNode(db, 'b', 'function', 'src/b.js', 1);
+    const fnC = insertNode(db, 'c', 'function', 'src/c.js', 1);
+    insertEdge(db, fnA, fnB, 'calls', 1.0, 0);
+    insertEdge(db, fnB, fnC, 'calls', 1.0, 0);
+    insertEdge(db, fnC, fnB, 'calls', 1.0, 0);
+    insertEdge(db, fnC, fnA, 'calls', 0.4, 1);
+
+    const all = findCycles(db, { fileLevel: false });
+    const confirmed = all.filter((c) => !c.speculative);
+    const speculative = all.filter((c) => c.speculative);
+    expect(confirmed).toHaveLength(1);
+    expect(confirmed[0].nodes.sort()).toEqual(['b|src/b.js', 'c|src/c.js']);
+    expect(speculative).toHaveLength(1);
+    expect(speculative[0].nodes.sort()).toEqual(['a|src/a.js', 'b|src/b.js', 'c|src/c.js']);
+
+    // The real b <-> c cycle must survive excludeSpeculative, not disappear
+    // along with the larger speculative-only grouping.
+    const confirmedOnly = findCycles(db, { fileLevel: false, excludeSpeculative: true });
+    expect(confirmedOnly).toHaveLength(1);
+    expect(confirmedOnly[0].nodes.sort()).toEqual(['b|src/b.js', 'c|src/c.js']);
+    db.close();
+  });
 });
 
 describe('formatCycles', () => {

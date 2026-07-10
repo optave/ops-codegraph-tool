@@ -58,6 +58,7 @@ import {
   CHA_TYPED_DISPATCH_CONFIDENCE,
   runChaPostPass,
 } from '../helpers.js';
+import { importNamePairs } from '../import-utils.js';
 import { getResolved, isBarrelFile, resolveBarrelExportCached } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -163,35 +164,6 @@ function importEdgeKind(imp: Import): string {
 }
 
 /**
- * Pairs each locally-bound name from an import statement with its original
- * (pre-rename) exported name — identical to the local name unless the
- * specifier renames a binding (`import { X as Y }`). Barrel tracing and
- * target-file symbol lookups must search using the *original* name — the
- * renamed local alias only exists in the importing file, not in the file
- * being imported from (#1730).
- *
- * Also reports, per name, whether it should be treated as type-only —
- * either because the whole statement is (`import type { X }`) or because
- * this specific specifier carries the inline modifier
- * (`import { type X }`, #1813).
- */
-function importNamePairs(
-  imp: Import,
-): Array<{ local: string; original: string; typeOnly: boolean }> {
-  const originalNameFor = new Map<string, string>();
-  for (const r of imp.renamedImports ?? []) originalNameFor.set(r.local, r.imported);
-  const typeOnlyNames = new Set(imp.typeOnlyNames ?? []);
-  return imp.names.map((name) => {
-    const local = name.replace(/^\*\s+as\s+/, '');
-    return {
-      local,
-      original: originalNameFor.get(local) ?? local,
-      typeOnly: imp.typeOnly === true || typeOnlyNames.has(local),
-    };
-  });
-}
-
-/**
  * Emit one symbol-level edge per named specifier in `imp`, pointing at the
  * specific target symbol (resolved through barrel chains when needed).
  *
@@ -284,6 +256,14 @@ function emitEdgesForImport(
   }
   if (imp.reexport && !imp.wildcardReexport) {
     emitNamedSymbolEdges(ctx, imp, resolvedPath, fileNodeId, allEdgeRows, 'reexports');
+  } else if (imp.reexport && imp.wildcardReexport) {
+    // A genuine wildcard needs to be distinguishable from a named reexport
+    // even when a *different* statement in the same file names specific
+    // symbols from this exact target — otherwise the query layer can't tell
+    // "only these symbols are re-exported" apart from "everything is
+    // re-exported, and these happen to also be individually named" (#1849
+    // review). See `collectReexportedSymbols` in domain/analysis/exports.ts.
+    allEdgeRows.push([fileNodeId, targetRow.id, 'reexports-wildcard', 1.0, 0, null, null]);
   }
 
   if (!imp.reexport && isBarrelFile(ctx, resolvedPath)) {
@@ -1015,7 +995,14 @@ function buildCallEdgesJS(
       importArtifactNames,
       importedOriginalNames,
     );
-    buildClassHierarchyEdges(lookup, relPath, symbols, importedNames, allEdgeRows);
+    buildClassHierarchyEdges(
+      lookup,
+      relPath,
+      symbols,
+      importedNames,
+      allEdgeRows,
+      importedOriginalNames,
+    );
   }
 }
 
@@ -1346,17 +1333,21 @@ function resolveFallbackTargets(
   // these positions is as likely to be a plain data reference
   // (`{ name: SOME_CONSTANT }`) as a real function/class, so drop any
   // other-kind match rather than fabricating a "calls" edge to a constant.
-  // `class` is included alongside function/method because `instanceof`'s
-  // right operand is always a class/constructor (#1784) — unlike the
-  // original #1771 object-literal case, which is function/method only.
-  // Applied once here, after every fallback tier above, so it covers
-  // whichever tier produced the match.
+  // `class` was added because `instanceof`'s right operand is always a
+  // class/constructor (#1784). The filter is keyed on `dynamicKind`, not on
+  // which site produced the call, so the #1771 object-literal and #1776 Lua
+  // sites also gain class-kind resolution as a side effect — not because
+  // either idiom commonly names a class. Applied once here, after every
+  // fallback tier above, so it covers whichever tier produced the match.
   if (call.dynamicKind === 'value-ref') {
     // `targets` is typed without `kind` when it flows straight through from
     // resolveCallTargets (call-resolver.ts's declared return type omits it),
     // but every underlying CallNodeLookup method actually populates it — the
-    // same gap the preQualifiedTargets cast above already works around.
-    targets = (targets as ReadonlyArray<{ id: number; file: string; kind?: string }>).filter(
+    // same gap the preQualifiedTargets cast above already works around. Kept
+    // as its own step (not folded into the filter callback) so the type-gap
+    // workaround and the actual filtering decision stay visually distinct.
+    const typedTargets = targets as ReadonlyArray<{ id: number; file: string; kind?: string }>;
+    targets = typedTargets.filter(
       (t) => t.kind === 'function' || t.kind === 'method' || t.kind === 'class',
     );
   }
@@ -1894,6 +1885,7 @@ function buildClassHierarchyEdges(
   symbols: ExtractorOutput,
   importedNames: ReadonlyMap<string, string>,
   allEdgeRows: EdgeRowTuple[],
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): void {
   for (const cls of symbols.classes) {
     const sourceRow = lookup
@@ -1908,6 +1900,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         EXTENDS_TARGET_KINDS,
+        importedOriginalNames,
       );
       for (const t of targets) {
         allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0, null, null]);
@@ -1921,6 +1914,7 @@ function buildClassHierarchyEdges(
         relPath,
         importedNames,
         IMPLEMENTS_TARGET_KINDS,
+        importedOriginalNames,
       );
       for (const t of targets) {
         allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0, null, null]);

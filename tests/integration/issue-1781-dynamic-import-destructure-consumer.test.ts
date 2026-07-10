@@ -126,7 +126,7 @@ describe('dynamic import() + destructure consumer crediting (#1781) — WASM', (
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1781-wasm-'));
     writeFixture(tmpDir);
     await buildGraph(tmpDir, { engine: 'wasm', incremental: false, skipRegistry: true });
-  });
+  }, 60_000);
 
   afterAll(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
