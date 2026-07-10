@@ -75,8 +75,8 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  fs.rmSync(tmpWasm, { recursive: true, force: true });
-  fs.rmSync(tmpNative, { recursive: true, force: true });
+  if (tmpWasm) fs.rmSync(tmpWasm, { recursive: true, force: true });
+  if (tmpNative) fs.rmSync(tmpNative, { recursive: true, force: true });
 });
 
 function getCallEdges(dbPath: string) {

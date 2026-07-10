@@ -18,7 +18,7 @@ import { findChild, nodeEndLine, nodeStartLine } from './helpers.js';
  * since it's a genuine global, not just within this file's call graph.
  * Mirrors `LUA_BUILTIN_GLOBALS` in `crates/codegraph-core/src/extractors/lua.rs`.
  */
-const LUA_BUILTIN_GLOBALS: Set<string> = new Set([
+export const LUA_BUILTIN_GLOBALS: Set<string> = new Set([
   'assert',
   'collectgarbage',
   'dofile',
