@@ -4,6 +4,7 @@ import type {
   CoreEdgeKind,
   CoreSymbolKind,
   DeadSubRole,
+  DynamicKind,
   EdgeKind,
   ExtendedSymbolKind,
   Role,
@@ -85,6 +86,20 @@ export const VALID_ROLES: readonly Role[] = [
   'leaf',
   ...DEAD_SUB_ROLES,
 ];
+
+// ── Dynamic call classification ──────────────────────────────────────
+// Dynamic kinds that cannot be resolved statically — a call site tagged with
+// one of these, and left with no resolved target, gets a confidence=0.0 sink
+// edge to its file node instead of being silently dropped. Shared by the
+// WASM/JS full-build path (`buildFileCallEdges`, stages/build-edges.ts) and
+// the incremental single-file rebuild path (`buildCallEdges`,
+// builder/incremental.ts) — both must emit the same sink edges (#1852).
+export const FLAG_ONLY_DYNAMIC_KINDS: ReadonlySet<DynamicKind> = new Set([
+  'eval',
+  'computed-key',
+  'reflection',
+  'unresolved-dynamic',
+]);
 
 // ── TypeScript type-erasure classification ──────────────────────────
 // Symbol kinds that are compile-time-only in TypeScript — interfaces and

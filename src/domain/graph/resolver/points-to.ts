@@ -20,9 +20,12 @@
  * a variable aliases an imported name, resolveCallTargets follows it).
  */
 import { DEFAULTS } from '../../../infrastructure/config.js';
+import { debug } from '../../../infrastructure/logger.js';
 import type {
   ArrayCallbackBinding,
   ArrayElemBinding,
+  Definition,
+  ExtractorOutput,
   FnRefBinding,
   ForOfBinding,
   ObjectPropBinding,
@@ -464,4 +467,108 @@ export function resolveViaPointsTo(callName: string, pts: PointsToMap): string[]
   const targets = pts.get(callName);
   if (!targets) return [];
   return [...targets].filter((t) => t !== callName);
+}
+
+// ── Per-file wiring (shared by build-edges.ts and incremental.ts) ──────────
+
+/**
+ * Map each function/method definition name to its ordered parameter names.
+ * Used to resolve argIndex → paramName for `buildParamFlowConstraints` and
+ * `buildSpreadArgConstraints` above.
+ */
+export function buildDefinitionParamsMap(
+  definitions: readonly Definition[],
+): Map<string, readonly string[]> {
+  const map = new Map<string, readonly string[]>();
+  for (const def of definitions) {
+    if ((def.kind === 'function' || def.kind === 'method') && def.children) {
+      const params = def.children.filter((c) => c.kind === 'parameter').map((c) => c.name);
+      if (params.length > 0) {
+        if (map.has(def.name)) {
+          // Two definitions share the same name (e.g. overloads, same-named method and
+          // function, or conditional redeclaration). Keep the first entry — using the
+          // wrong parameter list would map argIndex to the wrong parameter name.
+          debug(
+            `buildDefinitionParamsMap: duplicate def name "${def.name}" (kind=${def.kind}, line=${def.line}) — skipping; first entry kept`,
+          );
+        } else {
+          map.set(def.name, params);
+        }
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Build a per-file points-to map for Phase 8.3 alias resolution.
+ * Returns null fast when the file has no function-reference bindings.
+ *
+ * Only callable definitions (function/method) are seeded as concrete targets.
+ * Class and interface names are intentionally excluded — aliasing a constructor
+ * (`const Svc = MyService`) is an uncommon pattern that would require tracking
+ * `new`-expression flows separately from the alias chain. That is left to Phase
+ * 8.2 call-assignment propagation, which already handles constructor assignments.
+ *
+ * Shared by the WASM/JS full-build path (`buildCallEdgesJS`, stages/build-edges.ts)
+ * and the incremental single-file rebuild path (`buildCallEdges`, builder/incremental.ts)
+ * — both need the identical per-file pts map construction (#1852).
+ *
+ * @param maxIterations - fixed-point solver iteration cap, forwarded to
+ *   `buildPointsToMap`. Defaults to `DEFAULTS.analysis.pointsToMaxIterations`;
+ *   callers that already hold a resolved `CodegraphConfig` (e.g.
+ *   `buildCallEdgesJS` in stages/build-edges.ts) pass the user-configured value
+ *   through explicitly.
+ */
+export function buildPointsToMapForFile(
+  symbols: ExtractorOutput,
+  importedNames: Map<string, string>,
+  maxIterations: number = DEFAULTS.analysis.pointsToMaxIterations,
+): PointsToMap | null {
+  const hasThisCallBindings = !!symbols.thisCallBindings?.length;
+  if (
+    !symbols.fnRefBindings?.length &&
+    !symbols.paramBindings?.length &&
+    !symbols.arrayElemBindings?.length &&
+    !symbols.spreadArgBindings?.length &&
+    !symbols.forOfBindings?.length &&
+    !symbols.arrayCallbackBindings?.length &&
+    !symbols.objectRestParamBindings?.length &&
+    !symbols.objectPropBindings?.length &&
+    !hasThisCallBindings
+  )
+    return null;
+  const defNames = new Set(
+    symbols.definitions
+      .filter((d) => d.kind === 'function' || d.kind === 'method')
+      .map((d) => d.name),
+  );
+  const definitionParams = buildDefinitionParamsMap(symbols.definitions);
+
+  // Convert thisCallBindings into scoped fnRefBindings: `fn::this → namedCtx`.
+  // The scoped key `fn::this` is looked up when `this()` calls are resolved inside
+  // function `fn` — caller.callerName='fn', call.name='this' → scopedPtsKey='fn::this'.
+  let allFnRefBindings: readonly FnRefBinding[] = symbols.fnRefBindings ?? [];
+  if (hasThisCallBindings) {
+    const extra: FnRefBinding[] = (symbols.thisCallBindings ?? []).map((b) => ({
+      lhs: `${b.callee}::this`,
+      rhs: b.thisArg,
+    }));
+    allFnRefBindings = [...allFnRefBindings, ...extra];
+  }
+
+  return buildPointsToMap(
+    allFnRefBindings,
+    defNames,
+    importedNames,
+    symbols.paramBindings,
+    definitionParams,
+    symbols.arrayElemBindings,
+    symbols.spreadArgBindings,
+    symbols.forOfBindings,
+    symbols.arrayCallbackBindings,
+    symbols.objectRestParamBindings,
+    symbols.objectPropBindings,
+    maxIterations,
+  );
 }
