@@ -14,6 +14,8 @@
  *   consumer.ts       — imports Repository + Readable from moduleA/Base.ts;
  *                       UserRepository extends Repository implements Readable
  *   orphan.ts         — Orphan extends UniqueBase with NO import at all
+ *   renamed-import.ts — imports Repository as BaseRepo from moduleA/Base.ts;
+ *                       RenamedConsumer extends BaseRepo (renamed import)
  */
 
 import fs from 'node:fs';
@@ -128,7 +130,7 @@ describe.each(ENGINES)('issue #1812: hierarchy edge scoping (%s)', (engine) => {
     expect(matches[0]!.target_name).toBe('UniqueBase');
   });
 
-  it('extends: no-import fallback does NOT link Orphan -> decoy/UniqueBase.py (cross-language)', () => {
+  it('extends: no-import fallback does NOT link Orphan -> decoy/Repository.py UniqueBase (cross-language)', () => {
     const bogus = hierarchyEdges.find(
       (e) =>
         e.kind === 'extends' &&
@@ -136,5 +138,21 @@ describe.each(ENGINES)('issue #1812: hierarchy edge scoping (%s)', (engine) => {
         e.target_file === 'decoy/Repository.py',
     );
     expect(bogus).toBeUndefined();
+  });
+
+  it('extends: resolves RenamedConsumer -> moduleA/Base.ts Repository through a renamed import', () => {
+    // Greptile review: the imported file stores the symbol under its
+    // original exported name (`Repository`), not the local alias
+    // (`BaseRepo`) the heritage clause names — the edge must not be
+    // silently dropped for renamed imports (#1730).
+    const matches = hierarchyEdges.filter(
+      (e) => e.kind === 'extends' && e.source_name === 'RenamedConsumer',
+    );
+    expect(
+      matches,
+      `Expected exactly one extends edge from RenamedConsumer.\nActual:\n${JSON.stringify(hierarchyEdges, null, 2)}`,
+    ).toHaveLength(1);
+    expect(matches[0]!.target_file).toBe('moduleA/Base.ts');
+    expect(matches[0]!.target_name).toBe('Repository');
   });
 });

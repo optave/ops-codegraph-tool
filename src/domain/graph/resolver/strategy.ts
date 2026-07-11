@@ -381,7 +381,10 @@ function resolveExactGlobalMatch(
     .filter((candidate) => candidate.confidence >= 0.5);
   if (scored.length === 0) return [];
 
-  const bestConfidence = Math.max(...scored.map((candidate) => candidate.confidence));
+  const bestConfidence = scored.reduce(
+    (max, c) => (c.confidence > max ? c.confidence : max),
+    -Infinity,
+  );
   const best = scored.filter((candidate) => candidate.confidence === bestConfidence);
   return best.length === 1 ? [best[0]!.target] : [];
 }
