@@ -27,13 +27,22 @@ import { parseArgs } from 'node:util';
 
 import { ISSUES, extractAgentOutput, validateResult } from './token-benchmark-issues.js';
 import { getBenchmarkVersion } from './bench-version.js';
+import { srcImport } from './lib/bench-config.js';
 import { median, round1, timeMedian } from './lib/bench-timing.js';
+import { resolveCliNodeArgs } from './lib/cli-invocation.js';
 import { extractUsageMetrics, tallyToolCalls } from './lib/session-metrics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const benchVersion = getBenchmarkVersion(pkg.version, root);
+
+// Codegraph's own module tree lives nested under src/ (mirrors dist/'s
+// layout), not flat — see scripts/lib/bench-config.ts's srcImport() for the
+// same .ts-preferring resolution used by the other benchmark scripts.
+const SRC_DIR = path.join(root, 'src');
+
+const CLI_NODE_ARGS = resolveCliNodeArgs(root);
 
 // Redirect console.log to stderr so only JSON goes to stdout
 const origLog = console.log;
@@ -153,10 +162,9 @@ function checkoutCommit(nextjsDir, sha) {
 // ── Graph building ────────────────────────────────────────────────────────
 
 async function buildCodegraph(nextjsDir) {
-	const cliPath = path.join(root, 'src', 'cli.js');
 	console.error('Building codegraph graph for Next.js...');
 	const start = performance.now();
-	execFileSync('node', [cliPath, 'build', nextjsDir], {
+	execFileSync('node', [...CLI_NODE_ARGS, 'build', nextjsDir], {
 		cwd: nextjsDir,
 		stdio: 'pipe',
 		timeout: 600_000, // 10 min
@@ -189,12 +197,11 @@ function buildSessionOptions(mode, nextjsDir) {
 
 	if (mode === 'codegraph') {
 		const dbPath = path.join(nextjsDir, '.codegraph', 'graph.db');
-		const cliPath = path.join(root, 'src', 'cli.js');
 		options.mcpServers = {
 			codegraph: {
 				type: 'stdio',
 				command: 'node',
-				args: [cliPath, 'mcp', '-d', dbPath],
+				args: [...CLI_NODE_ARGS, 'mcp', '-d', dbPath],
 			},
 		};
 	}
@@ -310,19 +317,12 @@ async function runQueryBenchmarks(hubName, dbPath, fnDepsData, fnImpactData) {
  * Reuses the same codegraph APIs as the existing benchmark scripts.
  */
 async function runPerfBenchmarks(nextjsDir) {
-	const { pathToFileURL } = await import('node:url');
-	const { buildGraph } = await import(
-		pathToFileURL(path.join(root, 'src', 'builder.js')).href
-	);
+	const { buildGraph } = await import(srcImport(SRC_DIR, 'domain/graph/builder.js'));
 	const { fnDepsData, fnImpactData, statsData } = await import(
-		pathToFileURL(path.join(root, 'src', 'queries.js')).href
+		srcImport(SRC_DIR, 'domain/queries.js')
 	);
-	const { isNativeAvailable } = await import(
-		pathToFileURL(path.join(root, 'src', 'native.js')).href
-	);
-	const { isWasmAvailable } = await import(
-		pathToFileURL(path.join(root, 'src', 'parser.js')).href
-	);
+	const { isNativeAvailable } = await import(srcImport(SRC_DIR, 'infrastructure/native.js'));
+	const { isWasmAvailable } = await import(srcImport(SRC_DIR, 'domain/parser.js'));
 
 	const dbPath = path.join(nextjsDir, '.codegraph', 'graph.db');
 
