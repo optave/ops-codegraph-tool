@@ -163,6 +163,42 @@ export function attachConstructorTargets<T extends { id: number; file: string; k
   return augmented;
 }
 
+/**
+ * The distinct fixed-keyword constructor names across all supported
+ * languages — derived from `CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION` (excluding
+ * its `CTOR_NAME_SAME_AS_CLASS` entries, which `isConstructorMethodSuffix`
+ * checks separately via direct name equality) so the two stay in sync
+ * automatically as languages are added.
+ */
+const FIXED_CONSTRUCTOR_KEYWORDS = new Set(
+  [...CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION.values()].filter(
+    (v): v is string => v !== CTOR_NAME_SAME_AS_CLASS,
+  ),
+);
+
+/**
+ * True when `methodSuffix` denotes a constructor of `typeName` — either a
+ * fixed keyword (JS/TS "constructor", Python "__init__", PHP "__construct")
+ * or the class-name-identical convention (Java/C#/Dart/Groovy, where the
+ * suffix equals the type name itself).
+ *
+ * Used to exclude constructor-call edges (#1892's `attachConstructorTargets`
+ * additions, and `resolveThisDispatch`'s `super()`/`this()` constructor
+ * dispatch) from CHA virtual-dispatch expansion (`runChaPostPass` /
+ * `expandChaCall` in `builder/helpers.ts`, and the native
+ * `expand_cha_call`/`run_cha_post_pass` mirror). A constructor call is never
+ * polymorphically dispatched the way a virtual method call is — `new
+ * Circle()` always constructs exactly a `Circle`, never a `Circle` subclass,
+ * regardless of whether that subclass is separately instantiated elsewhere
+ * in the project. Without this guard, CHA's "expand to all instantiated
+ * subclass overrides" logic treated a constructor-attribution edge exactly
+ * like a regular qualified method call and fabricated edges from the
+ * *original* caller to *unrelated* subclasses' constructors.
+ */
+export function isConstructorMethodSuffix(typeName: string, methodSuffix: string): boolean {
+  return methodSuffix === typeName || FIXED_CONSTRUCTOR_KEYWORDS.has(methodSuffix);
+}
+
 // ── typeMap entry unwrapping ──────────────────────────────────────────────────
 
 /**

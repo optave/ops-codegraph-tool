@@ -44,6 +44,7 @@ import {
   patchDataflowResult,
 } from '../../../parser.js';
 import { computeConfidence } from '../../resolve.js';
+import { isConstructorMethodSuffix } from '../../resolver/strategy.js';
 import type { CallNodeLookup } from '../call-resolver.js';
 import { resolveDefinePropertyAccessorTarget } from '../call-resolver.js';
 import type { ChaContext } from '../cha.js';
@@ -880,6 +881,15 @@ function expandChaEdges(
     if (dotIdx === -1) continue;
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
+    // #1892: a constructor call is never polymorphically dispatched — `new
+    // Circle()` always constructs exactly a Circle, never an Ellipse, even
+    // though Ellipse extends Circle and is separately instantiated
+    // elsewhere. Without this guard, a constructor-attribution edge
+    // (`caller -> Circle.constructor`) looks identical to a regular
+    // qualified-method call edge here, and CHA fabricates edges from the
+    // *original* caller to unrelated subclasses' constructors. Mirrors the
+    // equivalent guard in builder/helpers.ts's runChaPostPass.
+    if (isConstructorMethodSuffix(typeName, methodSuffix)) continue;
 
     // BFS over the implementors map — handles multi-level hierarchies where
     // abstract/non-instantiated classes sit between the call-site type and
