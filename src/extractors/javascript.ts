@@ -832,14 +832,13 @@ function extractDestructuredDeclarators(
         if (binding) cjsRequireBindings.push(binding);
       }
     } else if (nameN && nameN.type === 'array_pattern') {
-      // `const [x, y] = ...` — emit a single constant node whose name is the
-      // full array pattern text (e.g. `[x, y]`), matching native engine behaviour.
-      definitions.push({
-        name: nameN.text,
-        kind: 'constant',
-        line: nodeStartLine(declNode),
-        endLine: nodeEndLine(declNode),
-      });
+      // `const [x, y] = ...` — one constant Definition per bound identifier (#1901).
+      extractArrayPatternBindings(
+        nameN,
+        nodeStartLine(declNode),
+        nodeEndLine(declNode),
+        definitions,
+      );
     }
   }
 }
@@ -1383,6 +1382,60 @@ function extractDestructuredBindings(
   }
 }
 
+/**
+ * Extract a per-element `constant` Definition from each bound identifier in an
+ * array-destructuring pattern (`const [a, b] = fn()`) — the array-pattern
+ * counterpart to `extractDestructuredBindings`'s per-property handling of
+ * object patterns (#1773). Each bound name becomes its own resolvable node
+ * (e.g. `a()`, `b()` calls can resolve to `a`/`b` directly), superseding the
+ * prior single-node-named-by-raw-pattern-text approach (`[a, b]` as one
+ * unresolvable node), which was never a real identifier and could never be a
+ * call target (#1901).
+ */
+function extractArrayPatternBindings(
+  pattern: TreeSitterNode,
+  line: number,
+  endLine: number,
+  definitions: Definition[],
+): void {
+  for (let i = 0; i < pattern.childCount; i++) {
+    const child = pattern.child(i);
+    if (!child) continue;
+    if (child.type === 'identifier') {
+      // [a, b] — plain positional binding
+      definitions.push({ name: child.text, kind: 'constant', line, endLine });
+    } else if (child.type === 'assignment_pattern') {
+      // [a = defaultValue] — the bound name is the left-hand identifier
+      const left = child.childForFieldName('left');
+      if (left && left.type === 'identifier') {
+        definitions.push({ name: left.text, kind: 'constant', line, endLine });
+      }
+    } else if (child.type === 'rest_pattern' || child.type === 'rest_element') {
+      // `rest_pattern`/`rest_element` has no named fields at all (verified against
+      // tree-sitter-javascript/typescript's node-types.json) — its single named
+      // child (after the `...` token) is whichever pattern the rest binds to.
+      // [...rest] binds a plain identifier; [...[a, b]] nests another array
+      // pattern whose own elements each need their own Definition. Scan all
+      // children (rather than assuming a fixed index) and recurse into a nested
+      // array_pattern instead of silently dropping it, matching extractParameters'
+      // own rest_pattern scan.
+      for (let j = 0; j < child.childCount; j++) {
+        const inner = child.child(j);
+        if (!inner) continue;
+        if (inner.type === 'identifier') {
+          definitions.push({ name: inner.text, kind: 'constant', line, endLine });
+          break;
+        } else if (inner.type === 'array_pattern') {
+          // [...[a, b]] — recurse so the nested pattern's own bound
+          // identifiers each get their own Definition.
+          extractArrayPatternBindings(inner, line, endLine, definitions);
+          break;
+        }
+      }
+    }
+  }
+}
+
 function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const isConst = node.text.startsWith('const ');
   for (let i = 0; i < node.childCount; i++) {
@@ -1436,15 +1489,9 @@ function handleVariableDeclarator(
   } else if (isConst && nameN.type === 'object_pattern' && !hasFunctionScopeAncestor(node)) {
     handleConstObjectPatternAssignment(node, nameN, valueN, ctx);
   } else if (isConst && nameN.type === 'array_pattern' && !hasFunctionScopeAncestor(node)) {
-    // Array destructuring: `const [x, y] = ...` — emit a single constant node
-    // whose name is the full array pattern text (e.g. `[x, y]`), matching
-    // native engine behaviour. Scope guard mirrors the object_pattern branch above.
-    ctx.definitions.push({
-      name: nameN.text,
-      kind: 'constant',
-      line: nodeStartLine(node),
-      endLine: nodeEndLine(node),
-    });
+    // Array destructuring: `const [x, y] = ...` — one constant Definition per
+    // bound identifier (#1901). Scope guard mirrors the object_pattern branch above.
+    extractArrayPatternBindings(nameN, nodeStartLine(node), nodeEndLine(node), ctx.definitions);
   }
 }
 
