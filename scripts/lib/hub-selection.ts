@@ -43,6 +43,13 @@ export const PINNED_HUB_CANDIDATES: readonly string[] = ['buildGraph', 'openDb',
 export interface HubTargets {
 	hub: string;
 	hubFile: string;
+	/**
+	 * Node at the median edge-count rank among kind-filtered candidates.
+	 * Informational only: it is recorded in benchmark output for visibility
+	 * but neither `query-benchmark.ts` nor `benchmark.ts` currently passes it
+	 * into a `benchDepths`/`benchQuery` call, so it drives no timed
+	 * measurement. See #2089 to wire it into an actual measurement or drop it.
+	 */
 	mid: string;
 	leaf: string;
 }
