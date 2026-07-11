@@ -3810,11 +3810,18 @@ fn collect_array_pattern_names(pattern: &Node, source: &[u8]) -> Vec<String> {
     names
 }
 
-/// Extract the identifier from a rest/spread element (`...rest` → `rest`)
+/// Extract the identifier from a rest/spread element (`...rest` → `rest`).
+/// Scans all children for the `identifier` node rather than assuming a fixed
+/// index — the `...` token itself is child 0, so indexing into a fixed slot
+/// silently returns the wrong node and drops the binding entirely (#1920).
+/// Mirrors `extract_array_pattern_bindings`'s own rest_pattern handling.
 fn extract_rest_identifier(rest_node: &Node, source: &[u8], names: &mut Vec<String>) {
-    if let Some(inner) = rest_node.child(0) {
-        if inner.kind() == "identifier" {
-            names.push(node_text(&inner, source).to_string());
+    for i in 0..rest_node.child_count() {
+        if let Some(inner) = rest_node.child(i) {
+            if inner.kind() == "identifier" {
+                names.push(node_text(&inner, source).to_string());
+                break;
+            }
         }
     }
 }
@@ -5156,6 +5163,53 @@ mod tests {
         assert_eq!(dyn_imports[0].source, "../../../../features/dataflow.js");
         assert!(dyn_imports[0].names.contains(&"buildDataflowVerticesFromMap".to_string()));
         assert!(dyn_imports[0].names.contains(&"buildDataflowEdges".to_string()));
+    }
+
+    // Regression tests for #1920: `extract_rest_identifier` indexed into a
+    // fixed child slot (0) that is actually the `...` token, not the bound
+    // identifier, so rest elements in both object- and array-pattern
+    // destructures of a dynamic `import()` were silently dropped.
+
+    #[test]
+    fn finds_dynamic_import_with_object_rest_destructuring() {
+        let s = parse_js("const { a, ...rest } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["a".to_string(), "rest".to_string()]);
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_shorthand_default_destructuring() {
+        let s = parse_js("const { a = 1 } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_mixed_plain_renamed_default_and_rest_destructuring() {
+        let s = parse_js("const { a, b: alias, c = 1, ...rest } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(
+            dyn_imports[0].names,
+            vec!["a".to_string(), "alias".to_string(), "c".to_string(), "rest".to_string()]
+        );
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated for the renamed specifier");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "alias");
+        assert_eq!(renamed[0].imported, "b");
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_array_rest_destructuring() {
+        let s = parse_js("const [a, ...rest] = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["a".to_string(), "rest".to_string()]);
     }
 
     #[test]

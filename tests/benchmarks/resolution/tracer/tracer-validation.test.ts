@@ -78,8 +78,12 @@ const SAME_FILE_THRESHOLDS: Record<string, number> = {
   groovy: 0.5,
 
   // Native — sed-injected trace support
-  c: 0.5,
-  cpp: 0.5,
+  // c/cpp use -finstrument-functions + dladdr() instead of sed injection,
+  // which can only resolve the compiled binary's own filename, never the
+  // originating source file — same-file recall is structurally stuck at 0%
+  // until that's fixed (see #2049).
+  c: 0.0,
+  cpp: 0.0,
   go: 0.5,
   rust: 0.5,
   csharp: 0.5,
