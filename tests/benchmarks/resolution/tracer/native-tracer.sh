@@ -323,7 +323,7 @@ CTRACE
     # generated bookkeeping crashes at runtime (see #1914). Compile it as a
     # separate, uninstrumented object and link it against the instrumented
     # fixture sources.
-    if ! $compiler -c trace_support.c -o trace_support.o 2>/dev/null; then
+    if ! $compiler -x c -c trace_support.c -o trace_support.o 2>/dev/null; then
         empty_result "$compiler trace_support.c compilation failed"
     fi
 
