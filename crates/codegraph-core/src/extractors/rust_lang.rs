@@ -403,6 +403,11 @@ fn extract_scoped_use_list(node: &Node, source: &[u8]) -> Vec<(String, Vec<Strin
     vec![(prefix, names)]
 }
 
+/// True if `name` matches a struct defined in this file (match_rust_node runs before this).
+fn is_known_unit_struct(name: &str, symbols: &FileSymbols) -> bool {
+    symbols.definitions.iter().any(|d| d.kind == "struct" && d.name == name)
+}
+
 fn extract_rust_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
     match type_node.kind() {
         "type_identifier" | "identifier" | "scoped_type_identifier" => Some(node_text(type_node, source)),
@@ -438,9 +443,17 @@ fn match_rust_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _d
                         // let x = TypeName;  — a bare capitalized identifier value binds
                         // a unit-struct instance (e.g. `let v = NameValidator;` for
                         // `struct NameValidator;`), not a reference to another variable (#1876).
+                        // Requiring a same-file `struct` definition excludes unit enum variants
+                        // like `None`/`Ok` (Option/Result, always in scope) and any custom
+                        // fieldless variant brought into scope via `use Enum::Variant` — those
+                        // also parse as a bare capitalized identifier but are values, not types
+                        // (Greptile review). A struct defined elsewhere in the crate is missed,
+                        // same as every other same-file-only heuristic in this extractor.
                         if value_node.kind() == "identifier" {
                             let type_name = node_text(&value_node, source);
-                            if type_name.starts_with(|c: char| c.is_uppercase()) {
+                            if type_name.starts_with(|c: char| c.is_uppercase())
+                                && is_known_unit_struct(type_name, symbols)
+                            {
                                 symbols.type_map.push(TypeMapEntry {
                                     name: node_text(&pattern, source).to_string(),
                                     type_name: type_name.to_string(),
@@ -674,6 +687,15 @@ mod tests {
         let s = parse_rust("struct NameValidator;\nfn f() { let v = NameValidator; }");
         let entry = s.type_map.iter().find(|e| e.name == "v").unwrap();
         assert_eq!(entry.type_name, "NameValidator");
+    }
+
+    #[test]
+    fn does_not_type_unit_enum_variant_as_unit_struct() {
+        // `None` (Option::None) parses identically to a unit-struct reference — a bare
+        // capitalized identifier — but is an enum variant, not a struct. Without a same-file
+        // `struct` definition for the name, it must not be typed (#1876 review).
+        let s = parse_rust("fn f() { let x = None; }");
+        assert!(s.type_map.iter().all(|e| e.name != "x"));
     }
 
     #[test]

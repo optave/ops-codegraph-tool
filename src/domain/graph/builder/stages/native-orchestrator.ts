@@ -44,6 +44,7 @@ import {
   patchDataflowResult,
 } from '../../../parser.js';
 import { computeConfidence, getWorkspacesForNative } from '../../resolve.js';
+import { isConstructorMethodSuffix } from '../../resolver/strategy.js';
 import type { CallNodeLookup } from '../call-resolver.js';
 import { resolveDefinePropertyAccessorTarget } from '../call-resolver.js';
 import type { ChaContext } from '../cha.js';
@@ -557,7 +558,7 @@ async function runDataflowVertexPass(
  * Used when the Rust addon doesn't include analysis persistence (older addon
  * version) or when analysis failed on the Rust side.
  */
-async function runPostNativeAnalysis(
+export async function runPostNativeAnalysis(
   ctx: PipelineContext,
   allFileSymbols: Map<string, ExtractorOutput>,
   changedFiles: string[] | undefined,
@@ -880,6 +881,15 @@ function expandChaEdges(
     if (dotIdx === -1) continue;
     const typeName = method_name.slice(0, dotIdx);
     const methodSuffix = method_name.slice(dotIdx + 1);
+    // #1892: a constructor call is never polymorphically dispatched — `new
+    // Circle()` always constructs exactly a Circle, never an Ellipse, even
+    // though Ellipse extends Circle and is separately instantiated
+    // elsewhere. Without this guard, a constructor-attribution edge
+    // (`caller -> Circle.constructor`) looks identical to a regular
+    // qualified-method call edge here, and CHA fabricates edges from the
+    // *original* caller to unrelated subclasses' constructors. Mirrors the
+    // equivalent guard in builder/helpers.ts's runChaPostPass.
+    if (isConstructorMethodSuffix(typeName, methodSuffix)) continue;
 
     // BFS over the implementors map — handles multi-level hierarchies where
     // abstract/non-instantiated classes sit between the call-site type and
@@ -2036,14 +2046,19 @@ async function backfillNativeDroppedFiles(
 }
 
 /**
- * One-hop reverse dependents of `files`: files with an edge whose TARGET is a
- * node inside one of `files`. The Rust incremental pipeline's own reverse-dep
- * cascade (`reconnect_reverse_dep_edges` in detect_changes.rs) re-creates
- * edges FROM these files INTO the changed files whenever the changed files'
- * nodes are purged + reinserted with new IDs — without ever writing
- * `technique` — so `backfillEdgeTechniquesAfterNativeOrchestrator` must reach
- * them too, not just `changedFiles` itself (#1744). Mirrors the one-hop
- * `findReverseDeps` query in `builder/incremental.ts`.
+ * One-hop reverse dependents of `files`: files with a `calls` edge whose
+ * TARGET is a node inside one of `files`. The Rust incremental pipeline's own
+ * reverse-dep cascade (`reconnect_reverse_dep_edges` in detect_changes.rs)
+ * re-creates edges FROM these files INTO the changed files whenever the
+ * changed files' nodes are purged + reinserted with new IDs — without ever
+ * writing `technique` — so `backfillEdgeTechniquesAfterNativeOrchestrator`
+ * must reach them too, not just `changedFiles` itself (#1744). Mirrors the
+ * one-hop `findReverseDeps` query in `builder/incremental.ts`.
+ *
+ * Scoped to `e.kind = 'calls'` since that's the only edge kind the caller's
+ * backfill UPDATE touches — including other edge kinds (`imports`,
+ * `reexports`, `inherits`, ...) would only widen `scopeFiles` with files that
+ * have nothing for the UPDATE to change.
  *
  * Chunked to stay within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (999 on older
  * builds).
@@ -2059,7 +2074,7 @@ function findOneHopReverseDepFiles(db: BetterSqlite3Database, files: readonly st
         `SELECT DISTINCT n_src.file AS file FROM edges e
          JOIN nodes n_src ON e.source_id = n_src.id
          JOIN nodes n_tgt ON e.target_id = n_tgt.id
-         WHERE n_tgt.file IN (${placeholders}) AND n_src.kind != 'directory'`,
+         WHERE e.kind = 'calls' AND n_tgt.file IN (${placeholders}) AND n_src.kind != 'directory'`,
       )
       .all(...chunk) as Array<{ file: string }>;
     for (const r of rows) found.add(r.file);
@@ -2146,7 +2161,7 @@ function backfillEdgeTechniquesAfterNativeOrchestrator(
  * corruption. On setup failure, falls back to reopening better-sqlite3 and
  * leaves ctx.nativeDb undefined so the caller falls through to the JS pipeline.
  */
-function openNativeDatabase(ctx: PipelineContext): void {
+export function openNativeDatabase(ctx: PipelineContext): void {
   if (ctx.nativeDb || !ctx.nativeAvailable) return;
   const native = loadNative();
   if (!native?.NativeDatabase) return;

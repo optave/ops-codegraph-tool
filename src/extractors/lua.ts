@@ -18,7 +18,7 @@ import { findChild, nodeEndLine, nodeStartLine } from './helpers.js';
  * since it's a genuine global, not just within this file's call graph.
  * Mirrors `LUA_BUILTIN_GLOBALS` in `crates/codegraph-core/src/extractors/lua.rs`.
  */
-const LUA_BUILTIN_GLOBALS: Set<string> = new Set([
+export const LUA_BUILTIN_GLOBALS: Set<string> = new Set([
   'assert',
   'collectgarbage',
   'dofile',
@@ -258,12 +258,12 @@ function handleLuaFunctionCall(node: TreeSitterNode, ctx: ExtractorOutput): void
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
 
-  // load(chunk) / loadstring(chunk) / dofile(...) — dynamic code execution;
-  // undecidable statically. Mirrors handle_lua_function_call's `load` arm in
-  // crates/codegraph-core/src/extractors/lua.rs.
+  // load(chunk) / loadstring(chunk) / loadfile(...) / dofile(...) — dynamic
+  // code execution; undecidable statically. Mirrors handle_lua_function_call's
+  // `load` arm in crates/codegraph-core/src/extractors/lua.rs.
   if (nameNode.type === 'identifier') {
     const ident = nameNode.text;
-    if (ident === 'load' || ident === 'loadstring' || ident === 'dofile') {
+    if (ident === 'load' || ident === 'loadstring' || ident === 'loadfile' || ident === 'dofile') {
       ctx.calls.push({
         name: '<dynamic:eval>',
         line: node.startPosition.row + 1,

@@ -1,4 +1,4 @@
-import { openReadonlyOrFail, resolveConfigForDbPath } from '../db/index.js';
+import { openReadonlyOrFail, resolveDbConfig } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { findCycles } from '../domain/graph/cycles.js';
 import { DEFAULTS } from '../infrastructure/config.js';
@@ -485,7 +485,7 @@ export function manifestoData(
   // handle at that point would never be closed). Derives rootDir from
   // customDbPath (not process.cwd()) so `--db /other/repo/...` reads that
   // repo's .codegraphrc.json (issue #1881).
-  const config = opts.config || resolveConfigForDbPath(customDbPath);
+  const config = opts.config || resolveDbConfig(customDbPath);
   const db = openReadonlyOrFail(
     customDbPath,
     config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,

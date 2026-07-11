@@ -58,7 +58,7 @@ installs two git hooks:
 
 ## Project Structure
 
-Source is TypeScript under `src/`, compiled via `tsup`/`tsc`; the native engine
+Source is TypeScript under `src/`, compiled via `tsc`; the native engine
 lives in `crates/codegraph-core/` (Rust, via napi-rs) and mirrors the `src/`
 tree module-for-module. `src/` is organized by layer, not by language:
 
@@ -327,9 +327,10 @@ configuration system, credential resolution, MCP isolation model) see
 
 ## WASM Grammars
 
-`.wasm` grammar files are **not** committed to git — they're built from
+Most `.wasm` grammar files are **not** committed to git — they're built from
 `devDependencies` into `grammars/` automatically via the `prepare` npm script
-(`npm run build:wasm`), which runs on every `npm install`. Each git worktree
+(`npm run build:wasm`), which runs on every `npm install`; pinned exceptions
+such as `grammars/tree-sitter-erlang.wasm` remain tracked. Each git worktree
 therefore needs its own `npm install` before its `grammars/` directory is
 populated (see "Working in multiple git worktrees?" above; `npm run doctor`
 detects a missing or incomplete `grammars/`).

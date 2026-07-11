@@ -45,21 +45,28 @@ impl SymbolExtractor for JsExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_prototype_methods);
         // call_assignments runs after type_map is populated (needs receiver types)
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_call_assignments);
-        // #1893: same-file get/set accessor property reads/writes → calls edges.
-        // Runs after type_map is populated (needs receiver types for the
-        // `varName.prop` case) and after handle_method_def has run (the
-        // registry re-derives accessor names directly from the AST, so source
-        // order relative to match_js_node doesn't matter for correctness).
-        let local_accessors = collect_local_accessors(&tree.root_node(), source);
-        walk_tree(&tree.root_node(), source, &mut symbols, |node, source, symbols, _depth| {
-            handle_accessor_property_read(node, source, symbols, &local_accessors)
-        });
         // Phase 8.3c–8.3f: points-to bindings (params, this-rebinding, arrays,
         // spread, for-of, object rest/props) for the pts constraint solver.
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_pts_bindings);
         // Collapse duplicate keys accumulated during the tree walks (O(n)).
         dedup_type_map(&mut symbols.type_map);
         dedup_type_map(&mut symbols.return_type_map);
+        // #1893: same-file get/set accessor property reads/writes → calls edges.
+        // Runs after `dedup_type_map` (needs the *arbitrated* highest-confidence
+        // receiver type for the `varName.prop` case) and after handle_method_def
+        // has run (the registry re-derives accessor names directly from the AST,
+        // so source order relative to match_js_node doesn't matter for
+        // correctness). `type_map` is a raw append-only Vec until dedup_type_map
+        // runs (see set_type_map_entry's doc comment) — reading it beforehand, as
+        // match_js_call_assignments above does, risks picking a lower-confidence,
+        // stale entry for a name that got pushed more than once. The TS mirror
+        // doesn't have this hazard: `typeMap` is a `Map` arbitrated on every write
+        // via `setTypeMapEntry`, so `.get()` is always already resolved — ordering
+        // this walk after dedup keeps both engines reading the same resolved view.
+        let local_accessors = collect_local_accessors(&tree.root_node(), source);
+        walk_tree(&tree.root_node(), source, &mut symbols, |node, source, symbols, _depth| {
+            handle_accessor_property_read(node, source, symbols, &local_accessors)
+        });
         symbols
     }
 }
@@ -485,10 +492,7 @@ fn is_eligible_object_literal_declarator(declarator: &Node) -> bool {
     if declarator.kind() != "variable_declarator" { return false; }
     let Some(name_n) = declarator.child_by_field_name("name") else { return false };
     if name_n.kind() != "identifier" { return false; }
-    find_parent_of_types(declarator, &[
-        "function_declaration", "arrow_function", "function_expression",
-        "method_definition", "generator_function_declaration", "generator_function",
-    ]).is_none()
+    find_parent_of_types(declarator, &VAR_DECL_FN_SCOPE_TYPES).is_none()
 }
 
 /// True when `method_node` (a method_definition) is a shorthand method whose enclosing object
@@ -1491,6 +1495,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let is_const = node.child(0)
         .map(|c| node_text(&c, source) == "const")
         .unwrap_or(false);
+    let in_function_scope = find_parent_of_types(node, &VAR_DECL_FN_SCOPE_TYPES).is_some();
     for i in 0..node.child_count() {
         let Some(declarator) = node.child(i) else { continue };
         if declarator.kind() != "variable_declarator" { continue; }
@@ -1498,7 +1503,6 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         let value_n = declarator.child_by_field_name("value");
         let (Some(name_n), Some(value_n)) = (name_n, value_n) else { continue };
         let vt = value_n.kind();
-        let in_function_scope = find_parent_of_types(node, &VAR_DECL_FN_SCOPE_TYPES).is_some();
 
         if vt == "arrow_function" || vt == "function_expression" || vt == "function" || vt == "generator_function" {
             let children = extract_js_parameters(&value_n, source);
@@ -1576,7 +1580,9 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             // Array destructuring: `const [x, y] = ...` — one constant Definition per
             // bound identifier (#1901). Scope guard mirrors the object_pattern branch above.
             extract_array_pattern_bindings(&name_n, source, start_line(node), end_line(node), &mut symbols.definitions);
-        } else if !is_const && value_n.kind() == "object" && name_n.kind() == "identifier" && !in_function_scope {
+        } else if !is_const && value_n.kind() == "object"
+            && is_eligible_object_literal_declarator(&declarator)
+        {
             // `let`/`var` object literals get no "constant" definition of their own (mirrors
             // WASM extractLetVarObjLiteralDeclarators) but still need their function/method
             // properties extracted — inline here, like the `const` branch above, so native and
@@ -2525,6 +2531,11 @@ const HTTP_VERB_CALLEES: &[&str] = &[
 /// separate `CALLBACK_ACCEPTING_CALLEES` entry needed); only the arg at its
 /// listed index is eligible.
 ///
+/// Invariant: this map and `CALLBACK_ACCEPTING_CALLEES` must stay disjoint.
+/// A callee name present in both would have its any-position intent silently
+/// narrowed to the single listed index (positional wins — see the gate in
+/// `extract_callback_reference_calls`), with no error or warning.
+///
 /// Name-based, not receiver-typed, so it can't distinguish `Array.from(x,
 /// mapFn)` from an unrelated `.from(x, y)` shaped differently (e.g.
 /// `Buffer.from(data, encoding)`) — that residual risk is far narrower than
@@ -2577,9 +2588,12 @@ fn first_arg_is_string_literal(args_node: &Node) -> bool {
 ///
 /// Name-keyed rather than receiver-typed, consistent with the rest of this
 /// gate (see `positional_callback_arg_index`'s doc comment for the same
-/// tradeoff) — a same-named function/method elsewhere in the file with an
-/// unrelated non-function-shaped parameter at the same index is a residual,
-/// accepted risk.
+/// tradeoff) — but unlike a plain name-keyed union, a position is only kept
+/// when *every* same-named declaration in the file agrees it is
+/// function-shaped (see `collect_callback_param_shapes`), so two unrelated
+/// same-named declarations with different signatures (e.g. same-named
+/// methods on two different classes) cancel out instead of merging into a
+/// false positive.
 ///
 /// Mirrors `CallbackParamShapes` in `src/extractors/javascript.ts`.
 type CallbackParamShapes = HashMap<String, HashSet<usize>>;
@@ -2692,6 +2706,9 @@ fn collect_function_shaped_type_aliases(root: &Node, source: &[u8]) -> HashMap<S
 /// parameter positions of every `function`/method declaration are
 /// function-shaped — the callee-definition side of recognizing identifier
 /// arguments to arbitrary user-defined higher-order functions (issue #1845).
+/// Also covers same-file `const f = (...) => ...` / `const f = function(...) {}`
+/// assignments, which are otherwise invisible to a walk that only looks at
+/// `function_declaration`/`method_definition` nodes.
 ///
 /// Same-file only: a call site whose callee is defined in another file has no
 /// entry here and falls back to the existing name/position allowlist.
@@ -2699,20 +2716,21 @@ fn collect_function_shaped_type_aliases(root: &Node, source: &[u8]) -> HashMap<S
 /// Mirrors `collectCallbackParamShapes` in `src/extractors/javascript.ts`.
 fn collect_callback_param_shapes(root: &Node, source: &[u8]) -> CallbackParamShapes {
     let alias_shapes = collect_function_shaped_type_aliases(root, source);
-    let mut shapes: CallbackParamShapes = HashMap::new();
+    // One entry per same-named declaration; intersected below so a bare name
+    // shared by two unrelated declarations only keeps a position that every
+    // declaration agrees is function-shaped.
+    let mut declarations: HashMap<String, Vec<HashSet<usize>>> = HashMap::new();
 
-    fn record_function_params(
-        name_node: Option<Node>,
+    fn function_shaped_param_indices(
         fn_node: &Node,
         source: &[u8],
         alias_shapes: &HashMap<String, bool>,
-        shapes: &mut CallbackParamShapes,
-    ) {
-        let Some(name_node) = name_node else { return };
+    ) -> HashSet<usize> {
+        let mut indices = HashSet::new();
         let params_node = fn_node
             .child_by_field_name("parameters")
             .or_else(|| find_child(fn_node, "formal_parameters"));
-        let Some(params_node) = params_node else { return };
+        let Some(params_node) = params_node else { return indices };
 
         let mut arg_index: usize = 0;
         for child in iter_children(&params_node, PUNCTUATION_TOKENS) {
@@ -2734,15 +2752,28 @@ fn collect_callback_param_shapes(root: &Node, source: &[u8]) -> CallbackParamSha
             if kind == "required_parameter" || kind == "optional_parameter" {
                 if let Some(type_anno) = find_child(&child, "type_annotation") {
                     if is_function_shaped_type_annotation(&type_anno, source, alias_shapes) {
-                        shapes
-                            .entry(node_text(&name_node, source).to_string())
-                            .or_default()
-                            .insert(arg_index);
+                        indices.insert(arg_index);
                     }
                 }
             }
             arg_index += 1;
         }
+        indices
+    }
+
+    fn record_declaration(
+        name_node: Option<Node>,
+        fn_node: &Node,
+        source: &[u8],
+        alias_shapes: &HashMap<String, bool>,
+        declarations: &mut HashMap<String, Vec<HashSet<usize>>>,
+    ) {
+        let Some(name_node) = name_node else { return };
+        let indices = function_shaped_param_indices(fn_node, source, alias_shapes);
+        declarations
+            .entry(node_text(&name_node, source).to_string())
+            .or_default()
+            .push(indices);
     }
 
     fn walk(
@@ -2750,28 +2781,52 @@ fn collect_callback_param_shapes(root: &Node, source: &[u8]) -> CallbackParamSha
         source: &[u8],
         depth: usize,
         alias_shapes: &HashMap<String, bool>,
-        shapes: &mut CallbackParamShapes,
+        declarations: &mut HashMap<String, Vec<HashSet<usize>>>,
     ) {
         if depth >= MAX_WALK_DEPTH {
             return;
         }
         match node.kind() {
             "function_declaration" | "generator_function_declaration" => {
-                record_function_params(node.child_by_field_name("name"), node, source, alias_shapes, shapes);
+                record_declaration(node.child_by_field_name("name"), node, source, alias_shapes, declarations);
             }
             "method_definition" => {
-                record_function_params(node.child_by_field_name("name"), node, source, alias_shapes, shapes);
+                record_declaration(node.child_by_field_name("name"), node, source, alias_shapes, declarations);
+            }
+            "variable_declarator" => {
+                if let (Some(name_node), Some(value_node)) = (
+                    node.child_by_field_name("name"),
+                    node.child_by_field_name("value"),
+                ) {
+                    let vt = value_node.kind();
+                    if name_node.kind() == "identifier"
+                        && (vt == "arrow_function" || vt == "function_expression" || vt == "generator_function")
+                    {
+                        record_declaration(Some(name_node), &value_node, source, alias_shapes, declarations);
+                    }
+                }
             }
             _ => {}
         }
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
-                walk(&child, source, depth + 1, alias_shapes, shapes);
+                walk(&child, source, depth + 1, alias_shapes, declarations);
             }
         }
     }
-    walk(root, source, 0, &alias_shapes, &mut shapes);
+    walk(root, source, 0, &alias_shapes, &mut declarations);
 
+    let mut shapes: CallbackParamShapes = HashMap::new();
+    for (name, per_decl_indices) in declarations {
+        let mut iter = per_decl_indices.into_iter();
+        let Some(mut intersected) = iter.next() else { continue };
+        for other in iter {
+            intersected.retain(|idx| other.contains(idx));
+        }
+        if !intersected.is_empty() {
+            shapes.insert(name, intersected);
+        }
+    }
     shapes
 }
 
@@ -3096,13 +3151,18 @@ fn extract_array_pattern_bindings(
                 }
             }
             "rest_pattern" | "rest_element" => {
-                // The identifier is at child index 1 (index 0 is the `...`
-                // token itself) — mirroring extract_js_parameters' own
-                // rest_pattern handling, which scans all children for the
-                // identifier rather than assuming a fixed index.
+                // `rest_pattern`/`rest_element` has no named fields at all (verified
+                // against tree-sitter-javascript/typescript's node-types.json) — its
+                // single named child (after the `...` token) is whichever pattern the
+                // rest binds to. [...rest] binds a plain identifier; [...[a, b]] nests
+                // another array pattern whose own elements each need their own
+                // Definition. Scan all children (rather than assuming a fixed index)
+                // and recurse into a nested array_pattern instead of silently
+                // dropping it, mirroring extract_js_parameters' own rest_pattern scan.
                 for j in 0..child.child_count() {
-                    if let Some(inner) = child.child(j) {
-                        if inner.kind() == "identifier" {
+                    let Some(inner) = child.child(j) else { continue };
+                    match inner.kind() {
+                        "identifier" => {
                             definitions.push(Definition {
                                 name: node_text(&inner, source).to_string(),
                                 kind: "constant".to_string(),
@@ -3116,6 +3176,13 @@ fn extract_array_pattern_bindings(
                             });
                             break;
                         }
+                        "array_pattern" => {
+                            // [...[a, b]] — recurse so the nested pattern's own
+                            // bound identifiers each get their own Definition.
+                            extract_array_pattern_bindings(&inner, source, line, end_line, definitions);
+                            break;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3602,13 +3669,19 @@ fn find_parent_class_no_fn_boundary(node: &Node, source: &[u8]) -> Option<String
 
 /// Wrapper node kinds that can sit between a dynamic `import()` call and its
 /// enclosing `variable_declarator` without changing which value gets bound —
-/// `await`, redundant parentheses, and TypeScript `as` casts. Real-world call
-/// sites often combine several of these, e.g.
+/// `await`, redundant parentheses, and TypeScript `as`/`satisfies` casts.
+/// Real-world call sites often combine several of these, e.g.
 /// `const { X } = (await import('./mod.js')) as { X: Fn }` nests
 /// await_expression → parenthesized_expression → as_expression before
-/// reaching the declarator (#1781).
-const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] =
-    &["await_expression", "parenthesized_expression", "as_expression"];
+/// reaching the declarator (#1781). `satisfies_expression` (TS 4.9+
+/// `... satisfies { X: Fn }`) is structurally identical to `as_expression`
+/// here — Greptile follow-up, mirrors the TS extractor.
+const DYNAMIC_IMPORT_WRAPPER_KINDS: &[&str] = &[
+    "await_expression",
+    "parenthesized_expression",
+    "as_expression",
+    "satisfies_expression",
+];
 
 /// Extract named bindings from a dynamic `import()` call expression.
 /// Handles: `const { a, b } = await import(...)`, `const mod = await import(...)`,
@@ -3684,24 +3757,42 @@ fn collect_object_pattern_names(
                     }
                     _ => None,
                 };
-                match (local_node, key) {
-                    (Some(local_node), Some(key)) => {
+                // A quoted (`{ 'foo-bar': local }`) or computed
+                // (`{ ['foo-bar']: local }`) key's raw text includes the
+                // quotes/brackets — using it verbatim as `imported` makes the
+                // resolver look for an export literally named `'foo-bar'`,
+                // which never matches (Greptile, #1824 follow-up). Resolve to
+                // the clean export name the same way resolve_computed_key_name
+                // already does for object-literal keys.
+                let key_name: Option<String> = key.and_then(|key| match key.kind() {
+                    "computed_property_name" => resolve_computed_key_name(&key, source),
+                    "string" => extract_string_fragment(&key, source).map(String::from),
+                    "string_fragment" => Some(node_text(&key, source).to_string()),
+                    _ => Some(node_text(&key, source).to_string()),
+                });
+                match (local_node, key_name) {
+                    (Some(local_node), key_name) => {
+                        // The local binding is always trackable on its own,
+                        // even when the key isn't statically resolvable (e.g.
+                        // `{ [Symbol()]: local }`) — only the rename-pair
+                        // mapping is skipped in that case.
                         let local_text = node_text(&local_node, source).to_string();
-                        let key_text = node_text(&key, source).to_string();
-                        if local_text != key_text {
-                            renamed_out.push(RenamedImport {
-                                local: local_text.clone(),
-                                imported: key_text,
-                            });
+                        if let Some(key_name) = key_name {
+                            if local_text != key_name {
+                                renamed_out.push(RenamedImport {
+                                    local: local_text.clone(),
+                                    imported: key_name,
+                                });
+                            }
                         }
                         names.push(local_text);
                     }
-                    (None, Some(key)) => {
+                    (None, Some(key_name)) => {
                         // Nested pattern (`{ foo: { nested } }`) or other
                         // unsupported value shape — no single local binding
                         // to extract; fall back to the key so the specifier
                         // isn't dropped entirely.
-                        names.push(node_text(&key, source).to_string());
+                        names.push(key_name);
                     }
                     _ => {}
                 }
@@ -4827,6 +4918,25 @@ mod tests {
     }
 
     #[test]
+    fn extracts_nested_array_pattern_rest_bindings_as_own_definitions() {
+        // Greptile review (#2038): a rest element that itself nests another
+        // array pattern (`...[a, b]`) must recurse into it rather than
+        // silently skipping — `rest_pattern`/`rest_element` has no "name"
+        // field in the grammar, so the previous single-identifier check
+        // dropped the nested bindings entirely.
+        let s = parse_js("const [x, ...[a, b]] = computeList();");
+        for name in ["x", "a", "b"] {
+            let def = s
+                .definitions
+                .iter()
+                .find(|d| d.name == name)
+                .unwrap_or_else(|| panic!("{name} should be extracted as a definition"));
+            assert_eq!(def.kind, "constant");
+        }
+        assert!(!s.definitions.iter().any(|d| d.name.starts_with('[')));
+    }
+
+    #[test]
     fn const_alias_gets_both_definition_and_fn_ref_binding() {
         // The new "constant" Definition for an identifier-aliased const must not
         // come at the expense of the existing pts fn_ref_binding tracking — the
@@ -4977,6 +5087,50 @@ mod tests {
     }
 
     #[test]
+    fn strips_quotes_from_string_literal_destructuring_key() {
+        // { 'foo-bar': local } — the key's raw text includes quotes; using it
+        // verbatim as `imported` would make the resolver look for an export
+        // literally named `'foo-bar'`, which never matches (Greptile follow-up).
+        let s = parse_js("const { 'foo-bar': local } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["local".to_string()]);
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "local");
+        assert_eq!(renamed[0].imported, "foo-bar");
+    }
+
+    #[test]
+    fn unwraps_computed_string_literal_destructuring_key() {
+        let s = parse_js("const { ['foo-bar']: local } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["local".to_string()]);
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "local");
+        assert_eq!(renamed[0].imported, "foo-bar");
+    }
+
+    #[test]
+    fn tracks_local_binding_for_non_string_computed_key_without_rename_pair() {
+        // `[Symbol()]` has no statically resolvable export name — the local
+        // binding must still be tracked, just without a renamed_imports entry.
+        let s = parse_js("const { [Symbol()]: local } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["local".to_string()]);
+        assert!(dyn_imports[0].renamed_imports.is_none());
+    }
+
+    #[test]
     fn finds_dynamic_import_with_mixed_destructuring() {
         let s = parse_js("const { a, buildGraph: fromBarrel, c } = await import('./mod.js');");
         let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
@@ -5041,6 +5195,17 @@ mod tests {
     #[test]
     fn finds_dynamic_import_with_as_cast_destructuring() {
         let s = parse_ts("const { a, b } = await import('./foo.js') as { a: Fn; b: Fn };");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_satisfies_cast_destructuring() {
+        // TS 4.9+ `satisfies` is structurally identical to `as` here (Greptile
+        // follow-up to #1781) — same walk-up gap would otherwise reproduce.
+        let s = parse_ts("const { a, b } = await import('./foo.js') satisfies { a: Fn; b: Fn };");
         let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
         assert_eq!(dyn_imports.len(), 1);
         assert!(dyn_imports[0].names.contains(&"a".to_string()));
@@ -5738,6 +5903,64 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_identifier_arg_via_arrow_function_hof_issue_1845() {
+        let s = parse_ts(
+            "type UserProcessor = (user: string) => void;
+             const processEach = (users: string[], fn: UserProcessor): void => {
+               for (const user of users) fn(user);
+             };
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "arrow-function HOF must recognize logUser; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn recognizes_identifier_arg_via_function_expression_hof_issue_1845() {
+        let s = parse_ts(
+            "type UserProcessor = (user: string) => void;
+             const processEach = function (users: string[], fn: UserProcessor): void {
+               for (const user of users) fn(user);
+             };
+             function logUser(user: string): void {}
+             function runDemo(users: string[]): void {
+               processEach(users, logUser);
+             }",
+        );
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "logUser"),
+            "function-expression HOF must recognize logUser; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
+    fn does_not_merge_callback_shapes_across_unrelated_same_named_methods_issue_1845() {
+        let s = parse_ts(
+            "class Uploader {
+               process(data: string, cb: (result: string) => void): void {}
+             }
+             class Reporter {
+               process(users: string[]): void {}
+             }
+             function runDemo(reporter: Reporter, users: string[]): void {
+               reporter.process(users);
+             }",
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "users"),
+            "unrelated same-named methods must not merge callback shapes; got: {:?}",
+            s.calls,
+        );
+    }
+
+    #[test]
     fn no_identifier_callback_for_cache_or_map_get() {
         // Identifier-arg counterpart to `no_member_expr_callback_for_cache_or_map_get`:
         // `cache.get(someKey)` shares the verb name `get` with Express routes
@@ -5802,6 +6025,39 @@ mod tests {
             !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
             "Uint8Array.from(arr, mapCallback) must not emit `arr`; got: {:?}",
             s.calls,
+        );
+    }
+
+    #[test]
+    fn applies_array_from_positional_gate_to_member_expression_args_too() {
+        // Mirrors the TS test of the same intent: the old member_expression
+        // guard was an explicit `&& memberExprArgsAllowed` inline check; the
+        // positional restructuring moved that responsibility to the shared
+        // early-return above the loop. `Array.from(arr, obj.mapper)` exercises
+        // that a member_expression at the positional index (1) is still
+        // emitted with its receiver, while one at index 0 is not.
+        let s = parse_js("Array.from(arr, obj.mapper);");
+        assert!(
+            s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapper" && c.receiver.as_deref() == Some("obj")),
+            "Array.from(arr, obj.mapper) must emit mapper with receiver obj; got: {:?}",
+            s.calls,
+        );
+        assert!(
+            !s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arr"),
+            "Array.from(arr, obj.mapper) must not emit `arr` (index 0); got: {:?}",
+            s.calls,
+        );
+
+        let s2 = parse_js("Array.from(obj.arrayLike, mapCallback);");
+        assert!(
+            !s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "arrayLike"),
+            "Array.from(obj.arrayLike, mapCallback) must not emit `arrayLike` (index 0); got: {:?}",
+            s2.calls,
+        );
+        assert!(
+            s2.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "mapCallback"),
+            "Array.from(obj.arrayLike, mapCallback) must emit mapCallback; got: {:?}",
+            s2.calls,
         );
     }
 

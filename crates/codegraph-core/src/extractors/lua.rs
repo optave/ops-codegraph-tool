@@ -157,10 +157,11 @@ fn handle_lua_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbol
         None => return,
     };
 
-    // load(chunk) / loadstring(chunk) / dofile — dynamic code execution; always undecidable
+    // load(chunk) / loadstring(chunk) / loadfile(...) / dofile — dynamic code
+    // execution; always undecidable
     if name_node.kind() == "identifier" {
         let ident = node_text(&name_node, source);
-        if matches!(ident, "load" | "loadstring" | "dofile") {
+        if matches!(ident, "load" | "loadstring" | "loadfile" | "dofile") {
             symbols.calls.push(Call {
                 name: "<dynamic:eval>".to_string(),
                 line: start_line(node),
@@ -382,6 +383,14 @@ mod tests {
     #[test]
     fn classifies_dofile_call_as_dynamic_eval() {
         let s = parse_lua("dofile(\"script.lua\")");
+        assert!(s.calls.iter().any(|c| c.name == "<dynamic:eval>"
+            && c.dynamic == Some(true)
+            && c.dynamic_kind.as_deref() == Some("eval")));
+    }
+
+    #[test]
+    fn classifies_loadfile_call_as_dynamic_eval() {
+        let s = parse_lua("loadfile(\"script.lua\")()");
         assert!(s.calls.iter().any(|c| c.name == "<dynamic:eval>"
             && c.dynamic == Some(true)
             && c.dynamic_kind.as_deref() == Some("eval")));
