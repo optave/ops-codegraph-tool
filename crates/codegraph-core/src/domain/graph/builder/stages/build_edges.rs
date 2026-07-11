@@ -206,9 +206,11 @@ impl<'a> EdgeContext<'a> {
 /// (a cross-file consumer added in an untouched file won't be seen until the
 /// next full rebuild) — the same scoping trade-off already accepted
 /// elsewhere in this codebase's incremental classification
-/// (`has_active_file_siblings`, exported-via-reexport, and median fan-in/out
-/// all recompute from the affected file set only, not the whole graph, in
-/// `graph/classifiers/roles.rs`'s incremental path). Mirrors
+/// (`has_active_file_siblings` and exported-via-reexport both recompute from
+/// the affected file set only, not the whole graph, in
+/// `graph/classifiers/roles.rs`'s incremental path — median fan-in/out is a
+/// separate case, deliberately kept as a whole-graph statistic even on the
+/// incremental path, for classification-threshold consistency). Mirrors
 /// `collectInvokedPropertyNames` in `src/domain/graph/builder/call-resolver.ts`.
 fn collect_invoked_property_names(files: &[FileEdgeInput]) -> HashSet<&str> {
     let mut names = HashSet::new();
