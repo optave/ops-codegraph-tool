@@ -2475,7 +2475,9 @@ function runDemo(reporter: Reporter, users: string[]): void {
       // identifier.
       const symbols = parseJS(`const [x, ...[a, b]] = computeList();`);
       for (const name of ['x', 'a', 'b']) {
-        expect(symbols.definitions).toContainEqual(expect.objectContaining({ name, kind: 'constant' }));
+        expect(symbols.definitions).toContainEqual(
+          expect.objectContaining({ name, kind: 'constant' }),
+        );
       }
       expect(symbols.definitions.every((d) => !d.name.startsWith('['))).toBe(true);
     });
