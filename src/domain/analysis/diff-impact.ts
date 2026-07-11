@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findDbPath, openReadonlyOrFail, resolveConfigForDbPath } from '../../db/index.js';
+import { findDbPath, openReadonlyOrFail, resolveDbConfig } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { evaluateBoundaries } from '../../features/boundaries.js';
 import { coChangeForFiles } from '../../features/cochange.js';
@@ -275,7 +275,7 @@ export function diffImpactData(
   // handle at that point would never be closed). Derives rootDir from
   // customDbPath (not process.cwd()) so `--db /other/repo/...` reads that
   // repo's .codegraphrc.json (issue #1881).
-  const config = opts.config || resolveConfigForDbPath(customDbPath);
+  const config = opts.config || resolveDbConfig(customDbPath);
   const db = openReadonlyOrFail(
     customDbPath,
     config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,

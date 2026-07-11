@@ -65,6 +65,11 @@ import {
 } from '../../src/db/index.js';
 import { PipelineContext } from '../../src/domain/graph/builder/context.js';
 import { reopenNativeDb } from '../../src/domain/graph/builder/stages/native-db-lifecycle.js';
+import {
+  openNativeDatabase,
+  runPostNativeAnalysis,
+} from '../../src/domain/graph/builder/stages/native-orchestrator.js';
+import { openNativeDbForFanMetrics } from '../../src/features/branch-compare.js';
 
 let tmpDir: string;
 let dbPath: string;
@@ -117,5 +122,51 @@ describe('reopenNativeDb (build pipeline) threads ctx.config.db.busyTimeoutMs in
 
     expect(openReadWriteCalls).toHaveLength(1);
     expect(openReadWriteCalls[0]?.[1]).toBe(CUSTOM_BUSY_TIMEOUT_MS);
+  });
+});
+
+describe('openNativeDatabase (build pipeline) threads ctx.config.db.busyTimeoutMs into NativeDatabase.openReadWrite', () => {
+  it('passes ctx.config.db.busyTimeoutMs to the native factory', () => {
+    openReadWriteCalls.length = 0;
+    const ctx = new PipelineContext();
+    ctx.dbPath = dbPath;
+    ctx.db = { close: () => {} } as PipelineContext['db'];
+    ctx.nativeAvailable = true;
+    ctx.config = { db: { busyTimeoutMs: CUSTOM_BUSY_TIMEOUT_MS } } as PipelineContext['config'];
+
+    openNativeDatabase(ctx);
+
+    expect(openReadWriteCalls).toHaveLength(1);
+    expect(openReadWriteCalls[0]?.[1]).toBe(CUSTOM_BUSY_TIMEOUT_MS);
+  });
+});
+
+describe('runPostNativeAnalysis (build pipeline) threads ctx.config.db.busyTimeoutMs into NativeDatabase.openReadWrite', () => {
+  it('passes ctx.config.db.busyTimeoutMs to the native factory', async () => {
+    openReadWriteCalls.length = 0;
+    const ctx = new PipelineContext();
+    ctx.dbPath = dbPath;
+    ctx.db = openDb(dbPath);
+    ctx.rootDir = tmpDir;
+    ctx.opts = { engine: 'native' };
+    ctx.config = { db: { busyTimeoutMs: CUSTOM_BUSY_TIMEOUT_MS } } as PipelineContext['config'];
+
+    try {
+      await runPostNativeAnalysis(ctx, new Map(), []);
+    } finally {
+      closeDb(ctx.db as Parameters<typeof closeDb>[0]);
+    }
+
+    expect(openReadWriteCalls).toHaveLength(1);
+    expect(openReadWriteCalls[0]?.[1]).toBe(CUSTOM_BUSY_TIMEOUT_MS);
+  });
+});
+
+describe('openNativeDbForFanMetrics (branch-compare) threads the configured busyTimeoutMs into NativeDatabase.openReadonly', () => {
+  it('passes the configured busyTimeoutMs to the native factory', () => {
+    openReadonlyCalls.length = 0;
+    openNativeDbForFanMetrics(dbPath);
+    expect(openReadonlyCalls).toHaveLength(1);
+    expect(openReadonlyCalls[0]?.[1]).toBe(CUSTOM_BUSY_TIMEOUT_MS);
   });
 });
