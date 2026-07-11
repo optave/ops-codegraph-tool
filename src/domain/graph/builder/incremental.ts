@@ -31,6 +31,7 @@ import {
 } from '../resolver/points-to.js';
 import {
   type CallNodeLookup,
+  collectInvokedPropertyNames,
   findCaller,
   isModuleScopedLanguage,
   resolveCallTargets,
@@ -1044,6 +1045,10 @@ function buildCallEdges(
   // JS path uses (buildPointsToMapForFile, shared via resolver/points-to.js).
   const ptsMap = buildPointsToMapForFile(symbols, importedNames);
   const fnRefBindingLhs = new Set(symbols.fnRefBindings?.map((b) => b.lhs) ?? []);
+  // #1895: scoped to this file's own calls only — see collectInvokedPropertyNames
+  // doc comment (call-resolver.ts) for why incremental rebuilds use a narrower,
+  // same-file view rather than a full-codebase one.
+  const invokedPropertyNames = collectInvokedPropertyNames([symbols.calls]);
   let edgesAdded = 0;
 
   for (const call of symbols.calls) {
@@ -1078,6 +1083,12 @@ function buildCallEdges(
       targets = targets.filter(
         (t) => t.kind === 'function' || t.kind === 'method' || t.kind === 'class',
       );
+      // #1895: object-literal-property value-refs additionally require
+      // independent evidence the property is actually invoked somewhere —
+      // mirrors the same check in resolveFallbackTargets (stages/build-edges.ts).
+      if (call.keyExpr && !invokedPropertyNames.has(call.keyExpr)) {
+        targets = [];
+      }
     }
 
     edgesAdded += emitIncrementalCallEdges(

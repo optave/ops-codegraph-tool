@@ -46,6 +46,43 @@ export const RECEIVER_KINDS = new Set(['class', 'struct', 'interface', 'type', '
 export { isModuleScopedLanguage };
 
 /**
+ * Collect the set of property/method names ever invoked via member-call
+ * syntax (`x.name(...)`) across every file currently being processed —
+ * regardless of whether the receiver `x` itself resolves to anything.
+ *
+ * Used as the "one hop further" liveness check for object-literal-property
+ * value-refs (#1895): a function referenced as `{ resolve: someFn }` should
+ * only be credited with a `calls` edge from that reference when something,
+ * somewhere, actually invokes a `.resolve(...)`-shaped call — otherwise the
+ * property is wired up but never read, and `someFn` is genuinely dead.
+ *
+ * Scope matches whatever set of files the caller passes in: the full
+ * codebase for a full build (build-edges.ts's `buildCallEdgesJS`, from
+ * `ctx.fileSymbols`), or just the single file being rebuilt on an incremental
+ * update (incremental.ts's `buildCallEdges`, from that file's own `calls`).
+ * The incremental case is a narrower, same-file view — a cross-file consumer
+ * added in a different, untouched file won't be seen until the next full
+ * rebuild — the same scoping trade-off already accepted elsewhere in this
+ * codebase's incremental classification (`hasActiveFileSiblings` and
+ * exported-via-reexport both recompute from an affected subset, not the
+ * whole graph, in `graph/classifiers/roles.rs`'s incremental path — median
+ * fan-in/out is a separate case, deliberately kept as a whole-graph
+ * statistic even on the incremental path, for classification-threshold
+ * consistency).
+ */
+export function collectInvokedPropertyNames(
+  callsList: Iterable<Iterable<{ name: string; receiver?: string }>>,
+): Set<string> {
+  const names = new Set<string>();
+  for (const calls of callsList) {
+    for (const call of calls) {
+      if (call.receiver) names.add(call.name);
+    }
+  }
+  return names;
+}
+
+/**
  * Shared by both the full-build (build-edges.ts) and incremental (incremental.ts)
  * same-class fallback strategies: derive the enclosing class name from the
  * caller's qualified name (the segment immediately before the final dot, e.g.
