@@ -275,23 +275,33 @@ fn workspace_resolved_cache() -> &'static Mutex<HashSet<String>> {
 /// Clear the workspace-resolved-paths cache. Call once per build, before any
 /// resolution runs, mirroring `_workspaceResolvedPaths.clear()` inside
 /// `setWorkspaces()`.
+///
+/// Recovers the inner data via `unwrap_or_else` instead of silently no-op'ing
+/// on a poisoned lock (`if let Ok(...)`): if a thread ever panics while
+/// holding this mutex, a silent skip here would leave workspace-resolved
+/// paths from the panicking build in the cache forever — every subsequent
+/// build's `.lock()` call keeps returning `Err`, so `compute_confidence`
+/// would keep awarding the 0.95 floor to paths that are no longer
+/// workspace-resolved (Greptile review).
 pub fn reset_workspace_resolved_paths() {
-    if let Ok(mut set) = workspace_resolved_cache().lock() {
-        set.clear();
-    }
+    let mut set = workspace_resolved_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    set.clear();
 }
 
 fn mark_workspace_resolved(path: &str) {
-    if let Ok(mut set) = workspace_resolved_cache().lock() {
-        set.insert(path.to_string());
-    }
+    let mut set = workspace_resolved_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    set.insert(path.to_string());
 }
 
 fn is_workspace_resolved(path: &str) -> bool {
     workspace_resolved_cache()
         .lock()
-        .map(|set| set.contains(path))
-        .unwrap_or(false)
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .contains(path)
 }
 
 /// Resolve a single import path, mirroring `resolveImportPath()` in builder.js.
