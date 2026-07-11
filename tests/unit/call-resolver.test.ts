@@ -719,3 +719,79 @@ describe('resolveCallTargets — same-file bare-name lookup kind filter (#1888)'
     expect(targets).toEqual([cls]);
   });
 });
+
+/**
+ * Regression test for #1892's barrel-rename gap (flagged in PR #2028 review):
+ * `attachConstructorTargets` must key its qualified `ClassName.ctorLocalName`
+ * lookup on the name truly declared in the target's own file, not the call
+ * site's (possibly barrel-aliased) name. `export { Foo as Bar } from './foo'`
+ * means `new Bar()` resolves the class node via `lookup.resolveBarrel`,
+ * which reports `{ file: 'foo.ts', name: 'Foo' }` — the constructor lookup
+ * must use that reported 'Foo', not the caller's 'Bar', or it builds a
+ * `Bar.constructor` key that can never match the stored `Foo.constructor`.
+ */
+describe('resolveCallTargets — constructor attribution through a renaming barrel (#1892)', () => {
+  function makeBarrelLookup(
+    sameFile: Record<string, Array<{ id: number; file: string; kind: string }>>,
+    barrelFiles: Set<string>,
+    barrelExports: Record<string, { file: string; name: string }>,
+  ): CallNodeLookup {
+    return {
+      byNameAndFile(name, file) {
+        return sameFile[`${name}:${file}`] ?? [];
+      },
+      byName() {
+        return [];
+      },
+      isBarrel(file) {
+        return barrelFiles.has(file);
+      },
+      resolveBarrel(barrelFile, symbolName) {
+        return barrelExports[`${symbolName}:${barrelFile}`] ?? null;
+      },
+      nodeId() {
+        return undefined;
+      },
+    };
+  }
+
+  it('attributes new Bar() to Foo.constructor when the barrel renames Foo to Bar', () => {
+    const classFoo = { id: 10, file: 'foo.ts', kind: 'class' };
+    const ctorFoo = { id: 11, file: 'foo.ts', kind: 'method' };
+    const lookup = makeBarrelLookup(
+      {
+        'Foo:foo.ts': [classFoo],
+        'Foo.constructor:foo.ts': [ctorFoo],
+      },
+      new Set(['barrel.ts']),
+      { 'Bar:barrel.ts': { file: 'foo.ts', name: 'Foo' } },
+    );
+    const importedNames = new Map([['Bar', 'barrel.ts']]);
+    const { targets } = resolveCallTargets(
+      lookup,
+      { name: 'Bar', receiver: undefined },
+      'caller.ts',
+      importedNames,
+      new Map(),
+      null,
+    );
+    expect(targets).toEqual([classFoo, ctorFoo]);
+  });
+
+  it('does not fabricate a constructor edge when the barrel-renamed class has no explicit constructor', () => {
+    const classBaz = { id: 20, file: 'baz.ts', kind: 'class' };
+    const lookup = makeBarrelLookup({ 'Baz:baz.ts': [classBaz] }, new Set(['barrel.ts']), {
+      'Qux:barrel.ts': { file: 'baz.ts', name: 'Baz' },
+    });
+    const importedNames = new Map([['Qux', 'barrel.ts']]);
+    const { targets } = resolveCallTargets(
+      lookup,
+      { name: 'Qux', receiver: undefined },
+      'caller.ts',
+      importedNames,
+      new Map(),
+      null,
+    );
+    expect(targets).toEqual([classBaz]);
+  });
+});

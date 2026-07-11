@@ -28,7 +28,7 @@ const DIST_CONSTANTS_PATH = path.join(REPO_ROOT, 'dist', 'shared', 'constants.js
 
 /** Extracts the `.ext|.ext|...` pattern from the hook's `case "$EXT" in` fallback arm. */
 function parseFallbackAllowlist(script: string): string[] {
-  const match = script.match(/case "\$EXT" in\s*\n\s*([.\w|]+)\)/);
+  const match = script.match(/case "\$EXT" in\s*\n\s*([.\w|-]+)\)/);
   if (!match) {
     throw new Error(
       'Could not find `case "$EXT" in <list>)` fallback allowlist in update-graph.sh',
@@ -61,8 +61,8 @@ describe('update-graph.sh hook extension allowlist', () => {
   });
 
   it('reads the generated dist/hook-extensions.txt snapshot as its primary source', () => {
-    expect(script).toContain('dist/hook-extensions.txt');
-    expect(script).toContain('scripts/gen-hook-extensions.mjs');
+    expect(script).toMatch(/GENERATED_EXT_LIST="\$PROJECT_DIR\/dist\/hook-extensions\.txt"/);
+    expect(script).toMatch(/grep -qxF "\$EXT" "\$GENERATED_EXT_LIST"/);
   });
 
   // Only meaningful once `npm run build` has produced dist/shared/constants.js.

@@ -241,7 +241,24 @@ function handleDartImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleDartConstructorCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = findChild(node, 'type_identifier') || findChild(node, 'identifier');
+  // tree-sitter-dart crate versions structure the type name differently:
+  // 0.2 (crates.io, used by the native engine — see check-grammar-versions.mjs's
+  // tracked exception for this crate) nests it under an intermediate `type`
+  // field — `new_expression type: (type (type_identifier)) arguments: (...)` —
+  // while npm's tree-sitter-dart 1.x (this WASM engine's grammar) puts it
+  // directly under `new_expression` — `(new_expression (type_identifier)
+  // (arguments))`. Try the direct shape first, then unwrap one `type` level,
+  // so both engines resolve identically once the crates.io release catches up.
+  const nameNode =
+    findChild(node, 'type_identifier') ||
+    findChild(node, 'identifier') ||
+    (() => {
+      const typeWrapper = node.childForFieldName('type') || findChild(node, 'type');
+      return (
+        typeWrapper &&
+        (findChild(typeWrapper, 'type_identifier') || findChild(typeWrapper, 'identifier'))
+      );
+    })();
   if (!nameNode) return;
 
   ctx.calls.push({

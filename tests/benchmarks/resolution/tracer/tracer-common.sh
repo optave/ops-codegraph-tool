@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # Shared helpers for the dynamic call tracer scripts in this directory.
 # Each tracer (native-tracer.sh, jvm-tracer.sh, go-tracer.sh, ...) is spawned
 # as its own subprocess by run-tracer.mjs, so sharing logic between them means
