@@ -197,6 +197,14 @@ trace_c_cpp() {
     cp "$FIXTURE_DIR"/*.h "$TMP_DIR/" 2>/dev/null || true
     cp "$FIXTURE_DIR"/*.hpp "$TMP_DIR/" 2>/dev/null || true
 
+    # Snapshot the fixture's own source files *before* trace_support.c is
+    # written below — trace_support.c is itself a ".c" file, so for the C
+    # case (ext=c) computing this glob afterward would capture it too,
+    # causing it to be compiled+linked twice (see #1914).
+    cd "$TMP_DIR"
+    local src_files
+    src_files="$(ls *."$ext" 2>/dev/null | tr '\n' ' ')"
+
     # Create instrumentation support
     cat > "$TMP_DIR/trace_support.c" <<'CTRACE'
 #include <stdio.h>
@@ -222,6 +230,9 @@ typedef struct { char name[128]; char file[128]; } Frame;
 static Frame call_stack[MAX_STACK];
 static int stack_depth = 0;
 
+static const char* extract_name(void* addr) __attribute__((no_instrument_function));
+static const char* extract_file(void* addr) __attribute__((no_instrument_function));
+
 static const char* extract_name(void* addr) {
     Dl_info info;
     if (dladdr(addr, &info) && info.dli_sname) {
@@ -238,6 +249,15 @@ static const char* extract_file(void* addr) {
     }
     return "unknown";
 }
+
+// g++ compiles this file as C++ (unlike gcc, which treats .c input as C),
+// so without extern "C" these two hooks would be name-mangled and no longer
+// match the unmangled __cyg_profile_func_enter/_exit symbols the compiler
+// auto-inserts into every instrumented translation unit, including ones
+// compiled from .cpp fixture files (see #1914).
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 void __cyg_profile_func_enter(void* callee, void* caller)
     __attribute__((no_instrument_function));
@@ -279,6 +299,10 @@ void __cyg_profile_func_exit(void* callee, void* caller) {
     if (stack_depth > 0) stack_depth--;
 }
 
+#ifdef __cplusplus
+}
+#endif
+
 void __attribute__((destructor, no_instrument_function)) dump_trace() {
     printf("{\n  \"edges\": [\n");
     for (int i = 0; i < edge_count; i++) {
@@ -293,18 +317,24 @@ void __attribute__((destructor, no_instrument_function)) dump_trace() {
 }
 CTRACE
 
-    cd "$TMP_DIR"
-    local src_files
-    src_files="$(ls *."$ext" 2>/dev/null | tr '\n' ' ')"
+    # trace_support.c is tracer scaffolding, not code under test, and must
+    # never itself be built with -finstrument-functions: g++ compiles .c
+    # input as C++, and instrumenting this translation unit's own compiler-
+    # generated bookkeeping crashes at runtime (see #1914). Compile it as a
+    # separate, uninstrumented object and link it against the instrumented
+    # fixture sources.
+    if ! $compiler -x c -c trace_support.c -o trace_support.o 2>/dev/null; then
+        empty_result "$compiler trace_support.c compilation failed"
+    fi
 
     if [[ "$compiler" == "gcc" || "$compiler" == "cc" ]]; then
-        if $compiler -finstrument-functions -rdynamic -ldl $src_files trace_support.c -o traced 2>/dev/null; then
+        if $compiler -finstrument-functions -rdynamic -ldl $src_files trace_support.o -o traced 2>/dev/null; then
             ./traced 2>/dev/null || echo '{"edges":[]}'
         else
             empty_result "$compiler compilation failed"
         fi
     else
-        if $compiler -finstrument-functions -rdynamic $src_files trace_support.c -o traced -ldl -lstdc++ 2>/dev/null; then
+        if $compiler -finstrument-functions -rdynamic $src_files trace_support.o -o traced -ldl -lstdc++ 2>/dev/null; then
             ./traced 2>/dev/null || echo '{"edges":[]}'
         else
             empty_result "$compiler compilation failed"
