@@ -9,6 +9,7 @@
  * `resolveByMethodOrGlobal` delegates its two branches to strategy helpers
  * in `../resolver/strategy.ts` to keep per-strategy complexity manageable.
  */
+import { CALLABLE_SYMBOL_KINDS } from '../../../shared/kinds.js';
 import { computeConfidence, isSameLanguageFamily } from '../resolve.js';
 import {
   isModuleScopedLanguage,
@@ -114,14 +115,6 @@ export function resolveDefinePropertyAccessorTarget(
 // ── Shared resolution functions ──────────────────────────────────────────
 
 /**
- * Callable definition kinds — variable/constant bindings are NOT callable
- * in the function-as-enclosing-scope sense (they are local declarations, not
- * function bodies). Top-level variable bindings (e.g. Haskell `main = do …`)
- * are handled separately as a fallback tier.
- */
-const CALLABLE_KINDS = new Set(['function', 'method']);
-
-/**
  * Variable-like binding kinds that may act as top-level callers when no
  * enclosing function/method exists (e.g. Haskell top-level `main` is a
  * `bind` node → kind `variable`).  Local variable declarations inside a
@@ -145,7 +138,7 @@ function findEnclosingCallable(
   let best: CallerMatch = null;
   let bestSpan = Infinity;
   for (const def of definitions) {
-    if (!CALLABLE_KINDS.has(def.kind)) continue;
+    if (!CALLABLE_SYMBOL_KINDS.has(def.kind)) continue;
     if (def.line > callLine) continue;
     const end = def.endLine ?? Infinity;
     if (callLine > end) continue;
@@ -300,7 +293,23 @@ export function resolveCallTargets(
   }
 
   if (!targets || targets.length === 0) {
-    targets = lookup.byNameAndFile(call.name, relPath);
+    // Same-file bare-name lookup. A receiver — concrete (`obj.x()`) or
+    // `this`/`self`/`super` — means the call is logically "invoke a member of
+    // some instance", which a class/interface/struct/etc. declaration can
+    // never satisfy; restrict those to definitively callable kinds so an
+    // unrelated same-file type declaration that merely shares the call's name
+    // can never pre-empt a legitimate target that a more specific resolution
+    // tier (receiver typing, the Object.defineProperty accessor fallback,
+    // etc.) would otherwise find. A genuinely bare call (no receiver at all)
+    // is left unfiltered: at this layer it is indistinguishable from a `new
+    // ClassName()` constructor invocation, which legitimately targets a
+    // class-kind definition — kind-filtering it would break constructor-call
+    // resolution (#1888).
+    const bareMatches = lookup.byNameAndFile(call.name, relPath);
+    targets = call.receiver
+      ? bareMatches.filter((n) => CALLABLE_SYMBOL_KINDS.has(n.kind ?? ''))
+      : bareMatches;
+
     if (targets.length === 0) {
       targets = resolveByMethodOrGlobal(
         lookup,

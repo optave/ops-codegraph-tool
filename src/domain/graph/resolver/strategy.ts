@@ -12,6 +12,7 @@
  * a circular dependency. The StrategyLookup interface mirrors CallNodeLookup structurally
  * (TypeScript structural typing ensures compatibility without an explicit import).
  */
+import { CALLABLE_SYMBOL_KINDS } from '../../../shared/kinds.js';
 import { computeConfidence } from '../resolve.js';
 
 // ── Lookup adapter (structural mirror of CallNodeLookup) ──────────────────────
@@ -357,14 +358,25 @@ function resolveViaSameClassSibling(
  *     ambiguous: there is no principled way to prefer one over another, so
  *     the match is dropped rather than fanning out, letting the caller fall
  *     through to the narrower resolveViaSameClassSibling fallback.
+ *
+ * A `this`/`self`/`super` call is additionally restricted to
+ * `CALLABLE_SYMBOL_KINDS`: such a call is logically "invoke a member of the
+ * current instance", which a class/interface/struct/etc. declaration can
+ * never satisfy, so an unrelated same-named type declaration must never
+ * substitute for a real callable target just because no other candidate
+ * exists (#1888). A genuinely bare call (no receiver at all) is left
+ * unfiltered — at this layer it is indistinguishable from a `new
+ * ClassName()` constructor invocation, which legitimately targets a
+ * class-kind definition.
  */
 function resolveExactGlobalMatch(
   lookup: StrategyLookup,
-  call: { name: string },
+  call: { name: string; receiver?: string | null },
   relPath: string,
 ): ReadonlyArray<{ id: number; file: string }> {
   const scored = lookup
     .byName(call.name)
+    .filter((target) => !call.receiver || CALLABLE_SYMBOL_KINDS.has(target.kind ?? ''))
     .map((target) => ({ target, confidence: computeConfidence(relPath, target.file, null) }))
     .filter((candidate) => candidate.confidence >= 0.5);
   if (scored.length === 0) return [];

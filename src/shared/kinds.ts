@@ -42,6 +42,21 @@ export const EVERY_SYMBOL_KIND: readonly SymbolKind[] = [
   ...EXTENDED_SYMBOL_KINDS,
 ];
 
+/**
+ * Symbol kinds that represent an actual invocable definition. A call site can
+ * legitimately target one of these — a class, interface, struct, or plain
+ * variable/constant binding cannot, in the general case, and must never win a
+ * same-name lookup that has no other type/receiver information to narrow it.
+ *
+ * Guards the "no other signal" tiers of call resolution — the same-file
+ * bare-name lookup in `resolveCallTargets` and `resolveByGlobal`'s exact
+ * global-name match (`call-resolver.ts`, `resolver/strategy.ts`) — so an
+ * unrelated same-named class/interface/variable never masquerades as a real
+ * callable target purely because those lookups otherwise carry no kind filter
+ * (#1888).
+ */
+export const CALLABLE_SYMBOL_KINDS: ReadonlySet<string> = new Set(['function', 'method']);
+
 // Backward compat: ALL_SYMBOL_KINDS stays as the core 10
 export const ALL_SYMBOL_KINDS: readonly CoreSymbolKind[] = CORE_SYMBOL_KINDS;
 
