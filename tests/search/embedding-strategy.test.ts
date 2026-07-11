@@ -516,16 +516,18 @@ describe('buildEmbeddings resolves default DB from rootDir, not cwd (#1869)', ()
 
     expect(EMBEDDED_TEXTS.length).toBe(1);
 
-    const targetCount = new Database(targetDbPath, { readonly: true })
-      .prepare('SELECT COUNT(*) as c FROM embeddings')
-      .get().c;
+    const targetDb = new Database(targetDbPath, { readonly: true });
+    const targetCount = targetDb.prepare('SELECT COUNT(*) as c FROM embeddings').get().c;
+    targetDb.close();
     expect(targetCount).toBe(1);
 
     // The unrelated cwd DB was never opened for writing — it doesn't even
     // have an `embeddings` table, since buildEmbeddings creates it lazily.
-    const unrelatedTables = new Database(unrelatedDbPath, { readonly: true })
+    const unrelatedDb = new Database(unrelatedDbPath, { readonly: true });
+    const unrelatedTables = unrelatedDb
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'embeddings'")
       .all();
+    unrelatedDb.close();
     expect(unrelatedTables).toHaveLength(0);
   });
 });

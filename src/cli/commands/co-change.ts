@@ -33,6 +33,7 @@ export const command: CommandDefinition = {
           ? parseInt(opts.minSupport as string, 10)
           : coChangeConfig?.minSupport,
         maxFilesPerCommit: coChangeConfig?.maxFilesPerCommit,
+        execMaxBufferBytes: coChangeConfig?.execMaxBufferBytes,
         full: opts.full,
       });
       if (opts.json) {

@@ -66,33 +66,36 @@ function readCallEdges(dbPath: string): CallEdgeRow[] {
   }
 }
 
-const ENGINES: EngineMode[] = ['wasm', 'native'];
+function runScenario(engine: EngineMode): void {
+  describe(`Object.defineProperty typed-instance accessor dispatch (${engine}, #1887)`, () => {
+    let tmpDir: string;
+    let callEdges: CallEdgeRow[] = [];
 
-describe.each(
-  ENGINES,
-)('Object.defineProperty typed-instance accessor dispatch (%s, #1887)', (engine) => {
-  let tmpDir: string;
-  let callEdges: CallEdgeRow[] = [];
+    beforeAll(async () => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `codegraph-1887-${engine}-`));
+      fs.writeFileSync(path.join(tmpDir, 'registry.js'), FIXTURE_SOURCE);
+      await buildGraph(tmpDir, { incremental: false, skipRegistry: true, engine });
+      callEdges = readCallEdges(path.join(tmpDir, '.codegraph', 'graph.db'));
+    }, 60_000);
 
-  beforeAll(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `codegraph-1887-${engine}-`));
-    fs.writeFileSync(path.join(tmpDir, 'registry.js'), FIXTURE_SOURCE);
-    await buildGraph(tmpDir, { incremental: false, skipRegistry: true, engine });
-    callEdges = readCallEdges(path.join(tmpDir, '.codegraph', 'graph.db'));
-  }, 60_000);
+    afterAll(() => {
+      if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
 
-  afterAll(() => {
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    it('resolves getter -> Registry.bar via the Object.defineProperty accessor receiver', () => {
+      const edge = callEdges.find((e) => e.src === 'getter' && e.tgt === 'Registry.bar');
+      expect(
+        edge,
+        `Expected getter -> Registry.bar edge.\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+      ).toBeDefined();
+      expect(edge?.tgtKind).toBe('method');
+    });
   });
+}
 
-  it('resolves getter -> Registry.bar via the Object.defineProperty accessor receiver', () => {
-    const edge = callEdges.find((e) => e.src === 'getter' && e.tgt === 'Registry.bar');
-    expect(
-      edge,
-      `Expected getter -> Registry.bar edge.\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
-    ).toBeDefined();
-    expect(edge?.tgtKind).toBe('method');
-  });
+runScenario('wasm');
+describe.skipIf(!isNativeAvailable())('native engine coverage', () => {
+  runScenario('native');
 });
 
 describe.skipIf(!isNativeAvailable())(

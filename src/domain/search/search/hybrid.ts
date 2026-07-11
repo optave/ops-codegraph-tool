@@ -1,4 +1,4 @@
-import { openReadonlyOrFail, resolveConfigForDbPath } from '../../../db/index.js';
+import { openReadonlyOrFail, resolveDbConfig } from '../../../db/index.js';
 import { DEFAULTS } from '../../../infrastructure/config.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../../../types.js';
 import { hasFtsIndex } from '../stores/fts5.js';
@@ -180,7 +180,7 @@ export async function hybridSearchData(
 ): Promise<HybridSearchResult | null> {
   // Derive rootDir from customDbPath (not process.cwd()) so `--db /other/repo/...`
   // reads that repo's .codegraphrc.json (issue #1881).
-  const config = opts.config || resolveConfigForDbPath(customDbPath);
+  const config = opts.config || resolveDbConfig(customDbPath);
   const searchCfg = config.search || ({} as CodegraphConfig['search']);
   const limit = opts.limit ?? searchCfg.topK ?? 15;
   const k = opts.rrfK ?? searchCfg.rrfK ?? 60;
@@ -195,7 +195,9 @@ export async function hybridSearchData(
   if (!ftsAvailable) return null;
 
   const queries = parseQueries(query);
-  const rankedLists = await collectRankedLists(queries, customDbPath, opts, topK);
+  // Pass the already-resolved config through so ftsSearchData (via
+  // collectRankedLists) doesn't re-run loadConfig() for the same path (#1943 review).
+  const rankedLists = await collectRankedLists(queries, customDbPath, { ...opts, config }, topK);
   const results = fuseResults(rankedLists, k, limit);
 
   return { results };

@@ -19,6 +19,13 @@
     },
     {
       "source": { "name": "main", "file": "main.dart" },
+      "target": { "name": "UserService.UserService", "file": "service.dart" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "UserService(repo) — also attributes to the constructor method itself (#1892)"
+    },
+    {
+      "source": { "name": "main", "file": "main.dart" },
       "target": { "name": "validateEmail", "file": "validators.dart" },
       "kind": "calls",
       "mode": "static",
@@ -61,6 +68,13 @@
     },
     {
       "source": { "name": "main", "file": "main.dart" },
+      "target": { "name": "Order.Order", "file": "models.dart" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "Order() — also attributes to the constructor method itself (#1892)"
+    },
+    {
+      "source": { "name": "main", "file": "main.dart" },
       "target": { "name": "validateAmount", "file": "validators.dart" },
       "kind": "calls",
       "mode": "static",
@@ -86,6 +100,13 @@
       "kind": "calls",
       "mode": "constructor",
       "notes": "User() — constructor call to create User instance"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "service.dart" },
+      "target": { "name": "User.User", "file": "models.dart" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "User() — also attributes to the constructor method itself (#1892)"
     },
     {
       "source": { "name": "UserService.createUser", "file": "service.dart" },

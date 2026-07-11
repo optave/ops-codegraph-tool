@@ -13,7 +13,7 @@ import type { CommandDefinition } from '../types.js';
 
 function resolveStickyModel(dbPath: string | undefined, rootDir: string): string | null {
   try {
-    const db = openReadonlyOrFail(dbPath, resolveBusyTimeoutMs(dbPath), rootDir);
+    const db = openReadonlyOrFail(dbPath, resolveBusyTimeoutMs(dbPath ?? rootDir), rootDir);
     try {
       const storedName = getEmbeddingMeta(db, 'model');
       if (!storedName) return null;
