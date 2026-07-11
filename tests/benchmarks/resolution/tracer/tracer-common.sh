@@ -23,7 +23,7 @@ sedi() {
 # that portable multi-line form internally so call sites never hand-roll the
 # GNU-only shortcut (see #1913).
 
-# Insert TEXT on the line immediately before the first line matching PATTERN.
+# Insert TEXT on the line immediately before every line matching PATTERN.
 sedi_insert_before() {
     local pattern="$1" text="$2" file="$3"
     sedi "${pattern} i\\
