@@ -230,6 +230,23 @@ Uint8Array.from(arr, mapCallback);
 `,
     },
     {
+      // Regression guard for #1897: WASM previously had no mirror of native's
+      // RES-2 inline object-literal dispatch-table detection
+      // (extract_dispatch_table_call), so `({a:fnA,b:fnB})[key]()` classified
+      // as a generic flagged computed-key sink on WASM while native resolved
+      // it via the pts wildcard. Both engines must now emit the exact same
+      // synthetic `<dt_line_col>[*]` call name (line/col computed identically).
+      name: 'JavaScript — inline object-literal dispatch table must agree between engines',
+      file: 'dispatch-table.js',
+      code: `
+function dtFn1() {}
+function dtFn2() {}
+function runDispatch(key) {
+  return ({ a: dtFn1, b: dtFn2 })[key]();
+}
+`,
+    },
+    {
       // Regression guard for #1845: native must recognize identifier args to
       // arbitrary user-defined higher-order functions via the callee's own
       // function-shaped parameter type, not just the CALLBACK_ACCEPTING_CALLEES
