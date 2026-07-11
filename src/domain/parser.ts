@@ -138,7 +138,7 @@ const _loadingPromises: Map<string, Promise<void>> = new Map();
 // 'interface'/'type' declarations, see shared/kinds.ts's TYPE_ERASED_SYMBOL_KINDS)
 // only exist for these. Used for typeMap backfill and, via shared/kinds.ts's
 // isTypeErasedImportTarget, for import-edge classification (#1833).
-export const TYPESCRIPT_EXTENSIONS: ReadonlySet<string> = new Set(['.ts', '.tsx']);
+export const TYPESCRIPT_EXTENSIONS: ReadonlySet<string> = new Set(['.ts', '.tsx', '.mts', '.cts']);
 
 // Re-export for backward compatibility
 export type { LanguageRegistryEntry } from '../types.js';

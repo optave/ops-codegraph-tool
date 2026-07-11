@@ -30,9 +30,26 @@ import Database from 'better-sqlite3';
 // a candidate's name — mirrors CALLABLE_SYMBOL_KINDS in src/shared/kinds.ts.
 export const HUB_CANDIDATE_KINDS: readonly string[] = ['function', 'method'];
 
+// Pinned hub targets — stable function names expected to exist across
+// versions. Auto-selecting the most-connected node makes version-to-version
+// comparison meaningless whenever the most-connected function changes (e.g.
+// a barrel/type file gets added or removed, or a new heavily-called utility
+// shifts the ranking) — pinning keeps "the hub" identity stable so
+// back-to-back benchmark runs measure the same node. Shared by both
+// query-benchmark.ts and benchmark.ts so the two scripts can't drift apart
+// on which names they consider stable.
+export const PINNED_HUB_CANDIDATES: readonly string[] = ['buildGraph', 'openDb', 'loadConfig'];
+
 export interface HubTargets {
 	hub: string;
 	hubFile: string;
+	/**
+	 * Node at the median edge-count rank among kind-filtered candidates.
+	 * Informational only: it is recorded in benchmark output for visibility
+	 * but neither `query-benchmark.ts` nor `benchmark.ts` currently passes it
+	 * into a `benchDepths`/`benchQuery` call, so it drives no timed
+	 * measurement. See #2089 to wire it into an actual measurement or drop it.
+	 */
 	mid: string;
 	leaf: string;
 }

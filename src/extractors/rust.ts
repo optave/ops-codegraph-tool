@@ -296,6 +296,11 @@ function extractRustTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractRustTypeMapDepth(node, ctx, 0);
 }
 
+/** True if `name` matches a struct defined in this file (walkRustNode runs before this). */
+function isKnownUnitStruct(name: string, ctx: ExtractorOutput): boolean {
+  return ctx.definitions.some((d) => d.kind === 'struct' && d.name === name);
+}
+
 function extractRustTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
   if (depth >= MAX_WALK_DEPTH) return;
 
@@ -310,8 +315,19 @@ function extractRustTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, dep
       // let x = TypeName;  — a bare capitalized identifier value binds a
       // unit-struct instance (e.g. `let v = NameValidator;` for `struct
       // NameValidator;`), not a reference to another variable (#1876).
+      // Requiring a same-file `struct` definition excludes unit enum variants
+      // like `None`/`Ok` (Option/Result, always in scope) and any custom
+      // fieldless variant brought into scope via `use Enum::Variant` — those
+      // also parse as a bare capitalized identifier but are values, not types
+      // (Greptile review). A struct defined elsewhere in the crate is missed,
+      // same as every other same-file-only heuristic in this extractor.
       const valueNode = node.childForFieldName('value');
-      if (valueNode?.type === 'identifier' && /^[A-Z]/.test(valueNode.text) && ctx.typeMap) {
+      if (
+        valueNode?.type === 'identifier' &&
+        /^[A-Z]/.test(valueNode.text) &&
+        ctx.typeMap &&
+        isKnownUnitStruct(valueNode.text, ctx)
+      ) {
         setTypeMapEntry(ctx.typeMap, pattern.text, valueNode.text, 0.7);
       }
     }

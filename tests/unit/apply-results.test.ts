@@ -39,17 +39,17 @@ function fakeDef(overrides: Partial<Definition> = {}): Definition {
 
 describe('hasFuncBody', () => {
   it('is true for a function/method with a real multi-line body', () => {
-    expect(hasFuncBody({ name: 'foo', kind: 'function', line: 5, endLine: 10 })).toBe(true);
-    expect(hasFuncBody({ name: 'bar', kind: 'method', line: 5, endLine: 10 })).toBe(true);
+    expect(hasFuncBody({ kind: 'function', line: 5, endLine: 10 })).toBe(true);
+    expect(hasFuncBody({ kind: 'method', line: 5, endLine: 10 })).toBe(true);
   });
 
   it('is false for non-function/method kinds', () => {
-    expect(hasFuncBody({ name: 'Foo', kind: 'class', line: 5, endLine: 10 })).toBe(false);
+    expect(hasFuncBody({ kind: 'class', line: 5, endLine: 10 })).toBe(false);
   });
 
   it('is false when endLine is missing or not after line (type signature, not a body)', () => {
-    expect(hasFuncBody({ name: 'foo', kind: 'function', line: 5 })).toBe(false);
-    expect(hasFuncBody({ name: 'foo', kind: 'function', line: 5, endLine: 5 })).toBe(false);
+    expect(hasFuncBody({ kind: 'function', line: 5 })).toBe(false);
+    expect(hasFuncBody({ kind: 'function', line: 5, endLine: 5 })).toBe(false);
   });
 
   it('is true for a dotted name with a real body (Class.method, module-table function, receiver method) — issue #1922', () => {
@@ -58,19 +58,17 @@ describe('hasFuncBody', () => {
     // functions (Lua's `M.foo`, Go/Java/C#/PHP/Rust receiver or impl methods) across every
     // extractor. Regression guard for the bug where the file-level "does this file need
     // complexity" gate (`defs.some(hasFuncBody)`) went false for an entire file when every
-    // function in it happened to have a dotted name.
-    expect(hasFuncBody({ name: 'Foo.bar', kind: 'method', line: 5, endLine: 10 })).toBe(true);
-    expect(hasFuncBody({ name: 'M.foo', kind: 'method', line: 5, endLine: 10 })).toBe(true);
+    // function in it happened to have a dotted name. `hasFuncBody` no longer takes `name`
+    // at all (it relies on `bodyless` instead), so a single non-bodyless method definition
+    // covers every dotted-name shape mentioned above — there's no name-shaped input left to
+    // vary across cases.
+    expect(hasFuncBody({ kind: 'method', line: 5, endLine: 10 })).toBe(true);
   });
 
   it('is false when the extractor marks the definition bodyless (interface/trait/abstract signature)', () => {
-    expect(
-      hasFuncBody({ name: 'Foo.bar', kind: 'method', line: 5, endLine: 10, bodyless: true }),
-    ).toBe(false);
+    expect(hasFuncBody({ kind: 'method', line: 5, endLine: 10, bodyless: true })).toBe(false);
     // Even a non-dotted signature-only declaration is excluded via `bodyless`.
-    expect(
-      hasFuncBody({ name: 'bar', kind: 'function', line: 5, endLine: 10, bodyless: true }),
-    ).toBe(false);
+    expect(hasFuncBody({ kind: 'function', line: 5, endLine: 10, bodyless: true })).toBe(false);
   });
 });
 
