@@ -587,12 +587,6 @@ pub fn compute_confidence(
     if !is_same_language_family(caller_file, target_file) {
         return 0.0;
     }
-    // Cross-language candidates are never legitimate call targets (#1783) —
-    // reject before scoring proximity so a same-directory, same-named symbol
-    // in an unrelated language can never pass the resolver's 0.5 threshold.
-    if !is_same_language_family(caller_file, target_file) {
-        return 0.0;
-    }
 
     let caller_dir = Path::new(caller_file)
         .parent()
