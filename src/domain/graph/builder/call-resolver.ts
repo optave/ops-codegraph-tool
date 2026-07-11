@@ -284,14 +284,22 @@ export function resolveCallTargets(
   // the imported file's actual symbol is declared under the *original* name
   // (X) — look that up instead of the local alias the call site wrote (#1730).
   const targetName = importedOriginalNames?.get(call.name) ?? call.name;
+  // Tracks the name actually used to find `targets`. Usually equal to
+  // `targetName`, but a barrel hop that itself renames the export
+  // (`export { Foo as Bar } from './foo'`, resolved below) reports the name
+  // truly declared in the origin file — the constructor-attribution lookup
+  // must key on that name, not the call site's (possibly barrel-aliased)
+  // `targetName`, or it builds a qualified name that doesn't exist (#1892).
+  let resolvedClassName = targetName;
   let targets: ReadonlyArray<{ id: number; file: string; kind?: string }> | undefined;
 
   if (importedFrom) {
     targets = lookup.byNameAndFile(targetName, importedFrom);
     if (targets.length === 0 && lookup.isBarrel(importedFrom)) {
-      const resolved = lookup.resolveBarrel(importedFrom, targetName);
-      if (resolved) {
-        targets = lookup.byNameAndFile(resolved.name, resolved.file);
+      const barrelResolved = lookup.resolveBarrel(importedFrom, targetName);
+      if (barrelResolved) {
+        targets = lookup.byNameAndFile(barrelResolved.name, barrelResolved.file);
+        resolvedClassName = barrelResolved.name;
       }
     }
   }
@@ -330,8 +338,10 @@ export function resolveCallTargets(
   // #1892: `new ClassName()` / bare `ClassName()` (keyword-less languages)
   // always resolves as a bare (no-receiver) call — augment any class-kind
   // match with the class's own constructor method, if it declares one.
+  // Uses `resolvedClassName` (not `targetName`) so a barrel rename doesn't
+  // make the qualified constructor lookup miss (see comment above).
   if (!call.receiver) {
-    resolved = attachConstructorTargets(lookup, resolved, targetName);
+    resolved = attachConstructorTargets(lookup, resolved, resolvedClassName);
   }
   if (resolved.length > 1) {
     resolved.sort((a, b) => {
