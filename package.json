@@ -185,7 +185,7 @@
     "tree-sitter-swift": "^0.7.1",
     "tree-sitter-typescript": "^0.23.2",
     "tree-sitter-verilog": "^1.0.0",
-    "typescript": "^6.0.2",
+    "typescript": "^7.0.2",
     "vitest": "^4.0.18"
   },
   "license": "Apache-2.0"
