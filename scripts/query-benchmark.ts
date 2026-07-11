@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
 import { round1, timeMedian } from './lib/bench-timing.js';
-import { selectHubTargets, type HubTargets } from './lib/hub-selection.js';
+import { PINNED_HUB_CANDIDATES, selectHubTargets, type HubTargets } from './lib/hub-selection.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -117,11 +117,6 @@ const RUNS = 5;
 // steady-state per-call latency is unchanged. Discard the first WARMUP_RUNS
 // before timing so the metric reflects warm-call latency, not cold-start.
 const WARMUP_RUNS = 3;
-
-// Pinned hub targets — stable function names that exist across versions.
-// Auto-selecting the most-connected node makes version-to-version comparison
-// meaningless when barrel/type files get added or removed.
-const PINNED_HUB_CANDIDATES = ['buildGraph', 'openDb', 'loadConfig'];
 
 async function benchDepths(fn, name, depths) {
 	const result = {};

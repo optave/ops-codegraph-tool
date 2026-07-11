@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { selectHubTargets } from '../../scripts/lib/hub-selection.js';
+import { PINNED_HUB_CANDIDATES, selectHubTargets } from '../../scripts/lib/hub-selection.js';
 import { initSchema } from '../../src/db/index.js';
 
 function insertNode(db, name, kind, file, line) {
@@ -78,6 +78,17 @@ afterAll(() => {
 describe('selectHubTargets', () => {
   it('prefers a callable-kind pinned candidate over a same-named constant binding', () => {
     const targets = selectHubTargets(dbPath, ['buildGraph']);
+    expect(targets.hub).toBe('buildGraph');
+    expect(targets.hubFile).toBe('src/domain/graph/builder.ts');
+  });
+
+  it('resolves via the shared PINNED_HUB_CANDIDATES list used by both benchmark scripts', () => {
+    // query-benchmark.ts and benchmark.ts both pass this exact export to
+    // selectHubTargets — exercise it directly (not just a single-item
+    // ['buildGraph'] stand-in) so a typo or ordering change in the shared
+    // list is caught here rather than only at benchmark run time.
+    expect(PINNED_HUB_CANDIDATES.length).toBeGreaterThan(0);
+    const targets = selectHubTargets(dbPath, PINNED_HUB_CANDIDATES);
     expect(targets.hub).toBe('buildGraph');
     expect(targets.hubFile).toBe('src/domain/graph/builder.ts');
   });

@@ -33,10 +33,24 @@
     },
     {
       "source": { "name": "UserService.getUser", "file": "service.ts" },
+      "target": { "name": "Serializer.serialize", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.serializer.serialize() — typed as Serializer<User>, resolved to the interface method declaration"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "service.ts" },
       "target": { "name": "JsonSerializer.serialize", "file": "serializer.ts" },
       "kind": "calls",
       "mode": "interface-dispatched",
       "notes": "this.serializer.serialize() — typed as Serializer<User>, resolved to JsonSerializer"
+    },
+    {
+      "source": { "name": "UserService.addUser", "file": "service.ts" },
+      "target": { "name": "Serializer.deserialize", "file": "types.ts" },
+      "kind": "calls",
+      "mode": "interface-dispatched",
+      "notes": "this.serializer.deserialize() — typed as Serializer<User>, resolved to the interface method declaration"
     },
     {
       "source": { "name": "UserService.addUser", "file": "service.ts" },
@@ -165,6 +179,13 @@
       "notes": "new UserService(repo, serializer) — class instantiation tracked as consumption"
     },
     {
+      "source": { "name": "createService", "file": "service.ts" },
+      "target": { "name": "UserService.constructor", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService(repo, serializer) — also attributes to the constructor method itself (#1892)"
+    },
+    {
       "source": { "name": "Shape.describe", "file": "hierarchy.ts" },
       "target": { "name": "Shape.area", "file": "hierarchy.ts" },
       "kind": "calls",
@@ -207,6 +228,13 @@
       "notes": "new Circle(r) — class instantiation"
     },
     {
+      "source": { "name": "makeCircle", "file": "hierarchy.ts" },
+      "target": { "name": "Circle.constructor", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new Circle(r) — also attributes to the constructor method itself (#1892); must NOT also attribute to Ellipse.constructor even though Ellipse extends Circle and is separately instantiated (constructor calls are never CHA-polymorphic)"
+    },
+    {
       "source": { "name": "makeEllipse", "file": "hierarchy.ts" },
       "target": { "name": "Ellipse", "file": "hierarchy.ts" },
       "kind": "calls",
@@ -214,11 +242,25 @@
       "notes": "new Ellipse(rx, ry) — class instantiation providing RTA evidence for transitive CHA"
     },
     {
+      "source": { "name": "makeEllipse", "file": "hierarchy.ts" },
+      "target": { "name": "Ellipse.constructor", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new Ellipse(rx, ry) — also attributes to the constructor method itself (#1892)"
+    },
+    {
       "source": { "name": "makeRectangle", "file": "hierarchy.ts" },
       "target": { "name": "Rectangle", "file": "hierarchy.ts" },
       "kind": "calls",
       "mode": "constructor",
       "notes": "new Rectangle(w, h) — class instantiation"
+    },
+    {
+      "source": { "name": "makeRectangle", "file": "hierarchy.ts" },
+      "target": { "name": "Rectangle.constructor", "file": "hierarchy.ts" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new Rectangle(w, h) — also attributes to the constructor method itself (#1892)"
     },
     {
       "source": { "name": "runCallbackDemo", "file": "callbacks.ts" },

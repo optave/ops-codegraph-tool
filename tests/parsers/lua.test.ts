@@ -1,5 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createParsers, extractLuaSymbols } from '../../src/domain/parser.js';
+import { LUA_BUILTIN_GLOBALS } from '../../src/extractors/lua.js';
 
 describe('Lua parser', () => {
   let parsers: any;
@@ -205,5 +209,38 @@ string.format("%s", name)`);
         }),
       );
     });
+  });
+});
+
+describe('LUA_BUILTIN_GLOBALS cross-engine parity', () => {
+  // Greptile follow-up (#1912): the allowlist is duplicated in lua.rs and
+  // lua.ts with only a prose comment linking them. If one drifts, native and
+  // WASM silently disagree on which reassignments produce a value-ref edge.
+  // This reads the Rust list as text (it can't be imported into a JS test)
+  // and diffs it against the real TS Set, so any future one-sided edit fails
+  // CI instead of shipping a silent engine divergence.
+  it('matches the Rust extractor allowlist exactly', () => {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const rustSource = fs.readFileSync(
+      path.join(__dirname, '../../crates/codegraph-core/src/extractors/lua.rs'),
+      'utf8',
+    );
+    const match = /const LUA_BUILTIN_GLOBALS: &\[&str\] = &\[([\s\S]*?)\];/.exec(rustSource);
+    expect(match, 'LUA_BUILTIN_GLOBALS array not found in lua.rs').not.toBeNull();
+
+    const rustNames = [...match![1].matchAll(/"([a-zA-Z0-9_]+)"/g)].map((m) => m[1]);
+    expect(
+      rustNames.length,
+      'regex extracted zero names from lua.rs — pattern likely stale',
+    ).toBeGreaterThan(0);
+
+    const rustSet = new Set(rustNames);
+    expect(rustSet.size, 'lua.rs has duplicate entries').toBe(rustNames.length);
+
+    const missingFromRust = [...LUA_BUILTIN_GLOBALS].filter((n) => !rustSet.has(n));
+    const missingFromTs = rustNames.filter((n) => !LUA_BUILTIN_GLOBALS.has(n));
+    expect(missingFromRust, 'present in lua.ts but missing from lua.rs').toEqual([]);
+    expect(missingFromTs, 'present in lua.rs but missing from lua.ts').toEqual([]);
   });
 });
