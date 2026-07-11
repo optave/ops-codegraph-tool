@@ -285,8 +285,20 @@ fn handle_dart_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_dart_constructor_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    // tree-sitter-dart crate versions structure the type name differently:
+    // 0.2 (crates.io, current) nests it under an intermediate `type` field —
+    // `new_expression type: (type (type_identifier)) arguments: (...)` —
+    // while npm's tree-sitter-dart 1.x (used by the WASM engine, see
+    // check-grammar-versions.mjs's tracked exception for this crate) puts it
+    // directly under `new_expression` — `(new_expression (type_identifier)
+    // (arguments))`. Try the direct shape first, then unwrap one `type` level.
     let name_node = find_child(node, "type_identifier")
-        .or_else(|| find_child(node, "identifier"));
+        .or_else(|| find_child(node, "identifier"))
+        .or_else(|| {
+            node.child_by_field_name("type").or_else(|| find_child(node, "type")).and_then(|t| {
+                find_child(&t, "type_identifier").or_else(|| find_child(&t, "identifier"))
+            })
+        });
     if let Some(name) = name_node {
         symbols.calls.push(Call {
             name: node_text(&name, source).to_string(),

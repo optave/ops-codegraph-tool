@@ -20,9 +20,15 @@
  * `buildChaContextFromDb`'s RTA fallback (incremental rebuilds) reads
  * instantiation evidence from `calls` edges targeting class-kind nodes.
  *
- * A class with no explicit constructor (`Bar`/`Baz`/`Qux` below) must still
- * resolve only to the class node — there is no method to attribute the call
- * to, and the fix must not fabricate one.
+ * A class with no explicit constructor (`Bar`/`Qux`/`Corge`/`Garply`/`Fred`/
+ * `Xyzzy` below) must still resolve only to the class node — there is no
+ * method to attribute the call to, and the fix must not fabricate one.
+ *
+ * Covers all three constructor-naming families named in
+ * `CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION` (strategy.ts): keyword-fixed
+ * (JS/TS `constructor`, Python `__init__`, PHP `__construct`) and
+ * class-name-identical (Java, Dart, Groovy — C# is covered by the shared
+ * benchmark fixtures, see resolution-benchmark.test.ts).
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -83,6 +89,81 @@ class Wrapper {
 }
 `;
 
+// PHP's constructor keyword (__construct) is a fixed identifier unlike Java's
+// "same as class name" convention — a typo in CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION
+// or a mismatch between the TS and Rust arms would go undetected without this.
+const PHP_FIXTURE = `<?php
+
+class Grault {
+  public function __construct() {
+  }
+}
+
+class Garply {
+}
+
+function makeGrault() {
+  return new Grault();
+}
+
+function makeGarply() {
+  return new Garply();
+}
+`;
+
+// Dart is one of the "same as class name" languages (with Java/C#/Groovy) —
+// covers the family beyond Java alone.
+// Three deliberate departures from the JS/Python/Java fixtures above, all
+// working around pre-existing Dart extractor gaps unrelated to constructor
+// attribution — tracked as a follow-up (#2082), not fixed here:
+//  1. Uses explicit `new` rather than the keyword-less `Waldo()` construction
+//     modern Dart also permits — bare (keyword-less) calls, constructor or
+//     plain function, are not extracted as a Call at all currently.
+//  2. Wrapper functions use an arrow (`=>`) body rather than a `{ ... }`
+//     block spanning multiple lines — a block-bodied function/method's
+//     `endLine` is currently truncated to its signature line, which makes
+//     any call in its body (on a later line) fall outside the recorded
+//     [line, endLine] span and get attributed to the file instead of the
+//     enclosing function during graph build.
+//  3. Waldo's constructor has an (empty) `{ }` block body rather than the
+//     semicolon-only `Waldo();` short form the benchmark fixtures use
+//     elsewhere — a bodyless constructor isn't extracted as a definition
+//     at all currently, so it would never be found for attribution.
+const DART_FIXTURE = `
+class Waldo {
+  Waldo() {
+  }
+}
+
+class Fred {
+}
+
+Waldo makeWaldo() => new Waldo();
+
+Fred makeFred() => new Fred();
+`;
+
+// Groovy is also "same as class name". Constructions wrapped in a method
+// (mirroring the Java Wrapper.run() fixture) rather than a bare top-level
+// function — Groovy scripts conventionally scope executable statements inside
+// a class method (see the resolution-benchmark Main.groovy fixture).
+const GROOVY_FIXTURE = `
+class Plugh {
+  Plugh() {
+  }
+}
+
+class Xyzzy {
+}
+
+class GroovyWrapper {
+  void run() {
+    def plugh = new Plugh()
+    def xyzzy = new Xyzzy()
+  }
+}
+`;
+
 interface CallEdgeRow {
   src: string;
   srcKind: string;
@@ -118,6 +199,9 @@ function runScenario(engine: EngineMode): void {
       fs.writeFileSync(path.join(dir, 'repro.js'), JS_FIXTURE);
       fs.writeFileSync(path.join(dir, 'repro.py'), PY_FIXTURE);
       fs.writeFileSync(path.join(dir, 'Repro.java'), JAVA_FIXTURE);
+      fs.writeFileSync(path.join(dir, 'repro.php'), PHP_FIXTURE);
+      fs.writeFileSync(path.join(dir, 'repro.dart'), DART_FIXTURE);
+      fs.writeFileSync(path.join(dir, 'repro.groovy'), GROOVY_FIXTURE);
       await buildGraph(dir, { engine, incremental: false, skipRegistry: true });
       edges = readCallEdges(path.join(dir, '.codegraph', 'graph.db'));
     }, 30_000);
@@ -199,6 +283,85 @@ function runScenario(engine: EngineMode): void {
         tgtKind: 'class',
       });
       expect(edges.some((e) => e.src === 'Wrapper.run' && e.tgt === 'Corge.Corge')).toBe(false);
+    });
+
+    it('PHP: new Grault() resolves to both Grault (class) and Grault.__construct (method)', () => {
+      expect(edges).toContainEqual({
+        src: 'makeGrault',
+        srcKind: 'function',
+        tgt: 'Grault',
+        tgtKind: 'class',
+      });
+      expect(edges).toContainEqual({
+        src: 'makeGrault',
+        srcKind: 'function',
+        tgt: 'Grault.__construct',
+        tgtKind: 'method',
+      });
+    });
+
+    it('PHP: new Garply() resolves only to Garply (class) — no explicit __construct to attribute to', () => {
+      expect(edges).toContainEqual({
+        src: 'makeGarply',
+        srcKind: 'function',
+        tgt: 'Garply',
+        tgtKind: 'class',
+      });
+      expect(edges.some((e) => e.src === 'makeGarply' && e.tgt === 'Garply.__construct')).toBe(
+        false,
+      );
+    });
+
+    it('Dart: Waldo() resolves to both Waldo (class) and Waldo.Waldo (constructor method)', () => {
+      expect(edges).toContainEqual({
+        src: 'makeWaldo',
+        srcKind: 'function',
+        tgt: 'Waldo',
+        tgtKind: 'class',
+      });
+      expect(edges).toContainEqual({
+        src: 'makeWaldo',
+        srcKind: 'function',
+        tgt: 'Waldo.Waldo',
+        tgtKind: 'method',
+      });
+    });
+
+    it('Dart: Fred() resolves only to Fred (class) — no explicit constructor to attribute to', () => {
+      expect(edges).toContainEqual({
+        src: 'makeFred',
+        srcKind: 'function',
+        tgt: 'Fred',
+        tgtKind: 'class',
+      });
+      expect(edges.some((e) => e.src === 'makeFred' && e.tgt === 'Fred.Fred')).toBe(false);
+    });
+
+    it('Groovy: new Plugh() resolves to both Plugh (class) and Plugh.Plugh (constructor method)', () => {
+      expect(edges).toContainEqual({
+        src: 'GroovyWrapper.run',
+        srcKind: 'method',
+        tgt: 'Plugh',
+        tgtKind: 'class',
+      });
+      expect(edges).toContainEqual({
+        src: 'GroovyWrapper.run',
+        srcKind: 'method',
+        tgt: 'Plugh.Plugh',
+        tgtKind: 'method',
+      });
+    });
+
+    it('Groovy: new Xyzzy() resolves only to Xyzzy (class) — no explicit constructor to attribute to', () => {
+      expect(edges).toContainEqual({
+        src: 'GroovyWrapper.run',
+        srcKind: 'method',
+        tgt: 'Xyzzy',
+        tgtKind: 'class',
+      });
+      expect(edges.some((e) => e.src === 'GroovyWrapper.run' && e.tgt === 'Xyzzy.Xyzzy')).toBe(
+        false,
+      );
     });
   });
 }

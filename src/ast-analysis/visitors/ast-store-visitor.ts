@@ -274,21 +274,29 @@ function collectNode(ctx: CollectCtx, node: TreeSitterNode, kind: string): void 
  * "function Object() { [native code] } could not be cloned" when the
  * resulting astNodes row is structured-cloned back to the main thread.
  *
- * When `requireNamedNode` is set, anonymous grammar tokens are rejected even
- * if their `type` string matches a mapped key — e.g. TypeScript's
- * `predefined_type` keyword (`string`, `number`, ...) lexes as an unnamed
- * token whose type collides with the named `string` literal node (#1729),
- * and PHP's `primitive_type`/`cast_type` keyword (`string`) collides with
- * the named `string` literal node the same way (#1821). See
- * `astRequiresNamedNode()` in `../rules/index.ts` for the full language list.
+ * When `requireNamedNode` is set, anonymous `string`/`template_string`
+ * grammar tokens are rejected even though their `type` string matches a
+ * mapped key — e.g. TypeScript's `predefined_type` keyword (`string`,
+ * `number`, ...) lexes as an unnamed token whose type collides with the
+ * named `string` literal node (#1729), and PHP's `primitive_type`/`cast_type`
+ * keyword (`string`) collides the same way (#1821). Scoped to just those two
+ * node types (not every mapped kind) to mirror the native `is_named()` guard,
+ * which only appears on the `"string" | "template_string"` match arm in
+ * `extractors/javascript.rs::walk_ast_nodes_depth` — every other mapped kind
+ * (call, new, throw, await, regex) is always a named production, so gating
+ * them too would silently diverge from the native engine's behavior the
+ * moment that stops being true. See `astRequiresNamedNode()` in
+ * `../rules/index.ts` for the full requireNamedNode language list.
  */
+const NAMED_NODE_REQUIRED_TYPES: ReadonlySet<string> = new Set(['string', 'template_string']);
+
 function resolveAstKind(
   node: TreeSitterNode,
   astTypeMap: Record<string, string>,
   requireNamedNode: boolean,
 ): string | null {
   if (!Object.hasOwn(astTypeMap, node.type)) return null;
-  if (requireNamedNode && !node.isNamed) return null;
+  if (requireNamedNode && !node.isNamed && NAMED_NODE_REQUIRED_TYPES.has(node.type)) return null;
   return astTypeMap[node.type] || null;
 }
 

@@ -136,6 +136,16 @@ describe('tracer-common.sh sed-injection helpers (#1913)', () => {
     // tracers should contain zero remaining single-line "i\text"/"a\text"
     // occurrences (the exact defect #1913 fixed) — this guards against
     // future injection sites reintroducing the GNU-only shortcut.
+    //
+    // tracer-common.sh itself is deliberately NOT in this list: its helpers
+    // build the sed script inside double-quoted bash strings, so a literal
+    // backslash is written as "i\\" (escaped for the enclosing quotes)
+    // immediately followed by a newline. That raw "\\" trips the /[ai]\\\S/
+    // pattern below as a false positive — the second backslash satisfies \S
+    // — even though it's the correct portable multi-line form, not the
+    // banned single-line shortcut. Trade-off: a future helper mistakenly
+    // written with the real GNU-only form directly inside tracer-common.sh
+    // would go undetected by this guard.
     const guardedFiles = ['jvm-tracer.sh', 'native-tracer.sh', 'go-tracer.sh'];
 
     for (const name of guardedFiles) {
