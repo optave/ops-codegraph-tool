@@ -112,6 +112,13 @@
       "notes": "new UserService(repo) — class instantiation"
     },
     {
+      "source": { "name": "UserService.createDefault", "file": "UserService.java" },
+      "target": { "name": "UserService.UserService", "file": "UserService.java" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService(repo) — also attributes to the constructor method itself (#1892), even though the caller is a static factory method of the same class being constructed"
+    },
+    {
       "source": { "name": "Main.main", "file": "Main.java" },
       "target": { "name": "UserService.createDefault", "file": "UserService.java" },
       "kind": "calls",

@@ -117,7 +117,7 @@ interface RawNodeRow {
 }
 
 /** Try opening a NativeDatabase handle for batched fan-in/fan-out metrics. */
-function openNativeDbForFanMetrics(dbPath: string): NativeDatabase | undefined {
+export function openNativeDbForFanMetrics(dbPath: string): NativeDatabase | undefined {
   if (!isNativeAvailable()) return undefined;
   try {
     const native = getNative();

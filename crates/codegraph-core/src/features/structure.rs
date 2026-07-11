@@ -141,29 +141,43 @@ pub fn get_existing_file_count(conn: &Connection) -> i64 {
     .unwrap_or(0)
 }
 
-/// Directories connected to `dir` via a live import/imports-type edge in
-/// either direction — the cross-directory neighbours whose own fan-in/out
-/// may have shifted even though none of their files changed. Used by
+/// Files connected to `file` via a live import/imports-type edge in either
+/// direction — the cross-directory neighbours whose own fan-in/out may have
+/// shifted even though `file` is the only one that actually changed. Used by
 /// `refresh_affected_directory_metrics` to expand its affected-directory set
-/// by exactly one hop.
-fn find_neighbor_files(conn: &Connection, dir: &str) -> Vec<String> {
-    let lo = format!("{dir}/");
-    let hi = format!("{dir}0");
+/// by exactly one hop, for both changed files and (via `removed_file_neighbors`,
+/// #1839) removed ones.
+///
+/// Scoped to the exact touched `file`, not its containing directory. An
+/// earlier version scoped this to the whole leaf directory (`dir >= x/ AND
+/// dir < x0`), which also pulled in edges belonging to unrelated sibling
+/// files that happen to live alongside `file` — harmless when the directory
+/// is small, but when the touched file sits in a widely-imported "hub"
+/// directory (e.g. `src/domain`, imported from dozens of unrelated
+/// directories via sibling files), that range scan discovers hundreds of
+/// neighbour files that have nothing to do with `file`'s own edges, which
+/// then balloon the affected-directory set to include broad, expensive-to-
+/// recompute ancestors like the repo-root `src` (measured: 251 neighbour
+/// files / 29 affected dirs for a single-file change to this repo's own
+/// `src/domain/queries.ts`, a ~55ms hit on the "1-file rebuild" benchmark —
+/// #1855). Scoping to the exact file preserves the cross-directory
+/// detection this function exists for (#1738) while only considering edges
+/// that could plausibly have changed as a result of editing `file` itself
+/// (251 -> 46 neighbour files / 29 -> 13 affected dirs for the same probe).
+fn find_neighbor_files(conn: &Connection, file: &str) -> Vec<String> {
     let mut stmt = match conn.prepare(
         "SELECT n2.file AS other FROM edges e \
            JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
-           WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file \
-             AND n1.file >= ?1 AND n1.file < ?2 \
+           WHERE e.kind IN ('imports', 'imports-type') AND n1.file = ?1 AND n2.file != ?1 \
          UNION \
          SELECT n1.file AS other FROM edges e \
            JOIN nodes n1 ON e.source_id = n1.id JOIN nodes n2 ON e.target_id = n2.id \
-           WHERE e.kind IN ('imports', 'imports-type') AND n1.file != n2.file \
-             AND n2.file >= ?1 AND n2.file < ?2",
+           WHERE e.kind IN ('imports', 'imports-type') AND n2.file = ?1 AND n1.file != ?1",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let result = match stmt.query_map(rusqlite::params![lo, hi], |row| row.get::<_, String>(0)) {
+    let result = match stmt.query_map(rusqlite::params![file], |row| row.get::<_, String>(0)) {
         Ok(rows) => rows.flatten().collect(),
         Err(_) => Vec::new(),
     };
@@ -181,14 +195,25 @@ fn find_neighbor_files(conn: &Connection, dir: &str) -> Vec<String> {
 ///
 /// This recomputes metrics for the ancestor directories of the files that
 /// changed in this build (added, removed, or modified), PLUS any directory
-/// reachable from them via a live cross-directory import edge — a changed
-/// file that gains (or loses) an import into a sibling package shifts that
-/// package's fan-in/fan-out/cohesion even though none of its own files were
-/// touched. One level of expansion only (mirrors the neighbour-expansion
-/// `classifyNodeRolesIncremental`/`do_classify_incremental` already does for
-/// role classification) — bounded by (changed files × path depth) rather
-/// than the size of the repo, so it stays cheap enough to run
-/// unconditionally alongside the fast path.
+/// reachable from the touched files' *immediate* (most specific) directory
+/// via a live cross-directory import edge — a changed file that gains (or
+/// loses) an import into a sibling package shifts that package's
+/// fan-in/fan-out/cohesion even though none of its own files were touched.
+///
+/// The neighbor-discovery step is seeded from each touched file itself, not
+/// from every ancestor up to root, and not from the touched file's whole
+/// containing directory either — `find_neighbor_files` is now bounded by the
+/// import edges attached to that ONE file. Seeding from every ancestor
+/// turned a single touched file into 50+ affected directories on this
+/// repo's own `src/` tree — a measured 70-90ms hit on the "1-file rebuild"
+/// benchmark (#1738 follow-up). Seeding from the touched file's *directory*
+/// (an intermediate fix) was still broad enough to pull in unrelated
+/// sibling files' edges whenever that directory was itself a widely-
+/// imported hub (e.g. `src/domain`) — measured 251 neighbour files / 29
+/// affected dirs (~55ms) for a single-file change there, cut to 46 / 13 by
+/// scoping to the exact file (#1855). Ancestor rollup (ancestors' own
+/// aggregates still get recomputed) is unaffected; only the expensive
+/// cross-directory neighbor lookup is scoped down.
 ///
 /// Removed files need no edge/node cleanup of their own — the purge step
 /// already deleted their nodes and every edge referencing them (including
@@ -216,9 +241,14 @@ pub fn refresh_affected_directory_metrics(
         return;
     }
 
-    let seed_dirs: Vec<String> = affected_dirs.iter().cloned().collect();
-    for dir in &seed_dirs {
-        let neighbor_files = find_neighbor_files(conn, dir);
+    // Seed neighbor-discovery from each touched file individually — NOT its
+    // containing directory, and NOT every entry in `affected_dirs` (which
+    // includes the full ancestor chain up to root). See the function doc
+    // comment: expanding from a broad ancestor like `src`, or from every
+    // sibling in the touched file's own directory, is effectively repo-wide
+    // whenever that directory is a widely-imported hub.
+    for file in &touched {
+        let neighbor_files = find_neighbor_files(conn, file);
         for ancestor in get_ancestor_dirs(&neighbor_files) {
             affected_dirs.insert(ancestor);
         }
