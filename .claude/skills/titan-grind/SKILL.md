@@ -109,7 +109,7 @@ Forge shapes the metal. Grind smooths the rough edges. Your goal: find helpers t
 
 12. **Capture dead-symbol baseline** (only if `grind.deadSymbolBaseline` is null):
     ```bash
-    codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{const data=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:data.count,byRole:data.summary}));})"
+    codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{try{const data=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:data.count??0,byRole:data.summary??{}}));}catch(e){console.error('Failed to parse roles --json output: '+e.message);process.exit(1);}})"
     ```
     `codegraph roles --json` returns `{ count, summary, symbols }` (not a bare array) — `summary` is already the per-role breakdown (e.g. `dead-leaf`, `dead-entry`, `dead-ffi`, `dead-unresolved`), so no manual reduce is needed.
     Store the total in `grind.deadSymbolBaseline`. Write `titan-state.json` immediately.
@@ -580,7 +580,7 @@ After all targets in the phase are processed:
 
 ```bash
 codegraph build
-codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{const data=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:data.count,byRole:data.summary}));})"
+codegraph roles --role dead -T --json | node -e "const d=[];process.stdin.on('data',c=>d.push(c));process.stdin.on('end',()=>{try{const data=JSON.parse(Buffer.concat(d));console.log(JSON.stringify({total:data.count??0,byRole:data.summary??{}}));}catch(e){console.error('Failed to parse roles --json output: '+e.message);process.exit(1);}})"
 ```
 
 Store in `grind.deadSymbolCurrent`. Write `titan-state.json`.
