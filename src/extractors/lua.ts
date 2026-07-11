@@ -258,12 +258,12 @@ function handleLuaFunctionCall(node: TreeSitterNode, ctx: ExtractorOutput): void
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
 
-  // load(chunk) / loadstring(chunk) / dofile(...) — dynamic code execution;
-  // undecidable statically. Mirrors handle_lua_function_call's `load` arm in
-  // crates/codegraph-core/src/extractors/lua.rs.
+  // load(chunk) / loadstring(chunk) / loadfile(...) / dofile(...) — dynamic
+  // code execution; undecidable statically. Mirrors handle_lua_function_call's
+  // `load` arm in crates/codegraph-core/src/extractors/lua.rs.
   if (nameNode.type === 'identifier') {
     const ident = nameNode.text;
-    if (ident === 'load' || ident === 'loadstring' || ident === 'dofile') {
+    if (ident === 'load' || ident === 'loadstring' || ident === 'loadfile' || ident === 'dofile') {
       ctx.calls.push({
         name: '<dynamic:eval>',
         line: node.startPosition.row + 1,

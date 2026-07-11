@@ -164,6 +164,13 @@ string.format("%s", name)`);
       );
     });
 
+    it('classifies loadfile(...) as a dynamic eval call', () => {
+      const symbols = parseLua(`loadfile("script.lua")()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: '<dynamic:eval>', dynamic: true, dynamicKind: 'eval' }),
+      );
+    });
+
     it('classifies dofile(...) as a dynamic eval call', () => {
       const symbols = parseLua(`dofile("script.lua")`);
       expect(symbols.calls).toContainEqual(
