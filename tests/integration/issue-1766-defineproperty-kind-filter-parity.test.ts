@@ -24,11 +24,13 @@
  * engines) — by `resolveCallTargets`'s own unqualified lookup before this
  * fallback tier is ever reached. This integration test instead locks in
  * end-to-end parity for the overall accessor-fallback feature across
- * full-build vs incremental after the consolidation. (Native-engine full
- * builds reach this via a different mechanism than the WASM path — Rust's
- * own composite-pts-key resolution, not the `definePropertyReceivers` path
- * this issue is about — since #1887 tracks that the native orchestrator's
- * fast path never runs the JS `definePropertyReceivers` post-pass at all.)
+ * full-build vs incremental after the consolidation. (For this specific
+ * object-literal fixture, native full builds already resolved the edge via
+ * Rust's own independent composite-pts-key mechanism even before #1887 was
+ * fixed — the native orchestrator's `definePropertyReceivers` post-pass now
+ * also runs and agrees, but it isn't what makes this particular case pass;
+ * see `issue-1887-native-defineproperty-postpass.test.ts` for the
+ * typed-instance-receiver case that #1887 was actually about.)
  *
  * Mirrors the full-build-vs-incremental-rebuild comparison pattern from
  * `issue-1765-incremental-same-class-barecall.test.ts`.

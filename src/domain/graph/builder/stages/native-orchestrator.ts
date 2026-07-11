@@ -45,6 +45,7 @@ import {
 } from '../../../parser.js';
 import { computeConfidence } from '../../resolve.js';
 import type { CallNodeLookup } from '../call-resolver.js';
+import { resolveDefinePropertyAccessorTarget } from '../call-resolver.js';
 import type { ChaContext } from '../cha.js';
 import { resolveThisDispatch } from '../cha.js';
 import type { PipelineContext } from '../context.js';
@@ -984,8 +985,10 @@ function runPostNativeCha(
   return expandChaEdges(db, callToMethods, implementors, instantiated, noRtaEvidence);
 }
 
-// Extensions where `this`/`super` dispatch can occur (JS/TS family)
-const THIS_DISPATCH_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '.mts', '.cts']);
+// Extensions covered by the JS/TS extractor — the only extractor that
+// understands `this`/`super` dispatch and Object.defineProperty accessor
+// receivers, so both hybrid WASM re-parse post-passes scope to this set.
+const JS_TS_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '.mts', '.cts']);
 
 // ── this/super dispatch post-pass helpers ───────────────────────────────────
 
@@ -1060,15 +1063,13 @@ function selectThisDispatchFiles(
         )
       `)
       .all() as Array<{ file: string }>;
-    return rows
-      .map((r) => r.file)
-      .filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
+    return rows.map((r) => r.file).filter((f) => JS_TS_EXTS.has(path.extname(f).toLowerCase()));
   }
   // NOTE: Only files explicitly listed in changedFiles are re-parsed.
   // If a parent-class method is replaced (new node ID) but the child file is
   // unchanged, the stale super.method() edge is not refreshed here. A full
   // rebuild (isFullBuild=true) is required to recover in that scenario.
-  return changedFiles.filter((f) => THIS_DISPATCH_EXTS.has(path.extname(f).toLowerCase()));
+  return changedFiles.filter((f) => JS_TS_EXTS.has(path.extname(f).toLowerCase()));
 }
 
 /**
@@ -1144,6 +1145,49 @@ async function parseFilesForThisDispatch(
   return { callsByRel, wasmResults };
 }
 
+/**
+ * Prepare a statement that finds the innermost containing method/function for
+ * a call at `line` in `file`. Shared by both hybrid WASM re-parse post-passes
+ * (this/super dispatch and Object.defineProperty accessor dispatch) — each
+ * attributes re-parsed call sites to their enclosing caller using DB state
+ * (the native engine's own definitions are authoritative) rather than the
+ * WASM re-parse's own transient per-file `definitions` array.
+ * COALESCE maps NULL end_line to a large sentinel so unbounded nodes sort last
+ * (SQLite ASC orders NULLs first, so a raw `end_line - line` would pick them first).
+ */
+function prepareCallerByLineStmt(db: BetterSqlite3Database) {
+  return db.prepare(`
+    SELECT id, name FROM nodes
+    WHERE file = ? AND kind IN ('method', 'function')
+    AND line <= ? AND (end_line IS NULL OR end_line >= ?)
+    ORDER BY COALESCE(end_line - line, 999999999) ASC
+    LIMIT 1
+  `);
+}
+
+/**
+ * Minimal DB-backed {@link CallNodeLookup} for hybrid WASM re-parse
+ * post-passes (this/super dispatch, Object.defineProperty accessor dispatch).
+ * Barrel resolution is intentionally unsupported — these post-passes only
+ * ever resolve same-file targets, never cross-file barrel re-exports.
+ * `nodeId` is unused by these callers (they resolve callers via
+ * {@link prepareCallerByLineStmt} instead of `findCaller`'s per-file
+ * `definitions` array) so it is intentionally left unimplemented.
+ */
+function makePostNativeCallLookup(db: BetterSqlite3Database): CallNodeLookup {
+  const findByNameStmt = db.prepare(`SELECT id, file, kind FROM nodes WHERE name = ?`);
+  return {
+    byName: (name) => findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>,
+    byNameAndFile: (name, file) =>
+      (findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>).filter(
+        (n) => n.file === file,
+      ),
+    isBarrel: () => false,
+    resolveBarrel: () => null,
+    nodeId: () => undefined,
+  };
+}
+
 /** Emit this/super dispatch edges from re-parsed call sites. */
 function emitThisDispatchEdges(
   db: BetterSqlite3Database,
@@ -1156,16 +1200,7 @@ function emitThisDispatchEdges(
   targetIds: Set<number>;
   affectedFiles: Set<string>;
 } {
-  // Find the innermost containing method/function for a call at `line` in `file`.
-  // COALESCE maps NULL end_line to a large sentinel so unbounded nodes sort last
-  // (SQLite ASC orders NULLs first, so a raw `end_line - line` would pick them first).
-  const findCallerByLineStmt = db.prepare(`
-    SELECT id, name FROM nodes
-    WHERE file = ? AND kind IN ('method', 'function')
-    AND line <= ? AND (end_line IS NULL OR end_line >= ?)
-    ORDER BY COALESCE(end_line - line, 999999999) ASC
-    LIMIT 1
-  `);
+  const findCallerByLineStmt = prepareCallerByLineStmt(db);
 
   const newEdges: Array<[number, number, string, number, number, string]> = [];
   const targetIds = new Set<number>();
@@ -1212,8 +1247,8 @@ function emitThisDispatchEdges(
   return { newEdges, targetIds, affectedFiles };
 }
 
-/** Free WASM parse trees after this-dispatch post-pass to prevent memory leaks. */
-function cleanupThisDispatchWasmTrees(wasmResults: Map<string, ExtractorOutput>): void {
+/** Free WASM parse trees after a hybrid re-parse post-pass to prevent memory leaks. */
+function cleanupWasmParseTrees(wasmResults: Map<string, ExtractorOutput>): void {
   for (const [, symbols] of wasmResults) {
     const tree = (symbols as { _tree?: { delete?: () => void } })._tree;
     if (tree && typeof tree.delete === 'function') {
@@ -1283,17 +1318,7 @@ async function runPostNativeThisDispatch(
   if (relFiles.length === 0) return emptyResult;
 
   // DB-backed CallNodeLookup — resolveThisDispatch only calls byName()
-  const findByNameStmt = db.prepare(`SELECT id, file, kind FROM nodes WHERE name = ?`);
-  const lookup: CallNodeLookup = {
-    byName: (name) => findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>,
-    byNameAndFile: (name, file) =>
-      (findByNameStmt.all(name) as Array<{ id: number; file: string; kind: string }>).filter(
-        (n) => n.file === file,
-      ),
-    isBarrel: () => false,
-    resolveBarrel: () => null,
-    nodeId: () => undefined,
-  };
+  const lookup = makePostNativeCallLookup(db);
 
   // Seed seen-pairs from existing call edges on source nodes in our file set
   const seen = new Set<string>();
@@ -1328,7 +1353,181 @@ async function runPostNativeThisDispatch(
     debug(`this/super dispatch post-pass: inserted ${newEdges.length} edge(s)`);
   }
 
-  cleanupThisDispatchWasmTrees(wasmResults);
+  cleanupWasmParseTrees(wasmResults);
+
+  return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
+}
+
+// ── Object.defineProperty accessor dispatch post-pass helpers ──────────────
+
+/**
+ * Select candidate JS/TS files to re-parse for Object.defineProperty
+ * accessor dispatch.
+ *
+ * Unlike this/super dispatch — gated on `extends`/dot-method structural
+ * signals already visible in the DB after a native build — the native engine
+ * leaves zero trace of Object.defineProperty usage, so there is no DB-side
+ * structural fingerprint to gate on:
+ *   - Full build: every known JS/TS file is a candidate, queried from
+ *     `nodes` (already populated by the native build).
+ *   - Incremental build: only `changedFiles` — same staleness trade-off
+ *     documented on {@link selectThisDispatchFiles}.
+ *
+ * A cheap raw-text pre-filter then narrows the candidate set before paying
+ * for a WASM parse: the extractor only recognises the literal
+ * `Object.defineProperty(...)` call form (see `collectDefinePropertyReceiver`
+ * in extractors/javascript.ts), so any file it could possibly match must
+ * contain the substring "defineProperty" verbatim. Skipping files that don't
+ * even mention it avoids WASM-parsing every JS/TS file in the project on a
+ * full build — the same +358% ms/file regression `selectThisDispatchFiles`
+ * guards against.
+ */
+function selectDefinePropertyDispatchFiles(
+  db: BetterSqlite3Database,
+  rootDir: string,
+  changedFiles: string[] | undefined,
+  isFullBuild: boolean,
+): string[] {
+  const candidates =
+    isFullBuild || !changedFiles
+      ? (
+          db.prepare(`SELECT DISTINCT file FROM nodes WHERE file IS NOT NULL`).all() as Array<{
+            file: string;
+          }>
+        )
+          .map((r) => r.file)
+          .filter((f) => JS_TS_EXTS.has(path.extname(f).toLowerCase()))
+      : changedFiles.filter((f) => JS_TS_EXTS.has(path.extname(f).toLowerCase()));
+
+  if (candidates.length === 0) return [];
+
+  return candidates.filter((relPath) => {
+    try {
+      return readFileSafe(path.join(rootDir, relPath)).includes('defineProperty');
+    } catch (e) {
+      debug(`defineProperty dispatch pre-filter read failed for ${relPath}: ${toErrorMessage(e)}`);
+      return false;
+    }
+  });
+}
+
+/**
+ * Phase 8.5b: Object.defineProperty accessor dispatch post-pass for the
+ * native orchestrator path.
+ *
+ * `Object.defineProperty(obj, "x", { get: getter })` registers `getter` as
+ * an accessor function whose `this` is `obj` when invoked. This is a JS/TS
+ * extractor-only mechanism (`definePropertyReceivers`) with no Rust
+ * equivalent, so `this.method()` calls inside such getters/setters were
+ * never resolved by the native orchestrator — not merely resolved to the
+ * wrong kind, the edge was entirely absent (issue #1887).
+ *
+ * This hybrid post-pass WASM re-parses candidate files to recover
+ * `definePropertyReceivers` plus call sites, then resolves targets via
+ * {@link resolveDefinePropertyAccessorTarget} — the exact same
+ * resolution function already shared by the WASM full-build path, the
+ * native fast-path inside `runPipelineStages` (both in build-edges.ts), and
+ * the incremental watch path (incremental.ts) — so all four call sites stay
+ * in lockstep.
+ */
+async function runPostNativeDefinePropertyDispatch(
+  db: BetterSqlite3Database,
+  rootDir: string,
+  changedFiles: string[] | undefined,
+  isFullBuild: boolean,
+): Promise<{ elapsedMs: number; targetIds: Set<number>; affectedFiles: Set<string> }> {
+  const t0 = performance.now();
+  const emptyResult = {
+    elapsedMs: 0,
+    targetIds: new Set<number>(),
+    affectedFiles: new Set<string>(),
+  };
+
+  const relFiles = selectDefinePropertyDispatchFiles(db, rootDir, changedFiles, isFullBuild);
+  if (relFiles.length === 0) return emptyResult;
+
+  const absFiles = relFiles.map((f) => path.join(rootDir, f));
+  const wasmResults = await parseFilesWasmForBackfill(absFiles, rootDir, { symbolsOnly: true });
+
+  const filesWithReceivers = [...wasmResults].filter(
+    ([, symbols]) => symbols.definePropertyReceivers && symbols.definePropertyReceivers.size > 0,
+  );
+  if (filesWithReceivers.length === 0) {
+    cleanupWasmParseTrees(wasmResults);
+    return emptyResult;
+  }
+
+  const findCallerByLineStmt = prepareCallerByLineStmt(db);
+  const lookup = makePostNativeCallLookup(db);
+
+  // Seed seen-pairs from existing call edges on source nodes in the receiver
+  // file set — mirrors runPostNativeThisDispatch's dedup strategy.
+  const seen = new Set<string>();
+  const receiverRelFiles = filesWithReceivers.map(([relPath]) => relPath);
+  const CHUNK = 500;
+  for (let i = 0; i < receiverRelFiles.length; i += CHUNK) {
+    const chunk = receiverRelFiles.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT e.source_id, e.target_id
+         FROM edges e
+         JOIN nodes n ON e.source_id = n.id
+         WHERE e.kind = 'calls' AND n.file IN (${ph})`,
+      )
+      .all(...chunk) as Array<{ source_id: number; target_id: number }>;
+    for (const r of rows) seen.add(`${r.source_id}|${r.target_id}`);
+  }
+
+  const newEdges: Array<[number, number, string, number, number, string]> = [];
+  const targetIds = new Set<number>();
+  const affectedFiles = new Set<string>();
+
+  for (const [relPath, symbols] of filesWithReceivers) {
+    const definePropertyReceivers = symbols.definePropertyReceivers!;
+    const typeMap = (symbols.typeMap ?? new Map()) as Map<string, unknown>;
+
+    for (const call of symbols.calls ?? []) {
+      if (call.receiver !== 'this') continue;
+
+      const callerRow = findCallerByLineStmt.get(relPath, call.line, call.line) as
+        | { id: number; name: string }
+        | undefined;
+      if (!callerRow || !definePropertyReceivers.has(callerRow.name)) continue;
+
+      const targets = resolveDefinePropertyAccessorTarget(
+        call.name,
+        callerRow.name,
+        relPath,
+        typeMap,
+        lookup,
+        definePropertyReceivers,
+      );
+
+      for (const t of targets) {
+        if (t.id === callerRow.id) continue; // skip self-loops
+        const key = `${callerRow.id}|${t.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const conf = computeConfidence(relPath, t.file, null);
+        if (conf <= 0) continue;
+        // 'ts-native' matches the technique tag used by the other three
+        // resolveDefinePropertyAccessorTarget call sites — this is direct
+        // name/type-lookup resolution, not CHA virtual dispatch.
+        newEdges.push([callerRow.id, t.id, 'calls', conf, 0, 'ts-native']);
+        targetIds.add(t.id);
+        affectedFiles.add(relPath);
+        if (t.file) affectedFiles.add(t.file);
+      }
+    }
+  }
+
+  if (newEdges.length > 0) {
+    db.transaction(() => batchInsertEdges(db, newEdges))();
+    debug(`Object.defineProperty accessor dispatch post-pass: inserted ${newEdges.length} edge(s)`);
+  }
+
+  cleanupWasmParseTrees(wasmResults);
 
   return { elapsedMs: performance.now() - t0, targetIds, affectedFiles };
 }
@@ -1337,6 +1536,7 @@ interface PostPassTimings {
   gapDetectMs: number;
   chaMs: number;
   thisDispatchMs: number;
+  definePropertyDispatchMs: number;
   reclassifyMs: number;
   techniqueBackfillMs: number;
 }
@@ -1362,6 +1562,7 @@ function formatNativeTimingResult(
       gapDetectMs: +postPass.gapDetectMs.toFixed(1),
       chaMs: +postPass.chaMs.toFixed(1),
       thisDispatchMs: +postPass.thisDispatchMs.toFixed(1),
+      definePropertyDispatchMs: +postPass.definePropertyDispatchMs.toFixed(1),
       reclassifyMs: +postPass.reclassifyMs.toFixed(1),
       techniqueBackfillMs: +postPass.techniqueBackfillMs.toFixed(1),
       astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
@@ -1831,7 +2032,7 @@ async function backfillNativeDroppedFiles(
   // sees them. Without this, trees leak WASM memory until process exit —
   // bounded per run but cumulative across in-process integration tests.
   // Mirrors the cleanup discipline established for #931.
-  cleanupThisDispatchWasmTrees(wasmResults);
+  cleanupWasmParseTrees(wasmResults);
 }
 
 /**
@@ -2029,6 +2230,23 @@ async function runPostNativePasses(
     !!result.isFullBuild,
   );
 
+  // Phase 8.5b: Object.defineProperty accessor dispatch — hybrid WASM re-parse
+  // to resolve `this.method()` calls inside getter/setter functions registered
+  // via Object.defineProperty, a mechanism the Rust pipeline has no concept of
+  // at all (issue #1887). Runs BEFORE CHA expansion so any qualified-name
+  // (`Type.method`) edges it resolves are eligible for the same sibling-override
+  // expansion this-dispatch's edges get.
+  const {
+    elapsedMs: definePropertyDispatchMs,
+    targetIds: definePropertyTargetIds,
+    affectedFiles: definePropertyAffectedFiles,
+  } = await runPostNativeDefinePropertyDispatch(
+    ctx.db as unknown as BetterSqlite3Database,
+    ctx.rootDir,
+    result.changedFiles,
+    !!result.isFullBuild,
+  );
+
   // Phase 8.6: expand CHA call edges (interface dispatch → concrete implementations).
   // Returns the affected files so role re-classification below can be scoped to
   // the nodes whose fan-in/out actually changed.
@@ -2076,11 +2294,18 @@ async function runPostNativePasses(
   let reclassifyMs = 0;
   const needsFullReclassify = !!result.isFullBuild;
   const needsScopedReclassify =
-    !needsFullReclassify && (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0);
+    !needsFullReclassify &&
+    (chaEdgeCount > 0 || thisDispatchTargetIds.size > 0 || definePropertyTargetIds.size > 0);
   if (needsFullReclassify || needsScopedReclassify) {
     let scopedFiles: string[] | null = null;
     if (needsScopedReclassify) {
-      const affectedFiles = [...new Set([...chaAffectedFiles, ...thisDispatchAffectedFiles])];
+      const affectedFiles = [
+        ...new Set([
+          ...chaAffectedFiles,
+          ...thisDispatchAffectedFiles,
+          ...definePropertyAffectedFiles,
+        ]),
+      ];
       // When edges were inserted but all their endpoint nodes have null `file`
       // columns (rare but possible), affectedFiles stays empty even though
       // fan-in/out changed. Fall back to full-graph re-classification in that
@@ -2126,7 +2351,11 @@ async function runPostNativePasses(
   // Rust orchestrator's counts are still accurate — no re-count needed.
   let finalNodeCount = result.nodeCount ?? 0;
   let finalEdgeCount = result.edgeCount ?? 0;
-  const postPassWroteData = backfillHappened || chaEdgeCount > 0 || thisDispatchTargetIds.size > 0;
+  const postPassWroteData =
+    backfillHappened ||
+    chaEdgeCount > 0 ||
+    thisDispatchTargetIds.size > 0 ||
+    definePropertyTargetIds.size > 0;
   if (postPassWroteData) {
     try {
       const counts = (ctx.db as unknown as BetterSqlite3Database)
@@ -2149,6 +2378,7 @@ async function runPostNativePasses(
     gapDetectMs,
     chaMs,
     thisDispatchMs,
+    definePropertyDispatchMs,
     reclassifyMs,
     techniqueBackfillMs,
     backfillHappened,
@@ -2391,6 +2621,7 @@ export async function tryNativeOrchestrator(
       gapDetectMs: 0,
       chaMs: 0,
       thisDispatchMs: 0,
+      definePropertyDispatchMs: 0,
       reclassifyMs: 0,
       techniqueBackfillMs: 0,
     });
