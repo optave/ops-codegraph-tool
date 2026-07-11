@@ -58,7 +58,7 @@ pub const FAST_PATH_MIN_EXISTING_FILES: i64 = 20;
 
 /// TypeScript source extensions — type annotations (and TS's compile-time-only
 /// 'interface'/'type' declarations) only exist for these.
-pub const TYPESCRIPT_EXTENSIONS: [&str; 2] = [".ts", ".tsx"];
+pub const TYPESCRIPT_EXTENSIONS: [&str; 4] = [".ts", ".tsx", ".mts", ".cts"];
 
 /// Symbol kinds that are compile-time-only in TypeScript — interfaces and
 /// type aliases are erased before runtime, so a symbol of one of these kinds
