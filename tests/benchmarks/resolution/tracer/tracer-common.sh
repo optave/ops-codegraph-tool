@@ -8,13 +8,37 @@
 #
 #   source "$(dirname "${BASH_SOURCE[0]}")/tracer-common.sh"
 
-# Portable sed -i (GNU vs BSD)
+# Portable in-place sed. Deliberately does NOT delegate to sed's own `-i`:
+# GNU sed's `-i` places its scratch file by looking for the last "/" in the
+# target path and creating the scratch file alongside it, falling back to the
+# current working directory when no "/" is found. A native Windows path (as
+# produced by Node's path.join/os.tmpdir on win32, e.g.
+# `C:\Users\...\Program.cs`) has no "/" at all, so on Windows/Git-Bash/MSYS2
+# CI runners sed's scratch file lands in the CWD (typically the repo
+# checkout) instead of next to the target — and when the target lives on a
+# different drive than the CWD (as it does for os.tmpdir() vs. a `D:`-drive
+# checkout on GitHub's windows-2022 runners), the final rename fails with
+# "Invalid cross-device link" (#1913 follow-up). Normalizing to forward
+# slashes first and doing our own same-directory scratch-file swap sidesteps
+# both the path-parsing bug and the cross-device rename, and — since it never
+# uses `-i` — works identically on GNU sed, BSD sed, and MSYS's bundled GNU
+# sed without needing to detect which flavor is present.
 sedi() {
-    if sed --version 2>/dev/null | grep -q GNU; then
-        sed -i "$@"
+    local n=$#
+    local file="${!n}"
+    file="${file//\\//}"
+    local dir
+    dir="$(dirname "$file")"
+    local tmp
+    tmp="$(mktemp "$dir/tracer-sed.XXXXXX")" || return 1
+    local status=0
+    sed "${@:1:$((n - 1))}" "$file" >"$tmp" || status=$?
+    if [ "$status" -eq 0 ]; then
+        mv "$tmp" "$file"
     else
-        sed -i '' "$@"
+        rm -f "$tmp"
     fi
+    return "$status"
 }
 
 # GNU sed accepts the single-line "i\text" / "a\text" shortcut for its insert
