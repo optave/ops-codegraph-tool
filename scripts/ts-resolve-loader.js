@@ -14,14 +14,9 @@
  * availability floor.
  */
 
-const [_major, _minor] = process.versions.node.split('.').map(Number);
-const hooksURL = new URL('./ts-resolve-hooks.js', import.meta.url);
+import { supportsRegister, supportsRegisterHooks } from './node-version-support.js';
 
-// module.registerHooks() requires Node >= 22.15.0 or >= 23.5.0.
-const supportsRegisterHooks =
-  _major > 23 || (_major === 23 && _minor >= 5) || (_major === 22 && _minor >= 15);
-// module.register() requires Node >= 20.6.0.
-const supportsRegister = _major > 20 || (_major === 20 && _minor >= 6);
+const hooksURL = new URL('./ts-resolve-hooks.js', import.meta.url);
 
 if (supportsRegisterHooks) {
   const { registerHooks } = await import('node:module');
