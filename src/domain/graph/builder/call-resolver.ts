@@ -269,7 +269,10 @@ export function resolveCallTargets(
   typeMap: Map<string, unknown>,
   callerName?: string | null,
   importedOriginalNames?: ReadonlyMap<string, string>,
-): { targets: Array<{ id: number; file: string }>; importedFrom: string | undefined } {
+): {
+  targets: Array<{ id: number; file: string; kind?: string }>;
+  importedFrom: string | undefined;
+} {
   // Flagged dynamic calls use synthetic names like '<dynamic:eval>'. Short-circuit
   // so they never accidentally match a real symbol via lookup.byName.
   if (call.name.startsWith('<dynamic:')) {
@@ -281,7 +284,7 @@ export function resolveCallTargets(
   // the imported file's actual symbol is declared under the *original* name
   // (X) — look that up instead of the local alias the call site wrote (#1730).
   const targetName = importedOriginalNames?.get(call.name) ?? call.name;
-  let targets: ReadonlyArray<{ id: number; file: string }> | undefined;
+  let targets: ReadonlyArray<{ id: number; file: string; kind?: string }> | undefined;
 
   if (importedFrom) {
     targets = lookup.byNameAndFile(targetName, importedFrom);

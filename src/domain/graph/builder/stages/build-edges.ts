@@ -1349,14 +1349,7 @@ function resolveFallbackTargets(
   // either idiom commonly names a class. Applied once here, after every
   // fallback tier above, so it covers whichever tier produced the match.
   if (call.dynamicKind === 'value-ref') {
-    // `targets` is typed without `kind` when it flows straight through from
-    // resolveCallTargets (call-resolver.ts's declared return type omits it),
-    // but every underlying CallNodeLookup method actually populates it — the
-    // same gap the preQualifiedTargets cast above already works around. Kept
-    // as its own step (not folded into the filter callback) so the type-gap
-    // workaround and the actual filtering decision stay visually distinct.
-    const typedTargets = targets as ReadonlyArray<{ id: number; file: string; kind?: string }>;
-    targets = typedTargets.filter(
+    targets = targets.filter(
       (t) => t.kind === 'function' || t.kind === 'method' || t.kind === 'class',
     );
   }
