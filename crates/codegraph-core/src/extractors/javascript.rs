@@ -45,21 +45,28 @@ impl SymbolExtractor for JsExtractor {
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_prototype_methods);
         // call_assignments runs after type_map is populated (needs receiver types)
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_call_assignments);
-        // #1893: same-file get/set accessor property reads/writes → calls edges.
-        // Runs after type_map is populated (needs receiver types for the
-        // `varName.prop` case) and after handle_method_def has run (the
-        // registry re-derives accessor names directly from the AST, so source
-        // order relative to match_js_node doesn't matter for correctness).
-        let local_accessors = collect_local_accessors(&tree.root_node(), source);
-        walk_tree(&tree.root_node(), source, &mut symbols, |node, source, symbols, _depth| {
-            handle_accessor_property_read(node, source, symbols, &local_accessors)
-        });
         // Phase 8.3c–8.3f: points-to bindings (params, this-rebinding, arrays,
         // spread, for-of, object rest/props) for the pts constraint solver.
         walk_tree(&tree.root_node(), source, &mut symbols, match_js_pts_bindings);
         // Collapse duplicate keys accumulated during the tree walks (O(n)).
         dedup_type_map(&mut symbols.type_map);
         dedup_type_map(&mut symbols.return_type_map);
+        // #1893: same-file get/set accessor property reads/writes → calls edges.
+        // Runs after `dedup_type_map` (needs the *arbitrated* highest-confidence
+        // receiver type for the `varName.prop` case) and after handle_method_def
+        // has run (the registry re-derives accessor names directly from the AST,
+        // so source order relative to match_js_node doesn't matter for
+        // correctness). `type_map` is a raw append-only Vec until dedup_type_map
+        // runs (see set_type_map_entry's doc comment) — reading it beforehand, as
+        // match_js_call_assignments above does, risks picking a lower-confidence,
+        // stale entry for a name that got pushed more than once. The TS mirror
+        // doesn't have this hazard: `typeMap` is a `Map` arbitrated on every write
+        // via `setTypeMapEntry`, so `.get()` is always already resolved — ordering
+        // this walk after dedup keeps both engines reading the same resolved view.
+        let local_accessors = collect_local_accessors(&tree.root_node(), source);
+        walk_tree(&tree.root_node(), source, &mut symbols, |node, source, symbols, _depth| {
+            handle_accessor_property_read(node, source, symbols, &local_accessors)
+        });
         symbols
     }
 }
