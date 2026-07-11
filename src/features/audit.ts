@@ -1,4 +1,4 @@
-import { openReadonlyOrFail, resolveConfigForDbPath } from '../db/index.js';
+import { openReadonlyOrFail, resolveDbConfig } from '../db/index.js';
 import { normalizeFileFilter } from '../db/query-builder.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { explainData } from '../domain/queries.js';
@@ -34,7 +34,7 @@ function resolveThresholds(
   config: unknown,
 ): Record<string, ThresholdEntry> {
   try {
-    const cfg = config || resolveConfigForDbPath(customDbPath);
+    const cfg = config || resolveDbConfig(customDbPath);
     const userRules = (cfg as Record<string, unknown>).manifesto || {};
     const resolved: Record<string, ThresholdEntry> = {};
     for (const def of FUNCTION_RULES) {
@@ -140,7 +140,7 @@ export function auditData(
   // Derive rootDir from customDbPath (not process.cwd()) so `--db /other/repo/...`
   // reads that repo's .codegraphrc.json (issue #1881) — matches resolveThresholds()
   // below, which already derived rootDir correctly.
-  const config = opts.config || resolveConfigForDbPath(customDbPath);
+  const config = opts.config || resolveDbConfig(customDbPath);
   const maxDepth =
     opts.depth ||
     (config as unknown as { analysis?: { auditDepth?: number } }).analysis?.auditDepth ||
@@ -170,7 +170,7 @@ export function auditData(
     customDbPath,
     config.db?.busyTimeoutMs ?? DEFAULTS.db.busyTimeoutMs,
   );
-  const thresholds = resolveThresholds(customDbPath, opts.config);
+  const thresholds = resolveThresholds(customDbPath, config);
 
   let functions: AuditFunctionEntry[];
   try {

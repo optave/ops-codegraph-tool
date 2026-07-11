@@ -68,10 +68,24 @@
     },
     {
       "source": { "name": "main", "file": "index.php" },
+      "target": { "name": "UserService.__construct", "file": "Service.php" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService($repo) — also attributes to the constructor method itself (#1892)"
+    },
+    {
+      "source": { "name": "main", "file": "index.php" },
       "target": { "name": "User", "file": "Repository.php" },
       "kind": "calls",
       "mode": "constructor",
       "notes": "new User('1', 'Alice', 'alice@example.com') — class instantiation"
+    },
+    {
+      "source": { "name": "main", "file": "index.php" },
+      "target": { "name": "User.__construct", "file": "Repository.php" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new User('1', 'Alice', 'alice@example.com') — also attributes to the constructor method itself (#1892)"
     },
     {
       "source": { "name": "main", "file": "index.php" },
@@ -117,10 +131,24 @@
     },
     {
       "source": { "name": "runWithValidation", "file": "index.php" },
+      "target": { "name": "UserService.__construct", "file": "Service.php" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService($repo) — also attributes to the constructor method itself (#1892)"
+    },
+    {
+      "source": { "name": "runWithValidation", "file": "index.php" },
       "target": { "name": "User", "file": "Repository.php" },
       "kind": "calls",
       "mode": "constructor",
       "notes": "new User('2', 'Bob', 'bob@example.com') — class instantiation"
+    },
+    {
+      "source": { "name": "runWithValidation", "file": "index.php" },
+      "target": { "name": "User.__construct", "file": "Repository.php" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new User('2', 'Bob', 'bob@example.com') — also attributes to the constructor method itself (#1892)"
     },
     {
       "source": { "name": "runWithValidation", "file": "index.php" },
