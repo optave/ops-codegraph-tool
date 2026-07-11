@@ -620,7 +620,12 @@ function getMethodAccessorKind(methNode: TreeSitterNode): 'get' | 'set' | null {
   const nameNode = methNode.childForFieldName('name');
   for (let i = 0; i < methNode.childCount; i++) {
     const child = methNode.child(i);
-    if (!child || child === nameNode) break;
+    // Node identity must be compared via `.id` — tree-sitter (WASM) mints a
+    // fresh wrapper object on every childForFieldName()/child() access, so
+    // `===` between two independently-fetched references to the same AST
+    // node is always false. The grammar places all get/set modifiers
+    // strictly before the name node, so this guard is exercised in practice.
+    if (!child || child.id === nameNode?.id) break;
     if (child.type === 'get' || child.type === 'set') return child.type;
   }
   return null;
@@ -3916,6 +3921,11 @@ const HTTP_VERB_CALLEES: ReadonlySet<string> = new Set([
  * callback-accepting (no separate {@link CALLBACK_ACCEPTING_CALLEES} entry
  * needed); only the arg at its listed index is eligible.
  *
+ * Invariant: this map and {@link CALLBACK_ACCEPTING_CALLEES} must stay
+ * disjoint. A callee name present in both would have its any-position intent
+ * silently narrowed to the single listed index (positional wins — see the
+ * gate in {@link extractCallbackReferenceCalls}), with no error or warning.
+ *
  * This is name-based, not receiver-typed (consistent with the rest of this
  * gate), so it can't distinguish `Array.from(x, mapFn)` from an unrelated
  * `.from(x, y)` on some other object shaped differently — e.g. `Buffer.from(data,
@@ -3975,9 +3985,12 @@ function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
  *
  * Name-keyed rather than receiver-typed, consistent with the rest of this
  * gate (see {@link POSITIONAL_CALLBACK_ARG_INDEX}'s doc comment for the same
- * tradeoff) — a same-named function/method elsewhere in the file with an
- * unrelated non-function-shaped parameter at the same index is a residual,
- * accepted risk.
+ * tradeoff) — but unlike a plain name-keyed union, a position is only kept
+ * when *every* same-named declaration in the file agrees it is
+ * function-shaped (see {@link collectCallbackParamShapes}), so two unrelated
+ * same-named declarations with different signatures (e.g. same-named
+ * methods on two different classes) cancel out instead of merging into a
+ * false positive.
  */
 type CallbackParamShapes = ReadonlyMap<string, ReadonlySet<number>>;
 
@@ -4070,19 +4083,25 @@ function collectFunctionShapedTypeAliases(root: TreeSitterNode): ReadonlyMap<str
  * parameter positions of every `function`/method declaration are
  * function-shaped — the callee-definition side of recognizing identifier
  * arguments to arbitrary user-defined higher-order functions (issue #1845).
+ * Also covers same-file `const f = (...) => ...` / `const f = function(...) {}`
+ * assignments, which are otherwise invisible to a walk that only looks at
+ * `function_declaration`/`method_definition` nodes.
  *
  * Same-file only: a call site whose callee is defined in another file has no
  * entry here and falls back to the existing name/position allowlist.
  */
 function collectCallbackParamShapes(root: TreeSitterNode): CallbackParamShapes {
   const aliasShapes = collectFunctionShapedTypeAliases(root);
-  const shapes = new Map<string, Set<number>>();
+  // One entry per same-named declaration; intersected below so a bare name
+  // shared by two unrelated declarations only keeps a position that every
+  // declaration agrees is function-shaped.
+  const declarations = new Map<string, Set<number>[]>();
 
-  function recordFunctionParams(nameNode: TreeSitterNode | null, fnNode: TreeSitterNode): void {
-    if (!nameNode) return;
+  function functionShapedParamIndices(fnNode: TreeSitterNode): Set<number> {
+    const indices = new Set<number>();
     const paramsNode =
       fnNode.childForFieldName('parameters') || findChild(fnNode, 'formal_parameters');
-    if (!paramsNode) return;
+    if (!paramsNode) return indices;
     let argIndex = -1;
     for (let i = 0; i < paramsNode.childCount; i++) {
       const child = paramsNode.child(i);
@@ -4101,23 +4120,39 @@ function collectCallbackParamShapes(root: TreeSitterNode): CallbackParamShapes {
       if (t !== 'required_parameter' && t !== 'optional_parameter') continue;
       const typeAnno = findChild(child, 'type_annotation');
       if (typeAnno && isFunctionShapedTypeAnnotation(typeAnno, aliasShapes)) {
-        let set = shapes.get(nameNode.text);
-        if (!set) {
-          set = new Set();
-          shapes.set(nameNode.text, set);
-        }
-        set.add(argIndex);
+        indices.add(argIndex);
       }
     }
+    return indices;
+  }
+
+  function recordDeclaration(nameNode: TreeSitterNode | null, fnNode: TreeSitterNode): void {
+    if (!nameNode) return;
+    let perName = declarations.get(nameNode.text);
+    if (!perName) {
+      perName = [];
+      declarations.set(nameNode.text, perName);
+    }
+    perName.push(functionShapedParamIndices(fnNode));
   }
 
   function walk(node: TreeSitterNode, depth: number): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
     if (t === 'function_declaration' || t === 'generator_function_declaration') {
-      recordFunctionParams(node.childForFieldName('name'), node);
+      recordDeclaration(node.childForFieldName('name'), node);
     } else if (t === 'method_definition') {
-      recordFunctionParams(node.childForFieldName('name'), node);
+      recordDeclaration(node.childForFieldName('name'), node);
+    } else if (t === 'variable_declarator') {
+      const nameNode = node.childForFieldName('name');
+      const valueNode = node.childForFieldName('value');
+      const vt = valueNode?.type;
+      if (
+        nameNode?.type === 'identifier' &&
+        (vt === 'arrow_function' || vt === 'function_expression' || vt === 'generator_function')
+      ) {
+        recordDeclaration(nameNode, valueNode!);
+      }
     }
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
@@ -4126,6 +4161,17 @@ function collectCallbackParamShapes(root: TreeSitterNode): CallbackParamShapes {
   }
   walk(root, 0);
 
+  const shapes = new Map<string, ReadonlySet<number>>();
+  for (const [name, perDeclIndices] of declarations) {
+    const [first, ...rest] = perDeclIndices;
+    const intersected = new Set(first);
+    for (const other of rest) {
+      for (const idx of intersected) {
+        if (!other.has(idx)) intersected.delete(idx);
+      }
+    }
+    if (intersected.size > 0) shapes.set(name, intersected);
+  }
   return shapes;
 }
 
@@ -4642,16 +4688,19 @@ function extractImportNames(
 /**
  * Wrapper node types that can sit between a dynamic `import()` call and its
  * enclosing `variable_declarator` without changing which value gets bound —
- * `await`, redundant parentheses, and TypeScript `as` casts. Real-world
- * dynamic-import call sites often combine several of these, e.g.
+ * `await`, redundant parentheses, and TypeScript `as`/`satisfies` casts.
+ * Real-world dynamic-import call sites often combine several of these, e.g.
  * `const { X } = (await import('./mod.js')) as { X: Fn }` nests
  * await_expression → parenthesized_expression → as_expression before
- * reaching the declarator (#1781).
+ * reaching the declarator (#1781). `satisfies_expression` (TS 4.9+
+ * `... satisfies { X: Fn }`) is structurally identical to `as_expression`
+ * here — same Greptile follow-up as the native mirror.
  */
 const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
   'await_expression',
   'parenthesized_expression',
   'as_expression',
+  'satisfies_expression',
 ]);
 
 /**
@@ -4717,16 +4766,32 @@ function extractDynamicImportNames(
           const left = value.childForFieldName('left');
           if (left?.type === 'identifier') localNode = left;
         }
-        if (localNode && key) {
+        // A quoted (`{ 'foo-bar': local }`) or computed (`{ ['foo-bar']: local }`)
+        // key's raw `.text` includes the quotes/brackets — using it verbatim as
+        // `imported` makes the resolver look for an export literally named
+        // `'foo-bar'`, which never matches (Greptile, #1824 follow-up). Resolve
+        // to the clean export name the same way resolveComputedKeyName/
+        // resolveMethodDefinitionName already do for object-literal keys.
+        const keyName = key
+          ? key.type === 'computed_property_name'
+            ? resolveComputedKeyName(key)
+            : key.type === 'string' || key.type === 'string_fragment'
+              ? key.text.replace(/^['"]|['"]$/g, '')
+              : key.text
+          : '';
+        if (localNode) {
+          // The local binding is always trackable on its own, even when the
+          // key isn't statically resolvable (e.g. `{ [Symbol()]: local }`) —
+          // only the rename-pair mapping is skipped in that case.
           names.push(localNode.text);
-          if (localNode.text !== key.text) {
-            renamedOut?.push({ local: localNode.text, imported: key.text });
+          if (keyName && localNode.text !== keyName) {
+            renamedOut?.push({ local: localNode.text, imported: keyName });
           }
-        } else if (key) {
+        } else if (keyName) {
           // Nested pattern (`{ foo: { nested } }`) or other unsupported
           // value shape — no single local binding to extract; fall back to
           // the key so the specifier isn't dropped entirely.
-          names.push(key.text);
+          names.push(keyName);
         }
       }
     }

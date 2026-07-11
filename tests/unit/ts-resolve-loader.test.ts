@@ -13,12 +13,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { supportsRegisterHooks } from '../../scripts/node-version-support.js';
 
 const LOADER_URL = new URL('../../scripts/ts-resolve-loader.js', import.meta.url).href;
-
-const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
-const supportsRegisterHooks =
-  nodeMajor > 23 || (nodeMajor === 23 && nodeMinor >= 5) || (nodeMajor === 22 && nodeMinor >= 15);
 
 describe('scripts/ts-resolve-loader.js', () => {
   let tmpDir: string;

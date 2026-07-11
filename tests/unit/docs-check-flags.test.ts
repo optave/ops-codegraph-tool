@@ -37,11 +37,16 @@ function validCheckFlags(): Set<string> {
   return valid;
 }
 
-/** Pull every `--flag`-shaped token out of `codegraph check ...` example lines. */
+/**
+ * Pull every `--flag`-shaped token out of `codegraph check ...` example
+ * lines, plus any "Available predicates:" prose line — that list is plain
+ * English, not a command example, so it wouldn't otherwise be scanned and
+ * could drift silently after a future rename.
+ */
 function flagsUsedInCheckExamples(doc: string): string[] {
   const flags: string[] = [];
   for (const line of doc.split('\n')) {
-    if (!/codegraph check\b/.test(line)) continue;
+    if (!/codegraph check\b|Available predicates:/.test(line)) continue;
     for (const match of line.matchAll(/--[a-zA-Z][a-zA-Z-]*/g)) {
       flags.push(match[0]);
     }
