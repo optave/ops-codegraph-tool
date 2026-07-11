@@ -108,7 +108,7 @@ function constructorLocalName(file: string, className: string): string | null {
   const dotIdx = file.lastIndexOf('.');
   if (dotIdx === -1) return null;
   const entry = CONSTRUCTOR_LOCAL_NAME_BY_EXTENSION.get(file.slice(dotIdx));
-  if (!entry) return null;
+  if (entry === undefined) return null;
   return entry === CTOR_NAME_SAME_AS_CLASS ? className : entry;
 }
 
