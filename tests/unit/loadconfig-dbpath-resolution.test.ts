@@ -6,7 +6,7 @@
  * from a different directory read the *invoking* directory's
  * `.codegraphrc.json` instead of the target repo's.
  *
- * Covers the shared `resolveConfigForDbPath()` helper directly, plus every
+ * Covers the shared `resolveDbConfig()` helper directly, plus every
  * call site named in the issue:
  *   - manifestoData (src/features/manifesto.ts)
  *   - hybridSearchData (src/domain/search/search/hybrid.ts)
@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { closeDb, initSchema, openDb, resolveConfigForDbPath } from '../../src/db/index.js';
+import { closeDb, initSchema, openDb, resolveDbConfig } from '../../src/db/index.js';
 import { diffImpactData } from '../../src/domain/analysis/diff-impact.js';
 import { hybridSearchData } from '../../src/domain/search/search/hybrid.js';
 import { auditData } from '../../src/features/audit.js';
@@ -90,11 +90,11 @@ afterAll(() => {
   if (unrelatedCwd) fs.rmSync(unrelatedCwd, { recursive: true, force: true });
 });
 
-describe('resolveConfigForDbPath', () => {
+describe('resolveDbConfig', () => {
   it('derives rootDir from a file-style --db path, not process.cwd()', () => {
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(unrelatedCwd);
     try {
-      const config = resolveConfigForDbPath(dbPath);
+      const config = resolveDbConfig(dbPath);
       expect(config.db?.busyTimeoutMs).toBe(REPO_BUSY_TIMEOUT_MS);
     } finally {
       cwdSpy.mockRestore();
@@ -104,7 +104,7 @@ describe('resolveConfigForDbPath', () => {
   it('derives rootDir from a directory-style --db path (normalises via findDbPath)', () => {
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(unrelatedCwd);
     try {
-      const config = resolveConfigForDbPath(repoDir);
+      const config = resolveDbConfig(repoDir);
       expect(config.db?.busyTimeoutMs).toBe(REPO_BUSY_TIMEOUT_MS);
     } finally {
       cwdSpy.mockRestore();
@@ -114,7 +114,7 @@ describe('resolveConfigForDbPath', () => {
   it('falls back to process.cwd() when no --db path is given', () => {
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(repoDir);
     try {
-      const config = resolveConfigForDbPath(undefined);
+      const config = resolveDbConfig(undefined);
       expect(config.db?.busyTimeoutMs).toBe(REPO_BUSY_TIMEOUT_MS);
     } finally {
       cwdSpy.mockRestore();
@@ -128,7 +128,7 @@ describe('resolveConfigForDbPath', () => {
       const db = openDb(bareDbPath);
       initSchema(db);
       closeDb(db);
-      expect(resolveConfigForDbPath(bareDbPath).db?.busyTimeoutMs).toBe(DEFAULTS.db.busyTimeoutMs);
+      expect(resolveDbConfig(bareDbPath).db?.busyTimeoutMs).toBe(DEFAULTS.db.busyTimeoutMs);
     } finally {
       fs.rmSync(bareDir, { recursive: true, force: true });
     }

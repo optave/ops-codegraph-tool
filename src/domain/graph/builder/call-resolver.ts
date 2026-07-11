@@ -63,10 +63,12 @@ export { isModuleScopedLanguage };
  * The incremental case is a narrower, same-file view — a cross-file consumer
  * added in a different, untouched file won't be seen until the next full
  * rebuild — the same scoping trade-off already accepted elsewhere in this
- * codebase's incremental classification (`hasActiveFileSiblings`,
- * exported-via-reexport, and median fan-in/out all recompute from an affected
- * subset, not the whole graph, in `graph/classifiers/roles.rs`'s incremental
- * path).
+ * codebase's incremental classification (`hasActiveFileSiblings` and
+ * exported-via-reexport both recompute from an affected subset, not the
+ * whole graph, in `graph/classifiers/roles.rs`'s incremental path — median
+ * fan-in/out is a separate case, deliberately kept as a whole-graph
+ * statistic even on the incremental path, for classification-threshold
+ * consistency).
  */
 export function collectInvokedPropertyNames(
   callsList: Iterable<Iterable<{ name: string; receiver?: string }>>,
@@ -304,7 +306,10 @@ export function resolveCallTargets(
   typeMap: Map<string, unknown>,
   callerName?: string | null,
   importedOriginalNames?: ReadonlyMap<string, string>,
-): { targets: Array<{ id: number; file: string }>; importedFrom: string | undefined } {
+): {
+  targets: Array<{ id: number; file: string; kind?: string }>;
+  importedFrom: string | undefined;
+} {
   // Flagged dynamic calls use synthetic names like '<dynamic:eval>'. Short-circuit
   // so they never accidentally match a real symbol via lookup.byName.
   if (call.name.startsWith('<dynamic:')) {
@@ -316,14 +321,22 @@ export function resolveCallTargets(
   // the imported file's actual symbol is declared under the *original* name
   // (X) — look that up instead of the local alias the call site wrote (#1730).
   const targetName = importedOriginalNames?.get(call.name) ?? call.name;
-  let targets: ReadonlyArray<{ id: number; file: string }> | undefined;
+  // Tracks the name actually used to find `targets`. Usually equal to
+  // `targetName`, but a barrel hop that itself renames the export
+  // (`export { Foo as Bar } from './foo'`, resolved below) reports the name
+  // truly declared in the origin file — the constructor-attribution lookup
+  // must key on that name, not the call site's (possibly barrel-aliased)
+  // `targetName`, or it builds a qualified name that doesn't exist (#1892).
+  let resolvedClassName = targetName;
+  let targets: ReadonlyArray<{ id: number; file: string; kind?: string }> | undefined;
 
   if (importedFrom) {
     targets = lookup.byNameAndFile(targetName, importedFrom);
     if (targets.length === 0 && lookup.isBarrel(importedFrom)) {
-      const resolved = lookup.resolveBarrel(importedFrom, targetName);
-      if (resolved) {
-        targets = lookup.byNameAndFile(resolved.name, resolved.file);
+      const barrelResolved = lookup.resolveBarrel(importedFrom, targetName);
+      if (barrelResolved) {
+        targets = lookup.byNameAndFile(barrelResolved.name, barrelResolved.file);
+        resolvedClassName = barrelResolved.name;
       }
     }
   }
@@ -362,8 +375,10 @@ export function resolveCallTargets(
   // #1892: `new ClassName()` / bare `ClassName()` (keyword-less languages)
   // always resolves as a bare (no-receiver) call — augment any class-kind
   // match with the class's own constructor method, if it declares one.
+  // Uses `resolvedClassName` (not `targetName`) so a barrel rename doesn't
+  // make the qualified constructor lookup miss (see comment above).
   if (!call.receiver) {
-    resolved = attachConstructorTargets(lookup, resolved, targetName);
+    resolved = attachConstructorTargets(lookup, resolved, resolvedClassName);
   }
   if (resolved.length > 1) {
     resolved.sort((a, b) => {
@@ -452,7 +467,11 @@ export function resolveReceiverEdge(
  * 1. Same-file declaration, when `name` is not itself an import artifact —
  *    a locally-declared class/interface owns the name in its own file.
  * 2. The file's actually-resolved import for `name` (barrel-traced), so
- *    `extends X` only links to the specific `X` this file imported.
+ *    `extends X` only links to the specific `X` this file imported. For a
+ *    renamed import (`import { Base as MyBase }`), the imported file stores
+ *    the symbol under its original exported name, not the local alias — so
+ *    the lookup uses `importedOriginalNames` to resolve `MyBase` back to
+ *    `Base` before searching, mirroring `resolveCallTargets` (#1730).
  * 3. Last resort: a same-language-family global-by-name match (never
  *    cross-language, per #1783) — and only the single first candidate, since
  *    a heritage clause names exactly one type and an unscoped match set is
@@ -464,6 +483,7 @@ export function resolveHierarchyTargets(
   relPath: string,
   importedNames: ReadonlyMap<string, string>,
   targetKinds: ReadonlySet<string>,
+  importedOriginalNames?: ReadonlyMap<string, string>,
 ): ReadonlyArray<{ id: number; file: string }> {
   const sameFileAll = lookup.byNameAndFile(name, relPath);
   const isLocalDefinition = sameFileAll.length > 0 && !importedNames.has(name);
@@ -473,8 +493,9 @@ export function resolveHierarchyTargets(
 
   const importedFrom = importedNames.get(name);
   if (importedFrom) {
+    const targetName = importedOriginalNames?.get(name) ?? name;
     const importedCandidates = lookup
-      .byNameAndFile(name, importedFrom)
+      .byNameAndFile(targetName, importedFrom)
       .filter((n) => targetKinds.has(n.kind ?? ''));
     if (importedCandidates.length > 0) return importedCandidates;
   }
