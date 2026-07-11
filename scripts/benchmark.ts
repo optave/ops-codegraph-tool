@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
 import { round1, timeMedian, timeMedianWithValue } from './lib/bench-timing.js';
-import { selectHubTargets } from './lib/hub-selection.js';
+import { PINNED_HUB_CANDIDATES, selectHubTargets } from './lib/hub-selection.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -173,7 +173,7 @@ try {
 
 // ── Query benchmarks ────────────────────────────────────────────────
 console.error(`  [${engine}] Benchmarking queries...`);
-const targets = workerTargets() || selectHubTargets(dbPath);
+const targets = workerTargets() || selectHubTargets(dbPath, PINNED_HUB_CANDIDATES);
 console.error(`    hub=${targets.hub}, leaf=${targets.leaf}`);
 
 async function benchQuery(fn, ...args) {
