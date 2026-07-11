@@ -20,7 +20,11 @@ import { louvainCommunities } from '../../../src/graph/algorithms/louvain.js';
 import { CodeGraph } from '../../../src/graph/model.js';
 import { getNative, isNativeAvailable } from '../../../src/infrastructure/native.js';
 
-const hasNative = isNativeAvailable();
+// Guards against a stale/cached native addon that loads but predates the
+// `leidenCommunities` binding (#1804 review): without the export check,
+// assertParity would silently degrade to a JS-vs-JS comparison and
+// runNativeDirect's non-null assertion would throw a confusing TypeError.
+const hasNative = isNativeAvailable() && typeof getNative()?.leidenCommunities === 'function';
 
 /** Sorted "node:community" pairs — stable snapshot for deep-equal comparison. */
 function snapshot(assignments: Map<string, number>): string[] {
