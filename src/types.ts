@@ -2315,17 +2315,36 @@ export type StmtCache<TRow = unknown> = WeakMap<BetterSqlite3Database, SqliteSta
 // §22  Native Addon (napi-rs FFI boundary)
 // ════════════════════════════════════════════════════════════════════════
 
+/**
+ * A single monorepo workspace package passed across the native FFI boundary,
+ * mirroring the `WorkspaceEntry` shape produced by `detectWorkspaces()` in
+ * `infrastructure/config.ts`. `entry` is `null` when no resolvable entry
+ * point was found for the package (issue #1927).
+ */
+export interface NativeWorkspacePackage {
+  packageName: string;
+  dir: string;
+  entry: string | null;
+}
+
 /** The native napi-rs addon interface (crates/codegraph-core). */
 export interface NativeAddon {
   parseFile(filePath: string, source: string, dataflow: boolean, ast: boolean): unknown;
   parseFiles(files: string[], rootDir: string, dataflow: boolean, ast: boolean): unknown[];
   parseFilesFull?(files: string[], rootDir: string): unknown[];
-  resolveImport(fromFile: string, importSource: string, rootDir: string, aliases: unknown): string;
+  resolveImport(
+    fromFile: string,
+    importSource: string,
+    rootDir: string,
+    aliases: unknown,
+    workspaces?: NativeWorkspacePackage[] | null,
+  ): string;
   resolveImports(
     items: Array<{ fromFile: string; importSource: string }>,
     rootDir: string,
     aliases: unknown,
     knownFiles: string[] | null,
+    workspaces?: NativeWorkspacePackage[] | null,
   ): Array<{ fromFile: string; importSource: string; resolvedPath: string }>;
   computeConfidence(callerFile: string, targetFile: string, importedFrom: string | null): number;
   detectCycles(edges: Array<{ source: string; target: string }>): string[][];
@@ -2971,7 +2990,13 @@ export interface NativeDatabase {
    * Returns a JSON string with timing and build result data.
    * When unavailable, the JS pipeline (runPipelineStages) is used as fallback.
    */
-  buildGraph?(rootDir: string, configJson: string, aliasesJson: string, optsJson: string): string;
+  buildGraph?(
+    rootDir: string,
+    configJson: string,
+    aliasesJson: string,
+    optsJson: string,
+    workspacesJson?: string,
+  ): string;
 }
 
 // ════════════════════════════════════════════════════════════════════════
