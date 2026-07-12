@@ -200,10 +200,23 @@ if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+com
   if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
     PROJECT_DIR=$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
     STAGED_FILES=$(git -C "$WORK_DIR" diff --cached --name-only 2>/dev/null) || true
+    MERGE_HEAD_PATH=$(git -C "$WORK_DIR" rev-parse --git-path MERGE_HEAD 2>/dev/null) || true
   else
     PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
     STAGED_FILES=$(git diff --cached --name-only 2>/dev/null) || true
+    MERGE_HEAD_PATH=$(git rev-parse --git-path MERGE_HEAD 2>/dev/null) || true
   fi
+
+  # A merge in progress (MERGE_HEAD present) stages every auto-merged file from
+  # the incoming branch alongside any manually resolved conflicts — not just
+  # files this session edited via tools. git also structurally refuses a
+  # partial-pathspec `git commit <files>` while MERGE_HEAD exists ("cannot do
+  # a partial commit during a merge"), so the edit-log check's own suggested
+  # workaround is impossible here. Skip validation for merge commits.
+  if [ -n "$MERGE_HEAD_PATH" ] && [ -f "$MERGE_HEAD_PATH" ]; then
+    exit 0
+  fi
+
   LOG_FILE="$PROJECT_DIR/.claude/session-edits.log"
 
   # If no edit log exists, allow (backward compat for sessions without tracking)
