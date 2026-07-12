@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterAll, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
 import {
   clearDeletedExportAdvisories,
@@ -38,8 +38,9 @@ beforeEach(() => {
   initSchema(db);
 });
 
-afterAll(() => {
+afterEach(() => {
   if (db) db.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe('recordDeletedExportAdvisories', () => {
