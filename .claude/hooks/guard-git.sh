@@ -197,14 +197,15 @@ if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+com
   # Resolve the target worktree so the edit log and staged-file listing come
   # from the same repo the commit targets (e.g. `git -C <pr-worktree> commit`).
   WORK_DIR=$(detect_work_dir commit)
+  MERGE_IN_PROGRESS=false
   if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
     PROJECT_DIR=$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
     STAGED_FILES=$(git -C "$WORK_DIR" diff --cached --name-only 2>/dev/null) || true
-    MERGE_HEAD_PATH=$(git -C "$WORK_DIR" rev-parse --git-path MERGE_HEAD 2>/dev/null) || true
+    git -C "$WORK_DIR" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1 && MERGE_IN_PROGRESS=true
   else
     PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
     STAGED_FILES=$(git diff --cached --name-only 2>/dev/null) || true
-    MERGE_HEAD_PATH=$(git rev-parse --git-path MERGE_HEAD 2>/dev/null) || true
+    git rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1 && MERGE_IN_PROGRESS=true
   fi
 
   # A merge in progress (MERGE_HEAD present) stages every auto-merged file from
@@ -213,7 +214,12 @@ if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+com
   # partial-pathspec `git commit <files>` while MERGE_HEAD exists ("cannot do
   # a partial commit during a merge"), so the edit-log check's own suggested
   # workaround is impossible here. Skip validation for merge commits.
-  if [ -n "$MERGE_HEAD_PATH" ] && [ -f "$MERGE_HEAD_PATH" ]; then
+  #
+  # `rev-parse --verify` (not a bare file-existence test) requires MERGE_HEAD
+  # to resolve to a real object in this repo's object database, so a stray or
+  # hand-crafted file at that path can't be used to fake a merge and bypass
+  # the check below.
+  if [ "$MERGE_IN_PROGRESS" = true ]; then
     exit 0
   fi
 
