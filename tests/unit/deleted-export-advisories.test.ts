@@ -99,6 +99,36 @@ describe('recordDeletedExportAdvisories', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].consumers.map((c) => c.file).sort()).toEqual(['src/a.js', 'src/c.js']);
   });
+
+  test('preserves a persisted snapshot once the file nodes are purged, instead of erasing it on a repeat call', () => {
+    // Regression test: `file_hashes` for a removed file is never purged on
+    // the incremental path, so a subsequent build keeps re-detecting the
+    // same file as "removed" and calls recordDeletedExportAdvisories again
+    // long after its `nodes` rows are gone. That later call must not wipe
+    // the snapshot captured while the nodes were still live (#1938).
+    const helperId = insertNode(db, 'helper', 'function', 'src/gone.js', 1, 1);
+    const callerAId = insertNode(db, 'callerA', 'function', 'src/a.js', 1);
+    insertEdge(db, callerAId, helperId, 'calls');
+
+    // First call: nodes are still live — this is the authoritative capture.
+    recordDeletedExportAdvisories(db, ['src/gone.js']);
+    expect(getDeletedExportAdvisories(db, ['src/gone.js'], new Set())).toHaveLength(1);
+
+    // Simulate the purge that follows the capture in the real build
+    // pipeline — src/gone.js's nodes (and the edges that reference them) are
+    // gone, but its file_hashes row (not modeled here) lives on, so a later
+    // build still passes it in removedFiles.
+    db.prepare(
+      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?) OR target_id IN (SELECT id FROM nodes WHERE file = ?)',
+    ).run('src/gone.js', 'src/gone.js');
+    db.prepare("DELETE FROM nodes WHERE file = 'src/gone.js'").run();
+
+    recordDeletedExportAdvisories(db, ['src/gone.js']);
+
+    const entries = getDeletedExportAdvisories(db, ['src/gone.js'], new Set());
+    expect(entries).toHaveLength(1);
+    expect(entries[0].consumers.map((c) => c.file)).toEqual(['src/a.js']);
+  });
 });
 
 describe('getDeletedExportAdvisories', () => {

@@ -58,15 +58,17 @@ function hasAdvisoryTable(db: BetterSqlite3Database): boolean {
  * one row per consumer — captured by `detectChanges` BEFORE the build
  * pipeline purges the deleted file's `nodes`/`edges` rows.
  *
- * Replaces any pre-existing advisory rows for the same files first. This
- * keeps a single up-to-date snapshot per file rather than accumulating
- * duplicates: the `file_hashes` row for a removed file is intentionally
- * never purged on the incremental path (`purgeHashes: false` — see
+ * Replaces any pre-existing advisory rows for a file only when that file's
+ * `nodes` are still live — i.e. only on the one build that actually purges
+ * them, when `findExportedDefinitions` can still derive an authoritative
+ * snapshot. The `file_hashes` row for a removed file is intentionally never
+ * purged on the incremental path (`purgeHashes: false` — see
  * `purgeAndAddReverseDeps`), so a subsequent build keeps re-detecting the
- * same file as "removed" and would otherwise re-run this capture every
- * time. In practice this is a no-op after the first capture — querying live
- * `nodes` for an already-purged file naturally returns nothing — but
- * replacing first keeps this correct even if that changes.
+ * same file as "removed" and calls this again with nothing left to derive a
+ * snapshot from. Deleting-then-not-reinserting on that later call would
+ * silently erase the one durable record this table exists to preserve, so
+ * a file with no live defs left is skipped entirely — its existing snapshot
+ * (if any) is left untouched.
  */
 export function recordDeletedExportAdvisories(
   db: BetterSqlite3Database,
@@ -84,8 +86,12 @@ export function recordDeletedExportAdvisories(
   const tx = db.transaction(() => {
     const now = Date.now();
     for (const file of removedFiles) {
-      deleteStmt.run(file);
       const defs = findExportedDefinitions(db, file);
+      // No live nodes left for this file — an earlier build already purged
+      // them and captured the snapshot. Nothing new to derive; preserve
+      // whatever is already persisted instead of wiping it (#1938).
+      if (defs.length === 0) continue;
+      deleteStmt.run(file);
       for (const def of defs) {
         const consumers = findExternalConsumers(db, def.id, file);
         for (const consumer of consumers) {

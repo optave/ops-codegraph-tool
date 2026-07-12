@@ -849,14 +849,16 @@ fn now_ms() -> i64 {
 /// rows by the time `check` runs. Mirrors `recordDeletedExportAdvisories` in
 /// `db/repository/deleted-export-advisories.ts` (#1938).
 ///
-/// Replaces any pre-existing advisory rows for the same files first — the
+/// Replaces any pre-existing advisory rows for a file only when that file's
+/// `nodes` are still live — i.e. only on the one build that actually purges
+/// them, when a fresh, authoritative snapshot can still be derived. The
 /// `file_hashes` row for a removed file is never purged on the incremental
 /// path (see `purge_changed_files`'s caller), so a subsequent build keeps
-/// re-detecting the same file as "removed" and would otherwise re-run this
-/// capture every time; querying live `nodes` for an already-purged file
-/// naturally returns nothing on those later runs, so this is a no-op after
-/// the first capture in practice — but replacing first keeps this correct
-/// even if that changes.
+/// re-detecting the same file as "removed" and calls this again with no live
+/// `nodes` left to derive a snapshot from. Deleting-then-not-reinserting on
+/// that later call would silently erase the one durable record this table
+/// exists to preserve, so a file with no live defs left is skipped
+/// entirely — its existing snapshot (if any) is left untouched.
 pub fn record_deleted_export_advisories(conn: &Connection, removed_files: &[String]) {
     if removed_files.is_empty() || !table_queryable(conn, "deleted_export_advisories") {
         return;
@@ -866,10 +868,6 @@ pub fn record_deleted_export_advisories(conn: &Connection, removed_files: &[Stri
         Ok(t) => t,
         Err(_) => return,
     };
-
-    for file in removed_files {
-        let _ = tx.execute("DELETE FROM deleted_export_advisories WHERE file = ?1", [file]);
-    }
 
     let defs_result = tx.prepare(
         "SELECT id, name, kind, line FROM nodes \
@@ -898,6 +896,14 @@ pub fn record_deleted_export_advisories(conn: &Connection, removed_files: &[Stri
                 Ok(rows) => rows.flatten().collect(),
                 Err(_) => continue,
             };
+            // No live nodes left for this file — an earlier build already
+            // purged them and captured the snapshot. Nothing new to derive;
+            // preserve whatever is already persisted instead of wiping it
+            // (#1938).
+            if defs.is_empty() {
+                continue;
+            }
+            let _ = tx.execute("DELETE FROM deleted_export_advisories WHERE file = ?1", [file]);
             for (id, name, kind, line) in defs {
                 let consumers: Vec<(String, String, i64)> = match consumers_stmt
                     .query_map(rusqlite::params![id, file], |row| {
@@ -1695,6 +1701,47 @@ mod tests {
                 ("callerA".to_string(), "src/a.js".to_string()),
                 ("callerC".to_string(), "src/c.js".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn record_deleted_export_advisories_preserves_snapshot_once_nodes_are_purged() {
+        // Regression test: `file_hashes` for a removed file is never purged
+        // on the incremental path, so `detect_removed_files` keeps
+        // re-classifying it as "removed" on every subsequent build, and
+        // `record_deleted_export_advisories` gets called again with the same
+        // file long after its `nodes` rows are gone. That later call must not
+        // wipe the snapshot captured while the nodes were still live (#1938).
+        let conn = test_conn_with_advisories();
+        let helper = insert_exported_node(&conn, "helper", "function", "src/gone.js", 1);
+        let caller_a = insert_node(&conn, "callerA", "function", "src/a.js", 1);
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?1, ?2, 'calls', 1.0, 0)",
+            rusqlite::params![caller_a, helper],
+        )
+        .unwrap();
+
+        // First call: nodes are still live — this is the authoritative
+        // capture.
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+        assert_eq!(
+            advisory_rows(&conn, "src/gone.js"),
+            vec![("callerA".to_string(), "src/a.js".to_string())]
+        );
+
+        // Simulate the purge that follows the capture in the real pipeline —
+        // `src/gone.js`'s nodes are gone, but its `file_hashes` row (not
+        // modeled in this schema) lives on, so a later build still passes it
+        // in `removed_files`.
+        conn.execute("DELETE FROM nodes WHERE file = 'src/gone.js'", [])
+            .unwrap();
+
+        record_deleted_export_advisories(&conn, &["src/gone.js".to_string()]);
+
+        assert_eq!(
+            advisory_rows(&conn, "src/gone.js"),
+            vec![("callerA".to_string(), "src/a.js".to_string())],
+            "advisory must survive a repeat call once the file's nodes are already purged"
         );
     }
 

@@ -685,6 +685,14 @@ export function checkNoDeletedExportsInUse(
   for (const file of deletedFiles) {
     if (noTests && isTestFile(file)) continue;
 
+    // `defs.length > 0` doubles as the "purge already happened" signal:
+    // `purgeFilesData`/`purgeFileData` atomically remove every `nodes` row
+    // for a file (see `db/repository/build-stmts.ts`), so it's never
+    // possible for a purged file to retain some other, non-exported node
+    // while losing its exported ones. `recordDeletedExportAdvisories` relies
+    // on this exact same signal to decide whether a fresh snapshot can still
+    // be derived here — see the comment there for why replacing the
+    // persisted advisory is gated on it (#1938).
     const defs = findExportedDefinitions(db, file);
     if (defs.length > 0) {
       for (const def of defs) {

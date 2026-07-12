@@ -158,6 +158,93 @@ function runScenario(engine: 'wasm' | 'native'): void {
         verifyDb.close();
       }
     }, 60_000);
+
+    it('survives a second, unrelated incremental build after the deletion (repeat-build erasure regression)', async () => {
+      const projectDir = mkTmp(`cg-1938-repeat-${engine}-`);
+      fs.mkdirSync(path.join(projectDir, 'src'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projectDir, 'package.json'),
+        JSON.stringify({ name: 'test-1938-repeat', version: '1.0.0', type: 'module' }),
+      );
+      fs.writeFileSync(
+        path.join(projectDir, 'src', 'shared.js'),
+        'export function sharedHelper() {\n  return 1;\n}\n',
+      );
+      fs.writeFileSync(
+        path.join(projectDir, 'src', 'consumer.js'),
+        "import { sharedHelper } from './shared.js';\nexport function useShared() {\n  return sharedHelper();\n}\n",
+      );
+      fs.writeFileSync(
+        path.join(projectDir, 'src', 'unrelated.js'),
+        'export function unrelatedHelper() {\n  return 2;\n}\n',
+      );
+
+      git(projectDir, ['init']);
+      git(projectDir, ['config', 'user.email', 'test@test.com']);
+      git(projectDir, ['config', 'user.name', 'Test']);
+      git(projectDir, ['add', '.']);
+      git(projectDir, ['commit', '-m', 'init']);
+
+      await buildGraph(projectDir, { engine, incremental: false, skipRegistry: true });
+
+      // Stage the deletion of shared.js — consumer.js is left untouched.
+      git(projectDir, ['rm', 'src/shared.js']);
+
+      const dbPath = path.join(projectDir, '.codegraph', 'graph.db');
+
+      // First rebuild: purges shared.js's nodes/edges and captures the
+      // advisory snapshot from the still-live pre-purge state.
+      await buildGraph(projectDir, { engine, skipRegistry: true });
+
+      let verifyDb = new Database(dbPath, { readonly: true });
+      try {
+        const rows = verifyDb
+          .prepare("SELECT * FROM deleted_export_advisories WHERE file = 'src/shared.js'")
+          .all();
+        expect(rows.length).toBeGreaterThan(0);
+      } finally {
+        verifyDb.close();
+      }
+
+      // Second, later incremental build touching a completely unrelated
+      // file. `shared.js`'s `file_hashes` row is intentionally never purged,
+      // so detectChanges keeps re-classifying it as "removed" on every
+      // subsequent build — this must not wipe the already-captured advisory
+      // just because its nodes are no longer live to re-derive it from
+      // (#1938 repeat-build erasure).
+      fs.writeFileSync(
+        path.join(projectDir, 'src', 'unrelated.js'),
+        'export function unrelatedHelper() {\n  return 3;\n}\n',
+      );
+      await buildGraph(projectDir, { engine, skipRegistry: true });
+
+      verifyDb = new Database(dbPath, { readonly: true });
+      try {
+        const rows = verifyDb
+          .prepare("SELECT * FROM deleted_export_advisories WHERE file = 'src/shared.js'")
+          .all();
+        expect(rows.length).toBeGreaterThan(0);
+      } finally {
+        verifyDb.close();
+      }
+
+      const data = checkData(dbPath, {
+        staged: true,
+        signatures: true,
+        cycles: false,
+        boundaries: false,
+      });
+
+      expect(data.error).toBeUndefined();
+      expect(data.passed).toBe(false);
+      const sigPred = data.predicates.find((p) => p.name === 'signatures');
+      expect(sigPred).toBeDefined();
+      expect(sigPred.passed).toBe(false);
+      const violation = sigPred.violations.find((v) => v.name === 'sharedHelper');
+      expect(violation).toBeDefined();
+      expect(violation.reason).toBe('file-deleted');
+      expect(violation.consumers.map((c) => c.file)).toContain('src/consumer.js');
+    }, 60_000);
   });
 }
 
