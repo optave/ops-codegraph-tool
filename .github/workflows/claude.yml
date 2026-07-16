@@ -48,7 +48,14 @@ jobs:
             exit 0
           fi
 
-          TOTAL_CHANGED=$(git diff --numstat "$BASE_SHA" HEAD | awk '{a+=$1; d+=$2} END {print a+d+0}')
+          # git diff --numstat prints "-\t-\t<path>" for binary files. Detect
+          # that explicitly and force a high sentinel so a binary-only change
+          # can't be silently counted as 0 lines and waved through as trivial.
+          TOTAL_CHANGED=$(git diff --numstat "$BASE_SHA" HEAD | awk '
+            $1 == "-" || $2 == "-" { binary=1; next }
+            { a += $1; d += $2 }
+            END { if (binary) print 999999; else print a + d + 0 }
+          ')
           if [ "$NUM_FILES" -le 1 ] && [ "${TOTAL_CHANGED:-0}" -le 5 ]; then
             echo "Trivial single-file diff (${TOTAL_CHANGED} line(s)) — skipping automated review"
             echo "trivial=true" >> "$GITHUB_OUTPUT"
