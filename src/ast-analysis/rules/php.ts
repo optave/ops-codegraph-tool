@@ -23,7 +23,7 @@ export const complexity: ComplexityRules = {
   ]),
   caseNodes: new Set(['case_statement', 'default_statement']),
   logicalOperators: new Set(['&&', '||', 'and', 'or', '??']),
-  logicalNodeType: 'binary_expression',
+  logicalNodeTypes: new Set(['binary_expression']),
   optionalChainType: 'nullsafe_member_access_expression',
   nestingNodes: new Set([
     'if_statement',

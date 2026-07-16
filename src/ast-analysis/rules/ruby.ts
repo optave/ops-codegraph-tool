@@ -23,7 +23,7 @@ export const complexity: ComplexityRules = {
   ]),
   caseNodes: new Set(['when']),
   logicalOperators: new Set(['and', 'or', '&&', '||']),
-  logicalNodeType: 'binary',
+  logicalNodeTypes: new Set(['binary']),
   optionalChainType: null,
   nestingNodes: new Set(['if', 'unless', 'case', 'for', 'while', 'until', 'rescue', 'conditional']),
   functionNodes: new Set(['method', 'singleton_method', 'lambda', 'do_block']),

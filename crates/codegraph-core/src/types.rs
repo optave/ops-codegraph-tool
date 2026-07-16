@@ -99,6 +99,14 @@ pub struct Definition {
     pub cfg: Option<CfgData>,
     #[napi(ts_type = "Definition[] | undefined")]
     pub children: Option<Vec<Definition>>,
+    /// Set when the underlying AST node structurally has no executable body
+    /// (an interface/protocol/trait method signature, an abstract method with
+    /// no block, a Rust trait `function_signature_item`, etc). Mirrors the TS
+    /// `Definition.bodyless` signal — see `hasFuncBody` in
+    /// `src/ast-analysis/apply-results.ts` (issue #1922). A dotted name alone
+    /// does not imply this: it's the normal qualified name for real bodied
+    /// class/struct/impl/module methods across every extractor.
+    pub bodyless: Option<bool>,
 }
 
 #[napi(object)]
@@ -574,6 +582,32 @@ pub struct PathAliases {
 pub struct AliasMapping {
     pub pattern: String,
     pub targets: Vec<String>,
+}
+
+/// A single monorepo workspace package, mirroring `WorkspaceEntry` in
+/// `src/infrastructure/config.ts`. `entry` is `None` when no resolvable
+/// entry point was found for the package (missing `main`/`source`/index
+/// file). Serves double duty: passed as a napi array argument to
+/// `resolve_import`/`resolve_imports` for the per-call FFI path, and
+/// deserialized from the `workspaces_json` blob `NativeDatabase::build_graph`
+/// receives for the full Rust orchestrator path (both use the same
+/// `{ packageName, dir, entry }` JSON shape).
+///
+/// `#[serde(rename_all = "camelCase")]` is required here even though
+/// `#[napi(object)]` already camelCases fields for direct FFI calls — that
+/// conversion is a separate mechanism from `serde_json`, which only sees the
+/// literal Rust field names unless told otherwise. Without it,
+/// `serde_json::from_str` on `workspaces_json` (camelCase, produced by
+/// `JSON.stringify(getWorkspacesForNative(...))`) fails with "missing field
+/// `package_name`" (mirrors `BuildPathAliases`'s reason for existing
+/// alongside `PathAliases` in infrastructure/config.rs).
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePackage {
+    pub package_name: String,
+    pub dir: String,
+    pub entry: Option<String>,
 }
 
 #[napi(object)]

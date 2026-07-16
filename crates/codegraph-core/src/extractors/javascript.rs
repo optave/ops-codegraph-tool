@@ -575,6 +575,7 @@ fn extract_object_literal_functions(
                             complexity: compute_all_metrics(&val_n, source, "javascript"),
                             cfg: build_function_cfg(&val_n, "javascript", source),
                             children: None,
+                            bodyless: None,
                         });
                         // Store qualified name as value so resolver looks up the qualified def.
                         symbols.type_map.push(TypeMapEntry {
@@ -622,6 +623,7 @@ fn extract_object_literal_functions(
                         complexity: compute_all_metrics(&child, source, "javascript"),
                         cfg: build_function_cfg(&child, "javascript", source),
                         children: opt_children(children),
+                        bodyless: None,
                     });
                 }
                 let body = child.child_by_field_name("body");
@@ -634,6 +636,7 @@ fn extract_object_literal_functions(
                     complexity: body.and_then(|b| compute_all_metrics(&b, source, "javascript")),
                     cfg: body.and_then(|b| build_function_cfg(&b, "javascript", source)),
                     children: None,
+                    bodyless: None,
                 });
             }
             _ => {}
@@ -895,6 +898,7 @@ fn handle_js_prototype_assignment(lhs: &Node, rhs: &Node, source: &[u8], symbols
             complexity: compute_all_metrics(rhs, source, "javascript"),
             cfg: build_function_cfg(rhs, "javascript", source),
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -916,6 +920,7 @@ fn emit_js_prototype_method(class_name: &str, method_name: &str, rhs: &Node, sou
                 complexity: compute_all_metrics(rhs, source, "javascript"),
                 cfg: build_function_cfg(rhs, "javascript", source),
                 children: opt_children(children),
+                bodyless: None,
             });
         }
         "identifier" => {
@@ -947,6 +952,7 @@ fn extract_js_prototype_object_literal(class_name: &str, obj_node: &Node, source
                     complexity: compute_all_metrics(&child, source, "javascript"),
                     cfg: build_function_cfg(&child, "javascript", source),
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
             "shorthand_property_identifier" => {
@@ -1066,6 +1072,7 @@ fn handle_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: compute_all_metrics(node, source, "javascript"),
             cfg: build_function_cfg(node, "javascript", source),
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -1083,6 +1090,7 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
 
     // Heritage: extends + implements
@@ -1184,6 +1192,7 @@ fn handle_method_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: compute_all_metrics(node, source, "javascript"),
             cfg: build_function_cfg(node, "javascript", source),
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -1373,6 +1382,7 @@ fn handle_static_block(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -1411,6 +1421,7 @@ fn handle_field_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -1426,6 +1437,7 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
     // Extract interface methods
     let body = node
@@ -1448,6 +1460,7 @@ fn handle_type_alias(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -1465,6 +1478,7 @@ fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -1501,6 +1515,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 complexity: compute_all_metrics(&value_n, source, "javascript"),
                 cfg: build_function_cfg(&value_n, "javascript", source),
                 children: opt_children(children),
+                bodyless: None,
             });
         } else if is_const && name_n.kind() == "object_pattern" && !in_function_scope {
             // Parity with TS query path (extractDestructuredBindingsWalk):
@@ -1552,6 +1567,7 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 complexity: None,
                 cfg: None,
                 children: None,
+                bodyless: None,
             });
             // Phase 8.3f: extract function/arrow properties from object literals and seed
             // typeMap composite keys so that this.method() inside Object.defineProperty
@@ -2401,6 +2417,7 @@ fn extract_interface_methods(
                         complexity: None,
                         cfg: None,
                         children: None,
+                        bodyless: Some(child.child_by_field_name("body").is_none()),
                     });
                 }
             }
@@ -3058,6 +3075,7 @@ fn extract_destructured_bindings(
                     complexity: None,
                     cfg: None,
                     children: None,
+                    bodyless: None,
                 });
             }
             "pair_pattern" | "pair" => {
@@ -3074,6 +3092,7 @@ fn extract_destructured_bindings(
                             complexity: None,
                             cfg: None,
                             children: None,
+                            bodyless: None,
                         });
                     }
                 }
@@ -3111,6 +3130,7 @@ fn extract_array_pattern_bindings(
                     complexity: None,
                     cfg: None,
                     children: None,
+                    bodyless: None,
                 });
             }
             "assignment_pattern" => {
@@ -3125,6 +3145,7 @@ fn extract_array_pattern_bindings(
                             complexity: None,
                             cfg: None,
                             children: None,
+                            bodyless: None,
                         });
                     }
                 }
@@ -3151,6 +3172,7 @@ fn extract_array_pattern_bindings(
                                 complexity: None,
                                 cfg: None,
                                 children: None,
+                                bodyless: None,
                             });
                             break;
                         }
@@ -3549,6 +3571,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             complexity: compute_all_metrics(&cb, source, "javascript"),
             cfg: build_function_cfg(&cb, "javascript", source),
             children: None,
+            bodyless: None,
         });
     }
 
@@ -3568,6 +3591,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             complexity: compute_all_metrics(&cb, source, "javascript"),
             cfg: build_function_cfg(&cb, "javascript", source),
             children: None,
+            bodyless: None,
         });
     }
 
@@ -3584,6 +3608,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             complexity: compute_all_metrics(&cb, source, "javascript"),
             cfg: build_function_cfg(&cb, "javascript", source),
             children: None,
+            bodyless: None,
         });
     }
 
@@ -3810,11 +3835,18 @@ fn collect_array_pattern_names(pattern: &Node, source: &[u8]) -> Vec<String> {
     names
 }
 
-/// Extract the identifier from a rest/spread element (`...rest` → `rest`)
+/// Extract the identifier from a rest/spread element (`...rest` → `rest`).
+/// Scans all children for the `identifier` node rather than assuming a fixed
+/// index — the `...` token itself is child 0, so indexing into a fixed slot
+/// silently returns the wrong node and drops the binding entirely (#1920).
+/// Mirrors `extract_array_pattern_bindings`'s own rest_pattern handling.
 fn extract_rest_identifier(rest_node: &Node, source: &[u8], names: &mut Vec<String>) {
-    if let Some(inner) = rest_node.child(0) {
-        if inner.kind() == "identifier" {
-            names.push(node_text(&inner, source).to_string());
+    for i in 0..rest_node.child_count() {
+        if let Some(inner) = rest_node.child(i) {
+            if inner.kind() == "identifier" {
+                names.push(node_text(&inner, source).to_string());
+                break;
+            }
         }
     }
 }
@@ -4581,6 +4613,42 @@ mod tests {
         assert!(names.contains(&"Foo"));
         assert!(names.contains(&"Foo.bar"));
         assert!(names.contains(&"Foo.baz"));
+        // Real class methods have a body — a dotted name alone must never be
+        // treated as a signature-only stub (#1922).
+        let bar = s.definitions.iter().find(|d| d.name == "Foo.bar").unwrap();
+        assert_ne!(bar.bodyless, Some(true));
+    }
+
+    /// Regression test for #1922: an interface's `method_signature` structurally
+    /// has no body field and must be marked `bodyless`, even when the signature
+    /// spans multiple lines (the exact shape #606's original dot-check targeted).
+    /// A real, dotted class method implementing the same interface must NOT be
+    /// affected by the interface's own stub — it keeps a real body and complexity.
+    #[test]
+    fn interface_method_signature_is_bodyless_but_implementing_class_method_is_not() {
+        let s = parse_ts(
+            "interface Repo {\n\
+               save(\n\
+                 id: string,\n\
+                 value: number,\n\
+               ): boolean;\n\
+             }\n\
+             class InMemoryRepo implements Repo {\n\
+               save(id: string, value: number): boolean {\n\
+                 if (value < 0) { return false; }\n\
+                 return true;\n\
+               }\n\
+             }\n",
+        );
+        let iface_save = s.definitions.iter().find(|d| d.name == "Repo.save").unwrap();
+        assert_eq!(iface_save.bodyless, Some(true));
+
+        let class_save = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "InMemoryRepo.save")
+            .unwrap();
+        assert_ne!(class_save.bodyless, Some(true));
     }
 
     #[test]
@@ -5156,6 +5224,53 @@ mod tests {
         assert_eq!(dyn_imports[0].source, "../../../../features/dataflow.js");
         assert!(dyn_imports[0].names.contains(&"buildDataflowVerticesFromMap".to_string()));
         assert!(dyn_imports[0].names.contains(&"buildDataflowEdges".to_string()));
+    }
+
+    // Regression tests for #1920: `extract_rest_identifier` indexed into a
+    // fixed child slot (0) that is actually the `...` token, not the bound
+    // identifier, so rest elements in both object- and array-pattern
+    // destructures of a dynamic `import()` were silently dropped.
+
+    #[test]
+    fn finds_dynamic_import_with_object_rest_destructuring() {
+        let s = parse_js("const { a, ...rest } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["a".to_string(), "rest".to_string()]);
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_shorthand_default_destructuring() {
+        let s = parse_js("const { a = 1 } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_mixed_plain_renamed_default_and_rest_destructuring() {
+        let s = parse_js("const { a, b: alias, c = 1, ...rest } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(
+            dyn_imports[0].names,
+            vec!["a".to_string(), "alias".to_string(), "c".to_string(), "rest".to_string()]
+        );
+        let renamed = dyn_imports[0]
+            .renamed_imports
+            .as_ref()
+            .expect("renamed_imports should be populated for the renamed specifier");
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].local, "alias");
+        assert_eq!(renamed[0].imported, "b");
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_array_rest_destructuring() {
+        let s = parse_js("const [a, ...rest] = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].names, vec!["a".to_string(), "rest".to_string()]);
     }
 
     #[test]
