@@ -48,7 +48,45 @@ jobs:
       - name: Run Biome
         run: npx @biomejs/biome check src/ tests/
 
+  detect-changes:
+    name: Detect native-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      native_changed: ${{ steps.check.outputs.native_changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for native-relevant changes
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+          fi
+
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "No usable base SHA to diff against — assuming native changed"
+            echo "native_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(crates/|Cargo\.toml$|Cargo\.lock$|src/infrastructure/native\.ts$)'; then
+            echo "Native-relevant paths changed"
+            echo "native_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No native-relevant paths changed"
+            echo "native_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   native-host-build:
+    needs: detect-changes
+    # Fail open: only skip when detect-changes positively confirmed nothing
+    # native-relevant changed. Any other outcome (failure, skip) still builds,
+    # so a broken change-detector can't silently hide a real Rust regression.
+    if: needs.detect-changes.result != 'success' || needs.detect-changes.outputs.native_changed == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -96,6 +134,13 @@ jobs:
 
   test:
     needs: native-host-build
+    # native-host-build may have been legitimately skipped (no native-relevant
+    # changes) — that's not a failure, so keep running against the published
+    # binary rather than cascading a skip.
+    if: |
+      always() &&
+      needs.native-host-build.result != 'failure' &&
+      needs.native-host-build.result != 'cancelled'
     strategy:
       fail-fast: false
       matrix:
@@ -131,12 +176,14 @@ jobs:
           done
 
       - name: Download PR-built native addon
+        if: needs.native-host-build.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: native-host-${{ matrix.os }}
           path: crates/codegraph-core
 
       - name: Install native addon over published binary
+        if: needs.native-host-build.result == 'success'
         shell: bash
         run: node scripts/ci-install-native.mjs
 
@@ -224,6 +271,10 @@ jobs:
 
   parity:
     needs: native-host-build
+    if: |
+      always() &&
+      needs.native-host-build.result != 'failure' &&
+      needs.native-host-build.result != 'cancelled'
     strategy:
       fail-fast: false
       matrix:
@@ -258,12 +309,14 @@ jobs:
           done
 
       - name: Download PR-built native addon
+        if: needs.native-host-build.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: native-host-${{ matrix.os }}
           path: crates/codegraph-core
 
       - name: Install native addon over published binary
+        if: needs.native-host-build.result == 'success'
         shell: bash
         run: node scripts/ci-install-native.mjs
 
@@ -351,8 +404,15 @@ jobs:
     # Only run on PRs — push-to-main re-runs the same benchmarks the merged
     # PR already gated on, doubling CI minutes per landed change with no new
     # signal. Mirrors the `if: github.event_name != 'push'` skip in
-    # publish.yml's equivalent gate.
-    if: github.event_name == 'pull_request'
+    # publish.yml's equivalent gate. Also tolerates native-host-build being
+    # legitimately skipped (no native-relevant changes) — benchmarks still
+    # need to run against the published binary since most regressions are
+    # TS-side, not Rust-side.
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.native-host-build.result != 'failure' &&
+      needs.native-host-build.result != 'cancelled'
     needs: native-host-build
     runs-on: ubuntu-latest
     env:
@@ -383,6 +443,7 @@ jobs:
           cache: false
 
       - name: Download PR-built native addon
+        if: needs.native-host-build.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: native-host-ubuntu-latest
@@ -406,6 +467,7 @@ jobs:
           done
 
       - name: Install native addon over published binary
+        if: needs.native-host-build.result == 'success'
         run: node scripts/ci-install-native.mjs
 
       # Build dist/ so benchmarks load the same compiled JS that ships to npm.
