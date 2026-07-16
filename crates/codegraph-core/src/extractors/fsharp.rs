@@ -80,6 +80,7 @@ fn handle_named_module(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -110,6 +111,7 @@ fn handle_module_defn(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -157,6 +159,7 @@ fn handle_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: compute_all_metrics(&end, source, "fsharp"),
         cfg: build_function_cfg(&end, "fsharp", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -226,6 +229,7 @@ fn handle_type_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -406,6 +410,7 @@ fn handle_value_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 

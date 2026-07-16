@@ -143,6 +143,7 @@ function handleCsInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void
             kind: 'method',
             line: child.startPosition.row + 1,
             endLine: child.endPosition.row + 1,
+            bodyless: !child.childForFieldName('body'),
           });
         }
       }
@@ -178,6 +179,7 @@ function handleCsMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     endLine: nodeEndLine(node),
     children: params.length > 0 ? params : undefined,
     visibility: extractModifierVisibility(node),
+    bodyless: !node.childForFieldName('body'),
   });
 }
 

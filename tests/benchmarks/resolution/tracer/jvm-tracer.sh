@@ -142,17 +142,13 @@ case "$LANG" in
             # Match lines like: public void method(...) {
             # The first sed pass matches all method/constructor opening braces,
             # so a second pass is unnecessary (it would double-inject traceCall).
-            sedi -E '/\)\s*\{$/{
-                /class |interface /!{
-                    a\        CallTracer.traceCall();
-                }
-            }' "$javafile"
+            sedi_append_unless '/\)[[:space:]]*\{$/' '/class |interface /' \
+                '        CallTracer.traceCall();' "$javafile"
         done
 
         # Add dump call at end of main
-        sedi '/public static void main/,/\}/ {
-            /^\s*\}/ i\        CallTracer.dump();
-        }' "$TMP_DIR/Main.java" 2>/dev/null || true
+        sedi_insert_before_end '/public static void main/' '/\}/' '/^[[:space:]]*\}/' \
+            '        CallTracer.dump();' "$TMP_DIR/Main.java" 2>/dev/null || true
 
         # Compile and run
         cd "$TMP_DIR"
@@ -171,15 +167,13 @@ case "$LANG" in
 
         # Inject CallTracer.traceCall() into every function body
         for ktfile in "$TMP_DIR"/*.kt; do
-            sedi -E '/fun [a-zA-Z].*\{[[:space:]]*$/{
-                /class |interface |object /!a\        CallTracer.traceCall();
-            }' "$ktfile"
+            sedi_append_unless '/fun [a-zA-Z].*\{[[:space:]]*$/' '/class |interface |object /' \
+                '        CallTracer.traceCall();' "$ktfile"
         done
 
         # Inject dump call before main's closing brace
-        sedi '/^fun main/,/^\}/ {
-            /^\}/ i\    CallTracer.dump()
-        }' "$TMP_DIR/Main.kt"
+        sedi_insert_before_end '/^fun main/' '/^\}/' '/^\}/' \
+            '    CallTracer.dump()' "$TMP_DIR/Main.kt"
 
         # Suppress println to keep stdout clean for JSON
         for ktfile in "$TMP_DIR"/*.kt; do
@@ -198,15 +192,13 @@ case "$LANG" in
         # Inject CallTracer.traceCall() into every def body
         for scfile in "$TMP_DIR"/*.scala; do
             base="$(basename "$scfile")"
-            sedi -E '/def [a-zA-Z].*\{[[:space:]]*$/{
-                /class |trait |object .*extends/!a\        CallTracer.traceCall();
-            }' "$scfile"
+            sedi_append_unless '/def [a-zA-Z].*\{[[:space:]]*$/' '/class |trait |object .*extends/' \
+                '        CallTracer.traceCall();' "$scfile"
         done
 
         # Inject dump call before main's closing brace
-        sedi '/def main/,/^\s*\}/ {
-            /^\s*\}/ i\    CallTracer.dump()
-        }' "$TMP_DIR/Main.scala"
+        sedi_insert_before_end '/def main/' '/^[[:space:]]*\}/' '/^[[:space:]]*\}/' \
+            '    CallTracer.dump()' "$TMP_DIR/Main.scala"
 
         # Suppress println to keep stdout clean for JSON
         for scfile in "$TMP_DIR"/*.scala; do
@@ -231,15 +223,13 @@ case "$LANG" in
 
         # Inject CallTracer.traceCall() into every method body
         for grfile in "$TMP_DIR"/*.groovy; do
-            sedi -E '/\)\s*\{[[:space:]]*$/{
-                /class |interface /!a\        CallTracer.traceCall();
-            }' "$grfile"
+            sedi_append_unless '/\)[[:space:]]*\{[[:space:]]*$/' '/class |interface /' \
+                '        CallTracer.traceCall();' "$grfile"
         done
 
         # Inject dump call before main's closing brace
-        sedi '/static void main/,/^\s*\}/ {
-            /^\s*\}/ i\        CallTracer.dump()
-        }' "$TMP_DIR/Main.groovy"
+        sedi_insert_before_end '/static void main/' '/^[[:space:]]*\}/' '/^[[:space:]]*\}/' \
+            '        CallTracer.dump()' "$TMP_DIR/Main.groovy"
 
         # Suppress println to keep stdout clean for JSON
         for grfile in "$TMP_DIR"/*.groovy; do

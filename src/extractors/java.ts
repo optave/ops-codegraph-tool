@@ -190,6 +190,7 @@ function extractJavaInterfaceMethods(
           kind: 'method',
           line: nodeStartLine(child),
           endLine: nodeEndLine(child),
+          bodyless: !child.childForFieldName('body'),
         });
       }
     }
@@ -224,6 +225,7 @@ function handleJavaMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
     endLine: nodeEndLine(node),
     children: params.length > 0 ? params : undefined,
     visibility: extractModifierVisibility(node),
+    bodyless: !node.childForFieldName('body'),
   });
 }
 

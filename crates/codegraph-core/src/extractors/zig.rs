@@ -50,6 +50,7 @@ fn handle_zig_function(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: compute_all_metrics(node, source, "zig"),
         cfg: build_function_cfg(node, "zig", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -98,6 +99,7 @@ fn handle_zig_variable(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -119,6 +121,7 @@ fn try_handle_zig_type_def(node: &Node, source: &[u8], symbols: &mut FileSymbols
             complexity: None,
             cfg: None,
             children,
+            bodyless: None,
         });
         return true;
     }
@@ -259,6 +262,7 @@ fn handle_zig_test(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 

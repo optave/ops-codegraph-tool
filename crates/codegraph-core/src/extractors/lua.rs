@@ -83,6 +83,7 @@ fn handle_lua_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbol
         complexity: compute_all_metrics(node, source, "lua"),
         cfg: build_function_cfg(node, "lua", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -156,10 +157,11 @@ fn handle_lua_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbol
         None => return,
     };
 
-    // load(chunk) / loadstring(chunk) / dofile — dynamic code execution; always undecidable
+    // load(chunk) / loadstring(chunk) / loadfile(...) / dofile — dynamic code
+    // execution; always undecidable
     if name_node.kind() == "identifier" {
         let ident = node_text(&name_node, source);
-        if matches!(ident, "load" | "loadstring" | "dofile") {
+        if matches!(ident, "load" | "loadstring" | "loadfile" | "dofile") {
             symbols.calls.push(Call {
                 name: "<dynamic:eval>".to_string(),
                 line: start_line(node),
@@ -358,5 +360,75 @@ mod tests {
             .calls
             .iter()
             .any(|c| c.name == "fakeOs" && c.dynamic_kind.as_deref() == Some("value-ref")));
+    }
+
+    // ── #1909: eval/computed-key dynamic-call detection ──────────────────────
+
+    #[test]
+    fn classifies_load_call_as_dynamic_eval() {
+        let s = parse_lua("load(chunk)()");
+        assert!(s.calls.iter().any(|c| c.name == "<dynamic:eval>"
+            && c.dynamic == Some(true)
+            && c.dynamic_kind.as_deref() == Some("eval")));
+    }
+
+    #[test]
+    fn classifies_loadstring_call_as_dynamic_eval() {
+        let s = parse_lua("loadstring(code)()");
+        assert!(s.calls.iter().any(|c| c.name == "<dynamic:eval>"
+            && c.dynamic == Some(true)
+            && c.dynamic_kind.as_deref() == Some("eval")));
+    }
+
+    #[test]
+    fn classifies_dofile_call_as_dynamic_eval() {
+        let s = parse_lua("dofile(\"script.lua\")");
+        assert!(s.calls.iter().any(|c| c.name == "<dynamic:eval>"
+            && c.dynamic == Some(true)
+            && c.dynamic_kind.as_deref() == Some("eval")));
+    }
+
+    #[test]
+    fn classifies_loadfile_call_as_dynamic_eval() {
+        let s = parse_lua("loadfile(\"script.lua\")()");
+        assert!(s.calls.iter().any(|c| c.name == "<dynamic:eval>"
+            && c.dynamic == Some(true)
+            && c.dynamic_kind.as_deref() == Some("eval")));
+    }
+
+    #[test]
+    fn resolves_bracket_index_call_with_string_literal_key_directly() {
+        let s = parse_lua("t[\"handler\"]()");
+        assert!(s
+            .calls
+            .iter()
+            .any(|c| c.name == "handler" && c.receiver.as_deref() == Some("t") && c.dynamic.is_none()));
+    }
+
+    #[test]
+    fn resolves_bracket_index_call_with_single_quoted_string_literal_key_directly() {
+        let s = parse_lua("t['handler']()");
+        assert!(s
+            .calls
+            .iter()
+            .any(|c| c.name == "handler" && c.receiver.as_deref() == Some("t")));
+    }
+
+    #[test]
+    fn classifies_bracket_index_call_with_variable_key_as_computed_key() {
+        let s = parse_lua("t[k]()");
+        assert!(s.calls.iter().any(|c| c.name == "<dynamic:computed-key>"
+            && c.dynamic == Some(true)
+            && c.dynamic_kind.as_deref() == Some("computed-key")
+            && c.key_expr.as_deref() == Some("k")
+            && c.receiver.as_deref() == Some("t")));
+    }
+
+    #[test]
+    fn classifies_bracket_index_call_with_expression_key_as_computed_key() {
+        let s = parse_lua("handlers[eventName .. \"Handler\"]()");
+        assert!(s.calls.iter().any(|c| c.dynamic == Some(true)
+            && c.dynamic_kind.as_deref() == Some("computed-key")
+            && c.receiver.as_deref() == Some("handlers")));
     }
 }

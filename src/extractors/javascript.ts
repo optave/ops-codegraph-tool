@@ -1969,6 +1969,7 @@ function extractInterfaceMethods(
           kind: child.type === 'method_signature' ? 'method' : 'property',
           line: nodeStartLine(child),
           endLine: nodeEndLine(child),
+          bodyless: !child.childForFieldName('body'),
         });
       }
     }
@@ -4751,6 +4752,21 @@ const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
 ]);
 
 /**
+ * Extract the bound identifier from a `rest_pattern`/`rest_element` node
+ * (`...rest` → `rest`). Scans all children for the `identifier` node rather
+ * than assuming a fixed index — the `...` token itself is child 0, so
+ * indexing into a fixed slot silently returns the wrong node (#1920).
+ * Mirrors `extract_rest_identifier` in the native engine.
+ */
+function extractRestPatternIdentifier(restNode: TreeSitterNode): string | undefined {
+  for (let i = 0; i < restNode.childCount; i++) {
+    const child = restNode.child(i);
+    if (child?.type === 'identifier') return child.text;
+  }
+  return undefined;
+}
+
+/**
  * Extract destructured names from a dynamic import() call expression.
  *
  * Handles:
@@ -4758,6 +4774,8 @@ const DYNAMIC_IMPORT_WRAPPER_TYPES = new Set([
  *   const mod = await import('./foo.js')                          → ['mod']
  *   const { a } = (await import('./foo.js')) as { a: Fn }         → ['a']
  *   const { a: b } = await import('./foo.js')                     → ['b']
+ *   const { a, ...rest } = await import('./foo.js')                → ['a', 'rest']
+ *   const { a = 1 } = await import('./foo.js')                    → ['a']
  *   import('./foo.js')                                            → [] (no names extractable)
  *
  * Walks up the AST from the call_expression — through any nesting of
@@ -4840,6 +4858,18 @@ function extractDynamicImportNames(
           // the key so the specifier isn't dropped entirely.
           names.push(keyName);
         }
+      } else if (child.type === 'object_assignment_pattern') {
+        // { a = defaultValue } — plain shorthand binding with a default
+        // value; the bound name is the `left`-hand identifier (#1920).
+        const left = child.childForFieldName('left');
+        if (left?.type === 'shorthand_property_identifier_pattern' || left?.type === 'identifier') {
+          names.push(left.text);
+        }
+      } else if (child.type === 'rest_pattern' || child.type === 'rest_element') {
+        // { a, ...rest } — the rest binding was silently dropped entirely
+        // before (#1920).
+        const inner = extractRestPatternIdentifier(child);
+        if (inner) names.push(inner);
       }
     }
     return names;
@@ -4856,9 +4886,11 @@ function extractDynamicImportNames(
     for (let i = 0; i < nameNode.childCount; i++) {
       const child = nameNode.child(i)!;
       if (child.type === 'identifier') names.push(child.text);
-      else if (child.type === 'rest_pattern') {
-        const inner = child.child(0) || child.childForFieldName('name');
-        if (inner && inner.type === 'identifier') names.push(inner.text);
+      else if (child.type === 'rest_pattern' || child.type === 'rest_element') {
+        // [a, ...rest] — child(0) is the `...` token, not the identifier
+        // (#1920); extractRestPatternIdentifier scans for the real one.
+        const inner = extractRestPatternIdentifier(child);
+        if (inner) names.push(inner);
       }
     }
     return names;

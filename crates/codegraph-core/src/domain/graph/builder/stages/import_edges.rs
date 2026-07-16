@@ -39,6 +39,8 @@ pub struct ImportEdgeContext {
     pub aliases: PathAliases,
     /// All known file paths (for resolution).
     pub known_files: HashSet<String>,
+    /// Monorepo workspace packages, keyed by package name (issue #1927).
+    pub workspaces: HashMap<String, resolve::WorkspaceEntry>,
 }
 
 /// An edge to insert into the database.
@@ -65,6 +67,7 @@ impl ImportEdgeContext {
             import_source,
             &self.root_dir,
             &self.aliases,
+            Some(&self.workspaces),
         )
     }
 
@@ -765,6 +768,7 @@ mod tests {
                     complexity: None,
                     cfg: None,
                     children: None,
+                    bodyless: None,
                 })
                 .collect(),
             imports,
@@ -814,6 +818,7 @@ mod tests {
                 paths: vec![],
             },
             known_files: HashSet::new(),
+            workspaces: HashMap::new(),
         };
 
         assert!(ctx.is_barrel_file("src/index.ts"));
@@ -861,6 +866,7 @@ mod tests {
                 paths: vec![],
             },
             known_files: HashSet::new(),
+            workspaces: HashMap::new(),
         };
 
         let candidates = vec![
@@ -899,6 +905,7 @@ mod tests {
                 paths: vec![],
             },
             known_files: HashSet::new(),
+            workspaces: HashMap::new(),
         };
 
         assert!(detect_barrel_only_files(&ctx, &[]).is_empty());
@@ -961,6 +968,7 @@ mod tests {
             root_dir: "/project".to_string(),
             aliases: PathAliases { base_url: None, paths: vec![] },
             known_files: HashSet::new(),
+            workspaces: HashMap::new(),
         }
     }
 

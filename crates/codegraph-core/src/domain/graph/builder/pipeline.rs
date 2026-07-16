@@ -116,6 +116,12 @@ struct PipelineSetup {
     include_dataflow: bool,
     include_ast: bool,
     force_full_rebuild: bool,
+    /// Monorepo workspace packages, keyed by package name. Detected by the JS
+    /// caller (`detectWorkspaces()` in infrastructure/config.ts — no Rust
+    /// equivalent; see `resolve::resolve_via_workspace`'s doc comment) and
+    /// serialized alongside aliases/opts. Empty when the project has no
+    /// workspace config (issue #1927).
+    workspaces: HashMap<String, resolve::WorkspaceEntry>,
 }
 
 fn pipeline_setup(
@@ -123,6 +129,7 @@ fn pipeline_setup(
     config_json: &str,
     aliases_json: &str,
     opts_json: &str,
+    workspaces_json: &str,
 ) -> Result<PipelineSetup, String> {
     let config: BuildConfig =
         serde_json::from_str(config_json).map_err(|e| format!("config parse error: {e}"))?;
@@ -130,12 +137,22 @@ fn pipeline_setup(
         serde_json::from_str(aliases_json).map_err(|e| format!("aliases parse error: {e}"))?;
     let opts: BuildOpts =
         serde_json::from_str(opts_json).map_err(|e| format!("opts parse error: {e}"))?;
+    let workspace_packages: Vec<crate::types::WorkspacePackage> = if workspaces_json.trim().is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(workspaces_json).map_err(|e| format!("workspaces parse error: {e}"))?
+    };
 
     let napi_aliases = aliases.to_napi_aliases();
     let incremental = opts.incremental.unwrap_or(config.build.incremental);
     let include_dataflow = opts.dataflow.unwrap_or(true);
     let include_ast = opts.ast.unwrap_or(true);
     let force_full_rebuild = check_version_mismatch(conn);
+    let workspaces = resolve::workspaces_from_packages(&workspace_packages);
+    // Reset once per build, mirroring `setWorkspaces()`'s
+    // `_workspaceResolvedPaths.clear()` in resolve.ts — must happen before
+    // Stage 6/6b resolve any imports below.
+    resolve::reset_workspace_resolved_paths();
 
     Ok(PipelineSetup {
         config,
@@ -145,6 +162,7 @@ fn pipeline_setup(
         include_dataflow,
         include_ast,
         force_full_rebuild,
+        workspaces,
     })
 }
 
@@ -278,6 +296,7 @@ fn resolve_pipeline_imports(
     collect_files: &[String],
     root_dir: &str,
     napi_aliases: &crate::types::PathAliases,
+    workspaces: &HashMap<String, resolve::WorkspaceEntry>,
 ) -> (HashMap<String, String>, HashSet<String>) {
     let mut batch_inputs: Vec<ImportResolutionInput> = Vec::new();
     for (rel_path, symbols) in file_symbols {
@@ -295,8 +314,13 @@ fn resolve_pipeline_imports(
     }
     let known_files: HashSet<String> =
         collect_files.iter().map(|f| relative_path(root_dir, f)).collect();
-    let resolved =
-        resolve::resolve_imports_batch(&batch_inputs, root_dir, napi_aliases, Some(&known_files));
+    let resolved = resolve::resolve_imports_batch(
+        &batch_inputs,
+        root_dir,
+        napi_aliases,
+        Some(&known_files),
+        Some(workspaces),
+    );
     let mut batch_resolved: HashMap<String, String> = HashMap::new();
     for r in &resolved {
         let key = format!("{}|{}", r.from_file, r.import_source);
@@ -493,13 +517,14 @@ pub fn run_pipeline(
     config_json: &str,
     aliases_json: &str,
     opts_json: &str,
+    workspaces_json: &str,
 ) -> Result<BuildPipelineResult, String> {
     let total_start = Instant::now();
     let mut timing = PipelineTiming::default();
 
     // ── Stage 1: Deserialize config ────────────────────────────────────
     let t0 = Instant::now();
-    let setup = pipeline_setup(conn, config_json, aliases_json, opts_json)?;
+    let setup = pipeline_setup(conn, config_json, aliases_json, opts_json, workspaces_json)?;
     let PipelineSetup {
         config,
         napi_aliases,
@@ -508,6 +533,7 @@ pub fn run_pipeline(
         include_dataflow,
         include_ast,
         force_full_rebuild,
+        workspaces,
     } = setup;
     timing.setup_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -596,8 +622,13 @@ pub fn run_pipeline(
 
     // ── Stage 6: Resolve imports ───────────────────────────────────────
     let t0 = Instant::now();
-    let (mut batch_resolved, known_files) =
-        resolve_pipeline_imports(&file_symbols, &collect_result.files, root_dir, &napi_aliases);
+    let (mut batch_resolved, known_files) = resolve_pipeline_imports(
+        &file_symbols,
+        &collect_result.files,
+        root_dir,
+        &napi_aliases,
+        &workspaces,
+    );
     timing.resolve_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 6b: Re-parse barrel candidates (incremental only) ─────────
@@ -610,8 +641,13 @@ pub fn run_pipeline(
     // than recomputing it over the whole `fileSymbols` map — #1848).
     let barrel_candidates_added: Vec<String> = if !change_result.is_full_build {
         reparse_barrel_candidates(
-            conn, root_dir, &napi_aliases, &known_files,
-            &mut file_symbols, &mut batch_resolved,
+            conn,
+            root_dir,
+            &napi_aliases,
+            &known_files,
+            &workspaces,
+            &mut file_symbols,
+            &mut batch_resolved,
         )
     } else {
         Vec::new()
@@ -629,6 +665,7 @@ pub fn run_pipeline(
         root_dir: root_dir.to_string(),
         aliases: napi_aliases.clone(),
         known_files,
+        workspaces: workspaces.clone(),
     };
 
     // Build reexport map and detect barrel files. Classification is scoped to
@@ -883,6 +920,7 @@ fn reparse_barrel_candidates(
     root_dir: &str,
     napi_aliases: &crate::types::PathAliases,
     known_files: &HashSet<String>,
+    workspaces: &HashMap<String, resolve::WorkspaceEntry>,
     file_symbols: &mut BTreeMap<String, FileSymbols>,
     batch_resolved: &mut HashMap<String, String>,
 ) -> Vec<String> {
@@ -981,6 +1019,7 @@ fn reparse_barrel_candidates(
                     root_dir,
                     napi_aliases,
                     Some(known_files),
+                    Some(workspaces),
                 );
                 for r in &resolved_batch {
                     let key = format!("{}|{}", r.from_file, r.import_source);
@@ -2198,6 +2237,7 @@ mod tests {
             root_dir: "/repo".to_string(),
             aliases: PathAliases { base_url: None, paths: vec![] },
             known_files: HashSet::new(),
+            workspaces: HashMap::new(),
         }
     }
 
