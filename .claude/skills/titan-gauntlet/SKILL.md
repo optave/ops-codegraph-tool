@@ -140,6 +140,16 @@ The codebase may have changed significantly since RECON ran. Detect this before 
 
 Every file must be checked against all four pillars. A file **FAILS** if it has any fail-level violation.
 
+> **Known codegraph tool caveats (v3.15.0) — check these before treating a finding as real, to avoid repeat rediscovery across batches:**
+> - `codegraph ast --kind` only supports `new`, `string`, `regex`, `throw`, `await` — **there is no `call` kind.** Use grep for call-site inspection (Rules 2, 5, 15).
+> - `codegraph ast --kind string` also matches the bare TypeScript `string` type keyword in type-annotation position (not just string literals) — filter out hits whose `text` is the unquoted word `string` before scoring Rule 7 (issue #1729).
+> - `codegraph batch complexity <file-paths>` ignores file-path targets and returns a global summary instead (issue #1721) — use `codegraph complexity --file <f> --health -T --json` per file.
+> - `codegraph roles --role dead` flags used function parameters, interface members, and class instance properties as dead-leaf/dead-unresolved even when genuinely referenced in the body (issue #1723) — verify manually via grep before treating as a real Rule-4 violation.
+> - `codegraph exports` / dead-role consumer counting misses consumers that use `import type` or `instanceof` (issue #1724), or that import via a rename (`import { X as Y }`, issue #1730) — cross-check with grep before concluding an export is truly dead.
+> - `codegraph where --file` sometimes omits genuinely exported symbols from `exported` entirely (issue #1728), and `codegraph deps`/`where --file` can report stale import edges even when the file's stored hash matches current content (issue #1731) — if either looks suspicious vs. `grep -n "^export"`/`grep -n "^import"`, trust the grep.
+> - `codegraph fn-impact <name> -f/--file <path>` crashes with a fatal Rust error (issue #1726) — never pass `-f`/`--file` to `fn-impact` or `query`; use the bare symbol name.
+> - If `titan-state.json → embeddingsAvailable` is `false`, skip semantic `codegraph search` for Rule 11 and rely on `codegraph co-change` + manual comparison instead.
+
 ### Pillar I: Structural Purity & Logic
 
 #### Rule 1 — Complexity (multi-metric)
@@ -161,9 +171,8 @@ This returns ALL metrics in one call — use them all:
 #### Rule 2 — Async hygiene (every Promise caught)
 ```bash
 codegraph ast --kind await --file <f> -T --json
-codegraph ast --kind call --file <f> -T --json
 ```
-Cross-reference: `.then()` calls without `.catch()` on the same chain; async functions without `try/catch` wrapping await calls. Also grep:
+`codegraph ast --kind` only supports `new`, `string`, `regex`, `throw`, `await` — there is no `call` kind (confirmed on v3.15.0; `codegraph ast --help` lists the valid set). Use grep for call-site inspection instead. Cross-reference: `.then()` calls without `.catch()` on the same chain; async functions without `try/catch` wrapping await calls. Also grep:
 ```bash
 grep -n "\.then(" <f>
 grep -n "async " <f>
@@ -186,9 +195,9 @@ codegraph exports <f> -T --json
 
 #### Rule 5 — Resource hygiene
 ```bash
-codegraph ast --kind call --file <f> -T --json
+grep -n "addEventListener\|setInterval\|setTimeout\|createReadStream\|\.on(" <f>
 ```
-Find `addEventListener`, `setInterval`, `setTimeout`, `createReadStream`, `.on(` — verify matching cleanup. **Fail:** resource acquired without cleanup.
+(No `codegraph ast --kind call` exists — valid `--kind` values are `new`, `string`, `regex`, `throw`, `await` — so this rule is grep-only.) Verify matching cleanup for each hit. **Fail:** resource acquired without cleanup.
 
 #### Rule 6 — Immutability
 ```bash
@@ -268,13 +277,9 @@ Flag vague names: `data`, `obj`, `temp`, `res`, `val`, `item`, `result`, single-
 
 #### Rule 15 — Structured logging
 ```bash
-codegraph ast --kind call --file <f> -T --json
-```
-Also grep:
-```bash
 grep -n "console\.\(log\|warn\|error\|info\)" <f>
 ```
-**Warn:** console.log in source files. **Fail:** in production code paths (non-debug, non-test).
+(No `codegraph ast --kind call` exists — grep-only, see Rule 5 note.) **Warn:** console.log in source files. **Fail:** in production code paths (non-debug, non-test). **Not a violation:** deliberate `console.*`/stdout writes in `presentation/*.ts` CLI-output formatters — that's their job; only flag internal debug logging that should go through the structured logger instead.
 
 #### Rule 16 — Testability
 ```bash
@@ -320,6 +325,8 @@ codegraph batch complexity <target1> <target2> ... -T --json
 ```
 This returns complexity + health metrics for all targets in one call. Parse the results.
 
+> **Known bug (issue #1721, v3.15.0):** `codegraph batch complexity <file-path-targets>` ignores file-path targets — it passes them into the symbol-name filter instead of the file filter, so it silently returns a global summary rather than per-file results. Until fixed, run `codegraph complexity --file <f> --health -T --json` separately per file instead of relying on the batch form for file-path targets.
+
 For deeper context on high-risk targets:
 ```bash
 codegraph batch context <target1> <target2> ... -T --json
@@ -347,7 +354,7 @@ For each file:
 
 ### 3f. Run Pillar IV checks
 - Naming quality (Rule 14): `codegraph where --file`
-- Structured logging (Rule 15): `codegraph ast --kind call` + grep
+- Structured logging (Rule 15): grep only (no `--kind call` exists, see Rule 15 above)
 - Testability (Rule 16): `codegraph fn-impact` + test file mock count
 - Critical path coverage (Rule 17): `codegraph roles --role core`
 
