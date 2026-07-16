@@ -160,6 +160,13 @@ describe('briefData (issue #1941)', () => {
     try {
       const config = withRepo(dbPath, (_repo, dbConfig) => dbConfig);
       expect(config.analysis?.briefCallerDepth).toBe(CUSTOM_BRIEF_CALLER_DEPTH);
+
+      // Exercise the actual briefData -> withRepo -> dbConfig chain (not just
+      // withRepo directly) so a regression where briefData reverts to calling
+      // loadConfig() itself would be caught here, mirroring the fnImpactData case.
+      loadConfigSpy.mockClear();
+      briefData('base.js', dbPath);
+      expect(loadConfigSpy).toHaveBeenCalledTimes(1);
     } finally {
       cwdSpy.mockRestore();
     }
