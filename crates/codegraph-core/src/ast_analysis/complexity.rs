@@ -337,8 +337,15 @@ pub static PHP_RULES: LangRules = LangRules {
     switch_like_nodes: &["switch_statement"],
 };
 
+// tree-sitter-c's if_statement wraps its else branch in a real `else_clause`
+// node (`if_statement condition consequence else_clause(else [if_statement |
+// <substatement>])`) — confirmed by parsing `if (..) {..} else if (..) {..}
+// else {..}` and inspecting the S-expression. This is Pattern A (JS/C#/Rust
+// style: an else_clause node wraps either a nested if_statement for
+// `else if` or the plain else body), NOT Pattern C (Go/Java style, where the
+// `alternative` field holds the substatement directly with no wrapper node).
 pub static C_RULES: LangRules = LangRules {
-    branch_nodes: &["if_statement", "for_statement", "while_statement", "do_statement", "case_statement", "conditional_expression"],
+    branch_nodes: &["if_statement", "else_clause", "for_statement", "while_statement", "do_statement", "case_statement", "conditional_expression"],
     case_nodes: &["case_statement"],
     logical_operators: &["&&", "||"],
     logical_node_types: &["binary_expression"],
@@ -346,14 +353,16 @@ pub static C_RULES: LangRules = LangRules {
     nesting_nodes: &["if_statement", "for_statement", "while_statement", "do_statement", "conditional_expression"],
     function_nodes: &["function_definition"],
     if_node_type: Some("if_statement"),
-    else_node_type: None,
+    else_node_type: Some("else_clause"),
     elif_node_type: None,
-    else_via_alternative: true,
+    else_via_alternative: false,
     switch_like_nodes: &["switch_statement"],
 };
 
+// Mirrors C_RULES: tree-sitter-cpp's if_statement uses the same else_clause
+// wrapper (Pattern A), confirmed by parsing the same if/else-if/else shape.
 pub static CPP_RULES: LangRules = LangRules {
-    branch_nodes: &["if_statement", "for_statement", "for_range_loop", "while_statement", "do_statement", "case_statement", "conditional_expression", "catch_clause"],
+    branch_nodes: &["if_statement", "else_clause", "for_statement", "for_range_loop", "while_statement", "do_statement", "case_statement", "conditional_expression", "catch_clause"],
     case_nodes: &["case_statement"],
     logical_operators: &["&&", "||"],
     logical_node_types: &["binary_expression"],
@@ -361,9 +370,9 @@ pub static CPP_RULES: LangRules = LangRules {
     nesting_nodes: &["if_statement", "for_statement", "for_range_loop", "while_statement", "do_statement", "catch_clause", "conditional_expression"],
     function_nodes: &["function_definition"],
     if_node_type: Some("if_statement"),
-    else_node_type: None,
+    else_node_type: Some("else_clause"),
     elif_node_type: None,
-    else_via_alternative: true,
+    else_via_alternative: false,
     switch_like_nodes: &["switch_statement"],
 };
 
@@ -382,11 +391,16 @@ pub static KOTLIN_RULES: LangRules = LangRules {
     switch_like_nodes: &["when_expression"],
 };
 
+// tree-sitter-swift, like tree-sitter-kotlin, splits && / || into distinct
+// node types (conjunction_expression / disjunction_expression) rather than
+// sharing one generic binary node — confirmed by parsing `a && b || a` and
+// inspecting the S-expression. `logical_node_types: &["binary_expression"]`
+// never matches either operator, so Swift && / || were never counted.
 pub static SWIFT_RULES: LangRules = LangRules {
     branch_nodes: &["if_statement", "for_in_statement", "while_statement", "repeat_while_statement", "catch_clause", "switch_entry", "ternary_expression", "guard_statement"],
     case_nodes: &["switch_entry"],
     logical_operators: &["&&", "||"],
-    logical_node_types: &["binary_expression"],
+    logical_node_types: &["conjunction_expression", "disjunction_expression"],
     optional_chain_type: Some("optional_chaining_expression"),
     nesting_nodes: &["if_statement", "for_in_statement", "while_statement", "repeat_while_statement", "catch_clause", "ternary_expression", "guard_statement"],
     function_nodes: &["function_declaration", "init_declaration"],
@@ -413,7 +427,7 @@ pub static SCALA_RULES: LangRules = LangRules {
 };
 
 pub static BASH_RULES: LangRules = LangRules {
-    branch_nodes: &["if_statement", "for_statement", "while_statement", "case_statement", "elif_clause"],
+    branch_nodes: &["if_statement", "else_clause", "for_statement", "while_statement", "case_statement", "elif_clause"],
     case_nodes: &["case_item"],
     logical_operators: &["&&", "||"],
     logical_node_types: &["binary_expression"],
@@ -1772,5 +1786,244 @@ mod tests {
         assert_eq!(m.cognitive, 3);
         assert_eq!(m.cyclomatic, 3);
         assert_eq!(m.max_nesting, 2);
+    }
+
+    // ─── C/C++ tests (issue #1923) ──────────────────────────────────────────
+
+    fn compute_c(code: &str) -> ComplexityMetrics {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_c::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let func = find_first_function(&root, &C_RULES).expect("no function found");
+        compute_function_complexity(&func, &C_RULES)
+    }
+
+    fn compute_cpp(code: &str) -> ComplexityMetrics {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_cpp::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let func = find_first_function(&root, &CPP_RULES).expect("no function found");
+        compute_function_complexity(&func, &CPP_RULES)
+    }
+
+    #[test]
+    fn c_empty_function() {
+        let m = compute_c("int f(void) { return 0; }");
+        assert_eq!(m.cognitive, 0);
+        assert_eq!(m.cyclomatic, 1);
+        assert_eq!(m.max_nesting, 0);
+    }
+
+    #[test]
+    fn c_single_if() {
+        let m = compute_c("int f(int x) {\n  if (x > 0) {\n    return 1;\n  }\n  return 0;\n}");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn c_if_elseif_else() {
+        // tree-sitter-c wraps the else branch in a real else_clause node
+        // (Pattern A, like JS/C#/Rust) — NOT Go/Java's alternative-field
+        // pattern. Confirmed by parsing and inspecting the S-expression.
+        let m = compute_c(
+            "int f(int x) {\n  if (x > 0) {\n    return 1;\n  } else if (x < 0) {\n    return -1;\n  } else {\n    return 0;\n  }\n}",
+        );
+        // if: +1 cog, +1 cyc; else-if: +1 cog, +1 cyc; plain else: +1 cog
+        assert_eq!(m.cognitive, 3);
+        assert_eq!(m.cyclomatic, 3);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn c_nested_if() {
+        let m = compute_c(
+            "int f(int x, int y) {\n  if (x > 0) {\n    if (y > 0) {\n      return 1;\n    }\n  }\n  return 0;\n}",
+        );
+        assert_eq!(m.cognitive, 3);
+        assert_eq!(m.cyclomatic, 3);
+        assert_eq!(m.max_nesting, 2);
+    }
+
+    #[test]
+    fn c_logical_operators() {
+        let m = compute_c("int f(int a, int b) { return a && b; }");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+    }
+
+    #[test]
+    fn cpp_if_elseif_else() {
+        let m = compute_cpp(
+            "int f(int x) {\n  if (x > 0) {\n    return 1;\n  } else if (x < 0) {\n    return -1;\n  } else {\n    return 0;\n  }\n}",
+        );
+        assert_eq!(m.cognitive, 3);
+        assert_eq!(m.cyclomatic, 3);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn cpp_for_range_loop() {
+        let m = compute_cpp("void f(int xs[]) {\n  for (int x : xs) {\n    use(x);\n  }\n}");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    // ─── Kotlin tests (issue #1923) ─────────────────────────────────────────
+
+    fn compute_kotlin(code: &str) -> ComplexityMetrics {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_kotlin_sg::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let func = find_first_function(&root, &KOTLIN_RULES).expect("no function found");
+        compute_function_complexity(&func, &KOTLIN_RULES)
+    }
+
+    #[test]
+    fn kotlin_single_if() {
+        let m = compute_kotlin("fun f(x: Int): Int {\n  if (x > 0) {\n    return 1\n  }\n  return 0\n}");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn kotlin_logical_operators() {
+        // Kotlin's grammar splits && / || into distinct node types
+        // (conjunction_expression / disjunction_expression) rather than
+        // sharing one generic binary node — both are listed in
+        // logical_node_types.
+        let m = compute_kotlin("fun f(a: Boolean, b: Boolean): Boolean {\n  return a && b || a\n}");
+        assert_eq!(m.cyclomatic, 3);
+    }
+
+    #[test]
+    fn kotlin_when_expression() {
+        let m = compute_kotlin(
+            "fun f(x: Int): Int {\n  return when (x) {\n    1 -> 1\n    2 -> 2\n    else -> 0\n  }\n}",
+        );
+        // base 1 + when container (0, switch-like) + 3 when_entry cases (+1
+        // each) = 4.
+        assert_eq!(m.cyclomatic, 4);
+    }
+
+    // ─── Swift tests (issue #1923) ──────────────────────────────────────────
+
+    fn compute_swift(code: &str) -> ComplexityMetrics {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_swift::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let func = find_first_function(&root, &SWIFT_RULES).expect("no function found");
+        compute_function_complexity(&func, &SWIFT_RULES)
+    }
+
+    #[test]
+    fn swift_single_if() {
+        let m = compute_swift("func f(_ x: Int) -> Int {\n  if x > 0 {\n    return 1\n  }\n  return 0\n}");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn swift_logical_operators() {
+        let m = compute_swift("func f(_ a: Bool, _ b: Bool) -> Bool {\n  return a && b\n}");
+        assert_eq!(m.cyclomatic, 2);
+    }
+
+    // ─── Scala tests (issue #1923) ──────────────────────────────────────────
+
+    fn compute_scala(code: &str) -> ComplexityMetrics {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_scala::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let func = find_first_function(&root, &SCALA_RULES).expect("no function found");
+        compute_function_complexity(&func, &SCALA_RULES)
+    }
+
+    #[test]
+    fn scala_if_elseif_else() {
+        // tree-sitter-scala's if_expression exposes a real `alternative`
+        // field holding either a nested if_expression or a block — Pattern C
+        // (Go/Java style) applies cleanly here, unlike Kotlin/Swift.
+        let m = compute_scala(
+            "def f(x: Int): Int = {\n  if (x > 0) {\n    1\n  } else if (x < 0) {\n    -1\n  } else {\n    0\n  }\n}",
+        );
+        assert_eq!(m.cognitive, 3);
+        assert_eq!(m.cyclomatic, 3);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn scala_match_expression() {
+        let m = compute_scala(
+            "def f(x: Int): Int = {\n  x match {\n    case 1 => 1\n    case 2 => 2\n    case _ => 0\n  }\n}",
+        );
+        // base 1 + match container (0, switch-like) + 3 case_clause cases
+        // (+1 each) = 4.
+        assert_eq!(m.cyclomatic, 4);
+    }
+
+    // ─── Bash tests (issue #1923) ───────────────────────────────────────────
+
+    fn compute_bash(code: &str) -> ComplexityMetrics {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_bash::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let func = find_first_function(&root, &BASH_RULES).expect("no function found");
+        compute_function_complexity(&func, &BASH_RULES)
+    }
+
+    #[test]
+    fn bash_single_if() {
+        let m = compute_bash("f() {\n  if [ \"$1\" -gt 0 ]; then\n    echo pos\n  fi\n}");
+        assert_eq!(m.cognitive, 1);
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn bash_if_elif_else() {
+        // elif_clause/else_clause are flat siblings of if_statement, matching
+        // Python's elif_clause/else_clause pattern (Pattern B).
+        let m = compute_bash(
+            "f() {\n  if [ \"$1\" -gt 0 ]; then\n    echo pos\n  elif [ \"$1\" -lt 0 ]; then\n    echo neg\n  else\n    echo zero\n  fi\n}",
+        );
+        // if: +1 cog, +1 cyc; elif: +1 cog, +1 cyc; else: +1 cog
+        assert_eq!(m.cognitive, 3);
+        assert_eq!(m.cyclomatic, 3);
+        assert_eq!(m.max_nesting, 1);
+    }
+
+    #[test]
+    fn bash_logical_operators() {
+        // `&&` inside a `[[ ... ]]` extended test expression parses as a real
+        // binary_expression node (matching logical_node_types). `&&` used to
+        // chain separate `[ ] && [ ]` commands is a different grammar
+        // category (a `list` node joining two `test_command`s, not a
+        // binary_expression) and is not counted here — confirmed by parsing
+        // both forms and inspecting the S-expression.
+        let m = compute_bash("f() {\n  if [[ \"$1\" && \"$2\" ]]; then\n    echo yes\n  fi\n}");
+        assert_eq!(m.cyclomatic, 3);
     }
 }

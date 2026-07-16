@@ -69,6 +69,7 @@ fn extract_block_attributes(node: &Node, source: &[u8]) -> Vec<Definition> {
                 complexity: None,
                 cfg: None,
                 children: None,
+                bodyless: None,
             });
         }
     }
@@ -124,6 +125,7 @@ fn match_hcl_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth:
                     complexity: None,
                     cfg: None,
                     children,
+                    bodyless: None,
                 });
                 if block_type == "module" {
                     extract_module_source(node, source, symbols);

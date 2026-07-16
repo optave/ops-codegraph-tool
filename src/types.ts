@@ -429,6 +429,16 @@ export interface Definition {
   children?: SubDeclaration[];
   visibility?: 'public' | 'private' | 'protected';
   decorators?: string[];
+  /**
+   * Set by the extractor when the underlying AST node structurally has no
+   * executable body (e.g. a TS `method_signature`, a Go interface
+   * `method_elem`, an abstract/interface method with no block, a Rust trait
+   * `function_signature_item`). This is a direct signal from the grammar —
+   * not inferred from name shape — so it stays correct for dotted names that
+   * denote real bodied methods (Lua's `M.foo`, Go/Java/C#/PHP/Rust receiver
+   * or impl methods, any `Class.method` qualified name).
+   */
+  bodyless?: boolean;
   /** Populated post-analysis by the complexity visitor. */
   complexity?: DefinitionComplexity;
   /** Populated post-analysis by the CFG visitor. */
@@ -976,7 +986,11 @@ export interface ComplexityRules {
   branchNodes: Set<string>;
   caseNodes: Set<string>;
   logicalOperators: Set<string>;
-  logicalNodeType: string | null;
+  /** Node type(s) that wrap a logical operator. Most grammars use one shared
+   * binary-op node for all operators; a few (e.g. Kotlin's `conjunction_expression`
+   * / `disjunction_expression`) use a distinct node type per operator. Mirrors
+   * the native `logical_node_types: &'static [&'static str]` slice. */
+  logicalNodeTypes: Set<string>;
   optionalChainType: string | null;
   nestingNodes: Set<string>;
   functionNodes: Set<string>;
@@ -2301,17 +2315,36 @@ export type StmtCache<TRow = unknown> = WeakMap<BetterSqlite3Database, SqliteSta
 // §22  Native Addon (napi-rs FFI boundary)
 // ════════════════════════════════════════════════════════════════════════
 
+/**
+ * A single monorepo workspace package passed across the native FFI boundary,
+ * mirroring the `WorkspaceEntry` shape produced by `detectWorkspaces()` in
+ * `infrastructure/config.ts`. `entry` is `null` when no resolvable entry
+ * point was found for the package (issue #1927).
+ */
+export interface NativeWorkspacePackage {
+  packageName: string;
+  dir: string;
+  entry: string | null;
+}
+
 /** The native napi-rs addon interface (crates/codegraph-core). */
 export interface NativeAddon {
   parseFile(filePath: string, source: string, dataflow: boolean, ast: boolean): unknown;
   parseFiles(files: string[], rootDir: string, dataflow: boolean, ast: boolean): unknown[];
   parseFilesFull?(files: string[], rootDir: string): unknown[];
-  resolveImport(fromFile: string, importSource: string, rootDir: string, aliases: unknown): string;
+  resolveImport(
+    fromFile: string,
+    importSource: string,
+    rootDir: string,
+    aliases: unknown,
+    workspaces?: NativeWorkspacePackage[] | null,
+  ): string;
   resolveImports(
     items: Array<{ fromFile: string; importSource: string }>,
     rootDir: string,
     aliases: unknown,
     knownFiles: string[] | null,
+    workspaces?: NativeWorkspacePackage[] | null,
   ): Array<{ fromFile: string; importSource: string; resolvedPath: string }>;
   computeConfidence(callerFile: string, targetFile: string, importedFrom: string | null): number;
   detectCycles(edges: Array<{ source: string; target: string }>): string[][];
@@ -2957,7 +2990,13 @@ export interface NativeDatabase {
    * Returns a JSON string with timing and build result data.
    * When unavailable, the JS pipeline (runPipelineStages) is used as fallback.
    */
-  buildGraph?(rootDir: string, configJson: string, aliasesJson: string, optsJson: string): string;
+  buildGraph?(
+    rootDir: string,
+    configJson: string,
+    aliasesJson: string,
+    optsJson: string,
+    workspacesJson?: string,
+  ): string;
 }
 
 // ════════════════════════════════════════════════════════════════════════

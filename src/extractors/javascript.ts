@@ -1969,6 +1969,7 @@ function extractInterfaceMethods(
           kind: child.type === 'method_signature' ? 'method' : 'property',
           line: nodeStartLine(child),
           endLine: nodeEndLine(child),
+          bodyless: !child.childForFieldName('body'),
         });
       }
     }

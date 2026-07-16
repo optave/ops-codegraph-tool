@@ -21,7 +21,7 @@ export const complexity: ComplexityRules = {
   ]),
   caseNodes: new Set(['case_clause']),
   logicalOperators: new Set(['and', 'or']),
-  logicalNodeType: 'boolean_operator',
+  logicalNodeTypes: new Set(['boolean_operator']),
   optionalChainType: null,
   nestingNodes: new Set([
     'if_statement',

@@ -1467,14 +1467,22 @@ impl NativeDatabase {
         config_json: String,
         aliases_json: String,
         opts_json: String,
+        // Monorepo workspace packages (JSON array of `WorkspacePackage`),
+        // detected on the JS side by `detectWorkspaces()` — see
+        // `resolve::resolve_via_workspace`'s doc comment (issue #1927).
+        // `Option` for compatibility with older JS callers built against a
+        // pre-#1927 native binary that never passes this argument.
+        workspaces_json: Option<String>,
     ) -> napi::Result<String> {
         let conn = self.conn()?;
+        let workspaces_json = workspaces_json.unwrap_or_default();
         let result = crate::domain::graph::builder::pipeline::run_pipeline(
             conn,
             &root_dir,
             &config_json,
             &aliases_json,
             &opts_json,
+            &workspaces_json,
         )
         .map_err(|e| napi::Error::from_reason(format!("build_graph failed: {e}")))?;
         serde_json::to_string(&result)
