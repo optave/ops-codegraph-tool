@@ -73,6 +73,7 @@ fn handle_defmodule(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
 }
 
@@ -142,6 +143,7 @@ fn handle_def_function(node: &Node, source: &[u8], symbols: &mut FileSymbols, _k
         complexity: compute_all_metrics(node, source, "elixir"),
         cfg: build_function_cfg(node, "elixir", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -325,6 +327,7 @@ fn handle_defprotocol(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -347,6 +350,7 @@ fn handle_defimpl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 

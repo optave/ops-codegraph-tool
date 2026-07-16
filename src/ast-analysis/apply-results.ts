@@ -32,19 +32,29 @@ interface CfgFuncResult {
   cyclomatic?: number;
 }
 
-/** Check if a definition has a real function body (not a type signature). */
+/**
+ * Check if a definition has a real function body (not a signature-only
+ * declaration). Relies on `bodyless`, a direct signal the extractor sets
+ * from the AST node's body field — not on name shape. A dotted name alone
+ * (`Class.method`) does not imply "no body": that's the normal qualified
+ * name for class/struct/impl methods and module-table functions (Lua's
+ * `M.foo`, Go/Java/C#/PHP/Rust receiver or impl methods) in every extractor,
+ * so filtering on it excluded real, bodied functions and could make an
+ * entire file's `defs.some(...)` gate false when every function in it
+ * happened to have a dotted name (issue #1922).
+ */
 export function hasFuncBody(d: {
-  name: string;
   kind: string;
   line: number;
   endLine?: number | null;
+  bodyless?: boolean;
 }): boolean {
   return (
     (d.kind === 'function' || d.kind === 'method') &&
     d.line > 0 &&
     d.endLine != null &&
     d.endLine > d.line &&
-    !d.name.includes('.')
+    !d.bodyless
   );
 }
 

@@ -92,6 +92,7 @@ function handleGoMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     endLine: nodeEndLine(node),
     children: params.length > 0 ? params : undefined,
     visibility: goVisibility(nameNode.text),
+    bodyless: !node.childForFieldName('body'),
   });
 }
 
@@ -171,6 +172,7 @@ function handleGoInterfaceType(
           kind: 'method',
           line: member.startPosition.row + 1,
           endLine: member.endPosition.row + 1,
+          bodyless: !member.childForFieldName('body'),
         });
       }
     }

@@ -225,6 +225,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                         complexity: None,
                         cfg: None,
                         children: None,
+                        bodyless: None,
                     });
                 } else if is_kotlin_enum(node) {
                     let children = extract_kotlin_enum_entries(node, source);
@@ -237,6 +238,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                         complexity: None,
                         cfg: None,
                         children: opt_children(children),
+                        bodyless: None,
                     });
                 } else {
                     let children = extract_kotlin_class_properties(node, source);
@@ -249,6 +251,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                         complexity: None,
                         cfg: None,
                         children: opt_children(children),
+                        bodyless: None,
                     });
                 }
 
@@ -269,6 +272,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                     complexity: None,
                     cfg: None,
                     children: opt_children(children),
+                    bodyless: None,
                 });
                 extract_kotlin_delegation_specifiers(node, source, &obj_name, symbols);
             }
@@ -293,6 +297,7 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                     complexity: compute_all_metrics(node, source, "kotlin"),
                     cfg: build_function_cfg(node, "kotlin", source),
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
         }

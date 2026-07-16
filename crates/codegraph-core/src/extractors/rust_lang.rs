@@ -77,6 +77,7 @@ fn handle_function_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: compute_all_metrics(node, source, "rust"),
         cfg: build_function_cfg(node, "rust", source),
         children: opt_children(children),
+        bodyless: None,
     });
 }
 
@@ -93,6 +94,7 @@ fn handle_struct_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
         seed_rust_struct_field_types(node, &struct_name, source, symbols);
     }
@@ -130,6 +132,7 @@ fn handle_enum_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -145,6 +148,7 @@ fn handle_const_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -161,6 +165,7 @@ fn handle_trait_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
     if let Some(body) = node.child_by_field_name("body") {
         for i in 0..body.child_count() {
@@ -178,6 +183,7 @@ fn handle_trait_item(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     complexity: compute_all_metrics(&child, source, "rust"),
                     cfg: build_function_cfg(&child, "rust", source),
                     children: None,
+                    bodyless: Some(child.kind() == "function_signature_item"),
                 });
             }
         }
@@ -605,6 +611,27 @@ mod tests {
         assert_eq!(children[0].name, "a");
         assert_eq!(children[0].kind, "parameter");
         assert_eq!(children[1].name, "b");
+    }
+
+    /// Regression test for #1922: a trait's required method (`function_signature_item`,
+    /// no default implementation) has no body and must be marked `bodyless`; a
+    /// default-implemented trait method (`function_item`, has a body) must not be.
+    #[test]
+    fn trait_required_method_is_bodyless_default_method_is_not() {
+        let s = parse_rust(
+            "trait Repo {\n\
+               fn save(&mut self, id: &str, value: i32) -> bool;\n\
+               fn find(&self, id: &str) -> Option<i32> {\n\
+                 if id.is_empty() { return None; }\n\
+                 None\n\
+               }\n\
+             }\n",
+        );
+        let save = s.definitions.iter().find(|d| d.name == "Repo.save").unwrap();
+        assert_eq!(save.bodyless, Some(true));
+
+        let find = s.definitions.iter().find(|d| d.name == "Repo.find").unwrap();
+        assert_ne!(find.bodyless, Some(true));
     }
 
     #[test]

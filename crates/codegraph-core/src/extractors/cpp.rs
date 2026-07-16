@@ -203,6 +203,7 @@ fn handle_cpp_function_definition(node: &Node, source: &[u8], symbols: &mut File
             complexity: compute_all_metrics(node, source, "cpp"),
             cfg: build_function_cfg(node, "cpp", source),
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -222,6 +223,7 @@ fn handle_cpp_class_specifier(node: &Node, source: &[u8], symbols: &mut FileSymb
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
         extract_cpp_base_classes(node, source, &class_name, symbols);
     }
@@ -242,6 +244,7 @@ fn handle_cpp_struct_specifier(node: &Node, source: &[u8], symbols: &mut FileSym
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
         extract_cpp_base_classes(node, source, &struct_name, symbols);
     }
@@ -259,6 +262,7 @@ fn handle_cpp_enum_specifier(node: &Node, source: &[u8], symbols: &mut FileSymbo
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -274,6 +278,7 @@ fn handle_cpp_namespace_definition(node: &Node, source: &[u8], symbols: &mut Fil
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -301,6 +306,7 @@ fn handle_cpp_type_definition(node: &Node, source: &[u8], symbols: &mut FileSymb
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }

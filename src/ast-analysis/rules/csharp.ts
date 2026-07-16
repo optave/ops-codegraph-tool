@@ -22,7 +22,7 @@ export const complexity: ComplexityRules = {
   ]),
   caseNodes: new Set(['switch_section']),
   logicalOperators: new Set(['&&', '||', '??']),
-  logicalNodeType: 'binary_expression',
+  logicalNodeTypes: new Set(['binary_expression']),
   optionalChainType: 'conditional_access_expression',
   nestingNodes: new Set([
     'if_statement',

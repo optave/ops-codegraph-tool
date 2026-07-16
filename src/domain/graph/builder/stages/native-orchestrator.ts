@@ -43,7 +43,7 @@ import {
   parseFilesWasmForBackfill,
   patchDataflowResult,
 } from '../../../parser.js';
-import { computeConfidence } from '../../resolve.js';
+import { computeConfidence, getWorkspacesForNative } from '../../resolve.js';
 import { isConstructorMethodSuffix } from '../../resolver/strategy.js';
 import type { CallNodeLookup } from '../call-resolver.js';
 import { resolveDefinePropertyAccessorTarget } from '../call-resolver.js';
@@ -2460,6 +2460,7 @@ class NativeOrchestrationSession {
         JSON.stringify(this.ctx.config),
         JSON.stringify(this.ctx.aliases),
         JSON.stringify(this.ctx.opts),
+        JSON.stringify(getWorkspacesForNative(this.ctx.rootDir)),
       );
     } finally {
       // Restore FK enforcement so any subsequent writes to this connection
