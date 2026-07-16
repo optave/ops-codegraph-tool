@@ -83,6 +83,7 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
 
     // Superclass: `superclass` field wraps a `_type` child (type_identifier /
@@ -168,6 +169,7 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 
     // `interface X extends Y, Z` — tree-sitter-groovy 0.1.x exposes parent
@@ -212,6 +214,7 @@ fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(members),
+        bodyless: None,
     });
 }
 
@@ -235,6 +238,7 @@ fn handle_method_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: compute_all_metrics(node, source, "groovy"),
         cfg: build_function_cfg(node, "groovy", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -256,6 +260,7 @@ fn handle_constructor_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols
         complexity: compute_all_metrics(node, source, "groovy"),
         cfg: build_function_cfg(node, "groovy", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -272,6 +277,7 @@ fn handle_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: compute_all_metrics(node, source, "groovy"),
         cfg: build_function_cfg(node, "groovy", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 

@@ -119,7 +119,7 @@ function classifyLogicalOp(node: TreeSitterNode, cRules: AnyRules, acc: Complexi
   acc.cyclomatic++;
   const parent = node.parent;
   const sameSequence =
-    parent != null && parent.type === cRules.logicalNodeType && parent.child(1)?.type === op;
+    parent != null && cRules.logicalNodeTypes.has(parent.type) && parent.child(1)?.type === op;
   if (!sameSequence) acc.cognitive++;
 }
 
@@ -194,13 +194,19 @@ function classifyNode(
 
   if (hRules) classifyHalstead(node, hRules, acc);
   if (nestingLevel > acc.maxNesting) acc.maxNesting = nestingLevel;
-  if (type === cRules.logicalNodeType) classifyLogicalOp(node, cRules, acc);
+  if (cRules.logicalNodeTypes.has(type)) classifyLogicalOp(node, cRules, acc);
   if (type === cRules.optionalChainType) acc.cyclomatic++;
-  if (cRules.branchNodes.has(type) && node.childCount > 0) {
+  const isBranchNode = cRules.branchNodes.has(type) && node.childCount > 0;
+  if (isBranchNode) {
     classifyBranchNode(node, type, nestingLevel, cRules, acc);
   }
   classifyPlainElse(node, type, cRules, acc);
-  if (cRules.caseNodes.has(type) && node.childCount > 0) acc.cyclomatic++;
+  // Mirrors the Rust walk()'s unconditional `return` after a branch-node
+  // match, which makes `is_case` unreachable for a node type listed in both
+  // branch_nodes and case_nodes (e.g. Kotlin's when_entry, Scala's
+  // case_clause). Without the `!isBranchNode` guard, such node types would
+  // be double-counted: once via classifyBranchNode above, again here.
+  if (!isBranchNode && cRules.caseNodes.has(type) && node.childCount > 0) acc.cyclomatic++;
 }
 
 /**

@@ -18,7 +18,7 @@ export const complexity: ComplexityRules = {
   ]),
   caseNodes: new Set(['expression_case', 'type_case', 'default_case', 'communication_case']),
   logicalOperators: new Set(['&&', '||']),
-  logicalNodeType: 'binary_expression',
+  logicalNodeTypes: new Set(['binary_expression']),
   optionalChainType: null,
   nestingNodes: new Set([
     'if_statement',

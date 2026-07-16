@@ -148,6 +148,75 @@ string.format("%s", name)`);
       );
     });
   });
+
+  describe('eval/computed-key dynamic-call detection (#1909)', () => {
+    it('classifies load(...) as a dynamic eval call', () => {
+      const symbols = parseLua(`load(chunk)()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: '<dynamic:eval>', dynamic: true, dynamicKind: 'eval' }),
+      );
+    });
+
+    it('classifies loadstring(...) as a dynamic eval call', () => {
+      const symbols = parseLua(`loadstring(code)()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: '<dynamic:eval>', dynamic: true, dynamicKind: 'eval' }),
+      );
+    });
+
+    it('classifies loadfile(...) as a dynamic eval call', () => {
+      const symbols = parseLua(`loadfile("script.lua")()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: '<dynamic:eval>', dynamic: true, dynamicKind: 'eval' }),
+      );
+    });
+
+    it('classifies dofile(...) as a dynamic eval call', () => {
+      const symbols = parseLua(`dofile("script.lua")`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: '<dynamic:eval>', dynamic: true, dynamicKind: 'eval' }),
+      );
+    });
+
+    it('resolves a bracket-index call with a string-literal key directly', () => {
+      const symbols = parseLua(`t["handler"]()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'handler', receiver: 't' }),
+      );
+      expect(symbols.calls.some((c) => c.dynamicKind === 'computed-key')).toBe(false);
+    });
+
+    it('resolves a bracket-index call with a single-quoted string-literal key directly', () => {
+      const symbols = parseLua(`t['handler']()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'handler', receiver: 't' }),
+      );
+    });
+
+    it('classifies a bracket-index call with a variable key as computed-key', () => {
+      const symbols = parseLua(`t[k]()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({
+          name: '<dynamic:computed-key>',
+          dynamic: true,
+          dynamicKind: 'computed-key',
+          keyExpr: 'k',
+          receiver: 't',
+        }),
+      );
+    });
+
+    it('classifies a bracket-index call with an expression key as computed-key', () => {
+      const symbols = parseLua(`handlers[eventName .. "Handler"]()`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({
+          dynamic: true,
+          dynamicKind: 'computed-key',
+          receiver: 'handlers',
+        }),
+      );
+    });
+  });
 });
 
 describe('LUA_BUILTIN_GLOBALS cross-engine parity', () => {

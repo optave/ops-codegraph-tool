@@ -193,6 +193,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                     complexity: compute_all_metrics(node, source, "c"),
                     cfg: build_function_cfg(node, "c", source),
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
         }
@@ -212,6 +213,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                     complexity: None,
                     cfg: None,
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
         }
@@ -230,6 +232,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                     complexity: None,
                     cfg: None,
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
         }
@@ -246,6 +249,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                     complexity: None,
                     cfg: None,
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
         }
@@ -274,6 +278,7 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                     complexity: None,
                     cfg: None,
                     children: None,
+                    bodyless: None,
                 });
             }
         }
