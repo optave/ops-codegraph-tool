@@ -26,6 +26,16 @@ const PARITY_FIXTURES: Array<{ label: string; dir: string }> = [
     label: 'csharp Repository',
     dir: path.join(FIXTURES_ROOT, 'benchmarks', 'resolution', 'fixtures', 'csharp'),
   },
+  // Regression fixture for issue #1927: a bare monorepo workspace package
+  // import (`import "@myorg/lib"`) must resolve identically under both
+  // engines — `resolve_import_path_inner` in the native engine previously had
+  // no workspace-awareness at all, so the import stayed unresolved and its
+  // downstream call edges either dropped or lost the workspace confidence
+  // boost that the WASM/JS engine's `resolveViaWorkspace()` grants.
+  {
+    label: 'monorepo-workspace (JS)',
+    dir: path.join(FIXTURES_ROOT, 'fixtures', 'monorepo-workspace'),
+  },
 ];
 
 const hasNative = isNativeAvailable();

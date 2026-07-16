@@ -30,6 +30,7 @@ fn match_bash_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth
                     complexity: compute_all_metrics(node, source, "bash"),
                     cfg: build_function_cfg(node, "bash", source),
                     children: None,
+                    bodyless: None,
                 });
             }
         }

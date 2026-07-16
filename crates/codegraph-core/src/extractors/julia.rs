@@ -67,6 +67,7 @@ fn handle_module_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) -> O
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 
     Some(name)
@@ -118,6 +119,7 @@ fn handle_function_def(
                 complexity: compute_all_metrics(node, source, "julia"),
                 cfg: build_function_cfg(node, "julia", source),
                 children: opt_children(params),
+                bodyless: None,
             });
             return;
         }
@@ -145,6 +147,7 @@ fn handle_function_def(
         complexity: compute_all_metrics(node, source, "julia"),
         cfg: build_function_cfg(node, "julia", source),
         children: None,
+        bodyless: None,
     });
 }
 
@@ -185,6 +188,7 @@ fn handle_assignment(
         complexity: compute_all_metrics(node, source, "julia"),
         cfg: build_function_cfg(node, "julia", source),
         children: opt_children(params),
+        bodyless: None,
     });
 }
 
@@ -266,6 +270,7 @@ fn handle_struct_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
 }
 
@@ -298,6 +303,7 @@ fn handle_abstract_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -376,6 +382,7 @@ fn handle_macro_def(
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
