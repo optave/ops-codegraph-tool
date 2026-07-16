@@ -255,8 +255,23 @@ describe('COMPLEXITY_RULES', () => {
     expect(COMPLEXITY_RULES.has('tsx')).toBe(true);
   });
 
-  it('supports all 11 languages, not hcl', () => {
-    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php', 'lua']) {
+  it('supports all 17 languages, not hcl', () => {
+    for (const lang of [
+      'python',
+      'go',
+      'rust',
+      'java',
+      'csharp',
+      'ruby',
+      'php',
+      'c',
+      'cpp',
+      'kotlin',
+      'swift',
+      'scala',
+      'bash',
+      'lua',
+    ]) {
       expect(COMPLEXITY_RULES.has(lang)).toBe(true);
     }
     expect(COMPLEXITY_RULES.has('hcl')).toBe(false);
@@ -347,8 +362,23 @@ describe('HALSTEAD_RULES', () => {
     expect(HALSTEAD_RULES.has('tsx')).toBe(true);
   });
 
-  it('supports all 11 languages, not hcl', () => {
-    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php', 'lua']) {
+  it('supports all 17 languages, not hcl', () => {
+    for (const lang of [
+      'python',
+      'go',
+      'rust',
+      'java',
+      'csharp',
+      'ruby',
+      'php',
+      'c',
+      'cpp',
+      'kotlin',
+      'swift',
+      'scala',
+      'bash',
+      'lua',
+    ]) {
       expect(HALSTEAD_RULES.has(lang)).toBe(true);
     }
     expect(HALSTEAD_RULES.has('hcl')).toBe(false);
@@ -1036,6 +1066,227 @@ describe('Lua complexity', () => {
   });
 });
 
+// ─── C (#1923) ────────────────────────────────────────────────────────────
+
+describe('C complexity', () => {
+  const { analyze, halstead, loc } = makeHelpers('c', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('int add(int a, int b) {\n  return a + b;\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze('int check(int x) {\n  if (x > 0) {\n    return 1;\n  }\n  return 0;\n}\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/else-if/else chain', () => {
+    // tree-sitter-c wraps the else branch in a real else_clause node
+    // (Pattern A, like JS/C#/Rust) — NOT Go/Java's alternative-field
+    // pattern, confirmed by parsing and inspecting the S-expression.
+    const r = analyze(
+      'int classify(int x) {\n  if (x > 0) {\n    return 1;\n  } else if (x < 0) {\n    return -1;\n  } else {\n    return 0;\n  }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'int nested(int x, int y) {\n  if (x > 0) {\n    if (y > 0) {\n      return 1;\n    }\n  }\n  return 0;\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('logical operators', () => {
+    const r = analyze('int check(int a, int b) {\n  return a && b;\n}\n');
+    expect(r.cognitive).toBe(1);
+    expect(r.cyclomatic).toBe(2);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('int add(int a, int b) {\n  return a + b;\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+
+  it('LOC: // and /* comments detected', () => {
+    const l = loc('int f() {\n  // slash comment\n  return 1;\n}\n');
+    expect(l.commentLines).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── C++ (#1923) ──────────────────────────────────────────────────────────
+
+describe('C++ complexity', () => {
+  const { analyze, halstead } = makeHelpers('cpp', sharedParsers());
+
+  it('if/else-if/else chain', () => {
+    // Uses the same else_clause wrapper (Pattern A) as C, confirmed by
+    // parsing the same shape with tree-sitter-cpp.
+    const r = analyze(
+      'int classify(int x) {\n  if (x > 0) {\n    return 1;\n  } else if (x < 0) {\n    return -1;\n  } else {\n    return 0;\n  }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('for-range loop', () => {
+    const r = analyze('void f(int xs[]) {\n  for (int x : xs) {\n    use(x);\n  }\n}\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('int add(int a, int b) {\n  return a + b;\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── Kotlin (#1923) ───────────────────────────────────────────────────────
+
+describe('Kotlin complexity', () => {
+  const { analyze, halstead } = makeHelpers('kotlin', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('fun add(a: Int, b: Int): Int {\n  return a + b\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      'fun check(x: Int): Int {\n  if (x > 0) {\n    return 1\n  }\n  return 0\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('logical operators (conjunction_expression / disjunction_expression)', () => {
+    // Kotlin's grammar splits && / || into distinct node types rather than
+    // sharing one generic binary node — both are in logicalNodeTypes.
+    const r = analyze('fun check(a: Boolean, b: Boolean): Boolean {\n  return a && b || a\n}\n');
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('when expression', () => {
+    const r = analyze(
+      'fun classify(x: Int): Int {\n  return when (x) {\n    1 -> 1\n    2 -> 2\n    else -> 0\n  }\n}\n',
+    );
+    // base 1 + when container (0, switch-like) + 3 when_entry cases (+1 each) = 4
+    expect(r.cyclomatic).toBe(4);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('fun add(a: Int, b: Int): Int {\n  return a + b\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── Swift (#1923) ────────────────────────────────────────────────────────
+
+describe('Swift complexity', () => {
+  const { analyze, halstead } = makeHelpers('swift', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('func add(_ a: Int, _ b: Int) -> Int {\n  return a + b\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      'func check(_ x: Int) -> Int {\n  if x > 0 {\n    return 1\n  }\n  return 0\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('logical operators (conjunction_expression)', () => {
+    // Like Kotlin, Swift splits && / || into conjunction_expression /
+    // disjunction_expression rather than a generic binary node.
+    const r = analyze('func check(_ a: Bool, _ b: Bool) -> Bool {\n  return a && b\n}\n');
+    expect(r.cyclomatic).toBe(2);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('func add(_ a: Int, _ b: Int) -> Int {\n  return a + b\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── Scala (#1923) ────────────────────────────────────────────────────────
+
+describe('Scala complexity', () => {
+  const { analyze, halstead } = makeHelpers('scala', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('def add(a: Int, b: Int): Int = {\n  a + b\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('if/else-if/else chain', () => {
+    // tree-sitter-scala's if_expression exposes a real `alternative` field
+    // holding either a nested if_expression or a block — Pattern C
+    // (Go/Java style) applies cleanly here, unlike Kotlin/Swift.
+    const r = analyze(
+      'def classify(x: Int): Int = {\n  if (x > 0) {\n    1\n  } else if (x < 0) {\n    -1\n  } else {\n    0\n  }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('match expression', () => {
+    const r = analyze(
+      'def classify(x: Int): Int = {\n  x match {\n    case 1 => 1\n    case 2 => 2\n    case _ => 0\n  }\n}\n',
+    );
+    // base 1 + match container (0, switch-like) + 3 case_clause cases (+1 each) = 4
+    expect(r.cyclomatic).toBe(4);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('def add(a: Int, b: Int): Int = {\n  a + b\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── Bash (#1923) ─────────────────────────────────────────────────────────
+
+describe('Bash complexity', () => {
+  const { analyze, halstead } = makeHelpers('bash', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('f() {\n  echo hi\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze('f() {\n  if [ "$1" -gt 0 ]; then\n    echo pos\n  fi\n}\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/elif/else chain', () => {
+    // elif_clause/else_clause are flat siblings of if_statement, matching
+    // Python's elif_clause/else_clause pattern (Pattern B).
+    const r = analyze(
+      'f() {\n  if [ "$1" -gt 0 ]; then\n    echo pos\n  elif [ "$1" -lt 0 ]; then\n    echo neg\n  else\n    echo zero\n  fi\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('logical operators inside [[ ]] extended test', () => {
+    // `&&` inside `[[ ... ]]` parses as a real binary_expression node
+    // (matching logicalNodeTypes). `&&` chaining separate `[ ] && [ ]`
+    // commands is a different grammar category (a `list` node joining two
+    // test_commands) and is not counted — confirmed by parsing both forms.
+    const r = analyze('f() {\n  if [[ "$1" && "$2" ]]; then\n    echo yes\n  fi\n}\n');
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('f() {\n  echo hi\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
 // ─── Parity: standalone DFS vs visitor-based computeAllMetrics ──────────
 
 describe('DFS vs visitor parity', () => {
@@ -1207,4 +1458,57 @@ describe('DFS vs visitor parity — Go (elseViaAlternative)', () => {
     expect(visitor!.cyclomatic).toBe(dfs!.cyclomatic);
     expect(visitor!.maxNesting).toBe(dfs!.maxNesting);
   });
+});
+
+// ─── Parity: DFS vs visitor for the #1923 tier-1 languages ───────────────
+//
+// computeFunctionComplexity is the standalone DFS reference (mirrors the
+// Rust walk); computeAllMetrics is the visitor-based path WASM builds
+// actually use. Both must agree for every newly-wired language, including
+// Kotlin (multiple logicalNodeTypes) which exercises the
+// logicalNodeType → logicalNodeTypes plural refactor.
+
+describe('DFS vs visitor parity — #1923 tier-1 languages', () => {
+  const snippets: Record<string, string> = {
+    c: 'int classify(int x) {\n  if (x > 0) {\n    return 1;\n  } else if (x < 0) {\n    return -1;\n  } else {\n    return 0;\n  }\n}\n',
+    cpp: 'int classify(int x) {\n  if (x > 0) {\n    return 1;\n  } else if (x < 0) {\n    return -1;\n  } else {\n    return 0;\n  }\n}\n',
+    kotlin:
+      'fun classify(x: Int): String {\n  if (x > 0) {\n    return "pos"\n  } else if (x < 0) {\n    return "neg"\n  }\n  return when (x) {\n    0 -> "zero"\n    else -> "other"\n  }\n}\n',
+    swift:
+      'func classify(_ x: Int) -> String {\n  if x > 0 {\n    return "pos"\n  } else if x < 0 {\n    return "neg"\n  }\n  return "zero"\n}\n',
+    scala:
+      'def classify(x: Int): String = {\n  if (x > 0) {\n    "pos"\n  } else if (x < 0) {\n    "neg"\n  } else {\n    "zero"\n  }\n}\n',
+    bash: 'f() {\n  if [ "$1" -gt 0 ]; then\n    echo pos\n  elif [ "$1" -lt 0 ]; then\n    echo neg\n  else\n    echo zero\n  fi\n}\n',
+  };
+
+  let parsers: any;
+  beforeAll(async () => {
+    parsers = await createParsers();
+  });
+
+  function findFunc(langId: string, node: any): any {
+    const rules = COMPLEXITY_RULES.get(langId);
+    if (!rules) return null;
+    if (rules.functionNodes.has(node.type)) return node;
+    for (let i = 0; i < node.childCount; i++) {
+      const result = findFunc(langId, node.child(i));
+      if (result) return result;
+    }
+    return null;
+  }
+
+  for (const [langId, code] of Object.entries(snippets)) {
+    it(`${langId}: dfs and visitor agree`, () => {
+      const parser = parsers.get(langId);
+      if (!parser) throw new Error(`${langId} parser not available`);
+      const tree = parser.parse(code);
+      const funcNode = findFunc(langId, tree.rootNode);
+      if (!funcNode) throw new Error(`No function found in ${langId} snippet`);
+      const dfs = computeFunctionComplexity(funcNode, langId);
+      const visitor = computeAllMetrics(funcNode, langId);
+      expect(visitor!.cognitive).toBe(dfs!.cognitive);
+      expect(visitor!.cyclomatic).toBe(dfs!.cyclomatic);
+      expect(visitor!.maxNesting).toBe(dfs!.maxNesting);
+    });
+  }
 });

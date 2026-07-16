@@ -67,6 +67,7 @@ fn handle_ocaml_let_binding(node: &Node, source: &[u8], symbols: &mut FileSymbol
             complexity: compute_all_metrics(node, source, "ocaml"),
             cfg: build_function_cfg(node, "ocaml", source),
             children: None,
+            bodyless: None,
         });
     } else {
         symbols.definitions.push(Definition {
@@ -78,6 +79,7 @@ fn handle_ocaml_let_binding(node: &Node, source: &[u8], symbols: &mut FileSymbol
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -124,6 +126,7 @@ fn handle_ocaml_module_def(node: &Node, source: &[u8], symbols: &mut FileSymbols
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -151,6 +154,7 @@ fn handle_ocaml_type_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
                     complexity: None,
                     cfg: None,
                     children: opt_children(children),
+                    bodyless: None,
                 });
             }
         }
@@ -193,6 +197,7 @@ fn handle_ocaml_class_def(node: &Node, source: &[u8], symbols: &mut FileSymbols)
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -235,6 +240,7 @@ fn handle_ocaml_value_spec(node: &Node, source: &[u8], symbols: &mut FileSymbols
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -253,6 +259,7 @@ fn handle_ocaml_external(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -270,6 +277,7 @@ fn handle_ocaml_module_type_def(node: &Node, source: &[u8], symbols: &mut FileSy
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -294,6 +302,7 @@ fn handle_ocaml_exception_def(node: &Node, source: &[u8], symbols: &mut FileSymb
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }

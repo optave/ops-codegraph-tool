@@ -60,6 +60,14 @@ export function computeHalsteadDerived(
 
 const C_STYLE_PREFIXES = ['//', '/*', '*', '*/'];
 
+// c/cpp/kotlin/swift/scala intentionally mirror the native `comment_prefixes()`
+// 2-entry list (`//`, `/*`) rather than the 4-entry C_STYLE_PREFIXES used by
+// javascript/go/rust/java/csharp — see native `comment_prefixes()` in
+// crates/codegraph-core/src/ast_analysis/complexity.rs for the source of truth
+// this must stay byte-for-byte identical to (both engines must agree on which
+// lines count as comments for the MI calculation).
+const C_LIKE_PREFIXES = ['//', '/*'];
+
 const COMMENT_PREFIXES = new Map<string, string[]>([
   ['javascript', C_STYLE_PREFIXES],
   ['typescript', C_STYLE_PREFIXES],
@@ -71,6 +79,12 @@ const COMMENT_PREFIXES = new Map<string, string[]>([
   ['python', ['#']],
   ['ruby', ['#']],
   ['php', ['//', '#', '/*', '*', '*/']],
+  ['c', C_LIKE_PREFIXES],
+  ['cpp', C_LIKE_PREFIXES],
+  ['kotlin', C_LIKE_PREFIXES],
+  ['swift', C_LIKE_PREFIXES],
+  ['scala', C_LIKE_PREFIXES],
+  ['bash', ['#']],
   ['lua', ['--']],
 ]);
 

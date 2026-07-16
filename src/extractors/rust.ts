@@ -185,6 +185,7 @@ function extractTraitMethods(body: TreeSitterNode, traitName: string, ctx: Extra
           kind: 'method',
           line: child.startPosition.row + 1,
           endLine: child.endPosition.row + 1,
+          bodyless: !child.childForFieldName('body'),
         });
       }
     }

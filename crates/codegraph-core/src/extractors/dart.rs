@@ -92,6 +92,7 @@ fn handle_dart_class(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -148,6 +149,7 @@ fn extract_dart_class_methods(body: &Node, class_name: &str, source: &[u8], symb
                             complexity: compute_all_metrics(&sig, source, "dart"),
                             cfg: build_function_cfg(&sig, "dart", source),
                             children: None,
+                            bodyless: None,
                         });
                     }
                 }
@@ -202,6 +204,7 @@ fn handle_dart_enum(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -220,6 +223,7 @@ fn handle_dart_mixin(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -238,6 +242,7 @@ fn handle_dart_extension(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 
@@ -256,6 +261,7 @@ fn handle_dart_function_sig(node: &Node, source: &[u8], symbols: &mut FileSymbol
         complexity: compute_all_metrics(node, source, "dart"),
         cfg: build_function_cfg(node, "dart", source),
         children: None,
+        bodyless: None,
     });
 }
 
@@ -317,6 +323,7 @@ fn handle_dart_type_alias(node: &Node, source: &[u8], symbols: &mut FileSymbols)
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }

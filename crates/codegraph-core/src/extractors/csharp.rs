@@ -61,6 +61,7 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
     extract_csharp_base_types(node, &class_name, source, symbols);
 }
@@ -77,6 +78,7 @@ fn handle_struct_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
     extract_csharp_base_types(node, &name, source, symbols);
 }
@@ -93,6 +95,7 @@ fn handle_record_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
     extract_csharp_base_types(node, &name, source, symbols);
 }
@@ -109,6 +112,7 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
     if let Some(body) = node.child_by_field_name("body") {
         for i in 0..body.child_count() {
@@ -127,6 +131,7 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
                     complexity: None,
                     cfg: None,
                     children: None,
+                    bodyless: Some(child.child_by_field_name("body").is_none()),
                 });
             }
         }
@@ -146,6 +151,7 @@ fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -168,6 +174,7 @@ fn handle_method_or_ctor(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
         complexity: compute_all_metrics(node, source, "csharp"),
         cfg: build_function_cfg(node, "csharp", source),
         children: opt_children(children),
+        bodyless: Some(node.child_by_field_name("body").is_none()),
     });
 }
 
@@ -204,6 +211,7 @@ fn handle_property_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
 }
 

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasFuncBody } from '../ast-analysis/apply-results.js';
 import { CFG_RULES } from '../ast-analysis/rules/index.js';
 import {
   makeCfgRules as _makeCfgRules,
@@ -97,14 +98,7 @@ interface FileSymbols {
  */
 function hasNativeCfgForFile(symbols: FileSymbols): boolean {
   return symbols.definitions
-    .filter(
-      (d) =>
-        (d.kind === 'function' || d.kind === 'method') &&
-        d.line > 0 &&
-        d.endLine != null &&
-        d.endLine > d.line &&
-        !d.name.includes('.'),
-    )
+    .filter((d) => hasFuncBody(d))
     .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
 }
 

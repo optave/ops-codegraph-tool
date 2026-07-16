@@ -101,6 +101,7 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         complexity: None,
         cfg: None,
         children: opt_children(children),
+        bodyless: None,
     });
 
     // Superclass
@@ -155,6 +156,7 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
         complexity: None,
         cfg: None,
         children: None,
+        bodyless: None,
     });
     if let Some(body) = node.child_by_field_name("body") {
         for i in 0..body.child_count() {
@@ -170,6 +172,7 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
                     complexity: compute_all_metrics(&child, source, "java"),
                     cfg: build_function_cfg(&child, "java", source),
                     children: None,
+                    bodyless: Some(child.child_by_field_name("body").is_none()),
                 });
             }
         }
@@ -189,6 +192,7 @@ fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -221,6 +225,7 @@ fn handle_method_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: compute_all_metrics(node, source, "java"),
             cfg: build_function_cfg(node, "java", source),
             children: opt_children(children),
+            bodyless: Some(node.child_by_field_name("body").is_none()),
         });
     }
 }
@@ -243,6 +248,7 @@ fn handle_constructor_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols
             complexity: compute_all_metrics(node, source, "java"),
             cfg: build_function_cfg(node, "java", source),
             children: opt_children(children),
+            bodyless: None,
         });
     }
 }
@@ -524,6 +530,42 @@ mod tests {
         assert_eq!(children[0].name, "x");
         assert_eq!(children[0].kind, "parameter");
         assert_eq!(children[1].name, "y");
+        // A real, bodied method — a dotted name alone must never be treated as a
+        // signature-only stub (#1922).
+        assert_ne!(bar.bodyless, Some(true));
+    }
+
+    /// Regression test for #1922: an interface method declaration (no body) must
+    /// be marked `bodyless`; an abstract class method (also no body, but reached
+    /// via the generic `handle_method_decl` path, not the interface-specific one)
+    /// must be marked `bodyless` too — the same dotted-name shape as a real
+    /// method must not be enough to tell them apart.
+    #[test]
+    fn interface_and_abstract_methods_are_bodyless_concrete_methods_are_not() {
+        let iface = parse_java("interface Repo { boolean save(String id, int value); }");
+        let iface_save = iface
+            .definitions
+            .iter()
+            .find(|d| d.name == "Repo.save")
+            .unwrap();
+        assert_eq!(iface_save.bodyless, Some(true));
+
+        let abstract_cls =
+            parse_java("abstract class Repo { abstract boolean save(String id, int value); }");
+        let abstract_save = abstract_cls
+            .definitions
+            .iter()
+            .find(|d| d.name == "Repo.save")
+            .unwrap();
+        assert_eq!(abstract_save.bodyless, Some(true));
+
+        let concrete = parse_java("class Repo { boolean save(String id, int value) { return true; } }");
+        let concrete_save = concrete
+            .definitions
+            .iter()
+            .find(|d| d.name == "Repo.save")
+            .unwrap();
+        assert_ne!(concrete_save.bodyless, Some(true));
     }
 
     #[test]

@@ -70,6 +70,7 @@ fn handle_binary_op(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: compute_all_metrics(&rhs, source, "r"),
             cfg: build_function_cfg(&rhs, "r", source),
             children: opt_children(params),
+            bodyless: None,
         });
     } else if is_program_level(node) {
         // Only record top-level variable assignments (matches JS extractor).
@@ -82,6 +83,7 @@ fn handle_binary_op(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -299,6 +301,7 @@ fn handle_set_class(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
@@ -314,6 +317,7 @@ fn handle_set_generic(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             complexity: None,
             cfg: None,
             children: None,
+            bodyless: None,
         });
     }
 }
