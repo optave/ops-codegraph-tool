@@ -58,26 +58,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for native-relevant changes
+      - name: Check for native-relevant changes since the last published release
         id: check
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          else
-            BASE_SHA="${{ github.event.before }}"
-          fi
+          # When this job says "unchanged", test/parity/pre-publish-benchmark
+          # fall back to the published npm platform packages (pinned exactly
+          # to package.json's version). Those packages only get rebuilt by an
+          # on-demand release (workflow_dispatch) — native-relevant commits
+          # routinely land on main between releases without republishing (this
+          # repo has shipped 60+ crates/ fixes since the last tag at the time
+          # of writing). Diffing against the PR base or the previous push SHA
+          # only answers "did *this* change touch native code" — it says
+          # nothing about whether the published binary this job's skip relies
+          # on has already drifted from HEAD. The only baseline that actually
+          # answers "is the published fallback binary still trustworthy" is
+          # the last release tag.
+          LAST_TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
 
-          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
-            echo "No usable base SHA to diff against — assuming native changed"
+          if [ -z "$LAST_TAG" ] || ! git cat-file -e "$LAST_TAG" 2>/dev/null; then
+            echo "No usable release tag to diff against — assuming native changed"
             echo "native_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(crates/|Cargo\.toml$|Cargo\.lock$|src/infrastructure/native\.ts$)'; then
-            echo "Native-relevant paths changed"
+          if git diff --name-only "$LAST_TAG" HEAD | grep -qE '^(crates/|Cargo\.toml$|Cargo\.lock$|src/infrastructure/native\.ts$)'; then
+            echo "Native-relevant paths changed since $LAST_TAG (last published release)"
             echo "native_changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No native-relevant paths changed"
+            echo "No native-relevant paths changed since $LAST_TAG (last published release)"
             echo "native_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
