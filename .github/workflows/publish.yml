@@ -30,7 +30,11 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
+      # Only the scheduled path below actually reads repo history (git rev-list);
+      # release/workflow_dispatch exit immediately with should_run=true and never
+      # touch the checkout, so skip the full-depth clone for those triggers.
       - uses: actions/checkout@v7
+        if: github.event_name == 'schedule'
         with:
           fetch-depth: 0
 
@@ -54,7 +58,12 @@ jobs:
             exit 0
           fi
 
-          COMMIT_SHA=$(gh release view "$LATEST_TAG" --json body -q .body | grep -oE '[0-9a-f]{40}' | head -1)
+          # Anchor the extraction to the "commit <sha>" phrasing from the
+          # publish-dev release notes template (see "Create GitHub pre-release"
+          # below) rather than grabbing the first bare 40-char hex string in the
+          # body, which could match unrelated content in future release notes.
+          COMMIT_SHA=$(gh release view "$LATEST_TAG" --json body -q .body \
+            | grep -oE 'commit[^0-9a-f]*[0-9a-f]{40}' | grep -oE '[0-9a-f]{40}$' | head -1)
           if [ -z "$COMMIT_SHA" ]; then
             echo "Could not parse commit SHA from ${LATEST_TAG} notes — proceeding to be safe"
             echo "should_run=true" >> "$GITHUB_OUTPUT"
