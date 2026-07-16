@@ -389,9 +389,11 @@ function dispatchQueryMatch(
     if (callInfo) calls.push(callInfo);
   } else if (c.callsuper_node) {
     // Bare `super(...)` constructor call — see extractCallInfo's 'super' branch.
+    // Callback-reference-call extraction is intentionally skipped for the arguments:
+    // they are values passed *to* the parent constructor, not callbacks of the enclosing
+    // scope. Mirrors the explicit early return in the Rust handle_call_expr super branch.
     const callInfo = extractCallInfo(c.callsuper_fn!, c.callsuper_node);
     if (callInfo) calls.push(callInfo);
-    calls.push(...extractCallbackReferenceCalls(c.callsuper_node, callbackParamShapes));
   } else if (c.assign_node) {
     handleCommonJSAssignment(c.assign_left!, c.assign_right!, c.assign_node, imports);
     handleFuncPropAssignment(c.assign_left!, c.assign_right!, definitions);
@@ -1696,6 +1698,17 @@ function handleCallExpr(
     if (fn.type === 'this') {
       ctx.calls.push({ name: 'this', line: nodeStartLine(node) });
       return; // no further processing needed for this()-style calls
+    }
+    // Bare `super(args)` — invokes the parent class's constructor (see
+    // extractCallInfo's 'super' branch). Callback-reference-call extraction on
+    // the arguments is intentionally skipped for the same reason as this(args)
+    // above: they are values passed *to* the parent constructor, not callbacks
+    // of the enclosing scope. Mirrors the explicit early return in the Rust
+    // handle_call_expr's `super` branch.
+    if (fn.type === 'super') {
+      const superCallInfo = extractCallInfo(fn, node, ctx.arrayElemBindings);
+      if (superCallInfo) ctx.calls.push(superCallInfo);
+      return; // no further processing needed for super(...)-style calls
     }
     const callInfo = extractCallInfo(fn, node, ctx.arrayElemBindings);
     if (callInfo) ctx.calls.push(callInfo);
