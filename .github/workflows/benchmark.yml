@@ -24,10 +24,14 @@ jobs:
   # single PR with the updates.
   record-benchmarks:
     runs-on: ubuntu-latest
+    # Allow-list rather than exclude, so this doesn't silently drift out of
+    # sync if Publish's trigger set changes again (see #2109) — only
+    # 'release'/'workflow_dispatch' Publish runs go through the
+    # pre-publish-benchmark gate that produces the artifacts this job needs.
     if: >-
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event != 'push'
+      (github.event.workflow_run.event == 'release' || github.event.workflow_run.event == 'workflow_dispatch')
     permissions:
       actions: read
       contents: write
@@ -121,7 +125,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event != 'push')
+       (github.event.workflow_run.event == 'release' || github.event.workflow_run.event == 'workflow_dispatch'))
     permissions:
       actions: read
       contents: write
