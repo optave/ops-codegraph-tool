@@ -1,5 +1,4 @@
 import type { Repository } from '../../db/index.js';
-import { loadConfig } from '../../infrastructure/config.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import type { ImportEdgeRow, NodeRow, RelatedNodeRow } from '../../types.js';
 import { withRepo } from './query-helpers.js';
@@ -108,9 +107,9 @@ export function briefData(
   customDbPath: string,
   opts: { noTests?: boolean; config?: any } = {},
 ) {
-  return withRepo(customDbPath, (repo) => {
+  return withRepo(customDbPath, (repo, dbConfig) => {
     const noTests = opts.noTests || false;
-    const config = opts.config || loadConfig();
+    const config = opts.config || dbConfig;
     const callerDepth = config.analysis?.briefCallerDepth ?? 5;
     const importerDepth = config.analysis?.briefImporterDepth ?? 5;
     const highRiskCallers = config.analysis?.briefHighRiskCallers ?? 10;

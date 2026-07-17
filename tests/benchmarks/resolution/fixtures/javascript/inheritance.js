@@ -32,3 +32,25 @@ export class DoubleCounter extends Counter {
     return super.count() * 2; // static super.count() → Counter.count via CHA parents map
   }
 }
+
+// Bare super(...) constructor call — same CHA parents-map resolution as
+// super.method(), but for the keyword-callee constructor invocation (#1929)
+export class Vehicle {
+  constructor(make) {
+    this.make = make;
+  }
+}
+
+export class Car extends Vehicle {
+  constructor(make, model) {
+    super(make); // bare super(...) → Vehicle.constructor
+    this.model = model;
+  }
+}
+
+export class SportsCar extends Car {
+  constructor(make, model, topSpeed) {
+    super(make, model); // bare super(...) → Car.constructor (nearest parent)
+    this.topSpeed = topSpeed;
+  }
+}

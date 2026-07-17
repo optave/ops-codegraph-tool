@@ -29,14 +29,20 @@ export function withReadonlyDb<T>(
  * Open a Repository (native-first, falling back to better-sqlite3), run `fn`,
  * and close on completion. Mirrors `withReadonlyDb` but routes queries through
  * the native Rust engine when available.
+ *
+ * Resolves the config once and passes it to both `openRepo` (for engine/
+ * busy-timeout selection) and `fn`, so callers that also need
+ * `resolveAnalysisOpts` can reuse it as `opts.config` instead of triggering a
+ * second `loadConfig()` for the same rootDir (issue #1941).
  */
 export function withRepo<T>(
   customDbPath: string | undefined,
-  fn: (repo: InstanceType<typeof Repository>) => T,
+  fn: (repo: InstanceType<typeof Repository>, config: CodegraphConfig) => T,
 ): T {
-  const { repo, close } = openRepo(customDbPath);
+  const config = resolveDbConfig(customDbPath);
+  const { repo, close } = openRepo(customDbPath, { config });
   try {
-    return fn(repo);
+    return fn(repo, config);
   } finally {
     close();
   }

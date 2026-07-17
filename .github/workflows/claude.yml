@@ -13,8 +13,68 @@ on:
     types: [submitted]
 
 jobs:
-  automated-review:
+  detect-trivial-pr:
+    name: Detect trivial PR diff
     if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      trivial: ${{ steps.check.outputs.trivial }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check whether this diff needs a full review
+        id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "No usable base SHA — treating as non-trivial to be safe"
+            echo "trivial=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" HEAD)
+          NUM_FILES=$(printf '%s\n' "$CHANGED_FILES" | grep -c . || true)
+
+          # Docs-only: every changed file is markdown, LICENSE, or under docs/.
+          NON_DOCS=$(printf '%s\n' "$CHANGED_FILES" | grep -vE '(\.md$|^LICENSE$|^docs/)' | grep -c . || true)
+          if [ "$NON_DOCS" -eq 0 ]; then
+            echo "Docs-only diff (${NUM_FILES} file(s)) — skipping automated review"
+            echo "trivial=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # git diff --numstat prints "-\t-\t<path>" for binary files. Detect
+          # that explicitly and force a high sentinel so a binary-only change
+          # can't be silently counted as 0 lines and waved through as trivial.
+          TOTAL_CHANGED=$(git diff --numstat "$BASE_SHA" HEAD | awk '
+            $1 == "-" || $2 == "-" { binary=1; next }
+            { a += $1; d += $2 }
+            END { if (binary) print 999999; else print a + d + 0 }
+          ')
+          if [ "$NUM_FILES" -le 1 ] && [ "${TOTAL_CHANGED:-0}" -le 5 ]; then
+            echo "Trivial single-file diff (${TOTAL_CHANGED} line(s)) — skipping automated review"
+            echo "trivial=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Substantive diff (${NUM_FILES} file(s), ${TOTAL_CHANGED} line(s)) — running automated review"
+            echo "trivial=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  automated-review:
+    needs: detect-trivial-pr
+    # Fail open toward reviewing: only skip when detect-trivial-pr positively
+    # confirmed a trivial diff. Any other outcome (failure, skip for a
+    # non-PR event) still reviews, so a broken detector can't silently wave
+    # through a substantive PR.
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.type != 'Bot' &&
+      (needs.detect-trivial-pr.result != 'success' || needs.detect-trivial-pr.outputs.trivial != 'true')
     runs-on: ubuntu-latest
     concurrency:
       group: claude-review-${{ github.event.pull_request.number }}
@@ -49,7 +109,7 @@ jobs:
 
       - name: Run Automated AI Review
         id: automated-review
-        uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a
+        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # claude-code-action v1 dropped the `model` input; model selection now goes
@@ -211,7 +271,7 @@ jobs:
 
       - name: Run Interactive AI Assistant
         id: interactive-claude
-        uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a
+        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # claude-code-action v1 dropped the `model` input; model selection now goes
