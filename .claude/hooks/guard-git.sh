@@ -197,37 +197,56 @@ if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+com
   # Resolve the target worktree so the edit log and staged-file listing come
   # from the same repo the commit targets (e.g. `git -C <pr-worktree> commit`).
   WORK_DIR=$(detect_work_dir commit)
+  MERGE_IN_PROGRESS=false
   if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
     PROJECT_DIR=$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
     STAGED_FILES=$(git -C "$WORK_DIR" diff --cached --name-only 2>/dev/null) || true
+    git -C "$WORK_DIR" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1 && MERGE_IN_PROGRESS=true
   else
     PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
     STAGED_FILES=$(git diff --cached --name-only 2>/dev/null) || true
-  fi
-  LOG_FILE="$PROJECT_DIR/.claude/session-edits.log"
-
-  # If no edit log exists, allow (backward compat for sessions without tracking)
-  if [ ! -f "$LOG_FILE" ] || [ ! -s "$LOG_FILE" ]; then
-    exit 0
+    git rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1 && MERGE_IN_PROGRESS=true
   fi
 
-  # Get unique edited files from log
-  EDITED_FILES=$(awk '{print $2}' "$LOG_FILE" | sort -u)
+  # A merge in progress (MERGE_HEAD present) stages every auto-merged file from
+  # the incoming branch alongside any manually resolved conflicts — not just
+  # files this session edited via tools. git also structurally refuses a
+  # partial-pathspec `git commit <files>` while MERGE_HEAD exists ("cannot do
+  # a partial commit during a merge"), so the edit-log check's own suggested
+  # workaround is impossible here. Skip only the edit-log validation for merge
+  # commits — scoped to this `if`, not an early `exit 0`, so any commit-time
+  # check added below in the future still runs for merge commits too.
+  #
+  # `rev-parse --verify` (not a bare file-existence test) requires MERGE_HEAD
+  # to resolve to a real object in this repo's object database, so a stray or
+  # hand-crafted file at that path can't be used to fake a merge and bypass
+  # the check below.
+  if [ "$MERGE_IN_PROGRESS" = false ]; then
+    LOG_FILE="$PROJECT_DIR/.claude/session-edits.log"
 
-  if [ -z "$STAGED_FILES" ]; then
-    exit 0
-  fi
-
-  # Find staged files that weren't edited in this session
-  UNEXPECTED=""
-  while IFS= read -r staged_file; do
-    if ! echo "$EDITED_FILES" | grep -qxF "$staged_file"; then
-      UNEXPECTED="${UNEXPECTED:+$UNEXPECTED, }$staged_file"
+    # If no edit log exists, allow (backward compat for sessions without tracking)
+    if [ ! -f "$LOG_FILE" ] || [ ! -s "$LOG_FILE" ]; then
+      exit 0
     fi
-  done <<< "$STAGED_FILES"
 
-  if [ -n "$UNEXPECTED" ]; then
-    deny "BLOCKED: These staged files were NOT edited in this session: $UNEXPECTED. They may belong to another session. Commit only your files: git commit <your-files> -m \"msg\""
+    # Get unique edited files from log
+    EDITED_FILES=$(awk '{print $2}' "$LOG_FILE" | sort -u)
+
+    if [ -z "$STAGED_FILES" ]; then
+      exit 0
+    fi
+
+    # Find staged files that weren't edited in this session
+    UNEXPECTED=""
+    while IFS= read -r staged_file; do
+      if ! echo "$EDITED_FILES" | grep -qxF "$staged_file"; then
+        UNEXPECTED="${UNEXPECTED:+$UNEXPECTED, }$staged_file"
+      fi
+    done <<< "$STAGED_FILES"
+
+    if [ -n "$UNEXPECTED" ]; then
+      deny "BLOCKED: These staged files were NOT edited in this session: $UNEXPECTED. They may belong to another session. Commit only your files: git commit <your-files> -m \"msg\""
+    fi
   fi
 fi
 
