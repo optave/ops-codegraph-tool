@@ -48,7 +48,53 @@ jobs:
       - name: Run Biome
         run: npx @biomejs/biome check src/ tests/
 
+  detect-changes:
+    name: Detect native-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      native_changed: ${{ steps.check.outputs.native_changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for native-relevant changes since the last published release
+        id: check
+        run: |
+          # When this job says "unchanged", test/parity/pre-publish-benchmark
+          # fall back to the published npm platform packages (pinned exactly
+          # to package.json's version). Those packages only get rebuilt by an
+          # on-demand release (workflow_dispatch) — native-relevant commits
+          # routinely land on main between releases without republishing (this
+          # repo has shipped 60+ crates/ fixes since the last tag at the time
+          # of writing). Diffing against the PR base or the previous push SHA
+          # only answers "did *this* change touch native code" — it says
+          # nothing about whether the published binary this job's skip relies
+          # on has already drifted from HEAD. The only baseline that actually
+          # answers "is the published fallback binary still trustworthy" is
+          # the last release tag.
+          LAST_TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
+
+          if [ -z "$LAST_TAG" ] || ! git cat-file -e "$LAST_TAG" 2>/dev/null; then
+            echo "No usable release tag to diff against — assuming native changed"
+            echo "native_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git diff --name-only "$LAST_TAG" HEAD | grep -qE '^(crates/|Cargo\.toml$|Cargo\.lock$|src/infrastructure/native\.ts$)'; then
+            echo "Native-relevant paths changed since $LAST_TAG (last published release)"
+            echo "native_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No native-relevant paths changed since $LAST_TAG (last published release)"
+            echo "native_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   native-host-build:
+    needs: detect-changes
+    # Fail open: only skip when detect-changes positively confirmed nothing
+    # native-relevant changed. Any other outcome (failure, skip) still builds,
+    # so a broken change-detector can't silently hide a real Rust regression.
+    if: needs.detect-changes.result != 'success' || needs.detect-changes.outputs.native_changed == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -96,6 +142,13 @@ jobs:
 
   test:
     needs: native-host-build
+    # native-host-build may have been legitimately skipped (no native-relevant
+    # changes) — that's not a failure, so keep running against the published
+    # binary rather than cascading a skip.
+    if: |
+      always() &&
+      needs.native-host-build.result != 'failure' &&
+      needs.native-host-build.result != 'cancelled'
     strategy:
       fail-fast: false
       matrix:
@@ -131,12 +184,14 @@ jobs:
           done
 
       - name: Download PR-built native addon
+        if: needs.native-host-build.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: native-host-${{ matrix.os }}
           path: crates/codegraph-core
 
       - name: Install native addon over published binary
+        if: needs.native-host-build.result == 'success'
         shell: bash
         run: node scripts/ci-install-native.mjs
 
@@ -224,6 +279,10 @@ jobs:
 
   parity:
     needs: native-host-build
+    if: |
+      always() &&
+      needs.native-host-build.result != 'failure' &&
+      needs.native-host-build.result != 'cancelled'
     strategy:
       fail-fast: false
       matrix:
@@ -258,12 +317,14 @@ jobs:
           done
 
       - name: Download PR-built native addon
+        if: needs.native-host-build.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: native-host-${{ matrix.os }}
           path: crates/codegraph-core
 
       - name: Install native addon over published binary
+        if: needs.native-host-build.result == 'success'
         shell: bash
         run: node scripts/ci-install-native.mjs
 
@@ -351,8 +412,15 @@ jobs:
     # Only run on PRs — push-to-main re-runs the same benchmarks the merged
     # PR already gated on, doubling CI minutes per landed change with no new
     # signal. Mirrors the `if: github.event_name != 'push'` skip in
-    # publish.yml's equivalent gate.
-    if: github.event_name == 'pull_request'
+    # publish.yml's equivalent gate. Also tolerates native-host-build being
+    # legitimately skipped (no native-relevant changes) — benchmarks still
+    # need to run against the published binary since most regressions are
+    # TS-side, not Rust-side.
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.native-host-build.result != 'failure' &&
+      needs.native-host-build.result != 'cancelled'
     needs: native-host-build
     runs-on: ubuntu-latest
     env:
@@ -383,6 +451,7 @@ jobs:
           cache: false
 
       - name: Download PR-built native addon
+        if: needs.native-host-build.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: native-host-ubuntu-latest
@@ -406,6 +475,7 @@ jobs:
           done
 
       - name: Install native addon over published binary
+        if: needs.native-host-build.result == 'success'
         run: node scripts/ci-install-native.mjs
 
       # Build dist/ so benchmarks load the same compiled JS that ships to npm.
