@@ -1,8 +1,11 @@
 name: Publish
 
 on:
-  push:
-    branches: [main]
+  # Dev builds run on a schedule rather than on every push to main — a native
+  # build+release across 6 platforms is expensive to run 1:1 with merge
+  # frequency. See check-dev-needed below for the no-new-commits skip.
+  schedule:
+    - cron: '0 5 * * *' # daily dev build, 5am UTC
   release:
     types: [published]
   workflow_dispatch:
@@ -19,11 +22,68 @@ concurrency:
 permissions: {}
 
 jobs:
+  check-dev-needed:
+    name: Check whether a dev build is needed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      # Only the scheduled path below actually reads repo history (git rev-list);
+      # release/workflow_dispatch exit immediately with should_run=true and never
+      # touch the checkout, so skip the full-depth clone for those triggers.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'schedule'
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether to proceed
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Scheduled dev build: skip if main hasn't moved since the last one
+          # (e.g. a quiet weekend), so we don't rebuild identical content.
+          LATEST_TAG=$(gh release list --limit 20 --json tagName,isPrerelease,publishedAt \
+            | jq -r '[.[] | select(.isPrerelease and (.tagName | startswith("dev-v")))] | sort_by(.publishedAt) | reverse | .[0].tagName // empty')
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No previous dev release found — proceeding"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Anchor the extraction to the "commit <sha>" phrasing from the
+          # publish-dev release notes template (see "Create GitHub pre-release"
+          # below) rather than grabbing the first bare 40-char hex string in the
+          # body, which could match unrelated content in future release notes.
+          COMMIT_SHA=$(gh release view "$LATEST_TAG" --json body -q .body \
+            | grep -oE 'commit[^0-9a-f]*[0-9a-f]{40}' | grep -oE '[0-9a-f]{40}$' | head -1)
+          if [ -z "$COMMIT_SHA" ]; then
+            echo "Could not parse commit SHA from ${LATEST_TAG} notes — proceeding to be safe"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          NEW_COMMITS=$(git rev-list "${COMMIT_SHA}..HEAD" --count 2>/dev/null || echo 1)
+          if [ "$NEW_COMMITS" -eq 0 ]; then
+            echo "No new commits since ${LATEST_TAG} (${COMMIT_SHA}) — skipping scheduled dev build"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "${NEW_COMMITS} new commit(s) since ${LATEST_TAG} (${COMMIT_SHA}) — proceeding"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   preflight:
     name: Preflight checks
+    needs: check-dev-needed
     runs-on: ubuntu-latest
-    # Skip dev publish when the push is a stable release version bump (direct push or merged PR)
-    if: "${{ github.event_name != 'push' || (!startsWith(github.event.head_commit.message, 'chore: release v') && !contains(github.event.head_commit.message, 'release/v')) }}"
+    if: needs.check-dev-needed.outputs.should_run == 'true'
     permissions:
       contents: read
     steps:
@@ -139,7 +199,7 @@ jobs:
 
   pre-publish-benchmark:
     name: Pre-publish benchmark gate
-    if: github.event_name != 'push'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs: [compute-version, build-native]
     runs-on: ubuntu-latest
     permissions:
@@ -306,7 +366,7 @@ jobs:
   # ── Dev builds: GitHub pre-release with tarballs ──
 
   publish-dev:
-    if: github.event_name == 'push'
+    if: github.event_name == 'schedule'
     needs: [compute-version, build-native]
     runs-on: ubuntu-latest
     permissions:
@@ -478,7 +538,7 @@ jobs:
   # ── Stable releases: publish to npm ──
 
   publish:
-    if: github.event_name != 'push'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs: [compute-version, build-native, pre-publish-benchmark]
     runs-on: ubuntu-latest
     environment: npm-publish
