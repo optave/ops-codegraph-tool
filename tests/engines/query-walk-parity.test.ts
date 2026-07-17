@@ -293,6 +293,26 @@ function run(key) {
 }
 `,
   },
+  {
+    // Regression guard for #1929: bare `super(...)` constructor calls must be
+    // extracted as a `constructor` call with receiver `super` on both paths —
+    // the query path via the new `callsuper_node` capture in
+    // `dispatchQueryMatch`, the walk path via `handleCallExpr`'s fall-through
+    // to `extractCallInfo`'s `super` branch.
+    name: 'bare super(...) constructor call (#1929)',
+    file: 'test.js',
+    code: `
+class Base {
+  constructor(a) { this.a = a; }
+}
+class Derived extends Base {
+  constructor(a, b) {
+    super(a);
+    this.b = b;
+  }
+}
+`,
+  },
   // TSX
   {
     name: 'TSX component with extends',

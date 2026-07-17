@@ -161,6 +161,21 @@ describe.each(ENGINES)('Phase 8.5 CHA dispatch (%s)', (engine) => {
     ).toBeUndefined();
   });
 
+  // ── bare super(...) constructor call (issue #1929) ──────────────────────
+
+  it('super-dispatch: emits Car.constructor → Vehicle.constructor (bare super(...) call)', () => {
+    const edge = callEdges.find(
+      (e) =>
+        e.caller_name === 'Car.constructor' &&
+        e.callee_name === 'Vehicle.constructor' &&
+        e.callee_file === 'Vehicle.ts',
+    );
+    expect(
+      edge,
+      `Expected Car.constructor → Vehicle.constructor edge (bare super(...) dispatch via class hierarchy).\nActual edges:\n${JSON.stringify(callEdges, null, 2)}`,
+    ).toBeDefined();
+  });
+
   // ── transitive multi-level CHA (issue #1311) ───────────────────────────
   // Hierarchy: IJob → AbstractJob (non-instantiated) → PrintJob / ScanJob
   // resolveChaTargets must BFS through AbstractJob to reach the concrete types.

@@ -34,10 +34,16 @@ sedi() {
     local status=0
     sed "${@:1:$((n - 1))}" "$file" >"$tmp" || status=$?
     if [ "$status" -eq 0 ]; then
-        mv "$tmp" "$file"
-    else
-        rm -f "$tmp"
+        # cp (not mv) into the existing target: POSIX cp overwrites an
+        # existing destination's *content* while leaving its inode --
+        # and thus its permission bits -- untouched, whereas mv would
+        # replace the inode outright and leave the target with
+        # mktemp's restrictive 0600 mode. This also means a failed copy
+        # (e.g. read-only target) is caught below instead of silently
+        # discarding the edit while reporting success.
+        cp "$tmp" "$file" || status=$?
     fi
+    rm -f "$tmp"
     return "$status"
 }
 
