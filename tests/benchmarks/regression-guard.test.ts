@@ -217,21 +217,25 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * Resolution keys use: "version:resolution <lang> precision" or "version:resolution <lang> recall".
  *
  * The `version` is the release where the regression was first observed.
- * When the per-PR gate runs `dev` against that release as baseline, the
- * exemption applies via the baseline-version fallback in assertNoRegressions
- * (and the resolution loop) — so a single `3.11.0:Foo` entry covers both
- * `3.11.0 vs 3.10.0` and every subsequent `dev vs 3.11.0` comparison until
- * the next release clears the regression and the entry is pruned.
+ * Any comparison whose baseline is that release gets the exemption via the
+ * baseline-version fallback in assertNoRegressions (and the resolution
+ * loop) — so a single `3.11.0:Foo` entry covers `3.11.0 vs 3.10.0`, every
+ * subsequent `dev vs 3.11.0` per-PR comparison, AND the eventual `3.12.0 vs
+ * 3.11.0` publish gate itself (the release that's supposed to fold the
+ * drift into a fresh baseline) — until that release's own benchmark data
+ * lands and the entry is pruned.
  *
- * Entries fire only when `latest.version` matches the prefix (or, for `dev`
- * latest, when `previous.version` matches via the baseline fallback). Once
- * a version is no longer the latest in committed history and no longer the
- * baseline used for `dev` comparisons, its entries become dead weight and
- * should be removed (last pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0/3.11.0/3.11.1/
- * 3.11.2; the 3.12.0 and 3.13.0 entries — dataflow/no-op/full-build timing noise
- * and the erlang 0% drop — were pruned at the 3.15.0 release once the 3.15.0
- * benchmark baseline landed in PR #1702, which folds those deltas into the
- * baseline so dev-vs-3.15.0 comparisons no longer flag them).
+ * Entries fire when `latest.version` matches the prefix directly, or when
+ * `previous.version` (the baseline) matches via the baseline fallback —
+ * regardless of whether `latest` is `dev` (per-PR gate) or a real version
+ * (the publish gate for the next release). Once a version is no longer the
+ * latest in committed history and no longer used as a baseline for any
+ * comparison, its entries become dead weight and should be removed (last
+ * pruned: 3.9.0/3.9.1/3.9.2/3.9.6/3.10.0/3.11.0/3.11.1/3.11.2; the 3.12.0 and
+ * 3.13.0 entries — dataflow/no-op/full-build timing noise and the erlang 0%
+ * drop — were pruned at the 3.15.0 release once the 3.15.0 benchmark
+ * baseline landed in PR #1702, which folds those deltas into the baseline
+ * so dev-vs-3.15.0 comparisons no longer flag them).
  *
  * NOTE: WASM *timing* noise no longer needs per-version entries here — it is
  * handled structurally by WASM_TIMING_THRESHOLD (see above); native keeps the
@@ -506,16 +510,22 @@ function assertNoRegressions(
   const regressions = real.filter((c) => {
     if (c.pctChange <= thresholdFor(c.label, engine)) return false;
     if (version && KNOWN_REGRESSIONS.has(`${version}:${c.label}`)) return false;
-    // When `latest` is the rolling 'dev' build, KNOWN_REGRESSIONS entries
-    // are anchored to the release where the regression was first observed
-    // (e.g. '3.9.6:No-op rebuild'), not to 'dev'. Fall back to the baseline
-    // version so a regression introduced before release N stays exempt for
-    // every PR comparing dev → N until release N+1 clears it.
-    if (
-      version === 'dev' &&
-      baselineVersion &&
-      KNOWN_REGRESSIONS.has(`${baselineVersion}:${c.label}`)
-    ) {
+    // KNOWN_REGRESSIONS entries are anchored to the release where the
+    // regression was first observed (e.g. '3.9.6:No-op rebuild'), not to
+    // whatever `latest` happens to be. Fall back to the baseline version so
+    // a regression introduced before release N stays exempt for every
+    // comparison against N — both per-PR gates (latest = 'dev') and the
+    // actual release N+1 publish gate itself (latest = the real N+1 version,
+    // e.g. '3.16.0') — until release N+1's own benchmark data lands as the
+    // new baseline and the entry goes stale (see the "KNOWN_REGRESSIONS
+    // entries are not stale" test below).
+    //
+    // This used to be gated on `version === 'dev'`, which meant the one run
+    // that most needs the exemption — the publish gate for the release that
+    // is supposed to fold the known drift into a fresh baseline — never got
+    // it, and failed on the exact regression it was meant to be exempt from
+    // (v3.16.0 publish, #2127; entries added by #2107 for exactly this).
+    if (baselineVersion && KNOWN_REGRESSIONS.has(`${baselineVersion}:${c.label}`)) {
       return false;
     }
     return true;
@@ -531,6 +541,45 @@ function assertNoRegressions(
     expect.fail(`Benchmark regressions exceed threshold:\n${details}`);
   }
 }
+
+// Pure-logic tests for the KNOWN_REGRESSIONS baseline fallback. Unlike the
+// describe.runIf(RUN_REGRESSION_GUARD) suite below, these don't read real
+// benchmark report files — they exercise assertNoRegressions directly, so
+// they always run and don't need a recorded 'X.Y.Z vs baseline' pair to exist
+// in committed history.
+describe('assertNoRegressions — KNOWN_REGRESSIONS baseline fallback', () => {
+  test('exempts a real-release latest (not just dev) when its baseline matches a KNOWN_REGRESSIONS entry', () => {
+    // Reproduces the v3.16.0 publish-gate failure (#2127): KNOWN_REGRESSIONS
+    // has '3.15.0:Full build' (added by #2107 for repo-growth drift), but the
+    // publish gate labels `latest.version` with the real new version being
+    // published, never 'dev' — this must still hit the baseline fallback.
+    expect(() =>
+      assertNoRegressions(
+        [checkRegression('Full build', 5000, 3521)], // +42%, over the 25% threshold
+        '3.16.0',
+        '3.15.0',
+        'native',
+      ),
+    ).not.toThrow();
+  });
+
+  test('still exempts the per-PR dev-vs-baseline comparison', () => {
+    expect(() =>
+      assertNoRegressions([checkRegression('Full build', 5000, 3521)], 'dev', '3.15.0', 'native'),
+    ).not.toThrow();
+  });
+
+  test('does not exempt a regression against a baseline with no matching KNOWN_REGRESSIONS entry', () => {
+    expect(() =>
+      assertNoRegressions(
+        [checkRegression('Full build', 5000, 3521)],
+        '3.16.0',
+        '3.14.0', // not a KNOWN_REGRESSIONS-covered baseline
+        'native',
+      ),
+    ).toThrow(/Full build/);
+  });
+});
 
 // ── Build benchmark data types ───────────────────────────────────────────
 
