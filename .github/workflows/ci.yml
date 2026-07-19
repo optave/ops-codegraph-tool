@@ -72,11 +72,21 @@ jobs:
           # nothing about whether the published binary this job's skip relies
           # on has already drifted from HEAD. The only baseline that actually
           # answers "is the published fallback binary still trustworthy" is
-          # the last release tag.
-          LAST_TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
+          # the tag for the version package.json currently declares.
+          #
+          # This deliberately does NOT use "the most recent vX.Y.Z tag" —
+          # a release tag is created by the GitHub Release that kicks off
+          # publish.yml, but publish itself (and the package.json version
+          # bump that comes with it) can still fail afterwards, e.g. the
+          # pre-publish benchmark gate. That leaves a tag on origin with no
+          # matching publish, which made this job wrongly report "unchanged"
+          # against a fallback binary that was actually several releases
+          # stale (#2127).
+          CURRENT_VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*: *"([^"]*)".*/\1/')
+          LAST_TAG="v$CURRENT_VERSION"
 
-          if [ -z "$LAST_TAG" ] || ! git cat-file -e "$LAST_TAG" 2>/dev/null; then
-            echo "No usable release tag to diff against — assuming native changed"
+          if [ -z "$CURRENT_VERSION" ] || ! git cat-file -e "$LAST_TAG" 2>/dev/null; then
+            echo "No usable release tag ($LAST_TAG) to diff against — assuming native changed"
             echo "native_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
