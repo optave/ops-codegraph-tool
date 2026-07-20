@@ -439,6 +439,30 @@ describe('exportGraphSON', () => {
     expect(functionLevel.vertices.every((v) => v.label !== 'file')).toBe(true);
     db.close();
   });
+
+  it('function-level matches loadFunctionLevelEdges semantics: calls-only edges, no isolated nodes', () => {
+    const db = createTestDb();
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fnA, fnB, 'calls');
+    // A class that implements/extends another — should NOT appear as a graphson edge
+    // in function-level output, matching dot/mermaid/graphml/neo4j's calls-only scope.
+    const base = insertNode(db, 'Base', 'class', 'src/c.js', 1);
+    const impl = insertNode(db, 'Impl', 'class', 'src/d.js', 1);
+    insertEdge(db, impl, base, 'implements');
+    // An isolated function with no edges at all — should not appear as a vertex,
+    // matching loadFunctionLevelEdges (which only returns nodes that participate
+    // in a calls edge), not an independent "all matching-kind nodes" query.
+    insertNode(db, 'unreachable', 'function', 'src/e.js', 1);
+
+    const data = exportGraphSON(db, { fileLevel: false });
+
+    expect(data.edges.every((e) => e.label === 'calls')).toBe(true);
+    expect(data.vertices.some((v) => v.properties.name[0].value === 'unreachable')).toBe(false);
+    expect(data.vertices.some((v) => v.properties.name[0].value === 'Impl')).toBe(false);
+    expect(data.vertices.some((v) => v.properties.name[0].value === 'doWork')).toBe(true);
+    db.close();
+  });
 });
 
 describe('exportNeo4jCSV', () => {

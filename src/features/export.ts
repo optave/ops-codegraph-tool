@@ -433,7 +433,6 @@ export function exportGraphSON(
 ): { vertices: unknown[]; edges: unknown[] } {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
-  const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
 
   let vertices: Array<{ id: unknown; label: string; properties: Record<string, unknown> }>;
   let gEdges: Array<{
@@ -483,40 +482,39 @@ export function exportGraphSON(
         properties: { confidence: e.confidence },
       }));
   } else {
-    let nodes = db
-      .prepare(`
-      SELECT id, name, kind, file, line, role FROM nodes
-      WHERE kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')
-    `)
-      .all() as Array<{
-      id: number;
-      name: string;
-      kind: string;
-      file: string;
-      line: number | null;
-      role: string | null;
-    }>;
-    if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
+    const { edges: fnEdges } = loadFunctionLevelEdges(db, {
+      noTests,
+      minConfidence: opts.minConfidence,
+    });
 
-    let edges = db
-      .prepare(`
-      SELECT e.rowid AS id, n1.id AS outV, n2.id AS inV, e.kind, e.confidence
-      FROM edges e
-      JOIN nodes n1 ON e.source_id = n1.id
-      JOIN nodes n2 ON e.target_id = n2.id
-      WHERE e.confidence >= ?
-    `)
-      .all(minConf) as Array<{
-      id: number;
-      outV: number;
-      inV: number;
-      kind: string;
-      confidence: number;
-    }>;
-    const nodeIds = new Set(nodes.map((n) => n.id));
-    edges = edges.filter((e) => nodeIds.has(e.outV) && nodeIds.has(e.inV));
+    const nodeMap = new Map<
+      number,
+      { id: number; name: string; kind: string; file: string; line: number; role: string | null }
+    >();
+    for (const e of fnEdges) {
+      if (!nodeMap.has(e.source_id)) {
+        nodeMap.set(e.source_id, {
+          id: e.source_id,
+          name: e.source_name,
+          kind: e.source_kind,
+          file: e.source_file,
+          line: e.source_line,
+          role: e.source_role,
+        });
+      }
+      if (!nodeMap.has(e.target_id)) {
+        nodeMap.set(e.target_id, {
+          id: e.target_id,
+          name: e.target_name,
+          kind: e.target_kind,
+          file: e.target_file,
+          line: e.target_line,
+          role: e.target_role,
+        });
+      }
+    }
 
-    vertices = nodes.map((n) => ({
+    vertices = [...nodeMap.values()].map((n) => ({
       id: n.id,
       label: n.kind,
       properties: {
@@ -527,11 +525,11 @@ export function exportGraphSON(
       },
     }));
 
-    gEdges = edges.map((e) => ({
-      id: e.id,
-      label: e.kind,
-      inV: e.inV,
-      outV: e.outV,
+    gEdges = fnEdges.map((e, i) => ({
+      id: i,
+      label: e.edge_kind,
+      inV: e.target_id,
+      outV: e.source_id,
       properties: {
         confidence: e.confidence,
       },
