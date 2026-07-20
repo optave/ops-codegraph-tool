@@ -183,7 +183,7 @@ Both match documented behavior exactly.
 ### Build Benchmark
 | Metric | WASM | Native | Speedup |
 |--------|------|--------|---------|
-| Full build (741 files) | 11318 ms | 2909 ms | 3.9× |
+| Full build (741 files — `scripts/benchmark.ts` excludes `tests/benchmarks/resolution/fixtures/**`, unlike the 993-file cold-start/engine-comparison scans elsewhere in this report) | 11318 ms | 2909 ms | 3.9× |
 | No-op rebuild | 23 ms | 23 ms | 1.0× |
 | 1-file rebuild | 186 ms | 142 ms | 1.3× |
 | Query time | 8 ms | 6 ms | 1.3× |
@@ -308,14 +308,15 @@ Not a bug (no crash, no wrong-looking results in my testing), but `codegraph emb
 ## 11. Testing Plan
 
 ### General Testing Plan (Any Release)
-- [ ] Install from npm, verify version + native binary + `codegraph info` reports `native`
-- [ ] Cold-start sweep: every command before `build`, confirm graceful `DB_ERROR`
-- [ ] Full command sweep with `-j`/`-T`/`--include-tests` where applicable
-- [ ] Incremental: no-op, real change, revert-to-identical-content, `--no-incremental` — diff full edge sets, not just counts
-- [ ] Engine comparison: node/edge/cycle/community counts, full edge-set diff (not just totals)
-- [ ] Embed → search → modify → rebuild → search-without-re-embed pipeline
-- [ ] MCP `tools/list` in both single- and multi-repo mode
-- [ ] Programmatic API via both `import()` and `require()`
+All items below were performed this session — see the section noted after each for evidence.
+- [x] Install from npm, verify version + native binary + `codegraph info` reports `native` (§1–§2)
+- [x] Cold-start sweep: every command before `build`, confirm graceful `DB_ERROR` (§2)
+- [x] Full command sweep with `-j`/`-T`/`--include-tests` where applicable (§3)
+- [x] Incremental: no-op, real change, revert-to-identical-content, `--no-incremental` — diff full edge sets, not just counts (§4)
+- [x] Engine comparison: node/edge/cycle/community counts, full edge-set diff (not just totals) (§5)
+- [x] Embed → search → modify → rebuild → search-without-re-embed pipeline (§4)
+- [x] MCP `tools/list` in both single- and multi-repo mode (§7)
+- [x] Programmatic API via both `import()` and `require()` (§7)
 
 ### Release-Specific Testing Plan (v3.16.0)
 - [x] Remote embedding provider: config parsing, graceful failure on unreachable endpoint, **and cwd-sensitivity** (this is where #2137 was found)
