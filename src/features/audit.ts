@@ -162,7 +162,7 @@ export function auditData(
   }
 
   if (results.length === 0) {
-    return { target, kind: explained.kind as 'function' | 'file', functions: [] };
+    return { target, kind: explained.kind as 'function' | 'file', functions: [], found: false };
   }
 
   // 2. Open DB for enrichment
