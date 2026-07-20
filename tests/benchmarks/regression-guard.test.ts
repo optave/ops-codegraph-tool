@@ -505,11 +505,17 @@ function assertNoRegressions(
   version?: string,
   baselineVersion?: string,
   engine?: string,
+  // Defaults to the module-level KNOWN_REGRESSIONS (production behavior).
+  // Tests that exercise the fallback logic itself pass a local, stable
+  // fixture instead — so they don't break when real entries above are
+  // pruned by a future benchmark-recording cleanup PR (see the
+  // 'assertNoRegressions — KNOWN_REGRESSIONS baseline fallback' suite below).
+  knownRegressions: ReadonlySet<string> = KNOWN_REGRESSIONS,
 ) {
   const real = checks.filter(Boolean) as RegressionCheck[];
   const regressions = real.filter((c) => {
     if (c.pctChange <= thresholdFor(c.label, engine)) return false;
-    if (version && KNOWN_REGRESSIONS.has(`${version}:${c.label}`)) return false;
+    if (version && knownRegressions.has(`${version}:${c.label}`)) return false;
     // KNOWN_REGRESSIONS entries are anchored to the release where the
     // regression was first observed (e.g. '3.9.6:No-op rebuild'), not to
     // whatever `latest` happens to be. Fall back to the baseline version so
@@ -525,7 +531,7 @@ function assertNoRegressions(
     // is supposed to fold the known drift into a fresh baseline — never got
     // it, and failed on the exact regression it was meant to be exempt from
     // (v3.16.0 publish, #2127; entries added by #2107 for exactly this).
-    if (baselineVersion && KNOWN_REGRESSIONS.has(`${baselineVersion}:${c.label}`)) {
+    if (baselineVersion && knownRegressions.has(`${baselineVersion}:${c.label}`)) {
       return false;
     }
     return true;
@@ -547,25 +553,42 @@ function assertNoRegressions(
 // benchmark report files — they exercise assertNoRegressions directly, so
 // they always run and don't need a recorded 'X.Y.Z vs baseline' pair to exist
 // in committed history.
+//
+// These tests use a local, test-only `knownRegressions` fixture (fictional
+// '9.9.9' version) rather than the module-level KNOWN_REGRESSIONS — the real
+// set is expected to have its '3.15.0:*' entries pruned once v3.16.0's own
+// benchmark data lands (see the KNOWN_REGRESSIONS docstring above), and
+// hardcoding these always-on tests against that live, evolving data would
+// break them the moment that routine cleanup PR lands.
 describe('assertNoRegressions — KNOWN_REGRESSIONS baseline fallback', () => {
+  const testKnownRegressions = new Set<string>(['9.9.9:Full build']);
+
   test('exempts a real-release latest (not just dev) when its baseline matches a KNOWN_REGRESSIONS entry', () => {
-    // Reproduces the v3.16.0 publish-gate failure (#2127): KNOWN_REGRESSIONS
-    // has '3.15.0:Full build' (added by #2107 for repo-growth drift), but the
-    // publish gate labels `latest.version` with the real new version being
-    // published, never 'dev' — this must still hit the baseline fallback.
+    // Reproduces the v3.16.0 publish-gate failure (#2127): a KNOWN_REGRESSIONS
+    // entry pinned to the prior release's baseline (e.g. '3.15.0:Full build',
+    // added by #2107 for repo-growth drift), but the publish gate labels
+    // `latest.version` with the real new version being published, never
+    // 'dev' — this must still hit the baseline fallback.
     expect(() =>
       assertNoRegressions(
         [checkRegression('Full build', 5000, 3521)], // +42%, over the 25% threshold
-        '3.16.0',
-        '3.15.0',
+        '10.0.0',
+        '9.9.9',
         'native',
+        testKnownRegressions,
       ),
     ).not.toThrow();
   });
 
   test('still exempts the per-PR dev-vs-baseline comparison', () => {
     expect(() =>
-      assertNoRegressions([checkRegression('Full build', 5000, 3521)], 'dev', '3.15.0', 'native'),
+      assertNoRegressions(
+        [checkRegression('Full build', 5000, 3521)],
+        'dev',
+        '9.9.9',
+        'native',
+        testKnownRegressions,
+      ),
     ).not.toThrow();
   });
 
@@ -582,9 +605,10 @@ describe('assertNoRegressions — KNOWN_REGRESSIONS baseline fallback', () => {
     expect(() =>
       assertNoRegressions(
         [checkRegression('Full build', 8000, 4000)],
-        '3.16.0',
-        '3.14.0', // not a KNOWN_REGRESSIONS-covered baseline
+        '10.0.0',
+        '9.8.0', // not covered by testKnownRegressions
         'native',
+        testKnownRegressions,
       ),
     ).toThrow(/Full build/);
   });
