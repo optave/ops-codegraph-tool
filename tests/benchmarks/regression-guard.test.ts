@@ -570,9 +570,18 @@ describe('assertNoRegressions — KNOWN_REGRESSIONS baseline fallback', () => {
   });
 
   test('does not exempt a regression against a baseline with no matching KNOWN_REGRESSIONS entry', () => {
+    // This describe block runs unconditionally — including under
+    // BENCH_CANARY=1 (.github/workflows/perf-canary.yml), which widens
+    // REGRESSION_THRESHOLD from 0.25 to 0.5. The delta here must clear the
+    // regression threshold in *every* mode this test can run under, or the
+    // check gets filtered out as "not a regression" before the
+    // KNOWN_REGRESSIONS fallback is even reached — making the test flip-flop
+    // based on an ambient env var instead of the exemption logic it's meant
+    // to exercise. +100% clears both the 25% default and the 50% canary
+    // threshold with margin.
     expect(() =>
       assertNoRegressions(
-        [checkRegression('Full build', 5000, 3521)],
+        [checkRegression('Full build', 8000, 4000)],
         '3.16.0',
         '3.14.0', // not a KNOWN_REGRESSIONS-covered baseline
         'native',
