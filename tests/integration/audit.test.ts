@@ -63,6 +63,9 @@ beforeAll(() => {
   insertNode(db, 'src/resolve.js', 'file', 'src/resolve.js', 0);
   insertNode(db, 'src/utils.js', 'file', 'src/utils.js', 0);
   insertNode(db, 'tests/builder.test.js', 'file', 'tests/builder.test.js', 0);
+  // Barrel/re-export-only file — tracked in the graph but has zero own
+  // function/method/class definitions.
+  insertNode(db, 'src/barrel.js', 'file', 'src/barrel.js', 0);
 
   // ── Function/class nodes ──
   const fnBuild = insertNode(
@@ -256,6 +259,33 @@ describe('auditData — edge cases', () => {
   test('no match returns empty functions array', () => {
     const data = auditData('nonExistentFunction', dbPath);
     expect(data.functions).toEqual([]);
+  });
+
+  test('nonexistent function sets found: false', () => {
+    const data = auditData('nonExistentFunction', dbPath);
+    expect(data.found).toBe(false);
+  });
+
+  test('nonexistent file sets found: false', () => {
+    const data = auditData('src/does/not/exist.js', dbPath);
+    expect(data.functions).toEqual([]);
+    expect(data.found).toBe(false);
+  });
+
+  test('barrel file with zero own functions does not set found: false', () => {
+    const data = auditData('src/barrel.js', dbPath);
+    expect(data.kind).toBe('file');
+    expect(data.functions).toEqual([]);
+    expect(data.found).not.toBe(false);
+  });
+
+  test('--file filter removing every match does not set found: false', () => {
+    // buildGraph exists in src/builder.js, not src/other.js -- the --file
+    // filter legitimately empties the result set, but the symbol IS in the
+    // graph, so this must not be reported as "not found".
+    const data = auditData('buildGraph', dbPath, { file: 'src/other.js' });
+    expect(data.functions).toEqual([]);
+    expect(data.found).not.toBe(false);
   });
 
   test('function with no complexity row has null health values', () => {

@@ -97,7 +97,11 @@ export function audit(
   if (outputResult(data, null, opts)) return;
 
   if (data.functions.length === 0) {
-    console.log(`No ${data.kind === 'file' ? 'file' : 'function/symbol'} matching "${target}"`);
+    if (data.found === false) {
+      console.log(`No ${data.kind === 'file' ? 'file' : 'function/symbol'} matching "${target}"`);
+    } else {
+      console.log(`No functions to audit in "${target}" (0 own function/method/class definitions)`);
+    }
     return;
   }
 

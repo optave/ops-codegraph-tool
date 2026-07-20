@@ -1731,6 +1731,11 @@ export interface AuditResult {
   target: string;
   kind: 'function' | 'file';
   functions: AuditFunctionEntry[];
+  /** False only when target isn't tracked in the graph at all — distinguishes
+   *  "no such file/symbol" from "file exists but has zero function-kind
+   *  definitions" (e.g. a pure re-export barrel), which also yields an
+   *  empty `functions` array. */
+  found?: boolean;
 }
 
 /** A single manifesto threshold breach reported against an audited function. */
