@@ -82,7 +82,7 @@ jobs:
           # matching publish, which made this job wrongly report "unchanged"
           # against a fallback binary that was actually several releases
           # stale (#2127).
-          CURRENT_VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*: *"([^"]*)".*/\1/')
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
           LAST_TAG="v$CURRENT_VERSION"
 
           if [ -z "$CURRENT_VERSION" ] || ! git cat-file -e "$LAST_TAG" 2>/dev/null; then
