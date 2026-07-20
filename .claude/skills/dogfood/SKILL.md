@@ -81,8 +81,6 @@ Your goal is to install the published package, exercise every feature, compare e
    Verify with `npx codegraph info` in the source repo. Revert `package.json` / `package-lock.json` changes after the session (do not commit them on the fix branch).
 7. **Do NOT rebuild the graph yet.** The first phase tests commands against the codegraph source repo without a pre-existing graph.
 
-**Hook contamination risk:** if this session's `.claude/hooks/update-graph.sh` is active, writing or editing *any* file with a tracked source extension (`.ts`, `.js`, `.sh`, etc. — see `EXTENSIONS`) — even a scratch file completely outside the target repo — can silently trigger an incremental rebuild of whatever repo the session's cwd happens to be in, using whatever `codegraph` binary is globally on `$PATH` (which may be a different, stale version than the one under test). This corrupts the graph you're testing without any visible error. Give scratch scripts a non-tracked extension (e.g. `.txt`, invoked via `bash script.txt`) for the rest of the session, and re-run a clean `build --no-incremental` before trusting any node/edge counts if you suspect this happened (check `sqlite3 .codegraph/graph.db "SELECT * FROM build_meta;"` for an unexpected `codegraph_version`/`node_count`).
-
 ---
 
 ## Phase 1 — Cold Start (No Graph)
@@ -175,7 +173,7 @@ Test that incremental rebuilds, full rebuilds, and cross-feature state remain co
    - Node IDs for unchanged symbols remain stable
    - Edge counts are consistent
    - The journal (`.codegraph/` directory) tracks the change
-3. **Force full rebuild:** Run `build --no-incremental`. Compare node/edge counts with the incremental result — they should match exactly. **Also try editing (then reverting to byte-identical content) a file *unrelated* to whatever you query afterward, and diff the full edge set** (not just totals) between the pre-edit and post-revert graphs — e.g. `sqlite3 graph.db "SELECT n1.file,n1.name,n1.line,e.kind,n2.file,n2.name,n2.line FROM edges e JOIN nodes n1 ON e.source_id=n1.id JOIN nodes n2 ON e.target_id=n2.id ORDER BY 1,2,3,4,5,6,7" | sort` before and after, then `comm -23`/`comm -13` (with `LC_ALL=C` set, or `comm` can misreport on SQLite's default collation order). Matching totals can still hide edges dropped from one part of the graph and gained in another — this exact technique caught a real incremental-rebuild edge-loss bug in v3.16.0 (#2138) that a count-only comparison would have missed entirely.
+3. **Force full rebuild:** Run `build --no-incremental`. Compare node/edge counts with the incremental result — they should match exactly.
 4. **Embed then rebuild:** Run `embed --model minilm`, then run `build` again (even with no changes). After the rebuild:
    - Run `search "build graph"` — do results still return? If embeddings reference stale node IDs, search will return 0 results
    - Compare embedding `node_id`s against actual node IDs in the graph (use `--json` outputs)
@@ -205,18 +203,12 @@ Test that incremental rebuilds, full rebuilds, and cross-feature state remain co
 
 Run all four benchmark scripts from the codegraph source repo and record results. These detect performance regressions between releases.
 
-The scripts are TypeScript, not plain `.js` — run them via `node --experimental-strip-types --import ./scripts/ts-resolve-loader.js scripts/<name>.ts`, or `npm run benchmark` for the build one (the only one with a package.json alias).
-
 | Benchmark | Script | What it measures | When it matters |
 |-----------|--------|-----------------|-----------------|
-| Build | `npm run benchmark` (`scripts/benchmark.ts`) | Build speed (native vs WASM), query latency | Always |
-| Incremental | `scripts/incremental-benchmark.ts` | Incremental build tiers, import resolution throughput | Always |
-| Query | `scripts/query-benchmark.ts` | Query depth scaling, diff-impact latency | Always |
-| Embedding | `scripts/embedding-benchmark.ts` | Search recall (Hit@1/3/5/10) across all ~11 models | Always |
-
-The embedding benchmark sweeps every registered model sequentially (not just the one you may pass on the command line) and can take 20-30+ minutes end-to-end for the larger models (jina-base, jina-code, nomic, bge-large, bge-m3, mxbai-large). Budget for this, or run it in the background and report whichever models finished — explicitly note which ones didn't, don't silently omit them.
-
-If the version label in the benchmark JSON output looks stale/wrong (e.g. a much older `-dev.N` tag than expected), run `git fetch origin --tags` in the worktree — the version is derived from `git describe --tags`, and a worktree created via `git fetch origin <branch>` (branch only, no tags) will describe against whatever old tag it can still see locally.
+| Build | `node scripts/benchmark.js` | Build speed (native vs WASM), query latency | Always |
+| Incremental | `node scripts/incremental-benchmark.js` | Incremental build tiers, import resolution throughput | Always |
+| Query | `node scripts/query-benchmark.js` | Query depth scaling, diff-impact latency | Always |
+| Embedding | `node scripts/embedding-benchmark.js` | Search recall (Hit@1/3/5/10) across models | Always |
 
 ### Pre-flight: verify native binary version
 
@@ -270,10 +262,10 @@ Before writing the report, **stop and think** about:
 - **Cross-command pipelines:** Have I tested `build` → `embed` → `search` → modify → `build` → `search`? Have I tested `watch` detecting changes then `diff-impact`?
 - **MCP server:** Have I tested the `mcp` command? Initialize via JSON-RPC on stdin, send `tools/list`, verify all 35 tools are present (34 in single-repo mode; 35 with `list_repos` in multi-repo). Test single-repo mode (default — `list_repos` should be absent, no `repo` parameter on tools) vs `--multi-repo` mode.
 - **Programmatic API:** Have I tested `require('@optave/codegraph')` or `import` from `index.js`? Key exports to verify: `buildGraph`, `loadConfig`, `contextData`, `explainData`, `whereData`, `fnDepsData`, `fnImpactData`, `diffImpactData`, `statsData`, `queryNameData`, `rolesData`, `auditData`, `triageData`, `complexityData`, `EXTENSIONS`, `IGNORE_DIRS`, `EVERY_SYMBOL_KIND`.
-- **Config options:** Have I tested `.codegraphrc.json`? Create one with `include`/`exclude` patterns, custom `aliases`, `build.incremental: false`, `query.defaultDepth`, `search.defaultMinScore`. Verify overrides work. **Test config-driven commands from a different cwd than the target project**, not just via `--db <path>` while cwd'ed into it — several commands resolve config from `process.cwd()` rather than the target dir/`--db` path, so a config that works when you `cd` into the project first can silently do nothing when invoked from elsewhere (this surfaced a real bug in v3.16.0, #2137). Also: never edit `.codegraphrc.json` in the actual source repo in place — copy it aside first (`cp .codegraphrc.json /tmp/orig.json`) so a stray `rm -f`/overwrite during iteration doesn't clobber the repo's real committed config.
+- **Config options:** Have I tested `.codegraphrc.json`? Create one with `include`/`exclude` patterns, custom `aliases`, `build.incremental: false`, `query.defaultDepth`, `search.defaultMinScore`. Verify overrides work.
 - **Env var overrides:** `CODEGRAPH_LLM_PROVIDER`, `CODEGRAPH_LLM_API_KEY`, `CODEGRAPH_LLM_MODEL`, `CODEGRAPH_REGISTRY_PATH`.
 - **Credential resolution:** `apiKeyCommand` in config — does it shell out via `execFileSync` correctly? Test with a simple `echo` command.
-- **Multi-repo registry flow:** `registry add .`, `registry list`, `mcp --repos <name>`, `registry remove <name>`, `registry prune --ttl 0`. **`registry prune --ttl 0` prunes anything not accessed in 0 days — i.e. everything.** The registry (`~/.codegraph/registry.json` by default) is shared, persistent state across every worktree/session on the machine, not something scoped to this dogfood run. Never run `prune` (with any TTL) against the real global registry just to exercise the flag — first set `export CODEGRAPH_REGISTRY_PATH=/tmp/dogfood-registry.json` (or any throwaway path) so every `registry`/`mcp --multi-repo` command in this session reads/writes an isolated file instead. Only test against the real registry if that's explicitly what's being verified, and even then prefer a small positive TTL over `0`.
+- **Multi-repo registry flow:** `registry add .`, `registry list`, `mcp --repos <name>`, `registry remove <name>`, `registry prune --ttl 0`.
 - **Concurrent usage:** Two builds at once, build while watching.
 - **Different repo:** Have I tested on a repo besides codegraph itself? Try a small open-source project.
 - **False positive filtering:** Does `stats` report false positives? Are `FALSE_POSITIVE_NAMES` (run, get, set, init, main, etc.) filtered from high-caller warnings?
