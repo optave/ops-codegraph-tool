@@ -644,19 +644,19 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.15.0 (2026-06-23)*
+*Last updated: v3.16.0 (2026-07-20)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **5.8 ms/file** | **26.2 ms/file** |
-| Query time | **33ms** | **47ms** |
-| No-op rebuild | **24ms** | **24ms** |
-| 1-file rebuild | **117ms** | **112ms** |
-| Query: fn-deps | **2.4ms** | **2.2ms** |
-| Query: path | **2.4ms** | **2.1ms** |
-| ~50,000 files (est.) | **~290.0s build** | **~1310.0s build** |
-| Resolution precision | **93.6%** | — |
-| Resolution recall | **64.7%** | — |
+| Build speed | **6.9 ms/file** | **24.4 ms/file** |
+| Query time | **9ms** | **12ms** |
+| No-op rebuild | **29ms** | **29ms** |
+| 1-file rebuild | **193ms** | **213ms** |
+| Query: fn-deps | **9.7ms** | **11.2ms** |
+| Query: path | **12.8ms** | **11.9ms** |
+| ~50,000 files (est.) | **~345.0s build** | **~1220.0s build** |
+| Resolution precision | **94.9%** | — |
+| Resolution recall | **66.7%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -664,21 +664,21 @@ Metrics are normalized per file for cross-version comparability. Times above are
 
 | Language | Precision | Recall | TP | FP | FN | Edges | Dynamic |
 |----------|----------:|-------:|---:|---:|---:|------:|--------:|
-| javascript | 100.0% | 100.0% | 42 | 0 | 0 | 42 | 14/32 |
-| typescript | 95.9% | 100.0% | 47 | 2 | 0 | 47 | — |
+| javascript | 100.0% | 100.0% | 47 | 0 | 0 | 47 | 17/32 |
+| typescript | 100.0% | 100.0% | 55 | 0 | 0 | 55 | — |
 | bash | 100.0% | 100.0% | 12 | 0 | 0 | 12 | 0/1 |
 | c | 100.0% | 100.0% | 9 | 0 | 0 | 9 | — |
 | clojure | 80.0% | 26.7% | 4 | 1 | 11 | 15 | — |
 | cpp | 100.0% | 57.1% | 8 | 0 | 6 | 14 | — |
-| csharp | 100.0% | 100.0% | 23 | 0 | 0 | 23 | — |
+| csharp | 100.0% | 100.0% | 25 | 0 | 0 | 25 | — |
 | cuda | 50.0% | 33.3% | 4 | 4 | 8 | 12 | — |
-| dart | 0.0% | 0.0% | 0 | 0 | 18 | 18 | — |
+| dart | 0.0% | 0.0% | 0 | 0 | 21 | 21 | — |
 | dynamic-groovy | 100.0% | 100.0% | 1 | 0 | 0 | 1 | — |
 | dynamic-java | 100.0% | 100.0% | 1 | 0 | 0 | 1 | — |
 | dynamic-javascript | 100.0% | 100.0% | 4 | 0 | 0 | 4 | — |
 | dynamic-kotlin | 100.0% | 100.0% | 3 | 0 | 0 | 3 | — |
 | dynamic-scala | 100.0% | 100.0% | 1 | 0 | 0 | 1 | — |
-| dynamic-typescript | 100.0% | 100.0% | 3 | 0 | 0 | 3 | — |
+| dynamic-typescript | 100.0% | 100.0% | 4 | 0 | 0 | 4 | — |
 | elixir | 100.0% | 81.0% | 17 | 0 | 4 | 21 | — |
 | erlang | 100.0% | 100.0% | 12 | 0 | 0 | 12 | — |
 | fsharp | 0.0% | 0.0% | 0 | 11 | 12 | 12 | — |
@@ -687,36 +687,36 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | groovy | 100.0% | 7.7% | 1 | 0 | 12 | 13 | — |
 | haskell | 100.0% | 33.3% | 4 | 0 | 8 | 12 | — |
 | hcl | 0.0% | 0.0% | 0 | 0 | 2 | 2 | — |
-| java | 100.0% | 80.0% | 16 | 0 | 4 | 20 | — |
+| java | 100.0% | 81.0% | 17 | 0 | 4 | 21 | — |
 | julia | 100.0% | 73.3% | 11 | 0 | 4 | 15 | — |
 | kotlin | 92.3% | 63.2% | 12 | 1 | 7 | 19 | — |
 | lua | 100.0% | 15.4% | 2 | 0 | 11 | 13 | — |
 | objc | 100.0% | 46.2% | 6 | 0 | 7 | 13 | — |
 | ocaml | 100.0% | 8.3% | 1 | 0 | 11 | 12 | — |
-| php | 100.0% | 57.9% | 11 | 0 | 8 | 19 | — |
-| pts-javascript | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
-| python | 100.0% | 60.0% | 9 | 0 | 6 | 15 | 15/15 |
+| php | 100.0% | 65.2% | 15 | 0 | 8 | 23 | — |
+| pts-javascript | 100.0% | 100.0% | 15 | 0 | 0 | 15 | — |
+| python | 100.0% | 68.4% | 13 | 0 | 6 | 19 | 15/15 |
 | r | 100.0% | 100.0% | 11 | 0 | 0 | 11 | — |
 | ruby | 100.0% | 100.0% | 11 | 0 | 0 | 11 | 11/11 |
-| rust | 100.0% | 64.3% | 9 | 0 | 5 | 14 | — |
+| rust | 100.0% | 83.3% | 20 | 0 | 4 | 24 | 23/23 |
 | scala | 100.0% | 100.0% | 7 | 0 | 0 | 7 | — |
 | solidity | 33.3% | 7.7% | 1 | 2 | 12 | 13 | — |
 | swift | 81.8% | 64.3% | 9 | 2 | 5 | 14 | 9/9 |
 | tsx | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
 | verilog | 0.0% | 0.0% | 0 | 0 | 4 | 4 | — |
-| zig | 66.7% | 13.3% | 2 | 1 | 13 | 15 | — |
+| zig | 100.0% | 13.3% | 2 | 0 | 13 | 15 | — |
 
 **By resolution mode (all languages):**
 
 | Mode | Resolved | Expected | Recall |
 |------|--------:|---------:|-------:|
-| receiver-typed | 35 | 112 | 31.3% |
-| module-function | 46 | 112 | 41.1% |
+| receiver-typed | 39 | 117 | 33.3% |
+| module-function | 49 | 115 | 42.6% |
 | static | 82 | 97 | 84.5% |
-| same-file | 68 | 90 | 75.6% |
-| interface-dispatched | 22 | 22 | 100.0% |
-| dynamic | 16 | 16 | 100.0% |
-| class-inheritance | 8 | 12 | 66.7% |
+| same-file | 69 | 91 | 75.8% |
+| interface-dispatched | 24 | 24 | 100.0% |
+| dynamic | 17 | 17 | 100.0% |
+| class-inheritance | 12 | 16 | 75.0% |
 | callback | 7 | 7 | 100.0% |
 | pts-spread | 4 | 4 | 100.0% |
 | pts-define-property | 3 | 3 | 100.0% |
@@ -726,7 +726,8 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | pts-for-of | 2 | 2 | 100.0% |
 | pts-set | 2 | 2 | 100.0% |
 | pts-array-from | 2 | 2 | 100.0% |
-| trait-dispatch | 0 | 2 | 0.0% |
+| pts-dispatch-table | 2 | 2 | 100.0% |
+| trait-dispatch | 2 | 2 | 100.0% |
 | define-property | 1 | 1 | 100.0% |
 | defineProperty-accessor | 1 | 1 | 100.0% |
 | package-function | 1 | 1 | 100.0% |

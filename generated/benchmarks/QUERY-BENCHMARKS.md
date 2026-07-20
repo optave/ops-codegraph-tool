@@ -5,6 +5,8 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
+| 3.16.0 | native | 9.3 ↓72% | 9.5 ↓71% | 9.6 ↓71% | 5.2 ↑4% | 5.6 ↑8% | 5.6 ↑8% | 12.2ms ↑45% |
+| 3.16.0 | wasm | 11.6 ↓75% | 12.3 ↓74% | 12.6 ↓74% | 5.6 ↑19% | 5.6 ↑14% | 5.6 ↑14% | 10.9ms ↓9% |
 | 3.15.0 | native | 32.8 ↓20% | 33.2 ↓20% | 33 ↓20% | 5 ↓17% | 5.2 ↓17% | 5.2 ↓15% | 8.4ms ↓7% |
 | 3.15.0 | wasm | 46.7 ↓17% | 47.3 ↓17% | 47.8 ↓15% | 4.7 ↓16% | 4.9 ↓12% | 4.9 ↓12% | 12ms ↑24% |
 | 3.13.0 | native | 41 ↑8% | 41.3 ↑10% | 41.3 ↑10% | 6 ~ | 6.3 ~ | 6.1 ↓8% | 9ms ↓24% |
@@ -67,37 +69,37 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.15.0 | **Date:** 2026-06-23
+**Version:** 3.16.0 | **Date:** 2026-07-20
 
 #### Native (Rust)
 
-**Targets:** hub=`buildGraph`, mid=`depth`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`isNpmGlobalModulesRoot`, leaf=`NativeDatabase.buildGraph`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 32.8ms |
-| fnDeps depth 3 | 33.2ms |
-| fnDeps depth 5 | 33ms |
-| fnImpact depth 1 | 5ms |
-| fnImpact depth 3 | 5.2ms |
-| fnImpact depth 5 | 5.2ms |
-| diffImpact latency | 8.4ms |
+| fnDeps depth 1 | 9.3ms |
+| fnDeps depth 3 | 9.5ms |
+| fnDeps depth 5 | 9.6ms |
+| fnImpact depth 1 | 5.2ms |
+| fnImpact depth 3 | 5.6ms |
+| fnImpact depth 5 | 5.6ms |
+| diffImpact latency | 12.2ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 #### WASM
 
-**Targets:** hub=`buildGraph`, mid=`depth`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`isNpmGlobalModulesRoot`, leaf=`NativeDatabase.buildGraph`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 46.7ms |
-| fnDeps depth 3 | 47.3ms |
-| fnDeps depth 5 | 47.8ms |
-| fnImpact depth 1 | 4.7ms |
-| fnImpact depth 3 | 4.9ms |
-| fnImpact depth 5 | 4.9ms |
-| diffImpact latency | 12ms |
+| fnDeps depth 1 | 11.6ms |
+| fnDeps depth 3 | 12.3ms |
+| fnDeps depth 5 | 12.6ms |
+| fnImpact depth 1 | 5.6ms |
+| fnImpact depth 3 | 5.6ms |
+| fnImpact depth 5 | 5.6ms |
+| diffImpact latency | 10.9ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
@@ -120,6 +122,56 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.16.0",
+    "date": "2026-07-20",
+    "wasm": {
+      "targets": {
+        "hub": "buildGraph",
+        "hubFile": "src/domain/graph/builder/pipeline.ts",
+        "mid": "isNpmGlobalModulesRoot",
+        "leaf": "NativeDatabase.buildGraph"
+      },
+      "fnDeps": {
+        "depth1Ms": 11.6,
+        "depth3Ms": 12.3,
+        "depth5Ms": 12.6
+      },
+      "fnImpact": {
+        "depth1Ms": 5.6,
+        "depth3Ms": 5.6,
+        "depth5Ms": 5.6
+      },
+      "diffImpact": {
+        "latencyMs": 10.9,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "buildGraph",
+        "hubFile": "src/domain/graph/builder/pipeline.ts",
+        "mid": "isNpmGlobalModulesRoot",
+        "leaf": "NativeDatabase.buildGraph"
+      },
+      "fnDeps": {
+        "depth1Ms": 9.3,
+        "depth3Ms": 9.5,
+        "depth5Ms": 9.6
+      },
+      "fnImpact": {
+        "depth1Ms": 5.2,
+        "depth3Ms": 5.6,
+        "depth5Ms": 5.6
+      },
+      "diffImpact": {
+        "latencyMs": 12.2,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.15.0",
     "date": "2026-06-23",
