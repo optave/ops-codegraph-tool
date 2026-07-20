@@ -162,7 +162,18 @@ export function auditData(
   }
 
   if (results.length === 0) {
-    return { target, kind: explained.kind as 'function' | 'file', functions: [] };
+    // `found` reflects whether the target exists in the graph at all -- check
+    // the pre-filter `explained.results`, not the post `--file`/`--kind` filtered
+    // `results`. Otherwise a real, tracked function filtered out entirely by
+    // e.g. `--file src/other.js` would be misreported as "not found" (the same
+    // bug this PR fixes for barrel files, reachable via a different input shape).
+    const foundInGraph = explained.results.length > 0;
+    return {
+      target,
+      kind: explained.kind as 'function' | 'file',
+      functions: [],
+      found: foundInGraph ? undefined : false,
+    };
   }
 
   // 2. Open DB for enrichment
