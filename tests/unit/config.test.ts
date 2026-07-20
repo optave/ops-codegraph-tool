@@ -440,18 +440,17 @@ describe('applyEnvOverrides', () => {
     expect(config.llm.provider).toBe('openai');
   });
 
-  it.each([
-    'native',
-    'wasm',
-    'auto',
-  ] as const)('overrides build.engine from env when set to "%s"', (engine) => {
-    process.env.CODEGRAPH_ENGINE = engine;
-    const config = applyEnvOverrides({
-      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
-      build: { engine: 'auto', fastSkipDiag: false },
-    });
-    expect(config.build.engine).toBe(engine);
-  });
+  it.each(['native', 'wasm', 'auto'] as const)(
+    'overrides build.engine from env when set to "%s"',
+    (engine) => {
+      process.env.CODEGRAPH_ENGINE = engine;
+      const config = applyEnvOverrides({
+        llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+        build: { engine: 'auto', fastSkipDiag: false },
+      });
+      expect(config.build.engine).toBe(engine);
+    },
+  );
 
   it('warns and falls back to "auto" when CODEGRAPH_ENGINE is invalid', () => {
     process.env.CODEGRAPH_ENGINE = 'natve';
