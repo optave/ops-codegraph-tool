@@ -164,7 +164,10 @@ describe('track-edits.sh Windows path normalization', () => {
   it.each([
     ['live hook', HOOK_PATH],
     ['docs example', DOCS_HOOK_PATH],
-  ])('%s: leaves a POSIX path with a literal backslash in the filename untouched', (_label, hookPath) => {
-    expect(normalize(hookPath, '/tmp/proj/weird\\name.ts')).toBe('/tmp/proj/weird\\name.ts');
-  });
+  ])(
+    '%s: leaves a POSIX path with a literal backslash in the filename untouched',
+    (_label, hookPath) => {
+      expect(normalize(hookPath, '/tmp/proj/weird\\name.ts')).toBe('/tmp/proj/weird\\name.ts');
+    },
+  );
 });
