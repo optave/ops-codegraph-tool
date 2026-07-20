@@ -279,6 +279,15 @@ describe('auditData — edge cases', () => {
     expect(data.found).not.toBe(false);
   });
 
+  test('--file filter removing every match does not set found: false', () => {
+    // buildGraph exists in src/builder.js, not src/other.js -- the --file
+    // filter legitimately empties the result set, but the symbol IS in the
+    // graph, so this must not be reported as "not found".
+    const data = auditData('buildGraph', dbPath, { file: 'src/other.js' });
+    expect(data.functions).toEqual([]);
+    expect(data.found).not.toBe(false);
+  });
+
   test('function with no complexity row has null health values', () => {
     const data = auditData('formatOutput', dbPath);
     const fn = data.functions.find((f) => f.name === 'formatOutput');
