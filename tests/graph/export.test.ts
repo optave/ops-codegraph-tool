@@ -258,6 +258,34 @@ describe('exportJSON', () => {
     expect(data.edges.length).toBeGreaterThanOrEqual(1);
     db.close();
   });
+
+  it('returns function-level nodes and edges with fileLevel: false', () => {
+    const db = createTestDb();
+    const fn = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fn2 = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fn, fn2, 'calls');
+
+    const data = exportJSON(db, { fileLevel: false });
+    expect(data.nodes.every((n) => n.kind !== 'file')).toBe(true);
+    expect(data.nodes.some((n) => n.name === 'doWork')).toBe(true);
+    expect(data.edges.some((e) => e.source === fn && e.target === fn2)).toBe(true);
+  });
+
+  it('produces different output for fileLevel vs functions', () => {
+    const db = createTestDb();
+    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    insertEdge(db, a, b, 'imports');
+    const fn = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fn2 = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fn, fn2, 'calls');
+
+    const fileLevel = exportJSON(db);
+    const functionLevel = exportJSON(db, { fileLevel: false });
+    expect(fileLevel.nodes.every((n) => n.kind === 'file')).toBe(true);
+    expect(functionLevel.nodes.some((n) => n.kind === 'function')).toBe(true);
+    db.close();
+  });
 });
 
 describe('exportGraphML', () => {
@@ -357,7 +385,7 @@ describe('exportGraphSON', () => {
     const fn2 = insertNode(db, 'helper', 'function', 'src/b.js', 10);
     insertEdge(db, fn, fn2, 'calls');
 
-    const data = exportGraphSON(db);
+    const data = exportGraphSON(db, { fileLevel: false });
     const vertex = data.vertices.find((v) => v.properties.name[0].value === 'doWork');
     expect(vertex).toBeDefined();
     expect(vertex.properties.name).toEqual([{ id: 0, value: 'doWork' }]);
@@ -371,7 +399,7 @@ describe('exportGraphSON', () => {
     const fn2 = insertNode(db, 'helper', 'function', 'src/b.js', 10);
     insertEdge(db, fn, fn2, 'calls');
 
-    const data = exportGraphSON(db);
+    const data = exportGraphSON(db, { fileLevel: false });
     expect(data.edges.length).toBeGreaterThanOrEqual(1);
     const edge = data.edges[0];
     expect(edge).toHaveProperty('inV');
@@ -387,10 +415,27 @@ describe('exportGraphSON', () => {
     const fn2 = insertNode(db, 'helper', 'function', 'src/b.js', 10);
     insertEdge(db, fn, fn2, 'calls');
 
-    const data = exportGraphSON(db);
+    const data = exportGraphSON(db, { fileLevel: false });
     const edge = data.edges[0];
     expect(edge.properties).toHaveProperty('confidence');
     expect(edge.properties.confidence).toBe(1.0);
+    db.close();
+  });
+
+  it('produces different output for fileLevel vs functions', () => {
+    const db = createTestDb();
+    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    insertEdge(db, a, b, 'imports');
+    const fn = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fn2 = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fn, fn2, 'calls');
+
+    const fileLevel = exportGraphSON(db);
+    const functionLevel = exportGraphSON(db, { fileLevel: false });
+    expect(fileLevel.vertices.every((v) => v.label === 'file')).toBe(true);
+    expect(functionLevel.vertices.some((v) => v.label === 'function')).toBe(true);
+    expect(functionLevel.vertices.every((v) => v.label !== 'file')).toBe(true);
     db.close();
   });
 });

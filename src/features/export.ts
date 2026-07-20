@@ -331,26 +331,73 @@ export function exportJSON(
   db: BetterSqlite3Database,
   opts: ExportOpts = {},
 ): { nodes: unknown[]; edges: unknown[] } {
+  const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
   const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
 
-  let nodes = db
-    .prepare(`
-    SELECT id, name, kind, file, line FROM nodes WHERE kind = 'file'
-  `)
-    .all() as Array<{ id: number; name: string; kind: string; file: string; line: number }>;
-  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
+  if (fileLevel) {
+    let nodes = db
+      .prepare(`
+      SELECT id, name, kind, file, line FROM nodes WHERE kind = 'file'
+    `)
+      .all() as Array<{ id: number; name: string; kind: string; file: string; line: number }>;
+    if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
-  let edges = db
-    .prepare(`
-    SELECT DISTINCT n1.file AS source, n2.file AS target, e.kind, e.confidence
-    FROM edges e
-    JOIN nodes n1 ON e.source_id = n1.id
-    JOIN nodes n2 ON e.target_id = n2.id
-    WHERE n1.file != n2.file AND e.confidence >= ?
-  `)
-    .all(minConf) as Array<{ source: string; target: string; kind: string; confidence: number }>;
-  if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
+    let edges = db
+      .prepare(`
+      SELECT DISTINCT n1.file AS source, n2.file AS target, e.kind, e.confidence
+      FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id
+      JOIN nodes n2 ON e.target_id = n2.id
+      WHERE n1.file != n2.file AND e.confidence >= ?
+    `)
+      .all(minConf) as Array<{ source: string; target: string; kind: string; confidence: number }>;
+    if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
+
+    const base = { nodes, edges };
+    return paginateResult(base, 'edges', { limit: opts.limit, offset: opts.offset }) as {
+      nodes: unknown[];
+      edges: unknown[];
+    };
+  }
+
+  const { edges: fnEdges } = loadFunctionLevelEdges(db, {
+    noTests,
+    minConfidence: opts.minConfidence,
+  });
+  const nodeMap = new Map<
+    number,
+    { id: number; name: string; kind: string; file: string; line: number; role: string | null }
+  >();
+  for (const e of fnEdges) {
+    if (!nodeMap.has(e.source_id)) {
+      nodeMap.set(e.source_id, {
+        id: e.source_id,
+        name: e.source_name,
+        kind: e.source_kind,
+        file: e.source_file,
+        line: e.source_line,
+        role: e.source_role,
+      });
+    }
+    if (!nodeMap.has(e.target_id)) {
+      nodeMap.set(e.target_id, {
+        id: e.target_id,
+        name: e.target_name,
+        kind: e.target_kind,
+        file: e.target_file,
+        line: e.target_line,
+        role: e.target_role,
+      });
+    }
+  }
+  const nodes = [...nodeMap.values()];
+  const edges = fnEdges.map((e) => ({
+    source: e.source_id,
+    target: e.target_id,
+    kind: e.edge_kind,
+    confidence: e.confidence,
+  }));
 
   const base = { nodes, edges };
   return paginateResult(base, 'edges', { limit: opts.limit, offset: opts.offset }) as {
@@ -384,64 +431,112 @@ export function exportGraphSON(
   db: BetterSqlite3Database,
   opts: ExportOpts = {},
 ): { vertices: unknown[]; edges: unknown[] } {
+  const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
   const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
 
-  let nodes = db
-    .prepare(`
-    SELECT id, name, kind, file, line, role FROM nodes
-    WHERE kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant', 'file')
-  `)
-    .all() as Array<{
-    id: number;
-    name: string;
-    kind: string;
-    file: string;
-    line: number | null;
-    role: string | null;
+  let vertices: Array<{ id: unknown; label: string; properties: Record<string, unknown> }>;
+  let gEdges: Array<{
+    id: unknown;
+    label: string;
+    inV: unknown;
+    outV: unknown;
+    properties: Record<string, unknown>;
   }>;
-  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
-  let edges = db
-    .prepare(`
-    SELECT e.rowid AS id, n1.id AS outV, n2.id AS inV, e.kind, e.confidence
-    FROM edges e
-    JOIN nodes n1 ON e.source_id = n1.id
-    JOIN nodes n2 ON e.target_id = n2.id
-    WHERE e.confidence >= ?
-  `)
-    .all(minConf) as Array<{
-    id: number;
-    outV: number;
-    inV: number;
-    kind: string;
-    confidence: number;
-  }>;
-  if (noTests) {
+  if (fileLevel) {
+    const { edges: fileEdges } = loadFileLevelEdges(db, {
+      noTests,
+      minConfidence: opts.minConfidence,
+      includeKind: true,
+      includeConfidence: true,
+    });
+    const filesInvolved = new Set<string>();
+    for (const e of fileEdges) {
+      filesInvolved.add(e.source);
+      filesInvolved.add(e.target);
+    }
+    const fileNodes = db
+      .prepare(`SELECT id, name, file, line FROM nodes WHERE kind = 'file'`)
+      .all() as Array<{ id: number; name: string; file: string; line: number | null }>;
+    const idByFile = new Map(
+      fileNodes.filter((n) => filesInvolved.has(n.file)).map((n) => [n.file, n]),
+    );
+
+    vertices = [...idByFile.values()].map((n) => ({
+      id: n.id,
+      label: 'file',
+      properties: {
+        name: [{ id: 0, value: n.name }],
+        file: [{ id: 0, value: n.file }],
+        ...(n.line != null ? { line: [{ id: 0, value: n.line }] } : {}),
+      },
+    }));
+
+    gEdges = fileEdges
+      .filter((e) => idByFile.has(e.source) && idByFile.has(e.target))
+      .map((e, i) => ({
+        id: i,
+        label: e.edge_kind ?? 'edge',
+        inV: idByFile.get(e.target)?.id,
+        outV: idByFile.get(e.source)?.id,
+        properties: { confidence: e.confidence },
+      }));
+  } else {
+    let nodes = db
+      .prepare(`
+      SELECT id, name, kind, file, line, role FROM nodes
+      WHERE kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')
+    `)
+      .all() as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      role: string | null;
+    }>;
+    if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
+
+    let edges = db
+      .prepare(`
+      SELECT e.rowid AS id, n1.id AS outV, n2.id AS inV, e.kind, e.confidence
+      FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id
+      JOIN nodes n2 ON e.target_id = n2.id
+      WHERE e.confidence >= ?
+    `)
+      .all(minConf) as Array<{
+      id: number;
+      outV: number;
+      inV: number;
+      kind: string;
+      confidence: number;
+    }>;
     const nodeIds = new Set(nodes.map((n) => n.id));
     edges = edges.filter((e) => nodeIds.has(e.outV) && nodeIds.has(e.inV));
+
+    vertices = nodes.map((n) => ({
+      id: n.id,
+      label: n.kind,
+      properties: {
+        name: [{ id: 0, value: n.name }],
+        file: [{ id: 0, value: n.file }],
+        ...(n.line != null ? { line: [{ id: 0, value: n.line }] } : {}),
+        ...(n.role ? { role: [{ id: 0, value: n.role }] } : {}),
+      },
+    }));
+
+    gEdges = edges.map((e) => ({
+      id: e.id,
+      label: e.kind,
+      inV: e.inV,
+      outV: e.outV,
+      properties: {
+        confidence: e.confidence,
+      },
+    }));
   }
-
-  const vertices = nodes.map((n) => ({
-    id: n.id,
-    label: n.kind,
-    properties: {
-      name: [{ id: 0, value: n.name }],
-      file: [{ id: 0, value: n.file }],
-      ...(n.line != null ? { line: [{ id: 0, value: n.line }] } : {}),
-      ...(n.role ? { role: [{ id: 0, value: n.role }] } : {}),
-    },
-  }));
-
-  const gEdges = edges.map((e) => ({
-    id: e.id,
-    label: e.kind,
-    inV: e.inV,
-    outV: e.outV,
-    properties: {
-      confidence: e.confidence,
-    },
-  }));
 
   const base = { vertices, edges: gEdges };
   return paginateResult(base, 'edges', { limit: opts.limit, offset: opts.offset }) as {
