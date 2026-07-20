@@ -106,85 +106,89 @@ async function buildAndReadEdgesTo(
 }
 
 describe('#1778: .call/.apply/.bind reflection tagging — engine parity', () => {
-  it.each(
-    ENGINES,
-  )('%s: greet.call(ctx) with NO prior direct call resolves dyn=1 (minimal repro, no dedup collision)', async (engine) => {
-    // Exactly the issue's own minimal repro: no direct call to `greet` exists
-    // anywhere, so the dedup-collision path in emitDirectCallEdgesForCall never
-    // fires — this is the plain, uncomplicated case the #1693 fix wrongly broke.
-    const edges = await buildAndReadEdgesTo(
-      {
-        'index.js': [
-          'export function greet(name) { return name; }',
-          "export function runCall(ctx) { return greet.call(ctx, 'world'); }",
-          '',
-        ].join('\n'),
-      },
-      engine,
-      'greet',
-    );
-    expect(edges).toHaveLength(1);
-    expect(edges[0]).toMatchObject({ source: 'runCall', target: 'greet', confidence: 1 });
-    expect(edges[0].dynamic).toBe(1);
-  });
+  it.each(ENGINES)(
+    '%s: greet.call(ctx) with NO prior direct call resolves dyn=1 (minimal repro, no dedup collision)',
+    async (engine) => {
+      // Exactly the issue's own minimal repro: no direct call to `greet` exists
+      // anywhere, so the dedup-collision path in emitDirectCallEdgesForCall never
+      // fires — this is the plain, uncomplicated case the #1693 fix wrongly broke.
+      const edges = await buildAndReadEdgesTo(
+        {
+          'index.js': [
+            'export function greet(name) { return name; }',
+            "export function runCall(ctx) { return greet.call(ctx, 'world'); }",
+            '',
+          ].join('\n'),
+        },
+        engine,
+        'greet',
+      );
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toMatchObject({ source: 'runCall', target: 'greet', confidence: 1 });
+      expect(edges[0].dynamic).toBe(1);
+    },
+  );
 
-  it.each(
-    ENGINES,
-  )('%s: direct f() followed by f.call({}) to the same target dedups to a single dyn=0 edge (#1687)', async (engine) => {
-    // The original #1687 scenario: a direct call and a reflection-style call to
-    // the SAME target from the SAME caller/scope. Must collapse to ONE edge
-    // (no double-edge emission) and that edge must be dyn=0, matching native's
-    // plain first-recorded-wins dedup (the direct call is recorded first, in
-    // true source order, and the later reflection call must not flip it).
-    const edges = await buildAndReadEdgesTo(
-      { 'index.js': ['function f() {}', 'f();', 'f.call({});', ''].join('\n') },
-      engine,
-      'f',
-    );
-    expect(edges).toHaveLength(1);
-    expect(edges[0].dynamic).toBe(0);
-  });
+  it.each(ENGINES)(
+    '%s: direct f() followed by f.call({}) to the same target dedups to a single dyn=0 edge (#1687)',
+    async (engine) => {
+      // The original #1687 scenario: a direct call and a reflection-style call to
+      // the SAME target from the SAME caller/scope. Must collapse to ONE edge
+      // (no double-edge emission) and that edge must be dyn=0, matching native's
+      // plain first-recorded-wins dedup (the direct call is recorded first, in
+      // true source order, and the later reflection call must not flip it).
+      const edges = await buildAndReadEdgesTo(
+        { 'index.js': ['function f() {}', 'f();', 'f.call({});', ''].join('\n') },
+        engine,
+        'f',
+      );
+      expect(edges).toHaveLength(1);
+      expect(edges[0].dynamic).toBe(0);
+    },
+  );
 
-  it.each(
-    ENGINES,
-  )('%s: f.call({}) followed by direct f() to the same target dedups to a single dyn=1 edge (reverse-order sanity)', async (engine) => {
-    // Mirror of the #1687 fixture with the two call sites swapped: the
-    // reflection call is now genuinely first in source order, so it should win
-    // the dedup and the later direct call must not downgrade it.
-    const edges = await buildAndReadEdgesTo(
-      { 'index.js': ['function f() {}', 'f.call({});', 'f();', ''].join('\n') },
-      engine,
-      'f',
-    );
-    expect(edges).toHaveLength(1);
-    expect(edges[0].dynamic).toBe(1);
-  });
+  it.each(ENGINES)(
+    '%s: f.call({}) followed by direct f() to the same target dedups to a single dyn=1 edge (reverse-order sanity)',
+    async (engine) => {
+      // Mirror of the #1687 fixture with the two call sites swapped: the
+      // reflection call is now genuinely first in source order, so it should win
+      // the dedup and the later direct call must not downgrade it.
+      const edges = await buildAndReadEdgesTo(
+        { 'index.js': ['function f() {}', 'f.call({});', 'f();', ''].join('\n') },
+        engine,
+        'f',
+      );
+      expect(edges).toHaveLength(1);
+      expect(edges[0].dynamic).toBe(1);
+    },
+  );
 
-  it.each(
-    ENGINES,
-  )('%s: bare decorator before call-expression decorator still upgrades to dyn=1 (#1683 regression guard)', async (engine) => {
-    // Regression guard for the ORIGINAL motivating case of the dynZeroEdgeRows
-    // upgrade path: the WASM query path collects `@Log()` (dyn=0) before the
-    // bare `@Log` (dyn=1) despite `@Log` appearing earlier in the source — the
-    // line-order comparison introduced by #1778's fix must still upgrade this
-    // to dyn=1, exactly as the pre-#1778 unconditional-upgrade logic did.
-    const edges = await buildAndReadEdgesTo(
-      {
-        'index.ts': [
-          'export function Log(target: unknown): void {}',
-          '',
-          '@Log',
-          'export class UserController {}',
-          '',
-          '@Log()',
-          'export class OrderController {}',
-          '',
-        ].join('\n'),
-      },
-      engine,
-      'Log',
-    );
-    expect(edges).toHaveLength(1);
-    expect(edges[0].dynamic).toBe(1);
-  });
+  it.each(ENGINES)(
+    '%s: bare decorator before call-expression decorator still upgrades to dyn=1 (#1683 regression guard)',
+    async (engine) => {
+      // Regression guard for the ORIGINAL motivating case of the dynZeroEdgeRows
+      // upgrade path: the WASM query path collects `@Log()` (dyn=0) before the
+      // bare `@Log` (dyn=1) despite `@Log` appearing earlier in the source — the
+      // line-order comparison introduced by #1778's fix must still upgrade this
+      // to dyn=1, exactly as the pre-#1778 unconditional-upgrade logic did.
+      const edges = await buildAndReadEdgesTo(
+        {
+          'index.ts': [
+            'export function Log(target: unknown): void {}',
+            '',
+            '@Log',
+            'export class UserController {}',
+            '',
+            '@Log()',
+            'export class OrderController {}',
+            '',
+          ].join('\n'),
+        },
+        engine,
+        'Log',
+      );
+      expect(edges).toHaveLength(1);
+      expect(edges[0].dynamic).toBe(1);
+    },
+  );
 });
