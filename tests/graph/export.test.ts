@@ -269,6 +269,7 @@ describe('exportJSON', () => {
     expect(data.nodes.every((n) => n.kind !== 'file')).toBe(true);
     expect(data.nodes.some((n) => n.name === 'doWork')).toBe(true);
     expect(data.edges.some((e) => e.source === fn && e.target === fn2)).toBe(true);
+    db.close();
   });
 
   it('produces different output for fileLevel vs functions', () => {
