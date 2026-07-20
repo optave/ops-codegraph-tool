@@ -109,7 +109,7 @@ jobs:
 
       - name: Run Automated AI Review
         id: automated-review
-        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342
+        uses: anthropics/claude-code-action@af0559ee4f514d1ef21826982bed13f7edc3c35e
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # claude-code-action v1 dropped the `model` input; model selection now goes
@@ -271,7 +271,7 @@ jobs:
 
       - name: Run Interactive AI Assistant
         id: interactive-claude
-        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342
+        uses: anthropics/claude-code-action@af0559ee4f514d1ef21826982bed13f7edc3c35e
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # claude-code-action v1 dropped the `model` input; model selection now goes
