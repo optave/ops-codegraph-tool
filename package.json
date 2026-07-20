@@ -154,7 +154,7 @@
     "@tree-sitter-grammars/tree-sitter-zig": "^1.1.2",
     "@types/better-sqlite3": "^7.6.13",
     "@vitest/coverage-v8": "^4.0.18",
-    "commit-and-tag-version": "^12.5",
+    "commit-and-tag-version": "^13.0",
     "husky": "^9.1",
     "tree-sitter-bash": "^0.25.1",
     "tree-sitter-c": "^0.24.1",
