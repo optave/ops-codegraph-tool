@@ -605,7 +605,7 @@ Generates an interactive HTML viewer powered by vis-network. Open in a browser f
 - Detail panel with metrics, callers, callees on node click
 
 ```bash
-codegraph plot --functions --color-by complexity --cluster-by community
+codegraph plot --functions --color-by complexity --cluster community
 ```
 
 ---
