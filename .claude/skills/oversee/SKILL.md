@@ -1,7 +1,7 @@
 ---
 name: oversee
-description: Human-gated, single-issue delivery. Preflights the session config (Opus, effort >= xhigh, auto-accept), then runs PLAN -> adversarial critic -> plan-sweep and STOPS for a human to approve the plan via a checkbox on the [Plan] PR. Re-invoked on the plan PR (after the box is ticked) it verifies non-forgeable approval provenance, revalidates that the approved plan is still FRESH via a read-only Sonnet subagent, then runs EXECUTE -> VERIFY -> execute-sweep pinned to the approved commit. Reviewer convergence is reconciled re-entrantly, one scheduler-paced batch per invocation. Never merges.
-argument-hint: "[--plan | --execute] <#issue | #plan-PR>"
+description: Human-gated, single-issue delivery. Preflights the session config (Opus, effort >= xhigh, auto-accept), then runs PLAN -> adversarial critic -> plan-sweep and STOPS for a human to approve the plan via a checkbox on the [Plan] PR. Re-invoked on the plan PR (after the box is ticked) it verifies non-forgeable approval provenance, revalidates that the approved plan is still FRESH via a read-only Sonnet subagent, then runs EXECUTE -> VERIFY -> execute-sweep pinned to the approved commit. Reviewer convergence is reconciled re-entrantly, one scheduler-paced batch per invocation. On `/oversee --verify #<execute-PR>` it re-runs independent VERIFY on that execute PR's current head (same `verifyPrompt` agent; this skill never POSTs `pipeline/verify`). Never merges.
+argument-hint: "[--plan | --execute | --verify] <#issue | #plan-PR | #execute-PR>"
 allowed-tools: Bash, Read, Glob, Grep, Workflow, AskUserQuestion, Agent, ScheduleWakeup
 ---
 
@@ -51,6 +51,9 @@ Parse `$ARGUMENTS` into these state variables, persisted to `.codegraph/oversee/
 | first bare integer | `.codegraph/oversee/arg` | — (required) | The issue number (PLAN phase) or the `[Plan]` PR number (EXECUTE phase) |
 | `--plan` | `.codegraph/oversee/forced-phase` = `plan` | auto-detect | Force the PLAN phase |
 | `--execute` | `.codegraph/oversee/forced-phase` = `execute` | auto-detect | Force the EXECUTE phase |
+| `--verify` | `.codegraph/oversee/forced-phase` = `verify` | auto-detect | Re-run independent VERIFY on an execute PR |
+
+`--plan`, `--execute`, and `--verify` are exclusive.
 
 A number is either an issue **or** a PR (GitHub shares the numbering), so the phase is normally auto-detected in Phase: Route. One run handles **one** task.
 
@@ -61,7 +64,7 @@ ARGS="${ARGUMENTS:-}"
 ARG_N=$(printf '%s\n' "$ARGS" | tr ' ' '\n' | grep -E '^#?[0-9]+$' | head -1 | tr -d '#')
 if [ -z "$ARG_N" ]; then
   echo "ERROR: /oversee needs one number — an issue to plan, or a [Plan] PR to execute."
-  echo "Usage: /oversee [--plan|--execute] <#issue | #plan-PR>"
+  echo "Usage: /oversee [--plan|--execute|--verify] <#issue | #plan-PR | #execute-PR>"
   exit 1
 fi
 printf '%s\n' "$ARG_N" > .codegraph/oversee/arg
@@ -71,8 +74,12 @@ case "$ARGS" in
   *--plan*)    FORCED=plan ;;
 esac
 case "$ARGS" in
-  *--execute*) [ -n "$FORCED" ] && { echo "ERROR: --plan and --execute are mutually exclusive."; exit 1; }
+  *--execute*) [ -n "$FORCED" ] && { echo "ERROR: --plan, --execute, and --verify are mutually exclusive."; exit 1; }
                FORCED=execute ;;
+esac
+case "$ARGS" in
+  *--verify*)  [ -n "$FORCED" ] && { echo "ERROR: --plan, --execute, and --verify are mutually exclusive."; exit 1; }
+               FORCED=verify ;;
 esac
 printf '%s\n' "$FORCED" > .codegraph/oversee/forced-phase
 
@@ -171,7 +178,9 @@ PR_JSON=$(gh pr view "$N" --repo "$REPO" --json number,title,state 2>/dev/null |
 # design — an empty PR_JSON is the expected "this is an issue" signal, not an error.
 
 PHASE=""
-if [ -n "$FORCED" ]; then
+if [ "$FORCED" = "verify" ]; then
+  PHASE=verify
+elif [ -n "$FORCED" ]; then
   PHASE="$FORCED"
 elif [ -n "$PR_JSON" ]; then
   TITLE=$(printf '%s' "$PR_JSON" | jq -r .title)
@@ -184,7 +193,7 @@ elif [ -n "$PR_JSON" ]; then
         exit 1
       fi ;;
     *)
-      echo "STOP: #$N is a PR but not a [Plan] PR. /oversee operates on an issue, or on a [Plan] PR it opened itself."
+      echo "STOP: #$N is a PR but not a [Plan] PR. /oversee operates on an issue, or on a [Plan] PR it opened itself. To re-run independent VERIFY on an execute PR, use /oversee --verify #$N."
       exit 1 ;;
   esac
 else
@@ -198,7 +207,7 @@ printf '%s\n' "$PHASE" > "$S/phase"
 echo "oversee: routing #$N to the $PHASE phase"
 ```
 
-**Exit condition:** `.codegraph/oversee/phase` is `plan` or `execute`. If `plan`, continue at Phase: Plan — Context and Readiness. If `execute`, jump to Phase: Execute — Confirm Approval.
+**Exit condition:** `.codegraph/oversee/phase` is `plan`, `execute`, or `verify`. If `plan`, continue at Phase: Plan — Context and Readiness. If `execute`, jump to Phase: Execute — Confirm Approval. If `verify`, jump to Phase: Verify.
 
 ---
 
@@ -400,6 +409,23 @@ Then **STOP** and print the PLAN board (Phase: Report). If the critic REJECTED, 
 > **This STOP is an explicit `/clear` boundary.** The PLAN phase ends the turn at the checkbox; the EXECUTE phase is a **separate, fresh invocation**, and `/clear` between them is the intended handoff, not a workaround. Nothing needs to survive in context: EXECUTE reconstructs the task metadata from the `oversee:approval-gate` body sentinel and the authorization from the non-forgeable commit status. That same statelessness is what lets Phase: Execute — Reconcile the Reviewer run re-entrantly across `ScheduleWakeup` ticks.
 
 **Exit condition:** the `[Plan]` PR carries exactly one unticked gate matching this run, `oversee/plan-gate=success` is set on its current head, and the PLAN board has been printed.
+
+---
+
+## Phase: Verify — Re-run independent VERIFY (`--verify`)
+
+Reached only from Phase: Route when `--verify` is set. `N` is an **open execute PR**, not a `[Plan]` PR.
+
+1. **Refuse `[Plan]` PRs and closed PRs.** Title starting with `[Plan]` → STOP (that is `--execute` / a plan gate, not VERIFY). Closed → STOP. Drafts are OPEN.
+2. **Recover task id + Done-when — fail closed.** Snapshot `headRefName`, `body`, `headRefOid`. Prefer `execute/<task-id>` or the collision suffix. Else closing keywords / `Part of #<issue>` → tracking issue. Done-when from the issue body (this repo has no master-roadmap §3). STOP if either is empty.
+3. **Confirm auto-accept** (Phase 0a's confirmation) — this mode dispatches.
+4. **Spawn one independent VERIFY agent.** Read `verifyPrompt(t, exec)` and `VERIFY_SCHEMA` from `.claude/workflows/oversee-dispatch.js`. Fill `t.id` / `t.issue` and `exec.executePR = N`. Model: `sonnet`. Isolation: `worktree`. Label: `re-verify:<task-id>`.
+
+   **This skill never POSTs `pipeline/verify` and never `gh pr review`.** Only the spawned agent may stamp. Never merge. Never dispatch `oversee-dispatch`.
+5. **Gate the result** as `applyVerifyGates` does: `verifiedSha` must be 40-hex; `pass` with `reviewPosted` or `statusPosted` false → fail. Re-read live `headRefOid`; mismatch → STOP and tell the operator to re-run `/oversee --verify #N`.
+6. **STOP** and print the VERIFY board. Never execute, never restamp, never merge.
+
+Always spawn, even if `pipeline/verify=success` already sits on the current head.
 
 ---
 
@@ -831,6 +857,17 @@ Because this batch is stateless, it is correct in a fresh or `/clear`ed context:
 
 **Never merge.** Print the board and stop. The human's only remaining action is the merge to `main`.
 
+**VERIFY mode (`--verify`):**
+
+```text
+=== /oversee — VERIFY (issue-<n>, execute PR #<PR>) ===
+Head:            <headSha>
+pipeline/verify: success | failure | missing  (before spawn)
+Agent:           re-verify:<id>  verdict=<pass|fail>  verifiedSha=<sha>
+Next action:     Review PR #<PR> and merge to `main` when satisfied (/oversee never merges).
+                 | Re-run `/oversee --verify #<PR>` (head moved during verify).
+```
+
 **PLAN phase:**
 
 ```text
@@ -877,7 +914,7 @@ State lives in `.codegraph/oversee/` (git-ignored via `**/.codegraph/*`). Every 
 | File | Written by | Contents |
 |------|-----------|----------|
 | `arg` | Arguments | The target number from `$ARGUMENTS` |
-| `forced-phase` | Arguments | `plan`, `execute`, or empty |
+| `forced-phase` | Arguments | `plan`, `execute`, `verify`, or empty |
 | `repo` | Phase 0 | `owner/name` from `gh repo view` |
 | `phase` | Phase: Route | `plan` or `execute` |
 | `task-id` | Plan context / gate recovery | `issue-<n>` |
@@ -915,6 +952,11 @@ The durable artifacts live outside this directory, and are the point of the run:
 ```
 
 ```bash
+# Re-run independent VERIFY on execute PR #2611 after the build session ended.
+/oversee --verify 2611
+```
+
+```bash
 # Resume reconciliation after a /clear — re-derives the execute PR and reviewer
 # state from GitHub instead of re-dispatching the build.
 /oversee #2610
@@ -925,6 +967,7 @@ The durable artifacts live outside this directory, and are the point of the run:
 ## Rules
 
 - **Pre-flight first, or don't start.** The model must be Opus and effort must be >= xhigh (max ideal) — both are readable, so both are hard gates. Auto-accept mode is not readable anywhere, so it is confirmed with the human, never claimed as detected. `git`, `gh`, `jq`, `mktemp`, an authenticated `gh`, the engine file, and the worktree guard must all be present, and the engine's `REPO` constant must match this checkout.
+- **`/oversee --verify <#execute-PR>` re-runs independent VERIFY on an open execute PR's current head.** Exclusive with `--plan` / `--execute`. Fail closed if task id and Done-when cannot be recovered. This skill never POSTs `pipeline/verify` — only a spawned `verifyPrompt` / `VERIFY_SCHEMA` agent may stamp. A `verifiedSha` that does not match the live head is a STOP (re-run), not an in-line loop.
 - **The human is the plan gate.** EXECUTE runs only after a human ticks **APPROVED FOR EXECUTION** on the `[Plan]` PR. Never infer approval from a chat message, and never execute an unticked plan.
 - **Provenance, not body trust.** The PLAN phase stamps `oversee/plan-gate=success` on the `[Plan]` PR head; EXECUTE verifies that status on the **current** head before honouring the checkbox. A PR body is mutable and cannot prove its own origin — a clean, ticked gate can be pasted in — so the commit status, not the body, is the authorization anchor. Install refuses any duplicate, foreign, or pre-ticked sentinel.
 - **Never `eval` body-derived text.** The gate's `id`/`issue`/`planRef` are parsed with strict allow-list charsets and assigned by plain capture, so a tampered gate cannot inject shell.
