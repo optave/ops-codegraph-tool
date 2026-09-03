@@ -25,6 +25,8 @@
 
 import Database from 'better-sqlite3';
 
+type SqliteDatabase = InstanceType<typeof Database>;
+
 // Symbol kinds that represent a real invocable definition. Local variable
 // and constant bindings must never win hub selection just because they share
 // a candidate's name — mirrors CALLABLE_SYMBOL_KINDS in src/shared/kinds.ts.
@@ -92,62 +94,69 @@ interface RankedNodeRow extends NodeRow {
  * malformed build), rather than silently returning a name that resolves to
  * nothing downstream.
  */
-export function selectHubTargets(dbPath: string, pinnedCandidates: readonly string[] = []): HubTargets {
-	const db = new Database(dbPath, { readonly: true });
-	try {
-		const kindPlaceholders = HUB_CANDIDATE_KINDS.map(() => '?').join(', ');
+export function selectHubTargetsFromDb(
+	db: SqliteDatabase,
+	pinnedCandidates: readonly string[] = [],
+): HubTargets {
+	const kindPlaceholders = HUB_CANDIDATE_KINDS.map(() => '?').join(', ');
 
-		let hub: string | null = null;
-		let hubFile: string | null = null;
-		let hubLine: number | null = null;
-		let hubEndLine: number | null = null;
-		for (const candidate of pinnedCandidates) {
-			const row = db
-				.prepare(
-					`SELECT n.name, n.file, n.line, n.end_line FROM nodes n
+	let hub: string | null = null;
+	let hubFile: string | null = null;
+	let hubLine: number | null = null;
+	let hubEndLine: number | null = null;
+	for (const candidate of pinnedCandidates) {
+		const row = db
+			.prepare(
+				`SELECT n.name, n.file, n.line, n.end_line FROM nodes n
            JOIN edges e ON e.source_id = n.id OR e.target_id = n.id
            WHERE n.name = ? AND n.kind IN (${kindPlaceholders})
              AND n.file NOT LIKE '%test%' AND n.file NOT LIKE '%spec%'
            ORDER BY n.id ASC
            LIMIT 1`,
-				)
-				.get(candidate, ...HUB_CANDIDATE_KINDS) as NodeRow | undefined;
-			if (row) {
-				hub = row.name;
-				hubFile = row.file;
-				hubLine = row.line;
-				hubEndLine = row.end_line;
-				break;
-			}
+			)
+			.get(candidate, ...HUB_CANDIDATE_KINDS) as NodeRow | undefined;
+		if (row) {
+			hub = row.name;
+			hubFile = row.file;
+			hubLine = row.line;
+			hubEndLine = row.end_line;
+			break;
 		}
+	}
 
-		const rows = db
-			.prepare(
-				`SELECT n.id, n.name, n.file, n.line, n.end_line, COUNT(e.id) AS cnt
+	const rows = db
+		.prepare(
+			`SELECT n.id, n.name, n.file, n.line, n.end_line, COUNT(e.id) AS cnt
          FROM nodes n
          JOIN edges e ON e.source_id = n.id OR e.target_id = n.id
          WHERE n.kind IN (${kindPlaceholders})
            AND n.file NOT LIKE '%test%' AND n.file NOT LIKE '%spec%'
          GROUP BY n.id
          ORDER BY cnt DESC, n.id ASC`,
-			)
-			.all(...HUB_CANDIDATE_KINDS) as RankedNodeRow[];
+		)
+		.all(...HUB_CANDIDATE_KINDS) as RankedNodeRow[];
 
-		if (rows.length === 0) {
-			throw new Error('No nodes with edges found in graph');
-		}
+	if (rows.length === 0) {
+		throw new Error('No nodes with edges found in graph');
+	}
 
-		if (!hub) {
-			hub = rows[0].name;
-			hubFile = rows[0].file;
-			hubLine = rows[0].line;
-			hubEndLine = rows[0].end_line;
-		}
+	if (!hub) {
+		hub = rows[0].name;
+		hubFile = rows[0].file;
+		hubLine = rows[0].line;
+		hubEndLine = rows[0].end_line;
+	}
 
-		const mid = rows[Math.floor(rows.length / 2)].name;
-		const leaf = rows[rows.length - 1].name;
+	const mid = rows[Math.floor(rows.length / 2)].name;
+	const leaf = rows[rows.length - 1].name;
 
-		return { hub, hubFile: hubFile as string, mid, leaf, hubLine, hubEndLine };
+	return { hub, hubFile: hubFile as string, mid, leaf, hubLine, hubEndLine };
+}
+
+export function selectHubTargets(dbPath: string, pinnedCandidates: readonly string[] = []): HubTargets {
+	const db = new Database(dbPath, { readonly: true });
+	try {
+		return selectHubTargetsFromDb(db, pinnedCandidates);
 	} finally {
 		db.close();
 	}

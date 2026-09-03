@@ -758,6 +758,9 @@ function serializeExtractorOutput(
     ...(symbols.computedDispatchTableEvidence?.length
       ? { computedDispatchTableEvidence: symbols.computedDispatchTableEvidence }
       : {}),
+    ...(symbols.objectLiteralSites?.length
+      ? { objectLiteralSites: symbols.objectLiteralSites }
+      : {}),
   };
 }
 

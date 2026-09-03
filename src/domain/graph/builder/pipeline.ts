@@ -76,6 +76,7 @@ function initializeEngine(ctx: PipelineContext): void {
     // ctx.engineOpts itself consistent rather than leaving the field
     // permanently unset on this construction path (#2077).
     pointsToMaxIterations: ctx.config.analysis.pointsToMaxIterations,
+    correlatedPropertyEvidence: ctx.config.analysis.correlatedPropertyEvidence,
     // nativeDb and WAL callbacks are set later when NativeDatabase is opened
     // (deferred to skip overhead on no-op rebuilds).
     nativeDb: undefined,

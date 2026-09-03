@@ -12,6 +12,7 @@
 import { FRAMEWORK_ENTRY_PREFIXES } from '../../../graph/classifiers/roles.js';
 import { CALLABLE_SYMBOL_KINDS } from '../../../shared/kinds.js';
 import { computeConfidence, isSameLanguageFamily } from '../resolve.js';
+import { correlatedEvidenceKey } from '../resolver/points-to.js';
 import {
   attachConstructorTargets,
   isModuleScopedLanguage,
@@ -98,6 +99,41 @@ export function collectInvokedPropertyNames(
     }
   }
   return names;
+}
+
+/**
+ * #2088 — the receiver-CORRELATED counterpart of
+ * `collectInvokedPropertyNames`. For every member call `x.name(...)`, resolve
+ * `x` through the points-to map for the FILE THAT CALL IS IN to the
+ * object-literal allocation sites it may refer to, and record
+ * `${siteKey}|${name}` for each.
+ */
+export function collectInvokedPropertySites(
+  fileCalls: ReadonlyMap<
+    string,
+    Iterable<{
+      name: string;
+      receiver?: string;
+      dynamicKind?: string | null;
+      callerName?: string | null;
+    }>
+  >,
+  resolveReceiverSites: (
+    relPath: string,
+    receiver: string,
+    callerName: string | null,
+  ) => ReadonlyArray<string>,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const [relPath, calls] of fileCalls) {
+    for (const call of calls) {
+      if (!call.receiver || call.dynamicKind === 'value-ref') continue;
+      for (const siteKey of resolveReceiverSites(relPath, call.receiver, call.callerName ?? null)) {
+        keys.add(correlatedEvidenceKey(siteKey, call.name));
+      }
+    }
+  }
+  return keys;
 }
 
 /**

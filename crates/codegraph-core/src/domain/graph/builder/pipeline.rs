@@ -824,6 +824,7 @@ pub fn run_pipeline(
         &import_ctx,
         !change_result.is_full_build,
         config.analysis.points_to_max_iterations,
+        config.analysis.correlated_property_evidence,
     )
     .map_err(|e| format!("call edge insertion failed: {e}"))?;
 
@@ -2075,6 +2076,7 @@ fn build_and_insert_call_edges(
     import_ctx: &ImportEdgeContext,
     is_incremental: bool,
     max_iterations: u32,
+    correlation_enabled: bool,
 ) -> Result<(), String> {
     use crate::domain::graph::builder::stages::build_edges::*;
 
@@ -2152,6 +2154,7 @@ fn build_and_insert_call_edges(
                     dynamic_kind: c.dynamic_kind.clone(),
                     key_expr: c.key_expr.clone(),
                     accessor_read: c.accessor_read.clone(),
+                    object_literal_site: c.object_literal_site.clone(),
                 })
                 .collect(),
             imported_names,
@@ -2176,6 +2179,8 @@ fn build_and_insert_call_edges(
             object_prop_bindings: non_empty(&symbols.object_prop_bindings),
             computed_dispatch_table_evidence: non_empty(&symbols.computed_dispatch_table_evidence),
             new_expressions: non_empty(&symbols.new_expressions),
+            object_literal_sites: non_empty(&symbols.object_literal_sites),
+            call_assignments: non_empty(&symbols.call_assignments),
         });
     }
 
@@ -2185,6 +2190,15 @@ fn build_and_insert_call_edges(
     // view for repos built with the native engine too.
     import_edges::persist_invoked_property_names(conn, &file_entries)
         .map_err(|e| format!("invoked property name persistence failed: {e}"))?;
+    import_edges::persist_object_literal_sites(conn, &file_entries)
+        .map_err(|e| format!("object literal site persistence failed: {e}"))?;
+    // #2088: one Andersen pass for this file set, reused for persist AND
+    // call-edge emission — mirrors JS `prepareInvokedPropertySiteResolution`.
+    // Persist before the extra-SELECT so a later incremental rebuild's
+    // extra-SELECT is not vacuously empty.
+    let prep = prepare_invoked_property_site_resolution(&file_entries, &all_nodes, max_iterations);
+    import_edges::persist_invoked_property_sites(conn, &file_entries, &prep.sites_by_file)
+        .map_err(|e| format!("invoked property site persistence failed: {e}"))?;
 
     // Read back the now-current whole-graph view (includes the fresh rows
     // just written above) so this pass's own call-edge resolution sees
@@ -2198,12 +2212,22 @@ fn build_and_insert_call_edges(
         })
         .unwrap_or_default();
 
-    let computed_edges = build_call_edges(
+    let extra_invoked_property_sites: Vec<String> = conn
+        .prepare("SELECT site_key || '|' || name FROM invoked_property_sites")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(0))
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    let computed_edges = build_call_edges_prepared(
         file_entries,
         all_nodes,
         builtin_receivers,
-        max_iterations,
         Some(extra_invoked_property_names),
+        Some(extra_invoked_property_sites),
+        Some(correlation_enabled),
+        prep,
     );
     insert_call_edge_rows(conn, &computed_edges)
 }

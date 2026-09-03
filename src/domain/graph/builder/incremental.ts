@@ -36,13 +36,17 @@ import {
 } from '../resolve.js';
 import {
   buildPointsToMapForFile,
+  correlatedEvidenceKey,
+  objectLiteralSiteKey,
   type PointsToMap,
+  resolveSitesViaPointsTo,
   resolveViaPointsTo,
 } from '../resolver/points-to.js';
 import type { ResolvedCandidate } from '../resolver/strategy.js';
 import {
   type CallNodeLookup,
   collectInvokedPropertyNames,
+  collectInvokedPropertySites,
   findCaller,
   isModuleScopedLanguage,
   resolveCallTargets,
@@ -351,6 +355,7 @@ function rebuildReverseDepEdges(
   aliases: PathAliases,
   // #2077: forwarded to buildCallEdges — see its own param doc.
   maxIterations?: number,
+  correlationEnabled = true,
 ): number {
   const fileNodeRow = stmts.getNodeId.get(depRelPath, 'file', depRelPath, 0);
   if (!fileNodeRow) return 0;
@@ -389,6 +394,7 @@ function rebuildReverseDepEdges(
     importedOriginalNames,
     maxIterations,
     namespaceImports,
+    correlationEnabled,
   );
   edgesAdded += buildClassHierarchyEdges(
     db,
@@ -555,6 +561,36 @@ function persistInvokedPropertyNamesForFile(
   deleteStmt.run(relPath);
   for (const name of ownNames) {
     insertStmt.run(relPath, name);
+  }
+}
+
+function persistObjectLiteralSitesForFile(
+  db: BetterSqlite3Database,
+  relPath: string,
+  symbols: ExtractorOutput,
+): void {
+  db.prepare('DELETE FROM object_literal_sites WHERE file = ?').run(relPath);
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO object_literal_sites (file, site, escapes) VALUES (?, ?, ?)',
+  );
+  for (const site of symbols.objectLiteralSites ?? []) {
+    insert.run(relPath, site.site, site.escapes ? 1 : 0);
+  }
+}
+
+function persistInvokedPropertySitesForFile(
+  db: BetterSqlite3Database,
+  relPath: string,
+  keys: ReadonlySet<string>,
+): void {
+  db.prepare('DELETE FROM invoked_property_sites WHERE file = ?').run(relPath);
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO invoked_property_sites (site_key, name, file) VALUES (?, ?, ?)',
+  );
+  for (const key of keys) {
+    const sep = key.lastIndexOf('|');
+    if (sep < 0) continue;
+    insert.run(key.slice(0, sep), key.slice(sep + 1), relPath);
   }
 }
 
@@ -1510,6 +1546,7 @@ function buildCallEdges(
   // #2387: local bindings that name a whole module (Python's `import x as y`),
   // so `y.f()` resolves f inside that module rather than resolving to nothing.
   namespaceImports?: ReadonlyMap<string, string>,
+  correlationEnabled = true,
 ): number {
   const typeMap = buildIncrementalTypeMap(symbols);
   const seenCallEdges = new Set<string>();
@@ -1520,7 +1557,7 @@ function buildCallEdges(
   const lookup = makeIncrementalLookup(db, stmts);
   // Phase 8.3 pts map (#1852) — same per-file construction the full-build
   // JS path uses (buildPointsToMapForFile, shared via resolver/points-to.js).
-  const ptsMap = buildPointsToMapForFile(symbols, importedNames, maxIterations);
+  const ptsMap = buildPointsToMapForFile(symbols, importedNames, maxIterations, relPath);
   const fnRefBindingLhs = new Set(symbols.fnRefBindings?.map((b) => b.lhs) ?? []);
   // #2087: this file's own calls, unioned with every other file's persisted
   // evidence (invoked_property_names) — closes the false-negative window
@@ -1539,6 +1576,55 @@ function buildCallEdges(
   // exported API); a cross-file case missed on a scoped rebuild recovers on
   // the next full build. See the fuller trade-off note in stages/build-edges.ts.
   const computedDispatchTableEvidence = new Set(symbols.computedDispatchTableEvidence ?? []);
+
+  function candidateScopesFor(callerName: string | null): readonly string[] {
+    const scoped = callerName ?? '<module>';
+    const lastDotIdx = callerName?.lastIndexOf('.') ?? -1;
+    const afterLastDot = lastDotIdx >= 0 ? callerName!.slice(lastDotIdx + 1) : null;
+    return [...new Set([scoped, ...(afterLastDot ? [afterLastDot] : []), '<module>'])];
+  }
+  const fileCallsWithCaller = new Map([
+    [
+      relPath,
+      symbols.calls.map((call) => ({
+        name: call.name,
+        receiver: call.receiver,
+        dynamicKind: call.dynamicKind,
+        callerName: findCaller(lookup, call, symbols.definitions, relPath, fileNodeRow).callerName,
+      })),
+    ],
+  ]);
+  const resolveReceiverSites = (_file: string, receiver: string, callerName: string | null) => {
+    if (!ptsMap) return [];
+    const scopedHits = candidateScopesFor(callerName).flatMap((scope) =>
+      resolveSitesViaPointsTo(`${scope}::${receiver}`, ptsMap),
+    );
+    return scopedHits.concat(resolveSitesViaPointsTo(receiver, ptsMap));
+  };
+  const correlated = collectInvokedPropertySites(fileCallsWithCaller, resolveReceiverSites);
+  try {
+    for (const row of db
+      .prepare('SELECT site_key, name FROM invoked_property_sites WHERE file != ?')
+      .all(relPath) as Array<{ site_key: string; name: string }>) {
+      correlated.add(correlatedEvidenceKey(row.site_key, row.name));
+    }
+  } catch {
+    // Table may not exist on a pre-v32 database during the first rebuild.
+  }
+  const nonEscapingSites = new Set<string>();
+  for (const site of symbols.objectLiteralSites ?? []) {
+    if (!site.escapes) nonEscapingSites.add(objectLiteralSiteKey(relPath, site.site));
+  }
+  try {
+    for (const row of db
+      .prepare('SELECT file, site FROM object_literal_sites WHERE escapes = 0')
+      .all() as Array<{ file: string; site: string }>) {
+      nonEscapingSites.add(objectLiteralSiteKey(row.file, row.site));
+    }
+  } catch {
+    // Table may not exist on a pre-v32 database during the first rebuild.
+  }
+
   let edgesAdded = 0;
 
   for (const call of symbols.calls) {
@@ -1588,12 +1674,20 @@ function buildCallEdges(
       // #2260: OR the property's own dispatch table has confirmed computed-
       // access invocation evidence — see resolveFallbackTargets's fuller
       // comment on this alternate pathway.
-      if (
-        call.keyExpr &&
-        !invokedPropertyNames.has(call.keyExpr) &&
-        !(call.receiver && computedDispatchTableEvidence.has(call.receiver))
-      ) {
-        targets = [];
+      if (call.keyExpr) {
+        const siteKey = call.objectLiteralSite
+          ? objectLiteralSiteKey(relPath, call.objectLiteralSite)
+          : null;
+        const localClosed = siteKey !== null && nonEscapingSites.has(siteKey);
+        let live = false;
+        if (correlationEnabled && localClosed) {
+          live = correlated.has(correlatedEvidenceKey(siteKey, call.keyExpr));
+        } else if (invokedPropertyNames.has(call.keyExpr)) {
+          live = true;
+        }
+        if (!live && !(call.receiver && computedDispatchTableEvidence.has(call.receiver))) {
+          targets = [];
+        }
       }
     }
 
@@ -1661,6 +1755,12 @@ function buildCallEdges(
   // for future rebuilds of OTHER files, regardless of what this rebuild
   // itself needed it for.
   persistInvokedPropertyNamesForFile(db, relPath, ownInvokedPropertyNames);
+  persistObjectLiteralSitesForFile(db, relPath, symbols);
+  persistInvokedPropertySitesForFile(
+    db,
+    relPath,
+    collectInvokedPropertySites(fileCallsWithCaller, resolveReceiverSites),
+  );
   // #2138: same rationale — purgeFileData (called before this function runs)
   // already deleted this file's return_types row; restore it so a later
   // scoped `codegraph build` incremental rebuild can still resolve dispatch
@@ -1794,6 +1894,7 @@ function rebuildEdgesForTargetFile(
   aliases: PathAliases,
   // #2077: forwarded to buildCallEdges — see its own param doc.
   maxIterations?: number,
+  correlationEnabled = true,
 ): number {
   // #1967: keep this file's persisted barrel rename table current if it's
   // itself a barrel — independent of the edges rebuilt below.
@@ -1829,6 +1930,7 @@ function rebuildEdgesForTargetFile(
     importedOriginalNames,
     maxIterations,
     namespaceImports,
+    correlationEnabled,
   );
   edgesAdded += buildClassHierarchyEdges(
     db,
@@ -1949,6 +2051,7 @@ async function runReverseDepCascade(
       knownFiles,
       aliases,
       engineOpts.pointsToMaxIterations,
+      engineOpts.correlatedPropertyEvidence !== false,
     );
   }
   // Pass 2: add barrel import edges (reexports edges now exist)
@@ -2478,6 +2581,7 @@ export async function rebuildFile(
     knownFiles,
     aliases,
     engineOpts.pointsToMaxIterations,
+    engineOpts.correlatedPropertyEvidence !== false,
   );
   const {
     edgesAdded: cascadeEdges,

@@ -951,6 +951,7 @@ const { results: fused } = await multiSearchData(
 
 - **TypeScript compiler integration is auto-enabled** — when `typescript` is installed and a `tsconfig.json` is found, the TypeScript compiler API pass runs automatically; disable with `"build": { "typescriptResolver": false }` in `.codegraphrc.json` if you want faster builds without it; heuristic type inference (annotations, `new` expressions, assignment chains) is always active as a baseline
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
+- **Dead-code dispatch tables** — object-literal properties on a proven local-closed literal (`const T = { k: fn }; T.k()`) are correlated to that literal's own invocations. Escaping literals (exported, passed as arguments, `this`-using methods, spreads, …) keep the coarser name-based check: any `x.k(...)` in the build still credits `{ k: fn }`. Disable the tighter check with `"analysis": { "correlatedPropertyEvidence": false }`
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
 - **Dataflow analysis** — interprocedural edges (`arg_in`, `return_out`) require a full build after adding new callee files; incremental re-stitch fires automatically on both the JS and native engine paths
 

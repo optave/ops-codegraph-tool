@@ -24,10 +24,12 @@ import { debug } from '../../../infrastructure/logger.js';
 import type {
   ArrayCallbackBinding,
   ArrayElemBinding,
+  CallAssignment,
   Definition,
   ExtractorOutput,
   FnRefBinding,
   ForOfBinding,
+  ObjectLiteralSite,
   ObjectPropBinding,
   ObjectRestParamBinding,
   ParamBinding,
@@ -35,6 +37,30 @@ import type {
 } from '../../../types.js';
 
 export type PointsToMap = Map<string, Set<string>>;
+
+/**
+ * Prefix marking a points-to target as an object-literal ALLOCATION SITE
+ * rather than a resolvable symbol name (#2088). `@` cannot appear in a JS
+ * identifier, so this can never collide with a real name — the same
+ * "synthetic token that can't match a real symbol" device ADR-002 uses for
+ * `<dynamic:…>` names.
+ */
+export const OBJLIT_PTS_PREFIX = 'objlit@';
+
+/**
+ * `objlit@${relPath}#${site}` — file-qualified so two files that each declare
+ * an object literal at the same line:col can never share evidence. Mirrors
+ * `computedDispatchTableEvidenceKey`'s `${file}::${name}` convention and the
+ * `callee::restName` scoping convention (#1358), for the same reason.
+ */
+export function objectLiteralSiteKey(relPath: string, site: string): string {
+  return `${OBJLIT_PTS_PREFIX}${relPath}#${site}`;
+}
+
+/** `${siteKey}|${propertyName}` — `|` cannot appear in an identifier or a path segment id. */
+export function correlatedEvidenceKey(siteKey: string, propertyName: string): string {
+  return `${siteKey}|${propertyName}`;
+}
 
 /**
  * Seed the pts map from locally-defined functions, imported names, and
@@ -427,6 +453,9 @@ export function buildPointsToMap(
   objectRestParamBindings?: readonly ObjectRestParamBinding[],
   objectPropBindings?: readonly ObjectPropBinding[],
   maxIterations: number = DEFAULTS.analysis.pointsToMaxIterations,
+  relPath?: string,
+  objectLiteralSites?: readonly ObjectLiteralSite[],
+  callAssignments?: readonly CallAssignment[],
 ): PointsToMap {
   const { pts, constraints } = buildThisAssignmentMap(
     fnRefBindings,
@@ -449,11 +478,49 @@ export function buildPointsToMap(
     objectPropBindings,
   );
 
+  if (relPath) {
+    buildObjectLiteralSiteConstraints(
+      pts,
+      constraints,
+      relPath,
+      objectLiteralSites,
+      callAssignments,
+    );
+  }
+
   if (constraints.length === 0) return pts;
 
   buildCallSiteTypeMap(pts, constraints, maxIterations);
 
   return pts;
+}
+
+/**
+ * #2088 — object-literal allocation-site constraints. Seeds `pts(siteKey) =
+ * { siteKey }` for each site, then flows it into the binding it was declared
+ * against.
+ */
+function buildObjectLiteralSiteConstraints(
+  pts: PointsToMap,
+  constraints: Array<{ lhs: string; rhsKey: string }>,
+  relPath: string,
+  objectLiteralSites?: readonly ObjectLiteralSite[],
+  callAssignments?: readonly CallAssignment[],
+): void {
+  if (!objectLiteralSites?.length) return;
+
+  for (const { site, owner } of objectLiteralSites) {
+    const siteKey = objectLiteralSiteKey(relPath, site);
+    pts.set(siteKey, new Set([siteKey]));
+    if (owner) constraints.push({ lhs: owner, rhsKey: siteKey });
+  }
+
+  for (const { varName, calleeName } of callAssignments ?? []) {
+    const returnKey = `${calleeName}::return`;
+    if (pts.has(returnKey) || constraints.some((c) => c.lhs === returnKey)) {
+      constraints.push({ lhs: varName, rhsKey: returnKey });
+    }
+  }
 }
 
 /**
@@ -466,7 +533,19 @@ export function buildPointsToMap(
 export function resolveViaPointsTo(callName: string, pts: PointsToMap): string[] {
   const targets = pts.get(callName);
   if (!targets) return [];
-  return [...targets].filter((t) => t !== callName);
+  // #2088: object-literal SITE tokens share the pts map with resolvable symbol
+  // names but are not names — they can never match a symbol, and letting them
+  // through would hand `resolveCallTargets` a token it would fruitlessly look
+  // up. Same "synthetic token filtered at the read site" device ADR-002 uses
+  // for `<dynamic:…>` names.
+  return [...targets].filter((t) => t !== callName && !t.startsWith(OBJLIT_PTS_PREFIX));
+}
+
+/** Site-namespace counterpart of `resolveViaPointsTo` (#2088). */
+export function resolveSitesViaPointsTo(varName: string, pts: PointsToMap): string[] {
+  const targets = pts.get(varName);
+  if (!targets) return [];
+  return [...targets].filter((t) => t.startsWith(OBJLIT_PTS_PREFIX));
 }
 
 // ── Per-file wiring (shared by build-edges.ts and incremental.ts) ──────────
@@ -524,6 +603,7 @@ export function buildPointsToMapForFile(
   symbols: ExtractorOutput,
   importedNames: Map<string, string>,
   maxIterations: number = DEFAULTS.analysis.pointsToMaxIterations,
+  relPath?: string,
 ): PointsToMap | null {
   const hasThisCallBindings = !!symbols.thisCallBindings?.length;
   if (
@@ -535,7 +615,8 @@ export function buildPointsToMapForFile(
     !symbols.arrayCallbackBindings?.length &&
     !symbols.objectRestParamBindings?.length &&
     !symbols.objectPropBindings?.length &&
-    !hasThisCallBindings
+    !hasThisCallBindings &&
+    !symbols.objectLiteralSites?.length
   )
     return null;
   const defNames = new Set(
@@ -570,5 +651,8 @@ export function buildPointsToMapForFile(
     symbols.objectRestParamBindings,
     symbols.objectPropBindings,
     maxIterations,
+    relPath,
+    symbols.objectLiteralSites,
+    symbols.callAssignments,
   );
 }

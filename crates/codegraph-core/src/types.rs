@@ -156,6 +156,19 @@ pub struct Call {
     /// — see that field's doc comment for the full rationale.
     #[napi(js_name = "entrypointWrappedBy")]
     pub entrypoint_wrapped_by: Option<String>,
+    /// File-local id of the object literal that owns this `value-ref` property
+    /// reference (#2088). Mirrors TS `Call.objectLiteralSite`.
+    #[napi(js_name = "objectLiteralSite")]
+    pub object_literal_site: Option<String>,
+}
+
+/// One object-literal allocation site (#2088). Mirrors TS `ObjectLiteralSite`.
+#[napi(object)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ObjectLiteralSite {
+    pub site: String,
+    pub owner: Option<String>,
+    pub escapes: bool,
 }
 
 /// `import { X as Y }`: the local binding name (Y) paired with the original
@@ -592,6 +605,9 @@ pub struct FileSymbols {
     /// `new_expression` handling in `src/extractors/javascript.ts`.
     #[napi(js_name = "newExpressions")]
     pub new_expressions: Vec<String>,
+    /// #2088 — object-literal allocation sites declared in this file.
+    #[napi(js_name = "objectLiteralSites")]
+    pub object_literal_sites: Vec<ObjectLiteralSite>,
 }
 
 impl FileSymbols {
@@ -620,6 +636,7 @@ impl FileSymbols {
             object_prop_bindings: Vec::new(),
             computed_dispatch_table_evidence: Vec::new(),
             new_expressions: Vec::new(),
+            object_literal_sites: Vec::new(),
         }
     }
 }

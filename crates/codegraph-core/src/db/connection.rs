@@ -555,6 +555,27 @@ const MIGRATIONS: &[Migration] = &[
       );
     "#,
     },
+    Migration {
+        // #2088: durable per-file object-literal sites and correlated
+        // invoked-property evidence. Mirrors src/db/migrations.ts v32.
+        version: 32,
+        up: r#"
+      CREATE TABLE IF NOT EXISTS object_literal_sites (
+        file    TEXT    NOT NULL,
+        site    TEXT    NOT NULL,
+        escapes INTEGER NOT NULL,
+        PRIMARY KEY (file, site)
+      );
+      CREATE TABLE IF NOT EXISTS invoked_property_sites (
+        site_key TEXT NOT NULL,
+        name     TEXT NOT NULL,
+        file     TEXT NOT NULL,
+        PRIMARY KEY (site_key, name, file)
+      );
+      CREATE INDEX IF NOT EXISTS idx_invoked_property_sites_key
+        ON invoked_property_sites(site_key);
+    "#,
+    },
 ];
 
 // ── napi types ──────────────────────────────────────────────────────────

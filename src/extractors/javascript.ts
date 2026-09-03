@@ -12,6 +12,7 @@ import type {
   FnRefBinding,
   ForOfBinding,
   Import,
+  ObjectLiteralSite,
   ObjectPropBinding,
   ObjectRestParamBinding,
   ParamBinding,
@@ -561,6 +562,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // whether the accessing code appears before or after the class declaration.
   const localAccessors = collectLocalAccessors(tree.rootNode);
   const computedDispatchTableEvidence: string[] = [];
+  const objectLiteralSites = new Map<string, ObjectLiteralSite>();
   runCollectorWalk(tree.rootNode, {
     definitions,
     typeMap,
@@ -571,6 +573,7 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     definePropertyReceivers,
     valueRefCalls: calls,
     computedDispatchTableEvidence,
+    objectLiteralSites,
     localAccessors,
     imports,
     calls,
@@ -590,6 +593,8 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // original push order as the tiebreak — content (the definition set) is
   // unaffected, only array order changes.
   definitions.sort((a, b) => a.line - b.line);
+
+  finalizeObjectLiteralSites(tree.rootNode, objectLiteralSites, definitions);
 
   return {
     definitions,
@@ -613,6 +618,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
     ...(definePropertyReceivers.size > 0 ? { definePropertyReceivers } : {}),
     ...(cjsRequireBindings.length > 0 ? { cjsRequireBindings } : {}),
     ...(computedDispatchTableEvidence.length > 0 ? { computedDispatchTableEvidence } : {}),
+    ...(objectLiteralSites.size > 0
+      ? { objectLiteralSites: [...objectLiteralSites.values()] }
+      : {}),
   };
 }
 
@@ -1467,6 +1475,7 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   // of collectLocalAccessors for why this must be computed up front.
   const localAccessors = collectLocalAccessors(tree.rootNode);
   const computedDispatchTableEvidence: string[] = [];
+  const objectLiteralSites = new Map<string, ObjectLiteralSite>();
   runCollectorWalk(tree.rootNode, {
     definitions: ctx.definitions,
     typeMap: ctx.typeMap!,
@@ -1477,6 +1486,7 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
     definePropertyReceivers,
     valueRefCalls: ctx.calls,
     computedDispatchTableEvidence,
+    objectLiteralSites,
     localAccessors,
     funcPropDefs: ctx.definitions,
   });
@@ -1484,6 +1494,10 @@ function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
   if (definePropertyReceivers.size > 0) ctx.definePropertyReceivers = definePropertyReceivers;
   if (computedDispatchTableEvidence.length > 0) {
     ctx.computedDispatchTableEvidence = computedDispatchTableEvidence;
+  }
+  finalizeObjectLiteralSites(tree.rootNode, objectLiteralSites, ctx.definitions);
+  if (objectLiteralSites.size > 0) {
+    ctx.objectLiteralSites = [...objectLiteralSites.values()];
   }
   return ctx;
 }
@@ -4482,12 +4496,7 @@ const TABLE_NAME_PASSTHROUGH_TYPES: ReadonlySet<string> = new Set([
  * regardless of nesting shape.
  */
 function findDeclaringScopeLine(node: TreeSitterNode, name: string): number | undefined {
-  let current: TreeSitterNode | null = node.parent;
-  while (current) {
-    if (introducesShadowedBinding(current, name)) return current.startPosition.row;
-    current = current.parent;
-  }
-  return undefined;
+  return findDeclaringScopeNode(node, name)?.startPosition.row;
 }
 
 /**
@@ -4554,11 +4563,19 @@ function findEnclosingTableName(node: TreeSitterNode): string | undefined {
  * (`TABLE[node.type]`) can't name a specific property statically the way a
  * dot access can.
  */
-function collectObjectLiteralValueRefCall(pairNode: TreeSitterNode, calls: Call[]): void {
+function collectObjectLiteralValueRefCall(
+  pairNode: TreeSitterNode,
+  calls: Call[],
+  sites: Map<string, ObjectLiteralSite>,
+): void {
   const valueNode = pairNode.childForFieldName('value');
   if (valueNode?.type !== 'identifier' || BUILTIN_GLOBALS.has(valueNode.text)) return;
   const keyNode = pairNode.childForFieldName('key');
   const keyExpr = keyNode ? resolveObjectLiteralKeyName(keyNode) || undefined : undefined;
+
+  const objectNode = enclosingObjectLiteral(pairNode);
+  const site = seedObjectLiteralSite(objectNode, sites);
+
   calls.push({
     name: valueNode.text,
     line: nodeStartLine(valueNode),
@@ -4566,7 +4583,715 @@ function collectObjectLiteralValueRefCall(pairNode: TreeSitterNode, calls: Call[
     dynamicKind: 'value-ref',
     keyExpr,
     receiver: findEnclosingTableName(pairNode),
+    objectLiteralSite: site,
   });
+}
+
+/** File-local allocation-site id for an object-literal node: `${line}:${col}`. */
+function objectLiteralSiteId(objectNode: TreeSitterNode): string {
+  return `${objectNode.startPosition.row}:${objectNode.startPosition.column}`;
+}
+
+/** Nearest enclosing `object` node, or undefined for a non-literal context. */
+function enclosingObjectLiteral(node: TreeSitterNode): TreeSitterNode | undefined {
+  const parent = node.parent;
+  return parent?.type === 'object' ? parent : undefined;
+}
+
+function seedObjectLiteralSite(
+  objectNode: TreeSitterNode | undefined,
+  sites: Map<string, ObjectLiteralSite>,
+): string | undefined {
+  if (!objectNode) return undefined;
+  const site = objectLiteralSiteId(objectNode);
+  if (!sites.has(site)) sites.set(site, { site, owner: null, escapes: true });
+  return site;
+}
+
+function finalizeObjectLiteralSites(
+  root: TreeSitterNode,
+  sites: Map<string, ObjectLiteralSite>,
+  definitions: readonly Definition[],
+): void {
+  if (sites.size === 0) return;
+  const exportedNames = collectExportedBindingNames(root);
+  const definitionNames = new Set(
+    definitions.filter((d) => d.kind === 'function' || d.kind === 'method').map((d) => d.name),
+  );
+  computeObjectLiteralSiteEscapes(sites, root, exportedNames, definitionNames);
+}
+
+const TRACKED_REFERENCE_PARENTS: ReadonlySet<string> = new Set([
+  'member_expression',
+  'subscript_expression',
+  'for_in_statement',
+]);
+
+const MAX_ALIAS_DEPTH = 6;
+
+function isTrackedReferencePosition(refNode: TreeSitterNode, isArrayOwner: boolean): boolean {
+  const parent = refNode.parent;
+  if (!parent || !TRACKED_REFERENCE_PARENTS.has(parent.type)) return false;
+
+  if (parent.type === 'member_expression' || parent.type === 'subscript_expression') {
+    if (isArrayOwner) return false;
+    if (parent.childForFieldName('object')?.id !== refNode.id) return false;
+    const propText = parent.childForFieldName('property')?.text;
+    if (propText === 'call' || propText === 'apply' || propText === 'bind') return false;
+    const grandparent = parent.parent;
+    if (
+      grandparent?.type !== 'call_expression' ||
+      grandparent.childForFieldName('function')?.id !== parent.id
+    ) {
+      return false;
+    }
+    if (parent.type === 'subscript_expression') {
+      const indexNode = parent.childForFieldName('index');
+      const indexType = indexNode?.type;
+      if (indexType !== 'string' && indexType !== 'template_string') return false;
+      const methodName = indexNode!.text.replace(/['"`]/g, '');
+      if (!methodName || methodName.includes('$')) return false;
+    }
+    return true;
+  }
+
+  if (parent.childForFieldName('right')?.id !== refNode.id) return false;
+  return parent.childForFieldName('operator')?.text === 'of';
+}
+
+function computeObjectLiteralSiteEscapes(
+  sites: Map<string, ObjectLiteralSite>,
+  root: TreeSitterNode,
+  exportedNames: ReadonlySet<string>,
+  definitionNames: ReadonlySet<string>,
+): void {
+  for (const entry of sites.values()) {
+    const objectNode = findNodeAtSite(root, entry.site);
+    if (!objectNode) continue;
+
+    const owner = resolveSiteOwner(objectNode);
+    if (!owner) continue;
+    entry.owner = owner.key;
+
+    if (literalHasUnmodeledThisReference(objectNode, root, definitionNames)) {
+      entry.escapes = true;
+      continue;
+    }
+
+    if (owner.bindingName === null) {
+      entry.escapes = true;
+      continue;
+    }
+    if (exportedNames.has(owner.bindingName)) continue;
+
+    const isArrayOwner = owner.key !== owner.bindingName;
+    entry.escapes = !allReferencesTracked(
+      root,
+      exportedNames,
+      owner.bindingName,
+      objectNode,
+      isArrayOwner,
+    );
+  }
+}
+
+function literalHasUnmodeledThisReference(
+  objectNode: TreeSitterNode,
+  root: TreeSitterNode,
+  definitionNames: ReadonlySet<string>,
+): boolean {
+  for (let i = 0; i < objectNode.childCount; i++) {
+    const child = objectNode.child(i);
+    if (!child) continue;
+
+    if (child.type === 'method_definition') {
+      for (let gi = 0; gi < child.childCount; gi++) {
+        if (child.child(gi)?.type === 'get') return true;
+      }
+      if (subtreeContainsThisKeyword(child, 0)) return true;
+      continue;
+    }
+
+    if (child.type === 'shorthand_property_identifier') {
+      if (BUILTIN_GLOBALS.has(child.text)) return true;
+      if (resolveIdentifierValueThisReference(objectNode, root, child.text, definitionNames)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (child.type === 'pair') {
+      const key = child.childForFieldName('key');
+      if (key && key.type !== 'computed_property_name') {
+        const rawKeyText = key.text;
+        if (rawKeyText.includes('\\') || rawKeyText.replace(/['"`]/g, '') === '__proto__') {
+          return true;
+        }
+      }
+      const value = child.childForFieldName('value');
+      if (!value) return true;
+      if (value.type === 'arrow_function') continue;
+      if (value.type === 'function_expression' || value.type === 'function') {
+        if (subtreeContainsThisKeyword(value, 0)) return true;
+        continue;
+      }
+      if (value.type === 'identifier') {
+        if (BUILTIN_GLOBALS.has(value.text)) return true;
+        if (resolveIdentifierValueThisReference(objectNode, root, value.text, definitionNames)) {
+          return true;
+        }
+        continue;
+      }
+      if (isPositivelyThisFreeLiteral(value)) continue;
+      return true;
+    }
+
+    if (child.type === 'spread_element') return true;
+  }
+  return false;
+}
+
+function isPositivelyThisFreeLiteral(value: TreeSitterNode): boolean {
+  return (
+    value.type === 'string' ||
+    value.type === 'number' ||
+    value.type === 'true' ||
+    value.type === 'false' ||
+    value.type === 'null' ||
+    value.type === 'template_string' ||
+    value.type === 'regex' ||
+    value.type === 'array' ||
+    value.type === 'object'
+  );
+}
+
+function unwrapParens(node: TreeSitterNode, depth = 0): TreeSitterNode {
+  if (depth >= MAX_WALK_DEPTH) return node;
+  if (node.type !== 'parenthesized_expression') return node;
+  const inner = node.namedChild(0);
+  return inner ? unwrapParens(inner, depth + 1) : node;
+}
+
+function findResolvingScopeNode(node: TreeSitterNode, name: string): TreeSitterNode | undefined {
+  let current: TreeSitterNode | null = node.parent;
+  while (current) {
+    if (current.type === 'for_in_statement') {
+      const left = current.childForFieldName('left');
+      if (left && patternBindsName(unwrapParens(left), name)) return current;
+    }
+    if (current.type === 'arrow_function') {
+      const param = current.childForFieldName('parameter');
+      if (param && param.text === name) return current;
+    }
+    if (current.type === 'statement_block') {
+      for (let i = 0; i < current.childCount; i++) {
+        const child = current.child(i);
+        if (child?.type === 'using_declaration' && declarationDeclaresName(child, name)) {
+          return current;
+        }
+      }
+    }
+    if (current.type === 'switch_body') {
+      for (let i = 0; i < current.childCount; i++) {
+        const clause = current.child(i);
+        if (!clause) continue;
+        if (clause.type !== 'switch_case' && clause.type !== 'switch_default') continue;
+        for (let j = 0; j < clause.childCount; j++) {
+          const child = clause.child(j);
+          if (child?.type === 'using_declaration' && declarationDeclaresName(child, name)) {
+            return current;
+          }
+        }
+      }
+    }
+    if (current.type === 'for_statement') {
+      for (let i = 0; i < current.childCount; i++) {
+        const child = current.child(i);
+        if (child && isMalformedUsingInitializer(child)) return current;
+      }
+    }
+    if (current.type === 'with_statement') return current;
+    if (introducesShadowedBinding(current, name)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function isMalformedUsingInitializer(node: TreeSitterNode): boolean {
+  if (node.type === 'ERROR' && /^(await\s+using|using)\b/.test(node.text)) return true;
+  for (let i = 0; i < node.childCount; i++) {
+    const inner = node.child(i);
+    if (inner?.type === 'ERROR' && /^(await\s+using|using)\b/.test(inner.text)) return true;
+  }
+  return false;
+}
+
+function resolveIdentifierValueThisReference(
+  objectNode: TreeSitterNode,
+  root: TreeSitterNode,
+  name: string,
+  definitionNames: ReadonlySet<string>,
+): boolean {
+  if (!definitionNames.has(name)) return true;
+
+  const declaringScope = findResolvingScopeNode(objectNode, name) ?? root;
+  if (declaringScope.id !== root.id) return true;
+
+  const fnNode = findTopLevelFunctionNodeByName(root, name);
+  if (!fnNode) return true;
+
+  if (subtreeContainsReassignmentOf(root, name, 0)) return true;
+
+  if (fnNode.type === 'arrow_function') return false;
+  return subtreeContainsThisKeyword(fnNode, 0);
+}
+
+function findTopLevelFunctionNodeByName(root: TreeSitterNode, name: string): TreeSitterNode | null {
+  let result: TreeSitterNode | null = null;
+  let declarationCount = 0;
+  for (let i = 0; i < root.childCount; i++) {
+    let stmt = root.child(i);
+    if (stmt?.type === 'export_statement') {
+      stmt = stmt.childForFieldName('declaration') ?? stmt.child(1);
+    }
+    if (!stmt) continue;
+    if (stmt.type === 'function_declaration' || stmt.type === 'generator_function_declaration') {
+      if (stmt.childForFieldName('name')?.text === name) {
+        declarationCount++;
+        result = stmt;
+      }
+      continue;
+    }
+    if (stmt.type === 'lexical_declaration' || stmt.type === 'variable_declaration') {
+      for (let j = 0; j < stmt.childCount; j++) {
+        const decl = stmt.child(j);
+        if (decl?.type !== 'variable_declarator') continue;
+        if (decl.childForFieldName('name')?.text !== name) continue;
+        declarationCount++;
+        const value = decl.childForFieldName('value');
+        if (
+          value &&
+          (value.type === 'arrow_function' ||
+            value.type === 'function_expression' ||
+            value.type === 'function')
+        ) {
+          result = value;
+        }
+      }
+      continue;
+    }
+    declarationCount += countHoistedVarScopeDeclarations(stmt, name, 0);
+  }
+  return declarationCount > 1 ? null : result;
+}
+
+function countHoistedVarScopeDeclarations(
+  node: TreeSitterNode,
+  name: string,
+  depth: number,
+): number {
+  if (depth >= MAX_WALK_DEPTH) return 2;
+  let count = 0;
+  if (node.type === 'variable_declaration' && declarationDeclaresName(node, name)) count++;
+  if (node.type === 'function_declaration' && node.childForFieldName('name')?.text === name) {
+    count++;
+  }
+  if (node.type === 'for_in_statement') {
+    const kind = node.childForFieldName('kind');
+    const left = node.childForFieldName('left');
+    if (kind?.text === 'var' && left && patternBindsName(unwrapParens(left), name)) count++;
+  }
+  if (FUNCTION_SCOPE_NODE_TYPES.has(node.type)) return count;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    count += countHoistedVarScopeDeclarations(child, name, depth + 1);
+  }
+  return count;
+}
+
+const GLOBAL_OBJECT_NAMES: ReadonlySet<string> = new Set([
+  'globalThis',
+  'global',
+  'self',
+  'window',
+]);
+
+function isGlobalObjectQualifiedWrite(node: TreeSitterNode, name: string): boolean {
+  if (node.type === 'member_expression') {
+    const object = node.childForFieldName('object');
+    const property = node.childForFieldName('property');
+    return (
+      !!object &&
+      unwrapParens(object).type === 'identifier' &&
+      GLOBAL_OBJECT_NAMES.has(unwrapParens(object).text) &&
+      !!property &&
+      property.text === name
+    );
+  }
+  if (node.type === 'subscript_expression') {
+    const object = node.childForFieldName('object');
+    if (!object || unwrapParens(object).type !== 'identifier') return false;
+    if (!GLOBAL_OBJECT_NAMES.has(unwrapParens(object).text)) return false;
+    const rawIndex = node.childForFieldName('index');
+    const index = rawIndex ? unwrapParens(rawIndex) : undefined;
+    const indexType = index?.type;
+    if (indexType !== 'string' && indexType !== 'template_string') return false;
+    const propertyName = index!.text.replace(/['"`]/g, '');
+    return !!propertyName && !propertyName.includes('$') && propertyName === name;
+  }
+  return false;
+}
+
+function subtreeContainsReassignmentOf(node: TreeSitterNode, name: string, depth: number): boolean {
+  if (depth >= MAX_WALK_DEPTH) return true;
+  if (node.type === 'assignment_expression' || node.type === 'augmented_assignment_expression') {
+    const left = node.childForFieldName('left');
+    if (left && patternBindsName(unwrapParens(left), name)) return true;
+    if (left && isGlobalObjectQualifiedWrite(unwrapParens(left), name)) return true;
+  } else if (node.type === 'update_expression') {
+    const arg = node.childForFieldName('argument');
+    const target = arg ? unwrapParens(arg) : undefined;
+    if (target?.type === 'identifier' && target.text === name) return true;
+  } else if (node.type === 'for_in_statement') {
+    const left = node.childForFieldName('left');
+    const kind = node.childForFieldName('kind');
+    if (left && patternBindsName(unwrapParens(left), name) && (!kind || kind.text === 'var')) {
+      return true;
+    }
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && subtreeContainsReassignmentOf(child, name, depth + 1)) return true;
+  }
+  return false;
+}
+
+function subtreeContainsThisKeyword(node: TreeSitterNode, depth: number): boolean {
+  if (depth >= MAX_WALK_DEPTH) return true;
+  if (node.type === 'this') return true;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && subtreeContainsThisKeyword(child, depth + 1)) return true;
+  }
+  return false;
+}
+
+function findNodeAtSite(root: TreeSitterNode, site: string): TreeSitterNode | undefined {
+  const sep = site.indexOf(':');
+  if (sep < 0) return undefined;
+  const row = Number(site.slice(0, sep));
+  const col = Number(site.slice(sep + 1));
+  if (!Number.isFinite(row) || !Number.isFinite(col)) return undefined;
+  const walk = (node: TreeSitterNode, depth: number): TreeSitterNode | undefined => {
+    if (depth >= MAX_WALK_DEPTH) return undefined;
+    if (
+      node.type === 'object' &&
+      node.startPosition.row === row &&
+      node.startPosition.column === col
+    ) {
+      return node;
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (!child) continue;
+      const found = walk(child, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return walk(root, 0);
+}
+
+function resolveSiteOwner(
+  objectNode: TreeSitterNode,
+): { key: string; bindingName: string | null } | null {
+  let current: TreeSitterNode | null = objectNode.parent;
+  let hops = 0;
+  let inArray = false;
+  while (current && hops < 6) {
+    if (current.type === 'array') {
+      inArray = true;
+      current = current.parent;
+      hops++;
+      continue;
+    }
+    if (current.type === 'variable_declarator') {
+      const nameNode = current.childForFieldName('name');
+      if (nameNode?.type !== 'identifier') return null;
+      const bindingName = nameNode.text;
+      return { key: inArray ? `${bindingName}[*]` : bindingName, bindingName };
+    }
+    if (current.type === 'return_statement') {
+      const fnName = findEnclosingFunctionQualifier(current);
+      if (!fnName) return null;
+      return { key: `${fnName}::return`, bindingName: null };
+    }
+    if (!TABLE_NAME_PASSTHROUGH_TYPES.has(current.type)) return null;
+    current = current.parent;
+    hops++;
+  }
+  return null;
+}
+
+function functionScopeDeclaresVarExcludingStaticBlocks(
+  node: TreeSitterNode,
+  name: string,
+  depth = 0,
+): boolean {
+  if (depth >= MAX_WALK_DEPTH) return false;
+  if (node.type === 'variable_declaration' && declarationDeclaresName(node, name)) return true;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (FUNCTION_SCOPE_NODE_TYPES.has(child.type) || child.type === 'class_static_block') continue;
+    if (functionScopeDeclaresVarExcludingStaticBlocks(child, name, depth + 1)) return true;
+  }
+  return false;
+}
+
+function scopeShadowsName(node: TreeSitterNode, name: string): boolean {
+  if (FUNCTION_SCOPE_NODE_TYPES.has(node.type)) {
+    if (node.childForFieldName('name')?.text === name) return true;
+    const params = node.childForFieldName('parameters');
+    if (params) {
+      for (let i = 0; i < params.childCount; i++) {
+        const param = params.child(i);
+        if (param && patternBindsName(param, name)) return true;
+      }
+    }
+    const param = node.childForFieldName('parameter');
+    if (param && patternBindsName(unwrapParens(param), name)) return true;
+    const body = node.childForFieldName('body');
+    return body ? functionScopeDeclaresVarExcludingStaticBlocks(body, name) : false;
+  }
+  if (SCOPE_NODE_TYPES.has(node.type)) return introducesShadowedBinding(node, name);
+  return false;
+}
+
+function findDeclaringScopeNode(node: TreeSitterNode, name: string): TreeSitterNode | undefined {
+  let current: TreeSitterNode | null = node.parent;
+  while (current) {
+    if (scopeShadowsName(current, name)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function findEnclosingFunctionBody(node: TreeSitterNode): TreeSitterNode | undefined {
+  let current: TreeSitterNode | null = node.parent;
+  while (current) {
+    if (FUNCTION_SCOPE_NODE_TYPES.has(current.type)) {
+      return current.childForFieldName('body') ?? undefined;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function isBindingOccurrence(node: TreeSitterNode): boolean {
+  const parent = node.parent;
+  if (!parent) return false;
+  if (parent.type === 'variable_declarator' && parent.childForFieldName('name')?.id === node.id) {
+    return true;
+  }
+  if (parent.type === 'for_in_statement') {
+    const left = parent.childForFieldName('left');
+    if (left && (left.id === node.id || patternBindsName(unwrapParens(left), node.text))) {
+      return true;
+    }
+  }
+  if (
+    (parent.type === 'function_declaration' || parent.type === 'generator_function_declaration') &&
+    parent.childForFieldName('name')?.id === node.id
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function enclosingDeclaratorIfValue(ref: TreeSitterNode): TreeSitterNode | null {
+  let current: TreeSitterNode | null = ref;
+  while (current) {
+    const parent: TreeSitterNode | null = current.parent ?? null;
+    if (!parent) return null;
+    if (
+      parent.type === 'variable_declarator' &&
+      parent.childForFieldName('value')?.id === current.id
+    ) {
+      return parent;
+    }
+    if (TABLE_NAME_PASSTHROUGH_TYPES.has(parent.type)) {
+      current = parent;
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+
+function allReferencesTracked(
+  root: TreeSitterNode,
+  exportedNames: ReadonlySet<string>,
+  bindingName: string,
+  objectNode: TreeSitterNode,
+  isArrayOwner: boolean,
+  declaringScope?: TreeSitterNode,
+  depth = 0,
+  skipNode?: TreeSitterNode,
+): boolean {
+  if (exportedNames.has(bindingName)) return false;
+  if (depth >= MAX_ALIAS_DEPTH) return false;
+
+  const scope = declaringScope ?? findDeclaringScopeNode(objectNode, bindingName) ?? root;
+  const refs: TreeSitterNode[] = [];
+  let covered = true;
+
+  const walk = (node: TreeSitterNode, walkDepth: number): void => {
+    if (walkDepth >= MAX_WALK_DEPTH) {
+      covered = false;
+      return;
+    }
+    if (node.id !== scope.id && scopeShadowsName(node, bindingName)) return;
+
+    // #2088 B5 / #2640: a globalThis/window/global/self qualified read of
+    // this binding is a real reference the identifier walk cannot see
+    // (`property_identifier` / string index). Unconditionally untracked —
+    // no T1 channel exists for a synthetic global-object lookup.
+    if (isGlobalObjectQualifiedWrite(node, bindingName)) {
+      covered = false;
+      return;
+    }
+
+    if (
+      (node.type === 'identifier' || node.type === 'shorthand_property_identifier') &&
+      node.text === bindingName &&
+      !isBindingOccurrence(node) &&
+      node.id !== skipNode?.id
+    ) {
+      refs.push(node);
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) walk(child, walkDepth + 1);
+    }
+  };
+  walk(scope, 0);
+  if (!covered) return false;
+
+  for (const ref of refs) {
+    if (isTrackedReferencePosition(ref, isArrayOwner)) {
+      const parent = ref.parent;
+      if (parent?.type === 'for_in_statement') {
+        const left = parent.childForFieldName('left');
+        if (!left) return false;
+        const unwrapped = unwrapParens(left);
+        if (unwrapped.type !== 'identifier') return false;
+        const loopVar = unwrapped.text;
+        const kind = parent.childForFieldName('kind')?.text;
+        const loopScope =
+          kind === 'var'
+            ? (findEnclosingFunctionBody(parent) ?? scope)
+            : (parent.childForFieldName('body') ?? scope);
+        if (
+          !allReferencesTracked(
+            root,
+            exportedNames,
+            loopVar,
+            objectNode,
+            false,
+            loopScope,
+            depth + 1,
+            unwrapped,
+          )
+        ) {
+          return false;
+        }
+      }
+      continue;
+    }
+
+    const declarator = enclosingDeclaratorIfValue(ref);
+    if (declarator) {
+      const nameNode = declarator.childForFieldName('name');
+      if (nameNode?.type !== 'identifier') return false;
+      const aliasScope = findDeclaringScopeNode(nameNode, nameNode.text) ?? scope;
+      if (
+        !allReferencesTracked(
+          root,
+          exportedNames,
+          nameNode.text,
+          objectNode,
+          isArrayOwner,
+          aliasScope,
+          depth + 1,
+          nameNode,
+        )
+      ) {
+        return false;
+      }
+      continue;
+    }
+
+    return false;
+  }
+  return true;
+}
+
+function collectExportedBindingNames(root: TreeSitterNode): ReadonlySet<string> {
+  const names = new Set<string>();
+  const addFromDecl = (decl: TreeSitterNode): void => {
+    const kind = EXPORT_DECL_KIND[decl.type];
+    if (kind) {
+      const n = decl.childForFieldName('name');
+      if (n) names.add(n.text);
+      return;
+    }
+    if (decl.type !== 'lexical_declaration' && decl.type !== 'variable_declaration') return;
+    for (let i = 0; i < decl.childCount; i++) {
+      const declarator = decl.child(i);
+      if (declarator?.type !== 'variable_declarator') continue;
+      const nameN = declarator.childForFieldName('name');
+      if (!nameN) continue;
+      if (nameN.type === 'identifier') names.add(nameN.text);
+      else if (nameN.type === 'object_pattern') {
+        for (const n of collectObjectPatternNames(nameN)) names.add(n);
+      } else if (nameN.type === 'array_pattern') {
+        for (const n of collectArrayPatternNames(nameN)) names.add(n);
+      }
+    }
+  };
+  const collectClauseNames = (node: TreeSitterNode, walkDepth: number): void => {
+    if (walkDepth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'export_specifier') {
+      const local =
+        node.childForFieldName('local') ?? node.childForFieldName('name') ?? node.child(0);
+      if (local && (local.type === 'identifier' || local.type === 'property_identifier')) {
+        names.add(local.text);
+      }
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) collectClauseNames(child, walkDepth + 1);
+    }
+  };
+  const visit = (node: TreeSitterNode, walkDepth: number): void => {
+    if (walkDepth >= MAX_WALK_DEPTH) return;
+    if (node.type === 'export_statement') {
+      const decl = node.childForFieldName('declaration');
+      if (decl) addFromDecl(decl);
+      collectClauseNames(node, 0);
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) visit(child, walkDepth + 1);
+    }
+  };
+  visit(root, 0);
+  return names;
 }
 
 /**
@@ -6470,6 +7195,8 @@ interface CollectorWalkTargets {
   valueRefCalls: Call[];
   /** #2260: table names with confirmed computed-access invocation evidence. */
   computedDispatchTableEvidence: string[];
+  /** #2088: object-literal allocation sites for value-ref properties. */
+  objectLiteralSites: Map<string, ObjectLiteralSite>;
   /** #1893: same-file `ClassName.propName` → declared get/set accessor kinds. */
   localAccessors: LocalAccessorRegistry;
   imports?: Import[];
@@ -6559,13 +7286,17 @@ function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTarget
       case 'pair':
         // #1771: dispatch-table-style object-literal property values, e.g.
         // `{ resolve: someFunction }`.
-        collectObjectLiteralValueRefCall(node, targets.valueRefCalls);
+        collectObjectLiteralValueRefCall(node, targets.valueRefCalls, targets.objectLiteralSites);
         break;
       case 'shorthand_property_identifier':
         // #1771: shorthand form of the same pattern, e.g. `{ someFunction }`.
         // keyExpr equals name here — the property key and the referenced
         // value are the same identifier in shorthand form (#1895).
         if (!BUILTIN_GLOBALS.has(node.text)) {
+          const site = seedObjectLiteralSite(
+            enclosingObjectLiteral(node),
+            targets.objectLiteralSites,
+          );
           targets.valueRefCalls.push({
             name: node.text,
             line: nodeStartLine(node),
@@ -6573,6 +7304,7 @@ function runCollectorWalk(rootNode: TreeSitterNode, targets: CollectorWalkTarget
             dynamicKind: 'value-ref',
             keyExpr: node.text,
             receiver: findEnclosingTableName(node),
+            objectLiteralSite: site,
           });
         }
         break;

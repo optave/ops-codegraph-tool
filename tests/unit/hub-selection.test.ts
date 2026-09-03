@@ -8,12 +8,9 @@
  * `kind` filter and no explicit ORDER BY tie-break.
  */
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PINNED_HUB_CANDIDATES, selectHubTargets } from '../../scripts/lib/hub-selection.js';
+import { PINNED_HUB_CANDIDATES, selectHubTargetsFromDb } from '../../scripts/lib/hub-selection.js';
 import { initSchema } from '../../src/db/index.js';
 
 function insertNode(db, name, kind, file, line) {
@@ -28,7 +25,7 @@ function insertEdge(db, sourceId, targetId, kind, confidence = 1.0) {
   ).run(sourceId, targetId, kind, confidence);
 }
 
-let tmpDir: string, dbPath: string;
+let db: InstanceType<typeof Database>;
 
 // Graph shape (mirrors the real #1904 scenario at smaller scale):
 //
@@ -54,10 +51,9 @@ let tmpDir: string, dbPath: string;
 // relying on duplicate rows or introducing extra qualifying nodes that
 // would shift the mid/leaf rank indices in the test below.
 beforeAll(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-hub-selection-'));
-  dbPath = path.join(tmpDir, 'graph.db');
-
-  const db = new Database(dbPath);
+  // In-memory DB: Windows CI has repeatedly timed out this hook on tmpdir
+  // file I/O (#2368). The queries under test do not depend on a real file.
+  db = new Database(':memory:');
   initSchema(db);
 
   const constBuildGraph = insertNode(db, 'buildGraph', 'constant', 'scripts/benchmark.ts', 20);
@@ -78,17 +74,15 @@ beforeAll(() => {
   insertEdge(db, orchestrator, realBuildGraph, 'calls');
   insertEdge(db, orchestrator, midHelper, 'calls');
   insertEdge(db, orchestrator, leafHelper, 'calls');
-
-  db.close();
-}, 60_000); // Windows CI runners have hit the default 30s hook timeout on slow tmpdir I/O (#2368)
+});
 
 afterAll(() => {
-  if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+  db?.close();
 });
 
 describe('selectHubTargets', () => {
   it('prefers a callable-kind pinned candidate over a same-named constant binding', () => {
-    const targets = selectHubTargets(dbPath, ['buildGraph']);
+    const targets = selectHubTargetsFromDb(db, ['buildGraph']);
     expect(targets.hub).toBe('buildGraph');
     expect(targets.hubFile).toBe('src/domain/graph/builder.ts');
   });
@@ -99,7 +93,7 @@ describe('selectHubTargets', () => {
     // ['buildGraph'] stand-in) so a typo or ordering change in the shared
     // list is caught here rather than only at benchmark run time.
     expect(PINNED_HUB_CANDIDATES.length).toBeGreaterThan(0);
-    const targets = selectHubTargets(dbPath, PINNED_HUB_CANDIDATES);
+    const targets = selectHubTargetsFromDb(db, PINNED_HUB_CANDIDATES);
     expect(targets.hub).toBe('buildGraph');
     expect(targets.hubFile).toBe('src/domain/graph/builder.ts');
   });
@@ -109,40 +103,32 @@ describe('selectHubTargets', () => {
     // qualifying (function/method) node. constBuildGraph has 3 edges (more
     // than any single function/method node) but must never win because it
     // is kind=constant.
-    const targets = selectHubTargets(dbPath, []);
+    const targets = selectHubTargetsFromDb(db, []);
     expect(targets.hub).toBe('orchestrator');
     expect(targets.hubFile).toBe('src/cli.ts');
   });
 
   it('selects mid/leaf from the same kind-filtered, edge-ranked ordering', () => {
-    const targets = selectHubTargets(dbPath, []);
+    const targets = selectHubTargetsFromDb(db, []);
     expect(targets.mid).toBe('midHelper');
     expect(targets.leaf).toBe('leafHelper');
   });
 
   it('is deterministic across repeated calls against the same DB', () => {
-    const first = selectHubTargets(dbPath, ['buildGraph']);
-    const second = selectHubTargets(dbPath, ['buildGraph']);
+    const first = selectHubTargetsFromDb(db, ['buildGraph']);
+    const second = selectHubTargetsFromDb(db, ['buildGraph']);
     expect(second).toEqual(first);
   });
 
-  // Windows CI runners have hit the default 30s test timeout here on slow
-  // tmpdir/DB-file I/O (#2368) — this test does its own mkdtempSync + a
-  // fresh better-sqlite3 file, unlike the other tests in this file which
-  // reuse the single DB `beforeAll` already built.
-  it('throws when the graph has no qualifying nodes with edges', { timeout: 60_000 }, () => {
-    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-hub-selection-empty-'));
-    const emptyDbPath = path.join(emptyDir, 'graph.db');
-    const db = new Database(emptyDbPath);
-    initSchema(db);
-    db.close();
-
+  it('throws when the graph has no qualifying nodes with edges', () => {
+    const emptyDb = new Database(':memory:');
+    initSchema(emptyDb);
     try {
-      expect(() => selectHubTargets(emptyDbPath, ['buildGraph'])).toThrow(
+      expect(() => selectHubTargetsFromDb(emptyDb, ['buildGraph'])).toThrow(
         'No nodes with edges found in graph',
       );
     } finally {
-      fs.rmSync(emptyDir, { recursive: true, force: true });
+      emptyDb.close();
     }
   });
 });

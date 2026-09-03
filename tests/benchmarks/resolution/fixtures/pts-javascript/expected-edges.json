@@ -107,6 +107,20 @@
       "kind": "calls",
       "mode": "pts-dispatch-table",
       "notes": "({a:dtFn1,b:dtFn2})[key]() — inline dispatch table; pts resolves wildcard to each value"
+    },
+    {
+      "source": { "name": "pickSite", "file": "objlit-site.js" },
+      "target": { "name": "isFooSite", "file": "objlit-site.js" },
+      "kind": "calls",
+      "mode": "pts-objlit-site",
+      "notes": "r.matches(x) inside for-of over [{matches, resolve}] — #2088 site correlation"
+    },
+    {
+      "source": { "name": "pickSite", "file": "objlit-site.js" },
+      "target": { "name": "doFooSite", "file": "objlit-site.js" },
+      "kind": "calls",
+      "mode": "pts-objlit-site",
+      "notes": "r.resolve(x) inside for-of over [{matches, resolve}] — #2088 site correlation"
     }
   ]
 }

@@ -610,6 +610,44 @@ export type DynamicKind =
   | 'value-ref' // bare identifier used as a value reference rather than a call site — object-literal property value (dispatch-table pattern, e.g. `{ resolve: someFn }`, #1771), assignment to a Lua global/builtin identifier (e.g. `require = tracedRequire`, #1776), the right operand of an `instanceof` check (e.g. `err instanceof CodegraphError`, #1784), or a logical-or/nullish-coalescing/ternary default assigned to a named variable (e.g. `const fetchFn = options._fetchLatest || fetchLatestVersion`, #2257) — resolved against function/method/class-kind targets; class was added for instanceof, but the filter is per-kind rather than per-site, so all sites share the same allow-list; unresolved (e.g. plain data references) are dropped silently, NOT flagged
   | 'dispatch-table'; // inline object-literal subscript dispatch, e.g. `({a:fnA,b:fnB})[key]()` (#1897) — resolved via the points-to wildcard solver against synthetic `<dt_line_col>[*]` array-elem bindings seeded from each property's identifier value; never flagged (excluded from FLAG_ONLY_DYNAMIC_KINDS) so an unresolved table produces no sink edge, matching the named-array `[fn1,fn2][*]` dispatch pattern
 
+/**
+ * One object-literal allocation site (#2088). Emitted by the JS/TS extractor
+ * for every object literal that produces at least one `value-ref` Call.
+ *
+ * Extends ROADMAP §8.3's allocation-site abstraction (which enumerated
+ * `new Foo()`, function literals, and arrow functions) to object literals.
+ */
+export interface ObjectLiteralSite {
+  /**
+   * File-LOCAL site id: `${startLine}:${startColumn}` of the object-literal
+   * node. Deliberately not file-qualified — extraction does not reliably know
+   * its own repo-relative path, so the consumer qualifies it via
+   * `objectLiteralSiteKey()`, mirroring how `computedDispatchTableEvidence`
+   * is emitted bare and keyed with the file at the consumer.
+   */
+  site: string;
+  /**
+   * The binding this literal flows into directly, or null when it has none
+   * (e.g. passed inline as a call argument):
+   *   - `"HANDLERS"`            — `const HANDLERS = { … }`
+   *   - `"makeTable::return"`   — `return { … }` inside `makeTable`
+   *   - `"RESOLVERS[*]"`        — an element of `const RESOLVERS = [ { … } ]`,
+   *                               reusing the existing array-element pts key
+   *                               shape already produced by
+   *                               `buildArrayElemConstraints`
+   */
+  owner: string | null;
+  /**
+   * True when this site's identity can leave the set of flows the points-to
+   * solver models, so correlated evidence for it is necessarily incomplete.
+   * The resolver falls back to the pre-#2088 bare-name predicate for
+   * escaping sites, which is what keeps this change in the conservative
+   * error direction. Defaults to `true` on any shape the analysis does not
+   * recognise — fail-safe, never fail-open.
+   */
+  escapes: boolean;
+}
+
 /** A function/method call detected by an extractor. */
 export interface Call {
   name: string;
@@ -702,6 +740,14 @@ export interface Call {
    * resolver instead of by an extraction-time gate.
    */
   accessorRead?: 'get' | 'set';
+  /**
+   * File-local id (`ObjectLiteralSite.site`) of the object literal that owns
+   * this `dynamicKind: 'value-ref'` property reference (#2088). Set only by
+   * the object-literal pair/shorthand collectors — the `instanceof` (#1784)
+   * and Lua builtin-reassignment (#1776) value-ref sites leave it undefined,
+   * matching how they already leave `keyExpr` undefined.
+   */
+  objectLiteralSite?: string;
 }
 
 /** An import statement detected by an extractor. */
@@ -1031,6 +1077,8 @@ export interface ExtractorOutput {
    * computed/bracket-access dispatch-table idiom.
    */
   computedDispatchTableEvidence?: readonly string[];
+  /** #2088 — object-literal allocation sites declared in this file. */
+  objectLiteralSites?: ObjectLiteralSite[];
   /**
    * CJS require bindings from `const { X, Y } = require('./path')` patterns.
    * Used by buildImportedNamesMap to classify X and Y as import artifacts so
@@ -1566,6 +1614,12 @@ export interface EngineOpts {
    */
   pointsToMaxIterations?: number;
   /**
+   * Enables allocation-site-correlated invoked-property evidence (#2088).
+   * Threaded through incremental/watch-mode rebuilds so a `.codegraphrc.json`
+   * override applies identically to `codegraph watch` and a full build.
+   */
+  correlatedPropertyEvidence?: boolean;
+  /**
    * `.codegraphrc.json`'s own `aliases` config field, resolved from
    * `config.aliases`. Threaded through incremental/watch-mode rebuilds
    * (`rebuildFile` in `incremental.ts`) so codegraph-configured aliases
@@ -1957,6 +2011,12 @@ export interface CodegraphConfig {
      * @reserved — not yet wired; see TODO in `src/infrastructure/config.ts`.
      */
     typeInferenceConfidence: number;
+    /**
+     * Enables allocation-site-correlated invoked-property evidence (#2088) for
+     * object-literal value-refs. When false, the resolver uses only the
+     * bare-property-name evidence set (pre-#2088 behavior).
+     */
+    correlatedPropertyEvidence: boolean;
   };
 
   community: {
@@ -2846,6 +2906,8 @@ export interface NativeAddon {
      * outside this pass. Omit or pass an empty array on a full build.
      */
     extraInvokedPropertyNames?: string[],
+    extraInvokedPropertySites?: string[],
+    correlationEnabled?: boolean,
   ): unknown[];
   buildImportEdges?(
     files: unknown[],

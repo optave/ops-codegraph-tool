@@ -634,7 +634,7 @@ function handleFullBuild(ctx: PipelineContext): void {
   const hasEmbeddings = detectHasEmbeddings(db, ctx.nativeDb);
   ctx.hasEmbeddings = hasEmbeddings;
   const deletions =
-    'PRAGMA foreign_keys = OFF; DELETE FROM cfg_edges; DELETE FROM cfg_blocks; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM ast_nodes; DELETE FROM reexport_renames; DELETE FROM invoked_property_names; DELETE FROM return_types; DELETE FROM entrypoint_calls; DELETE FROM nodes; DELETE FROM file_hashes; PRAGMA foreign_keys = ON;';
+    'PRAGMA foreign_keys = OFF; DELETE FROM cfg_edges; DELETE FROM cfg_blocks; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM ast_nodes; DELETE FROM reexport_renames; DELETE FROM invoked_property_names; DELETE FROM return_types; DELETE FROM entrypoint_calls; DELETE FROM object_literal_sites; DELETE FROM invoked_property_sites; DELETE FROM nodes; DELETE FROM file_hashes; PRAGMA foreign_keys = ON;';
   db.exec(
     hasEmbeddings
       ? `${deletions.replace('PRAGMA foreign_keys = ON;', '')} DELETE FROM embeddings; PRAGMA foreign_keys = ON;`

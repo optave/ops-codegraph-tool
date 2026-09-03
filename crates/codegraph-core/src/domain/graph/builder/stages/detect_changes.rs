@@ -1197,6 +1197,8 @@ pub fn purge_changed_files(
         // which had to run before this one precisely because it read the flag
         // off the target instead of off the guard.
         ("DELETE FROM entrypoint_calls WHERE file = ?1", false),
+        ("DELETE FROM object_literal_sites WHERE file = ?1", false),
+        ("DELETE FROM invoked_property_sites WHERE file = ?1", false),
         // Core tables (errors logged)
         ("DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1)", true),
         ("DELETE FROM nodes WHERE file = ?1", true),
@@ -1244,6 +1246,7 @@ pub fn clear_all_graph_data(conn: &Connection, has_embeddings: bool) {
          DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; \
          DELETE FROM ast_nodes; DELETE FROM reexport_renames; DELETE FROM invoked_property_names; \
          DELETE FROM return_types; DELETE FROM entrypoint_calls; \
+         DELETE FROM object_literal_sites; DELETE FROM invoked_property_sites; \
          DELETE FROM nodes; DELETE FROM file_hashes;",
     );
     if has_embeddings {

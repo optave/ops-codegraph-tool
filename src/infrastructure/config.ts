@@ -189,6 +189,16 @@ export const DEFAULTS = deepFreeze({
      * both engines in sync.
      */
     pointsToMaxIterations: 50,
+    /**
+     * Enables allocation-site-correlated invoked-property evidence (#2088) for
+     * object-literal value-refs. When false, the resolver uses only the
+     * bare-property-name evidence set (pre-#2088 behavior) — an escape hatch if
+     * a downstream consumer needs the older, looser liveness semantics.
+     * Threaded to the WASM solver via `buildCallEdgesJS` (which already holds a
+     * resolved `ctx.config`) and to the native engine through the same
+     * `BuildConfig` JSON payload that already carries `pointsToMaxIterations`.
+     */
+    correlatedPropertyEvidence: true,
   },
   community: {
     resolution: 1.0,

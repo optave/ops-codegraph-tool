@@ -83,6 +83,8 @@ export interface SerializedExtractorOutput {
   cjsRequireBindings?: Array<{ names: string[]; source: string }>;
   /** Issue #2260 — see ExtractorOutput.computedDispatchTableEvidence. */
   computedDispatchTableEvidence?: readonly string[];
+  /** Issue #2088 — see ExtractorOutput.objectLiteralSites. */
+  objectLiteralSites?: readonly import('../types.js').ObjectLiteralSite[];
 }
 
 export interface WorkerParseResponseOk {

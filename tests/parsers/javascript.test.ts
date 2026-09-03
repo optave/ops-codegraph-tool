@@ -2182,6 +2182,73 @@ function runDemo(reporter: Reporter, users: string[]): void {
     });
   });
 
+  describe('object-literal allocation sites (#2088)', () => {
+    it('emits a site and tags the value-ref call with objectLiteralSite', () => {
+      const symbols = parseJS(`
+        function someFunction() {}
+        const table = { resolve: someFunction };
+        table.resolve();
+      `);
+      expect(symbols.objectLiteralSites?.length).toBeGreaterThan(0);
+      const site = symbols.objectLiteralSites![0]!;
+      expect(site.site).toMatch(/^\d+:\d+$/);
+      expect(site.owner).toBe('table');
+      expect(site.escapes).toBe(false);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({
+          name: 'someFunction',
+          dynamicKind: 'value-ref',
+          objectLiteralSite: site.site,
+        }),
+      );
+    });
+
+    it('marks an exported table as escaping', () => {
+      const symbols = parseJS(`
+        function someFunction() {}
+        export const table = { resolve: someFunction };
+        table.resolve();
+      `);
+      expect(symbols.objectLiteralSites?.[0]?.escapes).toBe(true);
+    });
+
+    it('does not tag instanceof value-refs with objectLiteralSite', () => {
+      const symbols = parseJS(`if (err instanceof CodegraphError) {}`);
+      const call = symbols.calls.find(
+        (c) => c.dynamicKind === 'value-ref' && c.name === 'CodegraphError',
+      );
+      expect(call?.objectLiteralSite).toBeUndefined();
+    });
+
+    it('marks a this-using method table as escaping', () => {
+      const symbols = parseJS(`
+        function fnA() { return 1; }
+        const T = { alpha: fnA, run() { return this.alpha(); } };
+        T.run();
+      `);
+      expect(symbols.objectLiteralSites?.[0]?.escapes).toBe(true);
+    });
+
+    it('marks an object-spread table as escaping', () => {
+      const symbols = parseJS(`
+        function fnA() { return 1; }
+        const mixin = { extra: 1 };
+        const T = { alpha: fnA, ...mixin };
+        T.alpha();
+      `);
+      expect(symbols.objectLiteralSites?.[0]?.escapes).toBe(true);
+    });
+
+    it('keeps a mixed data/handler table local-closed', () => {
+      const symbols = parseJS(`
+        function isBaz() { return 1; }
+        const N = { priority: 1, label: 'default', tags: ['x', 'y'], resolve: isBaz };
+        N.resolve();
+      `);
+      expect(symbols.objectLiteralSites?.[0]?.escapes).toBe(false);
+    });
+  });
+
   describe('logical-or/nullish-coalescing/ternary fallback value-ref extraction (#2257)', () => {
     it('extracts a value-ref call for a logical-or fallback whose variable is used again', () => {
       const symbols = parseJS(`

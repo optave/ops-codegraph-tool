@@ -1460,10 +1460,11 @@ Implement a lightweight field-based points-to analysis inspired by [ACG](https:/
 - ✅ `for-of`, `Set`, and `Array.from` iteration-callback edges ([#1397](https://github.com/optave/ops-codegraph-tool/pull/1397))
 - ✅ Inline-array spread call edges `fn(...[a, b, c])` ([#1394](https://github.com/optave/ops-codegraph-tool/pull/1394))
 - 🔲 Full allocation-site abstraction and constraint solver (fixed-point iteration over points-to constraints)
+  - Progress: object-literal allocation sites for value-ref properties (#2088) — each `{ … }` that produces a `value-ref` gets a stable site id; the existing Andersen solver seeds `objlit@file#line:col` tokens and correlated invoked-property evidence is exclusive for proven local-closed sites. Function literals, arrow functions, and `new Foo()` remain outstanding. Measured on this repo (`codegraph roles --role dead -T`): 241 dead symbols with the feature on, 241 with `analysis.correlatedPropertyEvidence: false`, wasm ≡ native (byte-identical 241-symbol set). This repo's own dispatch tables are not local-closed, so the recall win shows up in the WU-10 fixtures rather than in the dogfood count.
 
 **Approach:**
 - **Field-based** (not field-sensitive): treat all instances of `obj.field` as the same abstract location regardless of which `obj` instance. This is the sweet spot between precision and scalability — ACG achieves 99% precision with this approach
-- **Allocation-site abstraction:** each `new Foo()`, function literal, or arrow function creates an abstract object tagged with its source location
+- **Allocation-site abstraction:** each `new Foo()`, function literal, arrow function, or object literal creates an abstract object tagged with its source location
 - **Assignment propagation:** track flows through assignments (`x = y`), parameter passing (`f(callback)`), and returns (`return handler`)
 - **Constraint solver:** fixed-point iteration over the points-to constraints until no new flows are discovered. Bound iterations to prevent divergence on pathological cases (configurable, default: 50 iterations)
 - **Scope:** intra-module first (8.3a), cross-module via import edges second (8.3b)

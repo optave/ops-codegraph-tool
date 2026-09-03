@@ -33,6 +33,10 @@ interface PurgeStmts {
    *  whose file was deleted stops projecting `nodes.entrypoint` onto its
    *  target on the next build. */
   entrypointCalls: SqliteStatement | null;
+  /** #2088: object-literal allocation sites keyed by declaring file. */
+  objectLiteralSites: SqliteStatement | null;
+  /** #2088: correlated invoked-property evidence keyed by consuming file. */
+  invokedPropertySites: SqliteStatement | null;
 }
 
 interface PurgeOpts {
@@ -108,6 +112,8 @@ function preparePurgeStmts(db: BetterSqlite3Database): PurgeStmts {
     // #2411's separate pre-purge clear step, which had to run before this one
     // precisely because it read the flag off the target instead.
     entrypointCalls: tryPrepare('DELETE FROM entrypoint_calls WHERE file = ?'),
+    objectLiteralSites: tryPrepare('DELETE FROM object_literal_sites WHERE file = ?'),
+    invokedPropertySites: tryPrepare('DELETE FROM invoked_property_sites WHERE file = ?'),
   };
 }
 
@@ -144,6 +150,8 @@ function runPurge(stmts: PurgeStmts, file: string, opts: PurgeOpts = {}): void {
   stmts.invokedPropertyNames?.run(file);
   stmts.returnTypes?.run(file);
   stmts.entrypointCalls?.run(file);
+  stmts.objectLiteralSites?.run(file);
+  stmts.invokedPropertySites?.run(file);
 
   // Core tables
   stmts.edges.run({ f: file });

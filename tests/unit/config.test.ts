@@ -101,6 +101,7 @@ describe('DEFAULTS', () => {
       typePropagationDepth: 3,
       pointsToMaxIterations: 50,
       typeInferenceConfidence: 0.85,
+      correlatedPropertyEvidence: true,
     });
   });
 
@@ -283,6 +284,17 @@ describe('loadConfig', () => {
     expect(config.analysis.pointsToMaxIterations).toBe(5);
     // Sibling defaults preserved
     expect(config.analysis.typePropagationDepth).toBe(3);
+  });
+
+  it('loads a correlatedPropertyEvidence override from config (issue #2088)', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'corr-prop-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ analysis: { correlatedPropertyEvidence: false } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.analysis.correlatedPropertyEvidence).toBe(false);
+    expect(config.analysis.pointsToMaxIterations).toBe(50);
   });
 });
 

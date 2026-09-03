@@ -606,6 +606,36 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // #2088: durable, per-file record of (a) every object-literal allocation
+    // site and whether it escapes, and (b) every `${siteKey}|${property}` pair
+    // proven invoked through a correlated receiver. The durable counterpart of
+    // the in-memory sets `buildCallEdgesJS` computes, for exactly the reason
+    // `invoked_property_names` (v29 / #2087) exists: a scoped incremental build
+    // narrows `ctx.fileSymbols` to changed files + reverse-deps, so a consumer
+    // living in an untouched file would otherwise be invisible and its site's
+    // properties misclassified dead.
+    //
+    // Deleted and re-inserted per file (see preparePurgeStmts) so a file whose
+    // sites changed never leaves stale rows behind.
+    version: 32,
+    up: `
+      CREATE TABLE IF NOT EXISTS object_literal_sites (
+        file    TEXT    NOT NULL,
+        site    TEXT    NOT NULL,
+        escapes INTEGER NOT NULL,
+        PRIMARY KEY (file, site)
+      );
+      CREATE TABLE IF NOT EXISTS invoked_property_sites (
+        site_key TEXT NOT NULL,
+        name     TEXT NOT NULL,
+        file     TEXT NOT NULL,
+        PRIMARY KEY (site_key, name, file)
+      );
+      CREATE INDEX IF NOT EXISTS idx_invoked_property_sites_key
+        ON invoked_property_sites(site_key);
+    `,
+  },
 ];
 
 interface PragmaColumnInfo {

@@ -177,6 +177,7 @@ impl SymbolExtractor for JsExtractor {
                 handle_accessor_property_read(node, source, symbols, &local_accessors)
             },
         );
+        finalize_object_literal_sites(&tree.root_node(), source, &mut symbols);
         symbols
     }
 }
@@ -1885,9 +1886,9 @@ fn match_js_node(
         "expression_statement" => handle_expr_stmt(node, source, symbols),
         // #1771: dispatch-table-style object-literal property values
         // (`{ resolve: someFunction }` / shorthand `{ someFunction }`).
-        "pair" => handle_object_literal_pair_value_ref(node, source, &mut symbols.calls),
+        "pair" => handle_object_literal_pair_value_ref(node, source, symbols),
         "shorthand_property_identifier" => {
-            handle_object_literal_shorthand_value_ref(node, source, &mut symbols.calls)
+            handle_object_literal_shorthand_value_ref(node, source, symbols)
         }
         // #1784: `instanceof ClassName` checks, e.g. `err instanceof CodegraphError`.
         "binary_expression" => handle_instanceof_value_ref(node, source, &mut symbols.calls),
@@ -4450,10 +4451,984 @@ fn find_enclosing_table_name(node: &Node, source: &[u8]) -> Option<String> {
     None
 }
 
+const MAX_ALIAS_DEPTH: usize = 6;
+const OBJLIT_TRACKED_PARENTS: &[&str] = &[
+    "member_expression",
+    "subscript_expression",
+    "for_in_statement",
+];
+const GLOBAL_OBJECT_NAMES: &[&str] = &["globalThis", "global", "self", "window"];
+
+fn object_literal_site_id(object_node: &Node) -> String {
+    format!(
+        "{}:{}",
+        object_node.start_position().row,
+        object_node.start_position().column
+    )
+}
+
+fn enclosing_object_literal<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    let parent = node.parent()?;
+    if parent.kind() == "object" {
+        Some(parent)
+    } else {
+        None
+    }
+}
+
+fn seed_object_literal_site(
+    object_node: Option<Node>,
+    symbols: &mut FileSymbols,
+) -> Option<String> {
+    let object_node = object_node?;
+    let site = object_literal_site_id(&object_node);
+    if !symbols.object_literal_sites.iter().any(|s| s.site == site) {
+        symbols.object_literal_sites.push(ObjectLiteralSite {
+            site: site.clone(),
+            owner: None,
+            escapes: true,
+        });
+    }
+    Some(site)
+}
+
+fn finalize_object_literal_sites(root: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if symbols.object_literal_sites.is_empty() {
+        return;
+    }
+    let exported_names = collect_exported_binding_names(root, source);
+    let definition_names: HashSet<String> = symbols
+        .definitions
+        .iter()
+        .filter(|d| d.kind == "function" || d.kind == "method")
+        .map(|d| d.name.clone())
+        .collect();
+    compute_object_literal_site_escapes(
+        &mut symbols.object_literal_sites,
+        root,
+        source,
+        &exported_names,
+        &definition_names,
+    );
+}
+
+fn unwrap_parens<'a>(node: Node<'a>, depth: usize) -> Node<'a> {
+    if depth >= MAX_WALK_DEPTH {
+        return node;
+    }
+    if node.kind() != "parenthesized_expression" {
+        return node;
+    }
+    match node.named_child(0) {
+        Some(inner) => unwrap_parens(inner, depth + 1),
+        None => node,
+    }
+}
+
+fn compute_object_literal_site_escapes(
+    sites: &mut [ObjectLiteralSite],
+    root: &Node,
+    source: &[u8],
+    exported_names: &HashSet<String>,
+    definition_names: &HashSet<String>,
+) {
+    for entry in sites.iter_mut() {
+        let Some(object_node) = find_node_at_site(root, &entry.site) else {
+            continue;
+        };
+        let Some(owner) = resolve_site_owner(&object_node, source) else {
+            continue;
+        };
+        entry.owner = Some(owner.key.clone());
+        if literal_has_unmodeled_this_reference(&object_node, root, source, definition_names) {
+            entry.escapes = true;
+            continue;
+        }
+        if owner.binding_name.is_none() {
+            entry.escapes = true;
+            continue;
+        }
+        let binding_name = owner.binding_name.as_deref().unwrap();
+        if exported_names.contains(binding_name) {
+            continue;
+        }
+        let is_array_owner = owner.key != binding_name;
+        entry.escapes = !all_references_tracked(
+            root,
+            source,
+            exported_names,
+            binding_name,
+            &object_node,
+            is_array_owner,
+            None,
+            0,
+            None,
+        );
+    }
+}
+
+struct SiteOwner {
+    key: String,
+    binding_name: Option<String>,
+}
+
+fn resolve_site_owner(object_node: &Node, source: &[u8]) -> Option<SiteOwner> {
+    let mut current = object_node.parent();
+    let mut hops = 0;
+    let mut in_array = false;
+    while let Some(cur) = current {
+        if hops >= 6 {
+            return None;
+        }
+        if cur.kind() == "array" {
+            in_array = true;
+            current = cur.parent();
+            hops += 1;
+            continue;
+        }
+        if cur.kind() == "variable_declarator" {
+            let name_n = cur.child_by_field_name("name")?;
+            if name_n.kind() != "identifier" {
+                return None;
+            }
+            let binding_name = node_text(&name_n, source).to_string();
+            let key = if in_array {
+                format!("{binding_name}[*]")
+            } else {
+                binding_name.clone()
+            };
+            return Some(SiteOwner {
+                key,
+                binding_name: Some(binding_name),
+            });
+        }
+        if cur.kind() == "return_statement" {
+            let fn_name = find_enclosing_function_qualifier(&cur, source)?;
+            return Some(SiteOwner {
+                key: format!("{fn_name}::return"),
+                binding_name: None,
+            });
+        }
+        if !TABLE_NAME_PASSTHROUGH_KINDS.contains(&cur.kind()) {
+            return None;
+        }
+        current = cur.parent();
+        hops += 1;
+    }
+    None
+}
+
+fn find_node_at_site<'a>(root: &Node<'a>, site: &str) -> Option<Node<'a>> {
+    let (row_s, col_s) = site.split_once(':')?;
+    let row: usize = row_s.parse().ok()?;
+    let col: usize = col_s.parse().ok()?;
+    fn walk<'a>(node: Node<'a>, row: usize, col: usize, depth: usize) -> Option<Node<'a>> {
+        if depth >= MAX_WALK_DEPTH {
+            return None;
+        }
+        if node.kind() == "object"
+            && node.start_position().row == row
+            && node.start_position().column == col
+        {
+            return Some(node);
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if let Some(found) = walk(child, row, col, depth + 1) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(*root, row, col, 0)
+}
+
+fn collect_exported_binding_names(root: &Node, source: &[u8]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    fn add_from_decl(decl: &Node, source: &[u8], names: &mut HashSet<String>) {
+        match decl.kind() {
+            "function_declaration"
+            | "generator_function_declaration"
+            | "class_declaration"
+            | "abstract_class_declaration"
+            | "interface_declaration"
+            | "type_alias_declaration"
+            | "enum_declaration" => {
+                if let Some(n) = decl.child_by_field_name("name") {
+                    names.insert(node_text(&n, source).to_string());
+                }
+            }
+            "lexical_declaration" | "variable_declaration" => {
+                for i in 0..decl.child_count() {
+                    let Some(declarator) = decl.child(i) else {
+                        continue;
+                    };
+                    if declarator.kind() != "variable_declarator" {
+                        continue;
+                    }
+                    let Some(name_n) = declarator.child_by_field_name("name") else {
+                        continue;
+                    };
+                    match name_n.kind() {
+                        "identifier" => {
+                            names.insert(node_text(&name_n, source).to_string());
+                        }
+                        "object_pattern" => {
+                            for n in collect_object_pattern_names(&name_n, source, &mut Vec::new())
+                            {
+                                names.insert(n);
+                            }
+                        }
+                        "array_pattern" => {
+                            for n in collect_array_pattern_names(&name_n, source) {
+                                names.insert(n);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    fn visit(node: &Node, source: &[u8], names: &mut HashSet<String>, depth: usize) {
+        if depth >= MAX_WALK_DEPTH {
+            return;
+        }
+        if node.kind() == "export_statement" {
+            if let Some(decl) = node.child_by_field_name("declaration") {
+                add_from_decl(&decl, source, names);
+            }
+            collect_export_clause_names(node, source, names, 0);
+            return;
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                visit(&child, source, names, depth + 1);
+            }
+        }
+    }
+    visit(root, source, &mut names, 0);
+    names
+}
+
+fn collect_export_clause_names(
+    node: &Node,
+    source: &[u8],
+    names: &mut HashSet<String>,
+    depth: usize,
+) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    if node.kind() == "export_specifier" {
+        let local = node
+            .child_by_field_name("local")
+            .or_else(|| node.child_by_field_name("name"))
+            .or_else(|| node.child(0));
+        if let Some(local) = local {
+            if local.kind() == "identifier" || local.kind() == "property_identifier" {
+                names.insert(node_text(&local, source).to_string());
+            }
+        }
+        return;
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            collect_export_clause_names(&child, source, names, depth + 1);
+        }
+    }
+}
+
+fn is_positively_this_free_literal(value: &Node) -> bool {
+    matches!(
+        value.kind(),
+        "string"
+            | "number"
+            | "true"
+            | "false"
+            | "null"
+            | "template_string"
+            | "regex"
+            | "array"
+            | "object"
+    )
+}
+
+fn subtree_contains_this_keyword(node: &Node, depth: usize) -> bool {
+    if depth >= MAX_WALK_DEPTH {
+        return true;
+    }
+    if node.kind() == "this" {
+        return true;
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if subtree_contains_this_keyword(&child, depth + 1) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn literal_has_unmodeled_this_reference(
+    object_node: &Node,
+    root: &Node,
+    source: &[u8],
+    definition_names: &HashSet<String>,
+) -> bool {
+    for i in 0..object_node.child_count() {
+        let Some(child) = object_node.child(i) else {
+            continue;
+        };
+        if child.kind() == "method_definition" {
+            for gi in 0..child.child_count() {
+                if child.child(gi).is_some_and(|c| c.kind() == "get") {
+                    return true;
+                }
+            }
+            if subtree_contains_this_keyword(&child, 0) {
+                return true;
+            }
+            continue;
+        }
+        if child.kind() == "shorthand_property_identifier" {
+            let text = node_text(&child, source);
+            if JS_BUILTIN_GLOBALS.contains(&text) {
+                return true;
+            }
+            if resolve_identifier_value_this_reference(
+                object_node,
+                root,
+                source,
+                text,
+                definition_names,
+            ) {
+                return true;
+            }
+            continue;
+        }
+        if child.kind() == "pair" {
+            if let Some(key) = child.child_by_field_name("key") {
+                if key.kind() != "computed_property_name" {
+                    let raw = node_text(&key, source);
+                    if raw.contains('\\') || raw.replace(['\'', '"', '`'], "") == "__proto__" {
+                        return true;
+                    }
+                }
+            }
+            let Some(value) = child.child_by_field_name("value") else {
+                return true;
+            };
+            if value.kind() == "arrow_function" {
+                continue;
+            }
+            if value.kind() == "function_expression" || value.kind() == "function" {
+                if subtree_contains_this_keyword(&value, 0) {
+                    return true;
+                }
+                continue;
+            }
+            if value.kind() == "identifier" {
+                let text = node_text(&value, source);
+                if JS_BUILTIN_GLOBALS.contains(&text) {
+                    return true;
+                }
+                if resolve_identifier_value_this_reference(
+                    object_node,
+                    root,
+                    source,
+                    text,
+                    definition_names,
+                ) {
+                    return true;
+                }
+                continue;
+            }
+            if is_positively_this_free_literal(&value) {
+                continue;
+            }
+            return true;
+        }
+        if child.kind() == "spread_element" {
+            return true;
+        }
+    }
+    false
+}
+
+fn resolve_identifier_value_this_reference(
+    object_node: &Node,
+    root: &Node,
+    source: &[u8],
+    name: &str,
+    definition_names: &HashSet<String>,
+) -> bool {
+    if !definition_names.contains(name) {
+        return true;
+    }
+    let declaring_scope = find_resolving_scope_node(object_node, name, source).unwrap_or(*root);
+    if declaring_scope.id() != root.id() {
+        return true;
+    }
+    let Some(fn_node) = find_top_level_function_node_by_name(root, name, source) else {
+        return true;
+    };
+    if subtree_contains_reassignment_of(root, name, source, 0) {
+        return true;
+    }
+    if fn_node.kind() == "arrow_function" {
+        return false;
+    }
+    subtree_contains_this_keyword(&fn_node, 0)
+}
+
+fn find_resolving_scope_node<'a>(node: &Node<'a>, name: &str, source: &[u8]) -> Option<Node<'a>> {
+    let mut current = node.parent();
+    while let Some(cur) = current {
+        if cur.kind() == "for_in_statement" {
+            if let Some(left) = cur.child_by_field_name("left") {
+                if pattern_binds_name(&unwrap_parens(left, 0), name, source, 0) {
+                    return Some(cur);
+                }
+            }
+        }
+        if cur.kind() == "arrow_function" {
+            if let Some(param) = cur.child_by_field_name("parameter") {
+                if node_text(&param, source) == name {
+                    return Some(cur);
+                }
+            }
+        }
+        if cur.kind() == "with_statement" {
+            return Some(cur);
+        }
+        if introduces_shadowed_binding(&cur, name, source) {
+            return Some(cur);
+        }
+        current = cur.parent();
+    }
+    None
+}
+
+fn find_top_level_function_node_by_name<'a>(
+    root: &Node<'a>,
+    name: &str,
+    source: &[u8],
+) -> Option<Node<'a>> {
+    let mut result = None;
+    let mut declaration_count = 0usize;
+    for i in 0..root.child_count() {
+        let mut stmt = root.child(i);
+        if let Some(s) = stmt {
+            if s.kind() == "export_statement" {
+                stmt = s.child_by_field_name("declaration").or_else(|| s.child(1));
+            }
+        }
+        let Some(stmt) = stmt else {
+            continue;
+        };
+        if stmt.kind() == "function_declaration" || stmt.kind() == "generator_function_declaration"
+        {
+            if stmt
+                .child_by_field_name("name")
+                .is_some_and(|n| node_text(&n, source) == name)
+            {
+                declaration_count += 1;
+                result = Some(stmt);
+            }
+            continue;
+        }
+        if stmt.kind() == "lexical_declaration" || stmt.kind() == "variable_declaration" {
+            for j in 0..stmt.child_count() {
+                let Some(decl) = stmt.child(j) else {
+                    continue;
+                };
+                if decl.kind() != "variable_declarator" {
+                    continue;
+                }
+                if decl
+                    .child_by_field_name("name")
+                    .is_none_or(|n| node_text(&n, source) != name)
+                {
+                    continue;
+                }
+                declaration_count += 1;
+                if let Some(value) = decl.child_by_field_name("value") {
+                    if value.kind() == "arrow_function"
+                        || value.kind() == "function_expression"
+                        || value.kind() == "function"
+                    {
+                        result = Some(value);
+                    }
+                }
+            }
+            continue;
+        }
+        declaration_count += count_hoisted_var_scope_declarations(&stmt, name, source, 0);
+    }
+    if declaration_count > 1 {
+        None
+    } else {
+        result
+    }
+}
+
+fn count_hoisted_var_scope_declarations(
+    node: &Node,
+    name: &str,
+    source: &[u8],
+    depth: usize,
+) -> usize {
+    if depth >= MAX_WALK_DEPTH {
+        return 2;
+    }
+    let mut count = 0usize;
+    if node.kind() == "variable_declaration" && declaration_declares_name(node, name, source) {
+        count += 1;
+    }
+    if node.kind() == "function_declaration"
+        && node
+            .child_by_field_name("name")
+            .is_some_and(|n| node_text(&n, source) == name)
+    {
+        count += 1;
+    }
+    if FUNCTION_SCOPE_NODE_TYPES.contains(&node.kind()) {
+        return count;
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            count += count_hoisted_var_scope_declarations(&child, name, source, depth + 1);
+        }
+    }
+    count
+}
+
+fn subtree_contains_reassignment_of(node: &Node, name: &str, source: &[u8], depth: usize) -> bool {
+    if depth >= MAX_WALK_DEPTH {
+        return true;
+    }
+    if node.kind() == "assignment_expression" || node.kind() == "augmented_assignment_expression" {
+        if let Some(left) = node.child_by_field_name("left") {
+            let unwrapped = unwrap_parens(left, 0);
+            if pattern_binds_name(&unwrapped, name, source, 0) {
+                return true;
+            }
+            if is_global_object_qualified_write(&unwrapped, name, source) {
+                return true;
+            }
+        }
+    } else if node.kind() == "update_expression" {
+        if let Some(arg) = node.child_by_field_name("argument") {
+            let target = unwrap_parens(arg, 0);
+            if target.kind() == "identifier" && node_text(&target, source) == name {
+                return true;
+            }
+        }
+    } else if node.kind() == "for_in_statement" {
+        if let Some(left) = node.child_by_field_name("left") {
+            let kind = node.child_by_field_name("kind");
+            let is_var = kind.map(|k| node_text(&k, source) == "var").unwrap_or(true);
+            if pattern_binds_name(&unwrap_parens(left, 0), name, source, 0) && is_var {
+                return true;
+            }
+        }
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if subtree_contains_reassignment_of(&child, name, source, depth + 1) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_global_object_qualified_write(node: &Node, name: &str, source: &[u8]) -> bool {
+    if node.kind() == "member_expression" {
+        let Some(object) = node.child_by_field_name("object") else {
+            return false;
+        };
+        let Some(property) = node.child_by_field_name("property") else {
+            return false;
+        };
+        let obj = unwrap_parens(object, 0);
+        return obj.kind() == "identifier"
+            && GLOBAL_OBJECT_NAMES.contains(&node_text(&obj, source))
+            && node_text(&property, source) == name;
+    }
+    if node.kind() == "subscript_expression" {
+        let Some(object) = node.child_by_field_name("object") else {
+            return false;
+        };
+        let obj = unwrap_parens(object, 0);
+        if obj.kind() != "identifier" || !GLOBAL_OBJECT_NAMES.contains(&node_text(&obj, source)) {
+            return false;
+        }
+        let Some(raw_index) = node.child_by_field_name("index") else {
+            return false;
+        };
+        let index = unwrap_parens(raw_index, 0);
+        if index.kind() != "string" && index.kind() != "template_string" {
+            return false;
+        }
+        let property_name = node_text(&index, source).replace(['\'', '"', '`'], "");
+        return !property_name.is_empty() && !property_name.contains('$') && property_name == name;
+    }
+    false
+}
+
+fn function_scope_declares_var_excluding_static_blocks(
+    node: &Node,
+    name: &str,
+    source: &[u8],
+    depth: usize,
+) -> bool {
+    if depth >= MAX_WALK_DEPTH {
+        return false;
+    }
+    if node.kind() == "variable_declaration" && declaration_declares_name(node, name, source) {
+        return true;
+    }
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else {
+            continue;
+        };
+        if FUNCTION_SCOPE_NODE_TYPES.contains(&child.kind()) || child.kind() == "class_static_block"
+        {
+            continue;
+        }
+        if function_scope_declares_var_excluding_static_blocks(&child, name, source, depth + 1) {
+            return true;
+        }
+    }
+    false
+}
+
+fn scope_shadows_name(node: &Node, name: &str, source: &[u8]) -> bool {
+    if FUNCTION_SCOPE_NODE_TYPES.contains(&node.kind()) {
+        if node
+            .child_by_field_name("name")
+            .is_some_and(|n| node_text(&n, source) == name)
+        {
+            return true;
+        }
+        if let Some(params) = node.child_by_field_name("parameters") {
+            for i in 0..params.child_count() {
+                if let Some(param) = params.child(i) {
+                    if pattern_binds_name(&param, name, source, 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+        if let Some(param) = node.child_by_field_name("parameter") {
+            if pattern_binds_name(&unwrap_parens(param, 0), name, source, 0) {
+                return true;
+            }
+        }
+        return node.child_by_field_name("body").is_some_and(|body| {
+            function_scope_declares_var_excluding_static_blocks(&body, name, source, 0)
+        });
+    }
+    if SCOPE_NODE_TYPES.contains(&node.kind()) {
+        return introduces_shadowed_binding(node, name, source);
+    }
+    false
+}
+
+fn find_declaring_scope_node<'a>(node: &Node<'a>, name: &str, source: &[u8]) -> Option<Node<'a>> {
+    let mut current = node.parent();
+    while let Some(cur) = current {
+        if scope_shadows_name(&cur, name, source) {
+            return Some(cur);
+        }
+        current = cur.parent();
+    }
+    None
+}
+
+fn find_enclosing_function_body<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    let mut current = node.parent();
+    while let Some(cur) = current {
+        if FUNCTION_SCOPE_NODE_TYPES.contains(&cur.kind()) {
+            return cur.child_by_field_name("body");
+        }
+        current = cur.parent();
+    }
+    None
+}
+
+fn is_binding_occurrence(node: &Node, source: &[u8]) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if parent.kind() == "variable_declarator"
+        && parent
+            .child_by_field_name("name")
+            .is_some_and(|n| n.id() == node.id())
+    {
+        return true;
+    }
+    if parent.kind() == "for_in_statement" {
+        if let Some(left) = parent.child_by_field_name("left") {
+            if left.id() == node.id()
+                || pattern_binds_name(&unwrap_parens(left, 0), node_text(node, source), source, 0)
+            {
+                return true;
+            }
+        }
+    }
+    if (parent.kind() == "function_declaration"
+        || parent.kind() == "generator_function_declaration")
+        && parent
+            .child_by_field_name("name")
+            .is_some_and(|n| n.id() == node.id())
+    {
+        return true;
+    }
+    false
+}
+
+fn enclosing_declarator_if_value<'a>(ref_node: &Node<'a>) -> Option<Node<'a>> {
+    let mut current = Some(*ref_node);
+    while let Some(cur) = current {
+        let parent = cur.parent()?;
+        if parent.kind() == "variable_declarator"
+            && parent
+                .child_by_field_name("value")
+                .is_some_and(|v| v.id() == cur.id())
+        {
+            return Some(parent);
+        }
+        if TABLE_NAME_PASSTHROUGH_KINDS.contains(&parent.kind()) {
+            current = Some(parent);
+            continue;
+        }
+        return None;
+    }
+    None
+}
+
+fn is_tracked_reference_position_src(ref_node: &Node, is_array_owner: bool, source: &[u8]) -> bool {
+    let Some(parent) = ref_node.parent() else {
+        return false;
+    };
+    if !OBJLIT_TRACKED_PARENTS.contains(&parent.kind()) {
+        return false;
+    }
+    if parent.kind() == "member_expression" || parent.kind() == "subscript_expression" {
+        if is_array_owner {
+            return false;
+        }
+        let Some(object) = parent.child_by_field_name("object") else {
+            return false;
+        };
+        if object.id() != ref_node.id() {
+            return false;
+        }
+        if let Some(prop) = parent.child_by_field_name("property") {
+            let prop_text = node_text(&prop, source);
+            if prop_text == "call" || prop_text == "apply" || prop_text == "bind" {
+                return false;
+            }
+        }
+        let Some(grandparent) = parent.parent() else {
+            return false;
+        };
+        if grandparent.kind() != "call_expression" {
+            return false;
+        }
+        if grandparent
+            .child_by_field_name("function")
+            .is_none_or(|f| f.id() != parent.id())
+        {
+            return false;
+        }
+        if parent.kind() == "subscript_expression" {
+            let Some(index) = parent.child_by_field_name("index") else {
+                return false;
+            };
+            if index.kind() != "string" && index.kind() != "template_string" {
+                return false;
+            }
+            let method_name = node_text(&index, source).replace(['\'', '"', '`'], "");
+            if method_name.is_empty() || method_name.contains('$') {
+                return false;
+            }
+        }
+        return true;
+    }
+    if parent
+        .child_by_field_name("right")
+        .is_none_or(|r| r.id() != ref_node.id())
+    {
+        return false;
+    }
+    parent
+        .child_by_field_name("operator")
+        .is_some_and(|op| node_text(&op, source) == "of")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn all_references_tracked(
+    root: &Node,
+    source: &[u8],
+    exported_names: &HashSet<String>,
+    binding_name: &str,
+    object_node: &Node,
+    is_array_owner: bool,
+    declaring_scope: Option<Node>,
+    depth: usize,
+    skip_node: Option<usize>,
+) -> bool {
+    if exported_names.contains(binding_name) {
+        return false;
+    }
+    if depth >= MAX_ALIAS_DEPTH {
+        return false;
+    }
+    let scope = declaring_scope
+        .or_else(|| find_declaring_scope_node(object_node, binding_name, source))
+        .unwrap_or(*root);
+    let mut refs = Vec::new();
+    let mut covered = true;
+    #[allow(clippy::too_many_arguments)]
+    fn walk<'a>(
+        node: Node<'a>,
+        scope_id: usize,
+        binding_name: &str,
+        source: &[u8],
+        skip_node: Option<usize>,
+        refs: &mut Vec<Node<'a>>,
+        covered: &mut bool,
+        walk_depth: usize,
+    ) {
+        if walk_depth >= MAX_WALK_DEPTH {
+            *covered = false;
+            return;
+        }
+        if node.id() != scope_id && scope_shadows_name(&node, binding_name, source) {
+            return;
+        }
+        // #2088 B5 / #2640: a globalThis/window/global/self qualified read
+        // of this binding is a real reference the identifier walk cannot
+        // see (`property_identifier` / string index). Unconditionally
+        // untracked — no T1 channel exists for a synthetic global-object
+        // lookup.
+        if is_global_object_qualified_write(&node, binding_name, source) {
+            *covered = false;
+            return;
+        }
+        if (node.kind() == "identifier" || node.kind() == "shorthand_property_identifier")
+            && node_text(&node, source) == binding_name
+            && !is_binding_occurrence(&node, source)
+            && skip_node != Some(node.id())
+        {
+            refs.push(node);
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                walk(
+                    child,
+                    scope_id,
+                    binding_name,
+                    source,
+                    skip_node,
+                    refs,
+                    covered,
+                    walk_depth + 1,
+                );
+            }
+        }
+    }
+    walk(
+        scope,
+        scope.id(),
+        binding_name,
+        source,
+        skip_node,
+        &mut refs,
+        &mut covered,
+        0,
+    );
+    if !covered {
+        return false;
+    }
+    for ref_node in refs {
+        if is_tracked_reference_position_src(&ref_node, is_array_owner, source) {
+            if let Some(parent) = ref_node.parent() {
+                if parent.kind() == "for_in_statement" {
+                    let Some(left) = parent.child_by_field_name("left") else {
+                        return false;
+                    };
+                    let unwrapped = unwrap_parens(left, 0);
+                    if unwrapped.kind() != "identifier" {
+                        return false;
+                    }
+                    let loop_var = node_text(&unwrapped, source).to_string();
+                    let kind = parent
+                        .child_by_field_name("kind")
+                        .map(|k| node_text(&k, source).to_string());
+                    let loop_scope = if kind.as_deref() == Some("var") {
+                        find_enclosing_function_body(&parent).unwrap_or(scope)
+                    } else {
+                        parent.child_by_field_name("body").unwrap_or(scope)
+                    };
+                    if !all_references_tracked(
+                        root,
+                        source,
+                        exported_names,
+                        &loop_var,
+                        object_node,
+                        false,
+                        Some(loop_scope),
+                        depth + 1,
+                        Some(unwrapped.id()),
+                    ) {
+                        return false;
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(declarator) = enclosing_declarator_if_value(&ref_node) {
+            let Some(name_node) = declarator.child_by_field_name("name") else {
+                return false;
+            };
+            if name_node.kind() != "identifier" {
+                return false;
+            }
+            let alias = node_text(&name_node, source).to_string();
+            let alias_scope =
+                find_declaring_scope_node(&name_node, &alias, source).unwrap_or(scope);
+            if !all_references_tracked(
+                root,
+                source,
+                exported_names,
+                &alias,
+                object_node,
+                is_array_owner,
+                Some(alias_scope),
+                depth + 1,
+                Some(name_node.id()),
+            ) {
+                return false;
+            }
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
 /// Mirrors `collectObjectLiteralValueRefCall` in `src/extractors/javascript.ts`.
 /// `receiver` (issue #2260) carries the TABLE's own variable name, when
 /// resolvable — see `find_enclosing_table_name`.
-fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], calls: &mut Vec<Call>) {
+fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(value_n) = node.child_by_field_name("value") else {
         return;
     };
@@ -4467,13 +5442,15 @@ fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], calls: &mut 
     let key_expr = node
         .child_by_field_name("key")
         .and_then(|k| resolve_pair_key_name(&k, source));
-    calls.push(Call {
+    let site = seed_object_literal_site(enclosing_object_literal(node), symbols);
+    symbols.calls.push(Call {
         name: text.to_string(),
         line: start_line(&value_n),
         dynamic: Some(true),
         dynamic_kind: Some("value-ref".to_string()),
         key_expr,
         receiver: find_enclosing_table_name(node, source),
+        object_literal_site: site,
         ..Default::default()
     });
 }
@@ -4490,18 +5467,24 @@ fn handle_object_literal_pair_value_ref(node: &Node, source: &[u8], calls: &mut 
 ///
 /// Mirrors the walk path's `shorthand_property_identifier` handling in
 /// `src/extractors/javascript.ts`'s `runCollectorWalk` (issue #1771).
-fn handle_object_literal_shorthand_value_ref(node: &Node, source: &[u8], calls: &mut Vec<Call>) {
+fn handle_object_literal_shorthand_value_ref(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+) {
     let text = node_text(node, source);
     if JS_BUILTIN_GLOBALS.contains(&text) {
         return;
     }
-    calls.push(Call {
+    let site = seed_object_literal_site(enclosing_object_literal(node), symbols);
+    symbols.calls.push(Call {
         name: text.to_string(),
         line: start_line(node),
         dynamic: Some(true),
         dynamic_kind: Some("value-ref".to_string()),
         key_expr: Some(text.to_string()),
         receiver: find_enclosing_table_name(node, source),
+        object_literal_site: site,
         ..Default::default()
     });
 }

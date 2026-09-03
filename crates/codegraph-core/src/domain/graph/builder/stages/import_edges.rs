@@ -355,6 +355,98 @@ pub fn persist_invoked_property_names(
     Ok(())
 }
 
+/// Persist object-literal allocation sites (#2088).
+pub fn persist_object_literal_sites(
+    conn: &Connection,
+    files: &[super::build_edges::FileEdgeInput],
+) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("persist_object_literal_sites: failed to start transaction: {e}"))?;
+    {
+        let mut delete_stmt = tx
+            .prepare("DELETE FROM object_literal_sites WHERE file = ?1")
+            .map_err(|e| e.to_string())?;
+        let mut insert_stmt = tx
+            .prepare(
+                "INSERT OR IGNORE INTO object_literal_sites (file, site, escapes) VALUES (?1, ?2, ?3)",
+            )
+            .map_err(|e| e.to_string())?;
+        for file in files {
+            delete_stmt
+                .execute([&file.file])
+                .map_err(|e| e.to_string())?;
+            if let Some(sites) = &file.object_literal_sites {
+                for site in sites {
+                    insert_stmt
+                        .execute(rusqlite::params![
+                            file.file,
+                            site.site,
+                            if site.escapes { 1 } else { 0 }
+                        ])
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    tx.commit()
+        .map_err(|e| format!("persist_object_literal_sites: commit failed: {e}"))?;
+    Ok(())
+}
+
+/// Persist per-file correlated invoked-property evidence (#2088) into
+/// `invoked_property_sites` — the durable counterpart of
+/// `persistInvokedPropertySites` in `build-edges.ts`. Called once per native
+/// orchestrator pass after `prepare_invoked_property_site_resolution` has this
+/// pass's keys, so a later `codegraph watch` extra-SELECT is not empty.
+///
+/// Deletes and re-inserts per file so a file whose correlated keys changed
+/// (or were removed entirely) never leaves stale rows behind for it.
+pub fn persist_invoked_property_sites(
+    conn: &Connection,
+    files: &[super::build_edges::FileEdgeInput],
+    sites_by_file: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("persist_invoked_property_sites: failed to start transaction: {e}"))?;
+    {
+        let mut delete_stmt = tx
+            .prepare("DELETE FROM invoked_property_sites WHERE file = ?1")
+            .map_err(|e| e.to_string())?;
+        let mut insert_stmt = tx
+            .prepare(
+                "INSERT OR IGNORE INTO invoked_property_sites (site_key, name, file) VALUES (?1, ?2, ?3)",
+            )
+            .map_err(|e| e.to_string())?;
+        for file in files {
+            delete_stmt
+                .execute([&file.file])
+                .map_err(|e| e.to_string())?;
+            let Some(keys) = sites_by_file.get(&file.file) else {
+                continue;
+            };
+            for key in keys {
+                let Some(sep) = key.rfind('|') else {
+                    continue;
+                };
+                insert_stmt
+                    .execute(rusqlite::params![&key[..sep], &key[sep + 1..], file.file])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    tx.commit()
+        .map_err(|e| format!("persist_invoked_property_sites: commit failed: {e}"))?;
+    Ok(())
+}
+
 /// Persist per-file return-type evidence (#2138) into `return_types` — gives
 /// a later incremental build's `propagate_return_types_across_files` a
 /// durable, whole-graph view of files it doesn't itself re-parse this pass.
@@ -1045,6 +1137,7 @@ mod tests {
             object_prop_bindings: vec![],
             computed_dispatch_table_evidence: vec![],
             new_expressions: vec![],
+            object_literal_sites: vec![],
         }
     }
 

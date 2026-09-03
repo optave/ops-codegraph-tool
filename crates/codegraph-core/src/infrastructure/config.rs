@@ -96,18 +96,27 @@ pub struct AnalysisConfig {
     /// `build_call_edges()` via `build_and_insert_call_edges()`.
     #[serde(default = "default_points_to_max_iterations")]
     pub points_to_max_iterations: u32,
+    /// Enables allocation-site-correlated invoked-property evidence (#2088).
+    /// Mirrors `DEFAULTS.analysis.correlatedPropertyEvidence`.
+    #[serde(default = "default_correlated_property_evidence")]
+    pub correlated_property_evidence: bool,
 }
 
 impl Default for AnalysisConfig {
     fn default() -> Self {
         Self {
             points_to_max_iterations: default_points_to_max_iterations(),
+            correlated_property_evidence: default_correlated_property_evidence(),
         }
     }
 }
 
 fn default_points_to_max_iterations() -> u32 {
     50
+}
+
+fn default_correlated_property_evidence() -> bool {
+    true
 }
 
 /// Build options passed from the JS caller.
