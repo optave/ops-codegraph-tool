@@ -164,7 +164,7 @@
     "tree-sitter-bash": "^0.25.1",
     "tree-sitter-c": "^0.24.1",
     "tree-sitter-c-sharp": "^0.23.1",
-    "tree-sitter-cli": "^0.26.5",
+    "tree-sitter-cli": "^0.27.0",
     "tree-sitter-clojure": "github:sogaiu/tree-sitter-clojure",
     "tree-sitter-cpp": "^0.23.4",
     "tree-sitter-cuda": "^0.21.1",
