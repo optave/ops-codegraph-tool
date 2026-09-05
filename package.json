@@ -125,7 +125,7 @@
     "better-sqlite3": "^13.0.1",
     "commander": "^15.0.0",
     "smol-toml": "^1.7.1",
-    "web-tree-sitter": "^0.26.5"
+    "web-tree-sitter": "^0.27.0"
   },
   "peerDependencies": {
     "@huggingface/transformers": "^4.0.1"
