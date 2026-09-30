@@ -714,14 +714,14 @@ describe('checkNoSignatureChanges', () => {
   test('passes for body-only changes', () => {
     // add is at line 1. Changing lines 3-5 (body only) should pass
     const changedRanges = new Map([['src/math.js', [{ start: 3, end: 5 }]]]);
-    const result = checkNoSignatureChanges(db, changedRanges, false);
+    const result = checkNoSignatureChanges(db, changedRanges, new Map(), false);
     expect(result.passed).toBe(true);
   });
 
   test('fails when declaration line is in a changed hunk', () => {
     // add is at line 1. Changing lines 1-2 (includes declaration) should fail
     const changedRanges = new Map([['src/math.js', [{ start: 1, end: 2 }]]]);
-    const result = checkNoSignatureChanges(db, changedRanges, false);
+    const result = checkNoSignatureChanges(db, changedRanges, new Map(), false);
     expect(result.passed).toBe(false);
     expect(result.violations.length).toBeGreaterThanOrEqual(1);
     expect(result.violations[0].name).toBe('add');
@@ -729,7 +729,7 @@ describe('checkNoSignatureChanges', () => {
 
   test('skips test files when noTests is true', () => {
     const changedRanges = new Map([['tests/math.test.js', [{ start: 1, end: 5 }]]]);
-    const result = checkNoSignatureChanges(db, changedRanges, true);
+    const result = checkNoSignatureChanges(db, changedRanges, new Map(), true);
     expect(result.passed).toBe(true);
   });
 
@@ -739,7 +739,7 @@ describe('checkNoSignatureChanges', () => {
     // grind performs — must not trip this check: every caller of a
     // private helper lives in the same file and is already part of the diff.
     const changedRanges = new Map([['src/math.js', [{ start: 14, end: 16 }]]]);
-    const result = checkNoSignatureChanges(db, changedRanges, false);
+    const result = checkNoSignatureChanges(db, changedRanges, new Map(), false);
     expect(result.passed).toBe(true);
   });
 
@@ -755,7 +755,7 @@ describe('checkNoSignatureChanges', () => {
         ],
       ],
     ]);
-    const result = checkNoSignatureChanges(db, changedRanges, false);
+    const result = checkNoSignatureChanges(db, changedRanges, new Map(), false);
     expect(result.passed).toBe(false);
     expect(result.violations.map((v) => v.name)).toEqual(['add']);
   });
@@ -787,7 +787,7 @@ describe('checkNoSignatureChanges', () => {
     // ...but checkNoSignatureChanges itself is driven by changedRanges
     // (new-file coordinates). This hunk has no added lines, so there is
     // nothing to compare against and multiply is correctly left alone.
-    const result = checkNoSignatureChanges(db, changedRanges, false);
+    const result = checkNoSignatureChanges(db, changedRanges, new Map(), false);
     expect(result.passed).toBe(true);
   });
 
@@ -828,13 +828,18 @@ describe('checkNoSignatureChanges', () => {
     // Prove the regression is real: had the call site still passed
     // oldRanges, isPidAlive's post-change line (2) falls inside the old
     // range [2, 12] and would be wrongly flagged.
-    const buggyResult = checkNoSignatureChanges(db, parsed.oldRanges, false);
+    const buggyResult = checkNoSignatureChanges(db, parsed.oldRanges, parsed.changedEdits, false);
     expect(buggyResult.passed).toBe(false);
     expect(buggyResult.violations.map((v) => v.name)).toContain('isPidAlive');
 
     // The fix: changedRanges is empty for a pure deletion, so there is
     // nothing to compare against and isPidAlive is correctly left alone.
-    const fixedResult = checkNoSignatureChanges(db, parsed.changedRanges, false);
+    const fixedResult = checkNoSignatureChanges(
+      db,
+      parsed.changedRanges,
+      parsed.changedEdits,
+      false,
+    );
     expect(fixedResult.passed).toBe(true);
   });
 
@@ -852,12 +857,71 @@ describe('checkNoSignatureChanges', () => {
       '+function someExportedFn(extra) {',
     ].join('\n');
 
-    const { changedRanges } = parseDiffOutput(diff);
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
     expect(changedRanges.get('src/coordshift2.js')).toEqual([{ start: 1, end: 1 }]);
+    // A replacement run carries the removed declaration text, so it is a
+    // genuine modification and must still flag (issue #2674).
+    expect(changedEdits.get('src/coordshift2.js')?.[0].removedText).toEqual([
+      'function someExportedFn() {',
+    ]);
 
-    const result = checkNoSignatureChanges(db, changedRanges, false);
+    const result = checkNoSignatureChanges(db, changedRanges, changedEdits, false);
     expect(result.passed).toBe(false);
     expect(result.violations.map((v) => v.name)).toContain('someExportedFn');
+  });
+
+  test('regression: a newly ADDED exported function is not a signature change (issue #2674)', () => {
+    // The db reflects the working tree AFTER the addition, so the new
+    // symbol is already present at its post-change line.
+    insertNode(db, 'brandNewThing', 'function', 'src/added-export.js', 25, 27, 1);
+
+    // A pure insertion — the exact shape of appending a new export at EOF.
+    // No line is removed, so the declaration did not exist at the base ref.
+    const diff = [
+      '--- a/src/added-export.js',
+      '+++ b/src/added-export.js',
+      '@@ -24,0 +25,3 @@',
+      '+export function brandNewThing(x) {',
+      '+  return x;',
+      '+}',
+    ].join('\n');
+
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+    expect(changedRanges.get('src/added-export.js')).toEqual([{ start: 25, end: 27 }]);
+    expect(changedEdits.get('src/added-export.js')?.[0].removedText).toEqual([]);
+
+    // Before the fix the changed range covering line 25 flagged the new
+    // export. `changedEdits` marks the run as a pure insertion (nothing
+    // removed), so the new symbol is not treated as a modification.
+    const result = checkNoSignatureChanges(db, changedRanges, changedEdits, false);
+    expect(result.passed).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  test('regression: renamed/newly-exported names sharing a hunk with removals are not flagged (issue #2674)', () => {
+    // Base exported only `register`. The diff renames it to `registerPanel`
+    // and adds `subscribeComposition`. The added run is paired with removed
+    // text, so `removedText` is NOT empty — the pure-insertion hedge alone
+    // was insufficient. Neither new name existed at the base ref.
+    insertNode(db, 'registerPanel', 'function', 'src/rename.js', 1, 3, 1);
+    insertNode(db, 'subscribeComposition', 'function', 'src/rename.js', 2, 4, 1);
+
+    const diff = [
+      '--- a/src/rename.js',
+      '+++ b/src/rename.js',
+      '@@ -1,1 +1,2 @@',
+      '-function register(id) {',
+      '+export function registerPanel(id) {',
+      '+export function subscribeComposition() {}',
+    ].join('\n');
+
+    const { changedRanges, changedEdits } = parseDiffOutput(diff);
+    expect(changedRanges.get('src/rename.js')).toEqual([{ start: 1, end: 2 }]);
+    expect(changedEdits.get('src/rename.js')?.[0].removedText).toEqual(['function register(id) {']);
+
+    const result = checkNoSignatureChanges(db, changedRanges, changedEdits, false);
+    expect(result.passed).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 });
 
